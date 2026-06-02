@@ -6,17 +6,50 @@
  *
  * Run:  npm run dev        (uses .env)
  */
-import { rm, mkdir } from "node:fs/promises";
+import { rm, mkdir, writeFile, unlink } from "node:fs/promises";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig } from "./config.js";
-import { listQueuedIssues, addLabel, removeLabel, commentOnIssue, cloneRepo } from "./github.js";
+import {
+  listQueuedIssues,
+  addLabel,
+  removeLabel,
+  commentOnIssue,
+  cloneRepo,
+  findPrForBranch,
+} from "./github.js";
 import { loadConstitution, loadPlaybook } from "./memory.js";
 import { runDevAgent } from "./agents/dev.js";
 
 const IN_PROGRESS = "agency:in-progress";
+const READY = "agency:ready";
+const NEEDS_ATTENTION = "agency:needs-attention";
+const LOCK_PATH = join(process.cwd(), ".agency.lock");
+
+/** Prevent overlapping runs (e.g. when launchd fires again before we finish). */
+function acquireLock(): boolean {
+  if (existsSync(LOCK_PATH)) {
+    const pid = Number(readFileSync(LOCK_PATH, "utf8").trim());
+    // If the recorded process is gone, the lock is stale — take it over.
+    try {
+      process.kill(pid, 0);
+      return false; // still running
+    } catch {
+      /* stale lock, fall through */
+    }
+  }
+  writeFileSync(LOCK_PATH, String(process.pid));
+  return true;
+}
 
 async function main(): Promise<void> {
   const cfg = loadConfig();
+
+  if (!acquireLock()) {
+    console.log("[agency] another run is already in progress; exiting.");
+    return;
+  }
+
   console.log(`[agency] target repo: ${cfg.targetRepo}`);
   console.log(`[agency] looking for issues labeled "${cfg.queueLabel}"...`);
 
@@ -61,13 +94,46 @@ async function main(): Promise<void> {
   });
 
   console.log(`[agency] developer finished after ${result.turns} turns.`);
-  console.log("[agency] ----- agent summary -----");
-  console.log(result.finalText || "(no textual summary returned)");
-  console.log("[agency] ---------------------------");
-  console.log(`[agency] done. Check issue #${issue.number} and its pull request on GitHub.`);
+
+  // The runner owns the terminal state authoritatively, regardless of whether the
+  // agent remembered to update labels/comments itself.
+  const branch = `agency/issue-${issue.number}`;
+  const pr = await findPrForBranch(cfg.targetRepo, branch);
+  await removeLabel(cfg.targetRepo, issue.number, IN_PROGRESS);
+
+  if (pr) {
+    await addLabel(cfg.targetRepo, issue.number, READY);
+    await commentOnIssue(
+      cfg.targetRepo,
+      issue.number,
+      [
+        `✅ Work complete. Opened ${pr.isDraft ? "draft " : ""}PR ${pr.url}`,
+        "",
+        `Test it locally:`,
+        "```bash",
+        `git fetch origin && git checkout ${branch}`,
+        "```",
+      ].join("\n"),
+    );
+    console.log(`[agency] issue #${issue.number} -> ${READY}. PR: ${pr.url}`);
+  } else {
+    // No PR means the agent stopped early (e.g. asked a question or hit a blocker).
+    await addLabel(cfg.targetRepo, issue.number, NEEDS_ATTENTION);
+    await commentOnIssue(
+      cfg.targetRepo,
+      issue.number,
+      "⚠️ The agency finished without opening a pull request. It may need clarification or hit a blocker — see the notes above. Re-add the queue label to retry.",
+    );
+    console.log(`[agency] issue #${issue.number} -> ${NEEDS_ATTENTION} (no PR found).`);
+  }
 }
 
-main().catch((err) => {
-  console.error("[agency] fatal error:", err);
-  process.exitCode = 1;
-});
+main()
+  .catch((err) => {
+    console.error("[agency] fatal error:", err);
+    process.exitCode = 1;
+  })
+  .finally(() => {
+    // Always release the lock.
+    void unlink(LOCK_PATH).catch(() => {});
+  });

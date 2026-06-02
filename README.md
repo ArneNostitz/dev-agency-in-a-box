@@ -79,6 +79,41 @@ docker compose run --rm agency
 The `memory/` folder is mounted into the container, so edits to the Constitution or
 playbooks take effect on the next run with no rebuild.
 
+## Run it always-on (macOS, e.g. a dedicated older Mac)
+
+This turns a Mac into the agency's home: a launchd service checks for queued issues
+every minute and processes them. Heavy compute stays in the cloud (LLM inference +
+GitHub Actions CI), so even modest hardware is plenty.
+
+```bash
+cd dev-agency
+claude            # type /login once to use your subscription (or set a token in .env)
+./scripts/setup-macos.sh
+```
+
+The script installs Node + gh (via Homebrew), builds, installs the background service,
+and disables sleep while on power. After that you only ever file issues — the Mac runs
+itself. Useful commands:
+
+```bash
+tail -f logs/agency.log                                   # watch it work
+launchctl unload ~/Library/LaunchAgents/com.devagency.runner.plist   # stop
+launchctl load   ~/Library/LaunchAgents/com.devagency.runner.plist   # start
+```
+
+### Cloud CI for projects
+
+Copy `templates/github-actions-ci.yml` into a target repo as `.github/workflows/ci.yml`
+so tests/builds run on GitHub's runners instead of the local Mac. With branch protection
+requiring that check, the agency physically can't merge red.
+
+### Issue labels (the state machine)
+
+`agency:queue` → you mark an issue ready for the agency.
+`agency:in-progress` → being worked on.
+`agency:ready` → PR opened, ready for your review.
+`agency:needs-attention` → stopped without a PR (needs clarification or hit a blocker).
+
 ## How behavior is controlled
 
 Everything the agents may and may not do lives in **`memory/central/CONSTITUTION.md`**,

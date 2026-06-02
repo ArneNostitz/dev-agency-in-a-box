@@ -68,3 +68,23 @@ export async function cloneRepo(repo: string, dest: string): Promise<void> {
   await gh(["auth", "setup-git"]);
   await gh(["repo", "clone", repo, dest, "--", "--depth", "50"]);
 }
+
+export interface PullRequest {
+  number: number;
+  url: string;
+  isDraft: boolean;
+}
+
+/** Find an open PR whose head branch matches `branch`, if any. */
+export async function findPrForBranch(repo: string, branch: string): Promise<PullRequest | null> {
+  const out = await gh([
+    "pr", "list",
+    "--repo", repo,
+    "--head", branch,
+    "--state", "open",
+    "--json", "number,url,isDraft",
+    "--limit", "1",
+  ]).catch(() => "[]");
+  const raw = JSON.parse(out) as Array<{ number: number; url: string; isDraft: boolean }>;
+  return raw.length > 0 ? raw[0] : null;
+}

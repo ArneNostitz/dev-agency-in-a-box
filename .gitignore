@@ -2,6 +2,8 @@ node_modules/
 dist/
 .env
 *.log
+logs/
+.agency.lock
 
 # Local memory database (structured state + vectors). Keep markdown in git, not the DB.
 memory/agency.db
