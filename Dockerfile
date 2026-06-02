@@ -31,4 +31,10 @@ RUN npm run build
 RUN git config --global user.name "dev-agency-bot" \
     && git config --global user.email "dev-agency-bot@users.noreply.github.com"
 
+# Default to a long-running watcher (ideal for Coolify / any container host).
+# Override RUN_MODE=once for a one-shot/cron-style run.
+ENV RUN_MODE=watch \
+    POLL_INTERVAL_SECONDS=60 \
+    NODE_ENV=production
+
 CMD ["node", "dist/runner.js"]

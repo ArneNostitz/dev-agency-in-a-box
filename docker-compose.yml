@@ -1,14 +1,32 @@
+# Coolify-ready deployment.
+# In Coolify: create a Docker Compose resource from this repo, set the env vars
+# below as secrets in the UI, and deploy. The service runs as a long-lived
+# watcher that polls GitHub issues every POLL_INTERVAL_SECONDS.
 services:
   agency:
     build: .
-    env_file:
-      - .env
+    restart: unless-stopped
     environment:
-      # Inside the container, ANTHROPIC_API_KEY / GITHUB_TOKEN come from .env above.
-      NODE_ENV: production
+      RUN_MODE: watch
+      POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-60}
+
+      # --- GitHub (required) ---
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      GITHUB_OWNER: ${GITHUB_OWNER}
+      TARGET_REPO: ${TARGET_REPO}
+      QUEUE_LABEL: ${QUEUE_LABEL:-agency:queue}
+
+      # --- Agent brains: set ONE of these ---
+      # Subscription token from `claude setup-token`:
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
+      # ...or a pay-as-you-go API key:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+
+      # Optional: pin a model (e.g. claude-sonnet-4-6)
+      AGENT_MODEL: ${AGENT_MODEL:-}
     volumes:
-      # Mount memory so you can edit the Constitution/playbooks on the fly and the
-      # next run picks them up without a rebuild.
-      - ./memory:/app/memory
-    # Phase 1 is a one-shot run. Re-run with: docker compose run --rm agency
-    restart: "no"
+      # Reserved for the persistent memory database (SQLite + vectors) in Phase 2.
+      - agency-data:/app/data
+
+volumes:
+  agency-data:

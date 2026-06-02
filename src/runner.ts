@@ -1,15 +1,19 @@
 /**
- * Phase 1 runner: pick up one queued GitHub issue and drive it to a linked PR
- * using a single Developer agent. This proves the issue -> branch -> PR ->
- * comment loop end to end before we add the orchestrator and the rest of the
- * roster in later phases.
+ * Runner: pick up queued GitHub issues and drive each to a linked PR using a
+ * single Developer agent. This proves the issue -> branch -> PR -> comment loop
+ * before we add the orchestrator and the rest of the roster in later phases.
  *
- * Run:  npm run dev        (uses .env)
+ * Two modes (set via RUN_MODE):
+ *   once   - process at most one queued issue, then exit (good for cron/launchd)
+ *   watch  - loop forever, polling every POLL_INTERVAL_SECONDS (good for a
+ *            long-running container, e.g. on Coolify)
+ *
+ * Local: npm run dev      Container: node dist/runner.js  (RUN_MODE=watch)
  */
-import { rm, mkdir, writeFile, unlink } from "node:fs/promises";
+import { rm, mkdir, unlink } from "node:fs/promises";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { loadConfig } from "./config.js";
+import { loadConfig, type Config } from "./config.js";
 import {
   listQueuedIssues,
   addLabel,
@@ -26,11 +30,10 @@ const READY = "agency:ready";
 const NEEDS_ATTENTION = "agency:needs-attention";
 const LOCK_PATH = join(process.cwd(), ".agency.lock");
 
-/** Prevent overlapping runs (e.g. when launchd fires again before we finish). */
+/** Prevent overlapping `once` runs (e.g. when a scheduler fires before we finish). */
 function acquireLock(): boolean {
   if (existsSync(LOCK_PATH)) {
     const pid = Number(readFileSync(LOCK_PATH, "utf8").trim());
-    // If the recorded process is gone, the lock is stale — take it over.
     try {
       process.kill(pid, 0);
       return false; // still running
@@ -42,22 +45,15 @@ function acquireLock(): boolean {
   return true;
 }
 
-async function main(): Promise<void> {
-  const cfg = loadConfig();
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-  if (!acquireLock()) {
-    console.log("[agency] another run is already in progress; exiting.");
-    return;
-  }
-
-  console.log(`[agency] target repo: ${cfg.targetRepo}`);
-  console.log(`[agency] looking for issues labeled "${cfg.queueLabel}"...`);
-
+/**
+ * Process at most one queued issue end to end.
+ * @returns true if an issue was picked up, false if the queue was empty.
+ */
+async function processOneIssue(cfg: Config): Promise<boolean> {
   const queued = await listQueuedIssues(cfg.targetRepo, cfg.queueLabel);
-  if (queued.length === 0) {
-    console.log(`[agency] nothing to do. Open an issue and add the "${cfg.queueLabel}" label.`);
-    return;
-  }
+  if (queued.length === 0) return false;
 
   const issue = queued[0];
   console.log(`[agency] picked issue #${issue.number}: ${issue.title}`);
@@ -92,7 +88,6 @@ async function main(): Promise<void> {
     gitPlaybook,
     model: cfg.model,
   });
-
   console.log(`[agency] developer finished after ${result.turns} turns.`);
 
   // The runner owns the terminal state authoritatively, regardless of whether the
@@ -109,7 +104,7 @@ async function main(): Promise<void> {
       [
         `✅ Work complete. Opened ${pr.isDraft ? "draft " : ""}PR ${pr.url}`,
         "",
-        `Test it locally:`,
+        "Test it locally:",
         "```bash",
         `git fetch origin && git checkout ${branch}`,
         "```",
@@ -117,7 +112,6 @@ async function main(): Promise<void> {
     );
     console.log(`[agency] issue #${issue.number} -> ${READY}. PR: ${pr.url}`);
   } else {
-    // No PR means the agent stopped early (e.g. asked a question or hit a blocker).
     await addLabel(cfg.targetRepo, issue.number, NEEDS_ATTENTION);
     await commentOnIssue(
       cfg.targetRepo,
@@ -126,14 +120,56 @@ async function main(): Promise<void> {
     );
     console.log(`[agency] issue #${issue.number} -> ${NEEDS_ATTENTION} (no PR found).`);
   }
+  return true;
 }
 
-main()
-  .catch((err) => {
-    console.error("[agency] fatal error:", err);
-    process.exitCode = 1;
-  })
-  .finally(() => {
-    // Always release the lock.
-    void unlink(LOCK_PATH).catch(() => {});
-  });
+async function runOnce(cfg: Config): Promise<void> {
+  if (!acquireLock()) {
+    console.log("[agency] another run is already in progress; exiting.");
+    return;
+  }
+  try {
+    console.log(`[agency] target repo: ${cfg.targetRepo} (mode: once)`);
+    const did = await processOneIssue(cfg);
+    if (!did) {
+      console.log(`[agency] nothing to do. Add the "${cfg.queueLabel}" label to an issue.`);
+    }
+  } finally {
+    await unlink(LOCK_PATH).catch(() => {});
+  }
+}
+
+async function runWatch(cfg: Config): Promise<void> {
+  console.log(
+    `[agency] target repo: ${cfg.targetRepo} (mode: watch, every ${cfg.pollIntervalSeconds}s)`,
+  );
+  // Single long-running process => sequential loop, no lock needed.
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    try {
+      const did = await processOneIssue(cfg);
+      if (!did) {
+        console.log(`[agency] queue empty; sleeping ${cfg.pollIntervalSeconds}s...`);
+        await sleep(cfg.pollIntervalSeconds * 1000);
+      }
+      // If work was done, loop immediately to drain any remaining queued issues.
+    } catch (err) {
+      console.error("[agency] error during cycle (continuing):", (err as Error).message);
+      await sleep(cfg.pollIntervalSeconds * 1000);
+    }
+  }
+}
+
+async function main(): Promise<void> {
+  const cfg = loadConfig();
+  if (cfg.runMode === "watch") {
+    await runWatch(cfg);
+  } else {
+    await runOnce(cfg);
+  }
+}
+
+main().catch((err) => {
+  console.error("[agency] fatal error:", err);
+  process.exitCode = 1;
+});

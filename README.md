@@ -69,15 +69,24 @@ git fetch origin && git checkout agency/issue-<N>
 # run / inspect the change
 ```
 
-## Run it (Docker)
+## Deploy always-on (Coolify — recommended)
+
+The recommended home for the agency is a container host running 24/7. On Coolify it
+runs as a single long-lived watcher (`RUN_MODE=watch`) that polls issues every minute.
+Full steps in **[COOLIFY.md](COOLIFY.md)** — connect the repo, set the env secrets, deploy.
+
+Edit `memory/` and `git push` to update the agents' rules; with Coolify auto-deploy, the
+running agency updates itself on push.
+
+## Run it (Docker, locally)
 
 ```bash
 docker compose build
-docker compose run --rm agency
+# one-shot:
+docker compose run --rm -e RUN_MODE=once agency
+# or the long-running watcher:
+docker compose up
 ```
-
-The `memory/` folder is mounted into the container, so edits to the Constitution or
-playbooks take effect on the next run with no rebuild.
 
 ## Run it always-on (macOS, e.g. a dedicated older Mac)
 

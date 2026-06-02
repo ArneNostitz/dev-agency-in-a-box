@@ -25,6 +25,10 @@ export interface Config {
   targetRepo: string;
   queueLabel: string;
   model?: string;
+  /** "once" = process one issue and exit; "watch" = loop forever polling. */
+  runMode: "once" | "watch";
+  /** Seconds between polls in watch mode. */
+  pollIntervalSeconds: number;
 }
 
 export function loadConfig(): Config {
@@ -42,6 +46,8 @@ export function loadConfig(): Config {
     targetRepo,
     queueLabel: optional("QUEUE_LABEL", "agency:queue"),
     model: process.env.AGENT_MODEL?.trim() || undefined,
+    runMode: process.env.RUN_MODE?.trim() === "watch" ? "watch" : "once",
+    pollIntervalSeconds: Math.max(10, Number(optional("POLL_INTERVAL_SECONDS", "60")) || 60),
   };
 
   // Report which auth mode is in effect so it's never a mystery.
