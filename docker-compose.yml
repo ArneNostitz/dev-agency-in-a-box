@@ -1,0 +1,14 @@
+services:
+  agency:
+    build: .
+    env_file:
+      - .env
+    environment:
+      # Inside the container, ANTHROPIC_API_KEY / GITHUB_TOKEN come from .env above.
+      NODE_ENV: production
+    volumes:
+      # Mount memory so you can edit the Constitution/playbooks on the fly and the
+      # next run picks them up without a rebuild.
+      - ./memory:/app/memory
+    # Phase 1 is a one-shot run. Re-run with: docker compose run --rm agency
+    restart: "no"
