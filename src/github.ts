@@ -53,16 +53,27 @@ export async function listQueuedIssues(repo: string, label: string): Promise<Iss
 const STATE_LABELS = ["agency:in-progress", "agency:ready", "agency:needs-attention"];
 
 export interface ActionableOptions {
-  requireLabel: boolean;
+  triggerMode: "mention" | "label" | "any";
+  handles: string[];
   queueLabel: string;
   ignoreLabel: string;
 }
 
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** True if `text` mentions any of `handles` as a whole token (e.g. "@dev" but not "@developer"). */
+export function mentionsHandle(text: string, handles: string[]): boolean {
+  return handles.some((h) => new RegExp(escapeRegex(h) + "(?![a-z0-9_-])", "i").test(text));
+}
+
 /**
- * Open issues the agency should act on. By default (requireLabel=false) that's ANY
- * open issue that isn't already in an agency state and isn't opted out via ignoreLabel —
- * so you just open an issue and it gets picked up. With requireLabel=true, the issue
- * must also carry queueLabel.
+ * Open issues the agency should act on, after excluding ones already in an agency
+ * state or opted out via ignoreLabel. The trigger decides the rest:
+ *   "mention" - the issue title/body mentions one of `handles` (pin to start)
+ *   "label"   - the issue carries `queueLabel`
+ *   "any"     - every remaining open issue
  */
 export async function listActionableIssues(repo: string, opts: ActionableOptions): Promise<Issue[]> {
   const out = await gh([
@@ -88,8 +99,11 @@ export async function listActionableIssues(repo: string, opts: ActionableOptions
     .filter((i) => {
       if (i.labels.includes(opts.ignoreLabel)) return false;
       if (i.labels.some((l) => STATE_LABELS.includes(l))) return false;
-      if (opts.requireLabel && !i.labels.includes(opts.queueLabel)) return false;
-      return true;
+      if (opts.triggerMode === "label") return i.labels.includes(opts.queueLabel);
+      if (opts.triggerMode === "mention") {
+        return mentionsHandle(`${i.title}\n${i.body}`, opts.handles);
+      }
+      return true; // "any"
     })
     .sort((a, b) => a.number - b.number);
 }

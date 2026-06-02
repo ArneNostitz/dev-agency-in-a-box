@@ -53,7 +53,8 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  */
 async function processOneIssue(cfg: Config, repo: string): Promise<boolean> {
   const actionable = await listActionableIssues(repo, {
-    requireLabel: cfg.requireLabel,
+    triggerMode: cfg.triggerMode,
+    handles: cfg.handles,
     queueLabel: cfg.queueLabel,
     ignoreLabel: cfg.ignoreLabel,
   });

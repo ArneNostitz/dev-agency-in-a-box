@@ -20,8 +20,9 @@ services:
       TARGET_REPOS: ${TARGET_REPOS:-}
       TARGET_REPO: ${TARGET_REPO:-}
 
-      # Work on any new issue (false) or only labeled ones (true):
-      REQUIRE_LABEL: ${REQUIRE_LABEL:-false}
+      # Trigger: mention (default, e.g. "@dev ...") | label | any
+      TRIGGER_MODE: ${TRIGGER_MODE:-mention}
+      HANDLES: ${HANDLES:-}
       QUEUE_LABEL: ${QUEUE_LABEL:-agency:queue}
       IGNORE_LABEL: ${IGNORE_LABEL:-agency:ignore}
 

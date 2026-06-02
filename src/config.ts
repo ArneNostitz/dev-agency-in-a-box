@@ -60,6 +60,40 @@ function loadRepos(owner: string): string[] {
   return [...repos];
 }
 
+/**
+ * The "@handles" that pin the agency, from config/team.txt (plus optional HANDLES env).
+ * Returned lowercased and guaranteed to start with '@'.
+ */
+function loadHandles(): string[] {
+  const handles = new Set<string>();
+  const norm = (h: string) => {
+    const t = h.trim().toLowerCase().split(/[:\s]/)[0];
+    if (!t) return "";
+    return t.startsWith("@") ? t : `@${t}`;
+  };
+
+  const file = join(projectRoot, "config", "team.txt");
+  if (existsSync(file)) {
+    for (const line of readFileSync(file, "utf8").split("\n")) {
+      const s = line.split("#")[0].trim();
+      const h = norm(s);
+      if (h && h !== "@") handles.add(h);
+    }
+  }
+  for (const h of (process.env.HANDLES ?? "").split(",")) {
+    const n = norm(h);
+    if (n && n !== "@") handles.add(n);
+  }
+  if (handles.size === 0) handles.add("@dev");
+  return [...handles];
+}
+
+function parseTrigger(v: string | undefined, requireLabel: boolean): "mention" | "label" | "any" {
+  const m = v?.trim().toLowerCase();
+  if (m === "mention" || m === "label" || m === "any") return m;
+  return requireLabel ? "label" : "mention"; // sensible default: pin-to-start
+}
+
 export interface Config {
   /** Optional. If unset, the Agent SDK uses your Claude Code subscription login. */
   anthropicApiKey?: string;
@@ -67,8 +101,15 @@ export interface Config {
   owner: string;
   /** All repos the agency watches. */
   targetRepos: string[];
-  /** If true, only act on issues carrying `queueLabel`. If false, act on any new issue. */
-  requireLabel: boolean;
+  /**
+   * How an issue starts the agency:
+   *   "mention" - the issue mentions one of `handles` (default, "pin to start")
+   *   "label"   - the issue carries `queueLabel`
+   *   "any"     - every new issue (aggressive)
+   */
+  triggerMode: "mention" | "label" | "any";
+  /** Short "@handles" that pin the agency (mention mode). */
+  handles: string[];
   queueLabel: string;
   /** Issues with this label are never touched (your manual opt-out). */
   ignoreLabel: string;
@@ -96,7 +137,8 @@ export function loadConfig(): Config {
     githubToken: required("GITHUB_TOKEN"),
     owner,
     targetRepos,
-    requireLabel: bool("REQUIRE_LABEL", false),
+    triggerMode: parseTrigger(process.env.TRIGGER_MODE, bool("REQUIRE_LABEL", false)),
+    handles: loadHandles(),
     queueLabel: optional("QUEUE_LABEL", "agency:queue"),
     ignoreLabel: optional("IGNORE_LABEL", "agency:ignore"),
     model: process.env.AGENT_MODEL?.trim() || undefined,
@@ -111,9 +153,15 @@ export function loadConfig(): Config {
   } else {
     console.log("[agency] auth: Claude Code subscription login (run `claude` and /login if this fails)");
   }
+  const triggerDesc =
+    cfg.triggerMode === "mention"
+      ? `mention ${cfg.handles.join(" / ")}`
+      : cfg.triggerMode === "label"
+        ? `label "${cfg.queueLabel}"`
+        : "any new issue";
   console.log(
-    `[agency] watching ${cfg.targetRepos.length} repo(s): ${cfg.targetRepos.join(", ")}` +
-      (cfg.requireLabel ? ` (only "${cfg.queueLabel}")` : " (any new issue)"),
+    `[agency] watching ${cfg.targetRepos.length} repo(s): ${cfg.targetRepos.join(", ")} ` +
+      `(trigger: ${triggerDesc})`,
   );
 
   // `gh` and `git` authenticate from GH_TOKEN; mirror the configured token into it.

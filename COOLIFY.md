@@ -38,16 +38,30 @@ normally set `TARGET_REPO` here.
 
 ### Which repos it works in — and adding more
 
-The agency watches every repo listed in **`config/repos.txt`**. To add a project, add a
-line with its name and `git push` — with auto-deploy on, Coolify redeploys and it starts
-watching the new repo within a minute. (The `GITHUB_TOKEN` must have access to that repo.)
+The agency **only** works in repos you explicitly list in **`config/repos.txt`** — never all
+your repos. To add one, run:
 
-### Triggering: any new issue, automatically
+```bash
+./scripts/add-repo.sh my-app        # or: npm run add-repo -- someorg/my-app
+```
 
-By default `REQUIRE_LABEL=false`, so the agency works on **any new issue** you open in a
-watched repo — no label needed. It marks issues `agency:in-progress` → `agency:ready` as it
-goes, so it never re-picks one. Add the **`agency:ignore`** label to any issue you want it
-to leave alone. (Set `REQUIRE_LABEL=true` if you'd rather it only act on `agency:queue` issues.)
+That appends the repo, commits, and pushes; with auto-deploy on, Coolify redeploys and it
+starts watching within a minute. (Your `GITHUB_TOKEN` must have access to that repo.)
+
+### Triggering: pin a teammate with a short @handle
+
+By default (`TRIGGER_MODE=mention`) the agency acts only when you **mention one of its
+handles** in an issue — so you "pin" it, e.g. open an issue and write:
+
+```
+@dev add a /health endpoint that returns 200
+```
+
+Handles live in **`config/team.txt`** (defaults: `@dev`, `@agency`) — short and easy to type,
+and ready to map to specialist roles in Phase 3. It marks issues `agency:in-progress` →
+`agency:ready` as it goes, and never re-picks one. Add the **`agency:ignore`** label to mute
+any issue. Prefer a different style? Set `TRIGGER_MODE=label` (only `agency:queue` issues) or
+`TRIGGER_MODE=any` (every new issue).
 
 ### Triggering instantly with webhooks (optional)
 
