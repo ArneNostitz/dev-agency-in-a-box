@@ -7,14 +7,23 @@ services:
     build: .
     restart: unless-stopped
     environment:
-      RUN_MODE: watch
+      # Trigger style: "watch" polls; "webhook" reacts instantly (set up a GitHub webhook).
+      RUN_MODE: ${RUN_MODE:-watch}
       POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-60}
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
+      PORT: 3000
 
       # --- GitHub (required) ---
       GITHUB_TOKEN: ${GITHUB_TOKEN}
       GITHUB_OWNER: ${GITHUB_OWNER}
-      TARGET_REPO: ${TARGET_REPO}
+      # Repos come from config/repos.txt; or override with a comma-separated list:
+      TARGET_REPOS: ${TARGET_REPOS:-}
+      TARGET_REPO: ${TARGET_REPO:-}
+
+      # Work on any new issue (false) or only labeled ones (true):
+      REQUIRE_LABEL: ${REQUIRE_LABEL:-false}
       QUEUE_LABEL: ${QUEUE_LABEL:-agency:queue}
+      IGNORE_LABEL: ${IGNORE_LABEL:-agency:ignore}
 
       # --- Agent brains: set ONE of these ---
       # Subscription token from `claude setup-token`:

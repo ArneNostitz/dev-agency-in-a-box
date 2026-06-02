@@ -24,8 +24,12 @@ RUN npm install
 COPY tsconfig.json ./
 COPY src ./src
 COPY memory ./memory
+COPY config ./config
 
 RUN npm run build
+
+# Webhook mode listens here (ignored in watch/once mode).
+EXPOSE 3000
 
 # Set a stable git identity for the agency's commits.
 RUN git config --global user.name "dev-agency-bot" \

@@ -24,15 +24,61 @@ In the resource's **Environment Variables** tab, add these (mark the tokens as s
 
 | Variable | Value |
 |---|---|
-| `GITHUB_TOKEN` | your fine-grained GitHub token |
+| `GITHUB_TOKEN` | your fine-grained GitHub token (ideally the **bot account's** — see below) |
 | `GITHUB_OWNER` | `ArneNostitz` |
-| `TARGET_REPO` | the repo to work on, e.g. `sandbox-project` |
 | `CLAUDE_CODE_OAUTH_TOKEN` | output of `claude setup-token` (subscription) |
 | `ANTHROPIC_API_KEY` | *(only if not using the subscription token)* |
-| `POLL_INTERVAL_SECONDS` | `60` (optional) |
+| `RUN_MODE` | `watch` (poll) or `webhook` (instant — see below) |
+| `GITHUB_WEBHOOK_SECRET` | a long random string (only for webhook mode) |
+| `POLL_INTERVAL_SECONDS` | `60` (watch mode, optional) |
 | `AGENT_MODEL` | optional, e.g. `claude-sonnet-4-6` |
 
-`RUN_MODE=watch` is baked into the image, so you don't need to set it.
+Repos are read from **`config/repos.txt`** in the repo (one per line), so you don't
+normally set `TARGET_REPO` here.
+
+### Which repos it works in — and adding more
+
+The agency watches every repo listed in **`config/repos.txt`**. To add a project, add a
+line with its name and `git push` — with auto-deploy on, Coolify redeploys and it starts
+watching the new repo within a minute. (The `GITHUB_TOKEN` must have access to that repo.)
+
+### Triggering: any new issue, automatically
+
+By default `REQUIRE_LABEL=false`, so the agency works on **any new issue** you open in a
+watched repo — no label needed. It marks issues `agency:in-progress` → `agency:ready` as it
+goes, so it never re-picks one. Add the **`agency:ignore`** label to any issue you want it
+to leave alone. (Set `REQUIRE_LABEL=true` if you'd rather it only act on `agency:queue` issues.)
+
+### Triggering instantly with webhooks (optional)
+
+Polling every 60s is fine, but for instant reaction set `RUN_MODE=webhook` and a
+`GITHUB_WEBHOOK_SECRET`, then in GitHub (repo or org **Settings → Webhooks → Add webhook**):
+
+- **Payload URL:** `https://<your-coolify-domain>/webhook`
+- **Content type:** `application/json`
+- **Secret:** the same `GITHUB_WEBHOOK_SECRET`
+- **Events:** select **Issues**
+
+Coolify exposes the service's port 3000 at the domain it assigns the resource. The agency
+verifies the signature and processes the issue the moment it's opened. A slow safety poll
+still runs so nothing is missed if a delivery is dropped.
+
+### Running under a bot identity (so it's not "you")
+
+Right now actions are attributed to whoever owns `GITHUB_TOKEN`. To give the agency its own
+identity:
+
+1. Create a second GitHub account, e.g. `arne-agency-bot` (use a `+` email alias like
+   `arne+agency@…`).
+2. Invite it to your repos as a collaborator (repo **Settings → Collaborators**), or add it
+   to a GitHub org.
+3. Log in as the bot and create a **fine-grained PAT** for it (all repos it should touch:
+   Contents/Issues/PRs/Workflows = read & write).
+4. Put that token in `GITHUB_TOKEN`. Commits already use the `dev-agency-bot` git identity;
+   now PRs and comments are attributed to the bot account too — and you can revoke it anytime
+   without touching your own account.
+
+`RUN_MODE` defaults to `watch` if unset.
 
 ### 3. Deploy
 Hit **Deploy**. Coolify builds the image (installs Node + git + gh, compiles the

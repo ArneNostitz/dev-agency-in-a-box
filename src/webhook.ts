@@ -1,0 +1,107 @@
+/**
+ * Event-driven mode (RUN_MODE=webhook): instead of polling every N seconds, run an
+ * HTTP server that GitHub calls the instant an issue is opened/labeled/reopened.
+ *
+ * Configure a GitHub webhook (repo or org Settings -> Webhooks):
+ *   Payload URL : https://<your-coolify-domain>/webhook
+ *   Content type: application/json
+ *   Secret      : same value as GITHUB_WEBHOOK_SECRET
+ *   Events      : "Issues" (at least)
+ *
+ * The server verifies the signature, then triggers a processing pass. A safety poll
+ * still runs occasionally so nothing is missed if a webhook delivery is dropped.
+ */
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createHmac, timingSafeEqual } from "node:crypto";
+import type { Config } from "./config.js";
+
+type ProcessAll = (cfg: Config) => Promise<number>;
+
+function verifySignature(secret: string, body: Buffer, header: string | undefined): boolean {
+  if (!secret) return true; // no secret configured -> skip verification (not recommended)
+  if (!header) return false;
+  const expected = "sha256=" + createHmac("sha256", secret).update(body).digest("hex");
+  const a = Buffer.from(expected);
+  const b = Buffer.from(header);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+function readBody(req: IncomingMessage): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (c) => chunks.push(c as Buffer));
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+    req.on("error", reject);
+  });
+}
+
+const RELEVANT_ACTIONS = new Set(["opened", "reopened", "labeled", "edited"]);
+
+export async function runWebhook(cfg: Config, processAll: ProcessAll): Promise<void> {
+  const port = Number(process.env.PORT?.trim() || "3000");
+  const secret = process.env.GITHUB_WEBHOOK_SECRET?.trim() || "";
+  const safetyPollMs = Math.max(60, cfg.pollIntervalSeconds * 5) * 1000;
+
+  // Serialize processing: a single chain, with a "pending" flag to coalesce bursts.
+  let running = false;
+  let pending = false;
+  async function trigger(reason: string): Promise<void> {
+    pending = true;
+    if (running) return;
+    running = true;
+    try {
+      while (pending) {
+        pending = false;
+        console.log(`[agency] processing (trigger: ${reason})`);
+        const n = await processAll(cfg);
+        console.log(`[agency] processed ${n} issue(s).`);
+      }
+    } catch (err) {
+      console.error("[agency] processing error:", (err as Error).message);
+    } finally {
+      running = false;
+    }
+  }
+
+  const server = createServer((req: IncomingMessage, res: ServerResponse) => {
+    if (req.method === "GET") {
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end("dev-agency: ok");
+      return;
+    }
+    if (req.method !== "POST") {
+      res.writeHead(405).end();
+      return;
+    }
+    void readBody(req).then((body) => {
+      if (!verifySignature(secret, body, req.headers["x-hub-signature-256"] as string)) {
+        console.warn("[agency] rejected webhook: bad signature");
+        res.writeHead(401).end("bad signature");
+        return;
+      }
+      const event = req.headers["x-github-event"] as string;
+      let action = "";
+      try {
+        action = (JSON.parse(body.toString("utf8")) as { action?: string }).action ?? "";
+      } catch {
+        /* ignore */
+      }
+      // Respond immediately; process in the background.
+      res.writeHead(202).end("accepted");
+
+      if (event === "ping") {
+        console.log("[agency] webhook ping ok");
+      } else if (event === "issues" && RELEVANT_ACTIONS.has(action)) {
+        void trigger(`issues.${action}`);
+      }
+    });
+  });
+
+  server.listen(port, () => {
+    console.log(`[agency] mode: webhook, listening on :${port} (POST /webhook)`);
+  });
+
+  // Drain anything already queued at startup, then keep a slow safety poll.
+  await trigger("startup");
+  setInterval(() => void trigger("safety-poll"), safetyPollMs);
+}

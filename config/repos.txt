@@ -1,0 +1,7 @@
+# Repositories the agency watches. One per line.
+# Use "owner/name" or just "name" (resolved under GITHUB_OWNER).
+# Lines starting with '#' are comments.
+#
+# To add a repo: add a line here and `git push` (Coolify auto-redeploys and starts watching it).
+
+sandbox-project

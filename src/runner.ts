@@ -15,7 +15,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig, type Config } from "./config.js";
 import {
-  listQueuedIssues,
+  listActionableIssues,
   addLabel,
   removeLabel,
   commentOnIssue,
@@ -48,41 +48,46 @@ function acquireLock(): boolean {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * Process at most one queued issue end to end.
- * @returns true if an issue was picked up, false if the queue was empty.
+ * Process at most one actionable issue in `repo` end to end.
+ * @returns true if an issue was picked up, false if there was nothing to do.
  */
-async function processOneIssue(cfg: Config): Promise<boolean> {
-  const queued = await listQueuedIssues(cfg.targetRepo, cfg.queueLabel);
-  if (queued.length === 0) return false;
+async function processOneIssue(cfg: Config, repo: string): Promise<boolean> {
+  const actionable = await listActionableIssues(repo, {
+    requireLabel: cfg.requireLabel,
+    queueLabel: cfg.queueLabel,
+    ignoreLabel: cfg.ignoreLabel,
+  });
+  if (actionable.length === 0) return false;
 
-  const issue = queued[0];
-  console.log(`[agency] picked issue #${issue.number}: ${issue.title}`);
+  const issue = actionable[0];
+  console.log(`[agency] ${repo} #${issue.number}: ${issue.title}`);
 
   // Move it into the in-progress state and announce on the thread.
-  await addLabel(cfg.targetRepo, issue.number, IN_PROGRESS);
-  await removeLabel(cfg.targetRepo, issue.number, cfg.queueLabel);
+  await addLabel(repo, issue.number, IN_PROGRESS);
+  await removeLabel(repo, issue.number, cfg.queueLabel);
   await commentOnIssue(
-    cfg.targetRepo,
+    repo,
     issue.number,
     `🤖 The dev agency picked up this issue and started working on branch \`agency/issue-${issue.number}\`.`,
   );
 
-  // Fresh working copy.
-  const workdir = join(process.cwd(), ".work", `${issue.number}`);
+  // Fresh working copy (namespaced per repo to avoid collisions).
+  const safeRepo = repo.replace("/", "__");
+  const workdir = join(process.cwd(), ".work", safeRepo, `${issue.number}`);
   await rm(workdir, { recursive: true, force: true });
-  await mkdir(join(process.cwd(), ".work"), { recursive: true });
-  console.log(`[agency] cloning ${cfg.targetRepo} into ${workdir}...`);
-  await cloneRepo(cfg.targetRepo, workdir);
+  await mkdir(join(process.cwd(), ".work", safeRepo), { recursive: true });
+  console.log(`[agency] cloning ${repo} into ${workdir}...`);
+  await cloneRepo(repo, workdir);
 
   const [constitution, gitPlaybook] = await Promise.all([
     loadConstitution(),
     loadPlaybook("git-workflow"),
   ]);
 
-  console.log(`[agency] handing issue #${issue.number} to the Developer agent...`);
+  console.log(`[agency] handing ${repo} #${issue.number} to the Developer agent...`);
   const result = await runDevAgent({
     issue,
-    repo: cfg.targetRepo,
+    repo,
     workdir,
     constitution,
     gitPlaybook,
@@ -93,13 +98,13 @@ async function processOneIssue(cfg: Config): Promise<boolean> {
   // The runner owns the terminal state authoritatively, regardless of whether the
   // agent remembered to update labels/comments itself.
   const branch = `agency/issue-${issue.number}`;
-  const pr = await findPrForBranch(cfg.targetRepo, branch);
-  await removeLabel(cfg.targetRepo, issue.number, IN_PROGRESS);
+  const pr = await findPrForBranch(repo, branch);
+  await removeLabel(repo, issue.number, IN_PROGRESS);
 
   if (pr) {
-    await addLabel(cfg.targetRepo, issue.number, READY);
+    await addLabel(repo, issue.number, READY);
     await commentOnIssue(
-      cfg.targetRepo,
+      repo,
       issue.number,
       [
         `✅ Work complete. Opened ${pr.isDraft ? "draft " : ""}PR ${pr.url}`,
@@ -110,17 +115,31 @@ async function processOneIssue(cfg: Config): Promise<boolean> {
         "```",
       ].join("\n"),
     );
-    console.log(`[agency] issue #${issue.number} -> ${READY}. PR: ${pr.url}`);
+    console.log(`[agency] ${repo} #${issue.number} -> ${READY}. PR: ${pr.url}`);
   } else {
-    await addLabel(cfg.targetRepo, issue.number, NEEDS_ATTENTION);
+    await addLabel(repo, issue.number, NEEDS_ATTENTION);
     await commentOnIssue(
-      cfg.targetRepo,
+      repo,
       issue.number,
-      "⚠️ The agency finished without opening a pull request. It may need clarification or hit a blocker — see the notes above. Re-add the queue label to retry.",
+      "⚠️ The agency finished without opening a pull request. It may need clarification or hit a blocker — see the notes above. Remove the needs-attention label to retry.",
     );
-    console.log(`[agency] issue #${issue.number} -> ${NEEDS_ATTENTION} (no PR found).`);
+    console.log(`[agency] ${repo} #${issue.number} -> ${NEEDS_ATTENTION} (no PR found).`);
   }
   return true;
+}
+
+/** Process one actionable issue per repo across all watched repos. @returns count handled. */
+export async function processAllRepos(cfg: Config): Promise<number> {
+  let handled = 0;
+  for (const repo of cfg.targetRepos) {
+    try {
+      // Drain this repo (one issue at a time) until nothing's actionable.
+      while (await processOneIssue(cfg, repo)) handled += 1;
+    } catch (err) {
+      console.error(`[agency] error on ${repo} (continuing):`, (err as Error).message);
+    }
+  }
+  return handled;
 }
 
 async function runOnce(cfg: Config): Promise<void> {
@@ -129,40 +148,32 @@ async function runOnce(cfg: Config): Promise<void> {
     return;
   }
   try {
-    console.log(`[agency] target repo: ${cfg.targetRepo} (mode: once)`);
-    const did = await processOneIssue(cfg);
-    if (!did) {
-      console.log(`[agency] nothing to do. Add the "${cfg.queueLabel}" label to an issue.`);
-    }
+    const handled = await processAllRepos(cfg);
+    if (handled === 0) console.log("[agency] nothing to do.");
   } finally {
     await unlink(LOCK_PATH).catch(() => {});
   }
 }
 
 async function runWatch(cfg: Config): Promise<void> {
-  console.log(
-    `[agency] target repo: ${cfg.targetRepo} (mode: watch, every ${cfg.pollIntervalSeconds}s)`,
-  );
+  console.log(`[agency] mode: watch (every ${cfg.pollIntervalSeconds}s)`);
   // Single long-running process => sequential loop, no lock needed.
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    try {
-      const did = await processOneIssue(cfg);
-      if (!did) {
-        console.log(`[agency] queue empty; sleeping ${cfg.pollIntervalSeconds}s...`);
-        await sleep(cfg.pollIntervalSeconds * 1000);
-      }
-      // If work was done, loop immediately to drain any remaining queued issues.
-    } catch (err) {
-      console.error("[agency] error during cycle (continuing):", (err as Error).message);
+    const handled = await processAllRepos(cfg);
+    if (handled === 0) {
       await sleep(cfg.pollIntervalSeconds * 1000);
     }
+    // If work was done, loop immediately to catch anything new.
   }
 }
 
 async function main(): Promise<void> {
   const cfg = loadConfig();
-  if (cfg.runMode === "watch") {
+  if (cfg.runMode === "webhook") {
+    const { runWebhook } = await import("./webhook.js");
+    await runWebhook(cfg, processAllRepos);
+  } else if (cfg.runMode === "watch") {
     await runWatch(cfg);
   } else {
     await runOnce(cfg);

@@ -49,6 +49,51 @@ export async function listQueuedIssues(repo: string, label: string): Promise<Iss
     .sort((a, b) => a.number - b.number);
 }
 
+/** Labels that mean "already being handled / handled / parked" — skip these. */
+const STATE_LABELS = ["agency:in-progress", "agency:ready", "agency:needs-attention"];
+
+export interface ActionableOptions {
+  requireLabel: boolean;
+  queueLabel: string;
+  ignoreLabel: string;
+}
+
+/**
+ * Open issues the agency should act on. By default (requireLabel=false) that's ANY
+ * open issue that isn't already in an agency state and isn't opted out via ignoreLabel —
+ * so you just open an issue and it gets picked up. With requireLabel=true, the issue
+ * must also carry queueLabel.
+ */
+export async function listActionableIssues(repo: string, opts: ActionableOptions): Promise<Issue[]> {
+  const out = await gh([
+    "issue", "list",
+    "--repo", repo,
+    "--state", "open",
+    "--json", "number,title,body,labels",
+    "--limit", "50",
+  ]).catch(() => "[]");
+  const raw = JSON.parse(out) as Array<{
+    number: number;
+    title: string;
+    body: string | null;
+    labels: Array<{ name: string }>;
+  }>;
+  return raw
+    .map((i) => ({
+      number: i.number,
+      title: i.title,
+      body: i.body ?? "",
+      labels: i.labels.map((l) => l.name),
+    }))
+    .filter((i) => {
+      if (i.labels.includes(opts.ignoreLabel)) return false;
+      if (i.labels.some((l) => STATE_LABELS.includes(l))) return false;
+      if (opts.requireLabel && !i.labels.includes(opts.queueLabel)) return false;
+      return true;
+    })
+    .sort((a, b) => a.number - b.number);
+}
+
 export async function addLabel(repo: string, issue: number, label: string): Promise<void> {
   // Create the label if it does not exist yet (ignore failure if it already does).
   await gh(["label", "create", label, "--repo", repo, "--force", "--color", "5319e7"]).catch(() => {});
