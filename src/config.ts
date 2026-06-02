@@ -17,7 +17,8 @@ function optional(name: string, fallback: string): string {
 }
 
 export interface Config {
-  anthropicApiKey: string;
+  /** Optional. If unset, the Agent SDK uses your Claude Code subscription login. */
+  anthropicApiKey?: string;
   githubToken: string;
   owner: string;
   /** Full "owner/name" of the repo the agency operates on. */
@@ -33,13 +34,24 @@ export function loadConfig(): Config {
   const targetRepo = rawRepo.includes("/") ? rawRepo : `${owner}/${rawRepo}`;
 
   const cfg: Config = {
-    anthropicApiKey: required("ANTHROPIC_API_KEY"),
+    // Optional: provide an API key for pay-as-you-go, OR leave it unset and log in
+    // with your Claude subscription via Claude Code (the SDK reuses those credentials).
+    anthropicApiKey: process.env.ANTHROPIC_API_KEY?.trim() || undefined,
     githubToken: required("GITHUB_TOKEN"),
     owner,
     targetRepo,
     queueLabel: optional("QUEUE_LABEL", "agency:queue"),
     model: process.env.AGENT_MODEL?.trim() || undefined,
   };
+
+  // Report which auth mode is in effect so it's never a mystery.
+  if (cfg.anthropicApiKey) {
+    console.log("[agency] auth: ANTHROPIC_API_KEY (pay-as-you-go)");
+  } else if (process.env.CLAUDE_CODE_OAUTH_TOKEN?.trim()) {
+    console.log("[agency] auth: CLAUDE_CODE_OAUTH_TOKEN (subscription, headless)");
+  } else {
+    console.log("[agency] auth: Claude Code subscription login (run `claude` and /login if this fails)");
+  }
 
   // `gh` and `git` authenticate from GH_TOKEN; mirror the configured token into it.
   process.env.GH_TOKEN = cfg.githubToken;

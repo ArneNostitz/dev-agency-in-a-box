@@ -27,10 +27,27 @@ vector memory, and the self-evolving loop.
 
 ```bash
 cd dev-agency
-cp .env.example .env      # then edit .env and paste your two keys
+cp .env.example .env      # then edit .env (GITHUB_TOKEN is always required)
 ```
 
 `.env` is gitignored — your token never gets committed.
+
+### Authenticating the agent brains
+
+You can use either your **Claude subscription** or a **pay-as-you-go API key**:
+
+- **Subscription (recommended for local runs):** leave `ANTHROPIC_API_KEY` blank and log in once:
+  ```bash
+  npm install -g @anthropic-ai/claude-code
+  claude            # then type /login and pick your Claude plan
+  ```
+  The SDK reuses that login. Note: from June 15 2026, Agent SDK usage draws from a separate
+  monthly plan credit ($20 Pro / $100 Max 5× / $200 Max 20×), then pauses until refresh.
+- **API key:** set `ANTHROPIC_API_KEY` in `.env`. Pay-as-you-go, no monthly ceiling.
+- **Docker / headless subscription:** generate a token with `claude setup-token` and put it in
+  `.env` as `CLAUDE_CODE_OAUTH_TOKEN` (interactive `/login` won't work inside a container).
+
+The runner prints which auth mode it's using on startup.
 
 ## Run it (local)
 
