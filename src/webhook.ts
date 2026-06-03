@@ -55,7 +55,9 @@ function readBody(req: IncomingMessage): Promise<Buffer> {
   });
 }
 
-const RELEVANT_ACTIONS = new Set(["opened", "reopened", "labeled", "edited"]);
+// "unlabeled" lets you retrigger an issue instantly: remove its agency:* label and it
+// becomes actionable again (the @handle in the body re-pins it) — no need to rewrite anything.
+const RELEVANT_ACTIONS = new Set(["opened", "reopened", "labeled", "unlabeled", "edited"]);
 
 export async function runWebhook(cfg: Config, processAll: ProcessAll): Promise<void> {
   const port = Number(process.env.PORT?.trim() || "3000");
