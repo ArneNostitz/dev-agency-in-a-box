@@ -6,16 +6,25 @@ and you test it locally. Built on the [Claude Agent SDK](https://code.claude.com
 
 See [`../dev-agency-architecture.md`](../dev-agency-architecture.md) for the full design and roadmap.
 
-## Status: Phase 1
+## Status: Phase 2/3 — the full roster
 
-One **Developer agent** that picks up a single queued issue and drives it to a draft PR:
+Pin a teammate by mentioning its handle in an issue; the orchestrator runs the right
+specialists and drives the work to a reviewed PR:
 
 ```
-issue (label: agency:queue)  ->  branch  ->  commit  ->  draft PR (Closes #N)  ->  comment back
+@dev <task>   ->  Architect plans  ->  Developer implements (branch)  ->  Tester runs checks
+              ->  Reviewer reviews (1 revise loop)  ->  draft PR (Closes #N)  ->  issue: agency:ready
 ```
 
-Later phases add the orchestrator, the architect/reviewer/tester agents, the SQLite +
-vector memory, and the self-evolving loop.
+Handles (config/team.txt): `@dev`/`@agency` (full pipeline), `@arch` (plan only),
+`@review` (review), `@test` (run checks). Every agent obeys the **engineering harness**
+(`memory/central/playbooks/`) and has an editable persona (`memory/central/agents/`).
+
+**Model policy** (cheapest that does the job, override per role with `*_MODEL`):
+architect/developer/reviewer = Sonnet, tester = Haiku.
+
+Companion repo: **`project-template`** — the atomic-design, themeable starting point the
+agents build from. Still to come: the SQLite + vector memory and the self-evolving loop.
 
 ## Prerequisites
 
