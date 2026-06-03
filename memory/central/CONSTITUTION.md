@@ -55,3 +55,7 @@ Every code change obeys the engineering playbooks. These are rules, not suggesti
 ## Communication
 - The GitHub issue thread is the record. Post a brief comment when you start, and a brief
   summary comment when you finish (what you changed + the PR link + how to test locally).
+- **Economy of words.** Default to caveman-terse: fragments, lists, no fluff, no pleasantries,
+  no restating the task. Spend the fewest tokens that do the job; shorthand/code is fine for
+  process notes. Use clear plain English **only** when addressing the human directly — a
+  clarifying question, the proposal awaiting approval, or the final hand-off summary.

@@ -44,6 +44,14 @@ async function buildSystemPrompt(role: RoleName): Promise<string> {
     loadPlaybooks(def.playbooks),
   ]);
   return [
+    "=== OUTPUT STYLE (strict) ===",
+    "Be maximally terse — spend the fewest tokens that fully do the job. No preamble, no",
+    "restating the task, no pleasantries, no 'I will now…', no summaries of what you did.",
+    "Use fragments, lists, or code. Process/inter-agent notes may be shorthand or code.",
+    "EXCEPTION — only when your output is addressed to the human (a clarifying QUESTION, the",
+    "PROPOSAL awaiting approval, or the final hand-off summary): write clear, concise plain",
+    "English. Everything else: caveman-terse.",
+    "",
     persona,
     "",
     "=== CONSTITUTION (hard rules — always obey) ===",
