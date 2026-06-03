@@ -249,6 +249,17 @@ async function runSpecialist(
   const branch = `agency/issue-${issue.number}`;
 
   if (role === "planner") {
+    // Conversational: if you approved the last proposal, accept it and finish.
+    if (issue.labels.includes(APPROVAL_LABEL) && isApproval(thread)) {
+      await removeLabel(repo, issue.number, APPROVAL_LABEL);
+      await removeLabel(repo, issue.number, IN_PROGRESS);
+      await addLabel(repo, issue.number, READY);
+      await commentOnIssue(repo, issue.number, say("planner", "**👍 Plan accepted.** Pin `@dev` to build it."));
+      recordIssueState(repo, issue.number, { state: READY });
+      return;
+    }
+    await removeLabel(repo, issue.number, APPROVAL_LABEL);
+
     const decision = await plan(repo, issue, workdir, thread);
     if (decision.kind === "questions") {
       await commentOnIssue(repo, issue.number, say("planner", `**A few questions**\n\n${decision.body}`));
@@ -257,12 +268,17 @@ async function runSpecialist(
       recordIssueState(repo, issue.number, { state: AWAITING_LABEL });
       return;
     }
+    // Post the plan and keep the conversation open — reply to refine, or "ok" to accept.
     await removeLabel(repo, issue.number, AWAITING_LABEL);
     recordPlan(repo, issue.number, decision.body);
-    await commentOnIssue(repo, issue.number, say("planner", `**Plan**\n\n${decision.body}`));
+    await commentOnIssue(
+      repo,
+      issue.number,
+      say("planner", `**Plan**\n\n${decision.body}\n\n---\n\n👉 Reply with changes to refine, or **ok** to accept.`),
+    );
     await removeLabel(repo, issue.number, IN_PROGRESS);
-    await addLabel(repo, issue.number, READY);
-    recordIssueState(repo, issue.number, { state: READY });
+    await addLabel(repo, issue.number, APPROVAL_LABEL);
+    recordIssueState(repo, issue.number, { state: APPROVAL_LABEL });
     return;
   }
 

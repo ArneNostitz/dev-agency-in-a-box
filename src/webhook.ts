@@ -153,6 +153,10 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll): Promise<v
         console.log("[agency] webhook ping ok");
       } else if (event === "issues" && RELEVANT_ACTIONS.has(action)) {
         void trigger(`issues.${action}`);
+      } else if (event === "issue_comment" && action === "created") {
+        // A new comment may be an answer/approval to resume a paused issue. (The agency's own
+        // comments are ignored downstream — they don't count as a human reply.)
+        void trigger("issue_comment");
       }
     });
   });

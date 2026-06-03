@@ -226,18 +226,32 @@ export async function ensureWebhook(
 ): Promise<"created" | "exists" | "failed"> {
   // Registering webhooks needs repo admin, so use the owner/admin token when provided.
   const run = (args: string[]) => (token ? ghAs(token, args) : gh(args));
+  const wantEvents = ["issues", "issue_comment"];
   try {
-    const existing = await run(["api", `repos/${repo}/hooks`, "--jq", ".[].config.url"]).catch(() => "");
-    if (existing.split("\n").some((u) => u.trim() === url)) return "exists";
+    const json = await run(["api", `repos/${repo}/hooks`]).catch(() => "[]");
+    const hooks = JSON.parse(json) as Array<{ id: number; config?: { url?: string }; events?: string[] }>;
+    const existing = hooks.find((h) => h.config?.url === url);
 
-    const body = JSON.stringify({
-      name: "web",
-      active: true,
-      events: ["issues"],
-      config: { url, content_type: "json", secret, insecure_ssl: "0" },
-    });
+    if (existing) {
+      // Make sure it listens for the events we need (older hooks only had "issues").
+      if (wantEvents.some((e) => !existing.events?.includes(e))) {
+        const tmp = join(tmpdir(), `agency-hook-${Date.now()}.json`);
+        writeFileSync(tmp, JSON.stringify({ events: wantEvents }));
+        await run(["api", `repos/${repo}/hooks/${existing.id}`, "-X", "PATCH", "--input", tmp]).catch(() => {});
+      }
+      return "exists";
+    }
+
     const tmp = join(tmpdir(), `agency-hook-${Date.now()}.json`);
-    writeFileSync(tmp, body);
+    writeFileSync(
+      tmp,
+      JSON.stringify({
+        name: "web",
+        active: true,
+        events: wantEvents,
+        config: { url, content_type: "json", secret, insecure_ssl: "0" },
+      }),
+    );
     await run(["api", `repos/${repo}/hooks`, "-X", "POST", "--input", tmp]);
     return "created";
   } catch {
