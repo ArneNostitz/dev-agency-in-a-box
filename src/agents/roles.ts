@@ -14,10 +14,10 @@ import { dirname, join } from "node:path";
 export const MODELS = {
   haiku: "claude-haiku-4-5-20251001",
   sonnet: "claude-sonnet-4-6",
-  opus: "claude-opus-4-6",
+  opus: "claude-opus-4-8",
 } as const;
 
-export type RoleName = "architect" | "developer" | "reviewer" | "tester";
+export type RoleName = "planner" | "architect" | "developer" | "reviewer" | "tester";
 
 export interface RoleDef {
   name: RoleName;
@@ -37,6 +37,15 @@ const READ_TOOLS = ["Read", "Glob", "Grep"];
 const SHARED_PLAYBOOKS = ["engineering-principles", "reuse-first"];
 
 export const ROLES: Record<RoleName, RoleDef> = {
+  planner: {
+    name: "planner",
+    personaFile: "planner",
+    playbooks: [...SHARED_PLAYBOOKS, "frontend-atomic-design", "logic-separation", "backend", "database"],
+    // The premium thinker: Opus 4.8, high effort. Override with PLANNER_MODEL.
+    defaultModel: MODELS.opus,
+    modelEnv: "PLANNER_MODEL",
+    tools: READ_TOOLS,
+  },
   architect: {
     name: "architect",
     personaFile: "architect",
@@ -96,7 +105,13 @@ const projectRoot = join(here, ".."); // src/agents -> src ; one more to root be
 const teamFile = join(projectRoot, "..", "config", "team.txt");
 
 function isRole(s: string): s is RoleName {
-  return s === "architect" || s === "developer" || s === "reviewer" || s === "tester";
+  return (
+    s === "planner" ||
+    s === "architect" ||
+    s === "developer" ||
+    s === "reviewer" ||
+    s === "tester"
+  );
 }
 
 /** Map of "@handle" (lowercased) -> RoleName, read from config/team.txt. */

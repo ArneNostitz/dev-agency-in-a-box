@@ -4,13 +4,15 @@
 # Keep handles short and easy to type. Lines starting with '#' are comments.
 #
 # Examples:
-#   "@dev add a /health endpoint"      -> full pipeline (architect → dev → test → review → PR)
-#   "@arch how should we structure X"  -> architect produces a plan only
+#   "@dev add a /health endpoint"      -> full pipeline: Planner (asks Qs) → dev → test → review → PR
+#   "@plan should we use X or Y?"       -> Planner only: clarifies + produces a plan (no code)
+#   "@arch how should we structure X"  -> architect produces a quick plan only
 #   "@review take a look at this"       -> reviewer reviews the branch/proposal
 #   "@test run the checks"              -> tester runs the project's checks
 
 @dev: developer
 @agency: developer
+@plan: planner
 @arch: architect
 @review: reviewer
 @test: tester

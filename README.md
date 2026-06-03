@@ -12,16 +12,23 @@ Pin a teammate by mentioning its handle in an issue; the orchestrator runs the r
 specialists and drives the work to a reviewed PR:
 
 ```
-@dev <task>   ->  Architect plans  ->  Developer implements (branch)  ->  Tester runs checks
-              ->  Reviewer reviews (1 revise loop)  ->  draft PR (Closes #N)  ->  issue: agency:ready
+@dev <task>  ->  Planner clarifies + plans  ->  Developer implements (branch)
+             ->  Tester runs checks  ->  Reviewer reviews (1 revise)  ->  draft PR  ->  agency:ready
 ```
 
-Handles (config/team.txt): `@dev`/`@agency` (full pipeline), `@arch` (plan only),
-`@review` (review), `@test` (run checks). Every agent obeys the **engineering harness**
+The **Planner** (Opus 4.8, high effort) reads the issue and, if it's under-specified, posts
+clarifying questions and labels the issue `agency:awaiting-answer` instead of guessing. Answer
+in a comment and it resumes automatically — plan, then build.
+
+Handles (config/team.txt): `@dev`/`@agency` (full pipeline), `@plan` (planner only),
+`@arch` (quick plan), `@review`, `@test`. Every agent obeys the **engineering harness**
 (`memory/central/playbooks/`) and has an editable persona (`memory/central/agents/`).
 
+**Memory:** a SQLite ledger (`node:sqlite`, no native build) records every issue, agent run
+(role/model/turns), and plan — the audit + recall layer. Lives on the Docker data volume.
+
 **Model policy** (cheapest that does the job, override per role with `*_MODEL`):
-architect/developer/reviewer = Sonnet, tester = Haiku.
+planner = Opus 4.8, architect/developer/reviewer = Sonnet, tester = Haiku.
 
 Companion repo: **`project-template`** — the atomic-design, themeable starting point the
 agents build from. Still to come: the SQLite + vector memory and the self-evolving loop.

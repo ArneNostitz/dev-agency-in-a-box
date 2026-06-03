@@ -3,8 +3,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { mentionsHandle } from "../dist/github.js";
+import { mentionsHandle, AGENCY_MARKER } from "../dist/github.js";
 import { roleForText, loadHandleRoleMap, modelFor, ROLES, MODELS } from "../dist/agents/roles.js";
+import { parsePlannerDecision } from "../dist/pipeline.js";
 
 test("mentionsHandle matches whole handles only", () => {
   const H = ["@dev", "@agency"];
@@ -48,4 +49,22 @@ test("each role declares tools and a model", () => {
     assert.ok(role.tools.length > 0, `${role.name} has tools`);
     assert.ok(role.defaultModel, `${role.name} has a default model`);
   }
+});
+
+test("planner is the Opus 4.8 role, mapped to @plan", () => {
+  assert.equal(ROLES.planner.defaultModel, MODELS.opus);
+  assert.equal(MODELS.opus, "claude-opus-4-8");
+  assert.equal(loadHandleRoleMap()["@plan"], "planner");
+});
+
+test("parsePlannerDecision reads the leading QUESTIONS/PLAN signal", () => {
+  assert.equal(parsePlannerDecision("QUESTIONS\n1. Which DB?").kind, "questions");
+  assert.equal(parsePlannerDecision("PLAN\nGoal: ...").kind, "plan");
+  assert.equal(parsePlannerDecision("PLAN: do the thing").body, "do the thing");
+  // No marker -> treat as a plan and proceed.
+  assert.equal(parsePlannerDecision("Here is what I'd do...").kind, "plan");
+});
+
+test("agency comments carry a hidden marker (to detect human replies)", () => {
+  assert.ok(AGENCY_MARKER.includes("dev-agency"));
 });

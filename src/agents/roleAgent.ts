@@ -19,6 +19,7 @@ export interface RoleRunInput {
 export interface RoleRunResult {
   text: string;
   turns: number;
+  model: string;
 }
 
 async function buildSystemPrompt(role: RoleName): Promise<string> {
@@ -64,5 +65,5 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
       text = (message as { result: string }).result;
     }
   }
-  return { text, turns };
+  return { text, turns, model };
 }

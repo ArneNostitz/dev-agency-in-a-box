@@ -39,6 +39,7 @@ RUN git config --global user.name "dev-agency-bot" \
 # Override RUN_MODE=once for a one-shot/cron-style run.
 ENV RUN_MODE=watch \
     POLL_INTERVAL_SECONDS=60 \
+    DB_PATH=/app/data/agency.db \
     NODE_ENV=production
 
 CMD ["node", "dist/runner.js"]

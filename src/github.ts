@@ -51,6 +51,7 @@ export async function listQueuedIssues(repo: string, label: string): Promise<Iss
 
 /** Labels that mean "already being handled / handled / parked" — skip these. */
 const STATE_LABELS = ["agency:in-progress", "agency:ready", "agency:needs-attention"];
+export const AWAITING_LABEL = "agency:awaiting-answer";
 
 export interface ActionableOptions {
   triggerMode: "mention" | "label" | "any";
@@ -89,23 +90,34 @@ export async function listActionableIssues(repo: string, opts: ActionableOptions
     body: string | null;
     labels: Array<{ name: string }>;
   }>;
-  return raw
-    .map((i) => ({
-      number: i.number,
-      title: i.title,
-      body: i.body ?? "",
-      labels: i.labels.map((l) => l.name),
-    }))
-    .filter((i) => {
-      if (i.labels.includes(opts.ignoreLabel)) return false;
-      if (i.labels.some((l) => STATE_LABELS.includes(l))) return false;
-      if (opts.triggerMode === "label") return i.labels.includes(opts.queueLabel);
-      if (opts.triggerMode === "mention") {
-        return mentionsHandle(`${i.title}\n${i.body}`, opts.handles);
-      }
-      return true; // "any"
-    })
-    .sort((a, b) => a.number - b.number);
+  const mapped = raw.map((i) => ({
+    number: i.number,
+    title: i.title,
+    body: i.body ?? "",
+    labels: i.labels.map((l) => l.name),
+  }));
+
+  const result: Issue[] = [];
+  for (const i of mapped) {
+    if (i.labels.includes(opts.ignoreLabel)) continue;
+
+    // Awaiting a human answer: re-engage only once the human has replied.
+    if (i.labels.includes(AWAITING_LABEL)) {
+      if (await humanRepliedLast(repo, i.number)) result.push(i);
+      continue;
+    }
+    // Already being handled / done / parked.
+    if (i.labels.some((l) => STATE_LABELS.includes(l))) continue;
+
+    if (opts.triggerMode === "label") {
+      if (i.labels.includes(opts.queueLabel)) result.push(i);
+    } else if (opts.triggerMode === "mention") {
+      if (mentionsHandle(`${i.title}\n${i.body}`, opts.handles)) result.push(i);
+    } else {
+      result.push(i); // "any"
+    }
+  }
+  return result.sort((a, b) => a.number - b.number);
 }
 
 export async function addLabel(repo: string, issue: number, label: string): Promise<void> {
@@ -118,8 +130,37 @@ export async function removeLabel(repo: string, issue: number, label: string): P
   await gh(["issue", "edit", String(issue), "--repo", repo, "--remove-label", label]).catch(() => {});
 }
 
+/** Hidden marker appended to every agency comment so we can tell our messages from a human's. */
+export const AGENCY_MARKER = "<!-- dev-agency -->";
+
 export async function commentOnIssue(repo: string, issue: number, body: string): Promise<void> {
-  await gh(["issue", "comment", String(issue), "--repo", repo, "--body", body]);
+  await gh(["issue", "comment", String(issue), "--repo", repo, "--body", `${body}\n\n${AGENCY_MARKER}`]);
+}
+
+export async function listComments(repo: string, issue: number): Promise<Array<{ body: string }>> {
+  const out = await gh([
+    "issue", "view", String(issue), "--repo", repo, "--json", "comments",
+  ]).catch(() => '{"comments":[]}');
+  const data = JSON.parse(out) as { comments?: Array<{ body: string }> };
+  return data.comments ?? [];
+}
+
+/** True if the most recent comment was written by a human (not the agency). */
+export async function humanRepliedLast(repo: string, issue: number): Promise<boolean> {
+  const comments = await listComments(repo, issue);
+  if (comments.length === 0) return false;
+  return !comments[comments.length - 1].body.includes(AGENCY_MARKER);
+}
+
+/** The full thread as readable text, each comment tagged [human] or [agency]. */
+export async function commentThread(repo: string, issue: number): Promise<string> {
+  const comments = await listComments(repo, issue);
+  return comments
+    .map((c) => {
+      const who = c.body.includes(AGENCY_MARKER) ? "[agency]" : "[human]";
+      return `${who} ${c.body.replace(AGENCY_MARKER, "").trim()}`;
+    })
+    .join("\n\n---\n\n");
 }
 
 /** Configure git to authenticate through gh, then clone `repo` to `dest`. */

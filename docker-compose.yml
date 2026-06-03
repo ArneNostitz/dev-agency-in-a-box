@@ -32,10 +32,12 @@ services:
       # ...or a pay-as-you-go API key:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
 
-      # Optional: pin a model (e.g. claude-sonnet-4-6)
+      # Per-role model overrides (defaults: planner=opus 4.8, dev/arch/review=sonnet, tester=haiku)
+      PLANNER_MODEL: ${PLANNER_MODEL:-}
       AGENT_MODEL: ${AGENT_MODEL:-}
+      # SQLite memory lives on the mounted volume so it survives redeploys.
+      DB_PATH: /app/data/agency.db
     volumes:
-      # Reserved for the persistent memory database (SQLite + vectors) in Phase 2.
       - agency-data:/app/data
 
 volumes:

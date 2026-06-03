@@ -75,9 +75,19 @@ Template: 4 unit tests green (form validation logic). Both have a `test` script 
 - The template's **UI layer** is authored and typed but its React toolchain isn't installed in
   my sandbox; run `npm install` once in the template to build/typecheck the UI. The dependency-
   free logic is tested and green.
-- **Still to come (next sprint):** the SQLite + vector memory (so agents recall past work and
-  reuse across projects) and the self-evolving loop (agents proposing playbook improvements via
-  reviewed PRs). The markdown vault and structure for these are in place.
+- **Still to come (next sprint):** vector/semantic recall (sqlite-vec) on top of the SQLite
+  ledger, and the self-evolving loop (agents proposing playbook improvements via reviewed PRs).
+
+## Added after the briefing: Planner + SQLite memory
+
+- **Planner (Opus 4.8, high effort)** now fronts the `@dev` pipeline. It reads the issue and,
+  if anything's ambiguous, **asks you clarifying questions** in a comment and labels the issue
+  `agency:awaiting-answer` instead of guessing. Reply in a comment and it resumes automatically —
+  plans, then the orchestrator builds. You can also pin `@plan` for planning/questions only.
+- **SQLite memory** (`node:sqlite`, no native build) records every issue, agent run
+  (role + model + turns, for audit/cost), and plan, on the Docker data volume. Verified working.
+- Tests now 8/8 green. To deploy, the only new env is optional: `PLANNER_MODEL` (defaults to
+  `claude-opus-4-8`); the DB lives at `/app/data/agency.db` (volume already configured).
 
 ## Repos
 - Agency: github.com/ArneNostitz/dev-agency

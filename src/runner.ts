@@ -20,9 +20,12 @@ import {
   removeLabel,
   commentOnIssue,
   cloneRepo,
+  commentThread,
+  AWAITING_LABEL,
 } from "./github.js";
-import { loadHandleRoleMap, roleForText } from "./agents/roles.js";
+import { loadHandleRoleMap, roleForText, type RoleName } from "./agents/roles.js";
 import { runPipeline } from "./pipeline.js";
+import { recordIssueState, getIssueRole } from "./store.js";
 
 const IN_PROGRESS = "agency:in-progress";
 const LOCK_PATH = join(process.cwd(), ".agency.lock");
@@ -59,18 +62,30 @@ async function processOneIssue(cfg: Config, repo: string): Promise<boolean> {
 
   const issue = actionable[0];
 
-  // Which teammate was pinned? (defaults to the developer pipeline.)
-  const role = roleForText(`${issue.title}\n${issue.body}`, loadHandleRoleMap()) ?? "developer";
-  console.log(`[agency] ${repo} #${issue.number}: ${issue.title}  ->  role:${role}`);
+  // Resuming an issue that was awaiting a human answer? Use its original role.
+  const resuming = issue.labels.includes(AWAITING_LABEL);
+  const role: RoleName = resuming
+    ? ((getIssueRole(repo, issue.number) as RoleName) ?? "developer")
+    : roleForText(`${issue.title}\n${issue.body}`, loadHandleRoleMap()) ?? "developer";
+  console.log(
+    `[agency] ${repo} #${issue.number}: ${issue.title}  ->  role:${role}${resuming ? " (resume)" : ""}`,
+  );
 
-  // Move it into the in-progress state and announce on the thread.
+  // Move it into the in-progress state.
   await addLabel(repo, issue.number, IN_PROGRESS);
   await removeLabel(repo, issue.number, cfg.queueLabel);
-  await commentOnIssue(
-    repo,
-    issue.number,
-    `🤖 The dev agency picked this up (role: **${role}**) on branch \`agency/issue-${issue.number}\`.`,
-  );
+  await removeLabel(repo, issue.number, AWAITING_LABEL);
+  recordIssueState(repo, issue.number, { title: issue.title, role, state: IN_PROGRESS });
+  if (!resuming) {
+    await commentOnIssue(
+      repo,
+      issue.number,
+      `🤖 Picked up (role: **${role}**) on branch \`agency/issue-${issue.number}\`.`,
+    );
+  }
+
+  // The whole conversation so far (the human's request + any Q&A) feeds the Planner.
+  const thread = await commentThread(repo, issue.number);
 
   // Fresh working copy (namespaced per repo to avoid collisions).
   const safeRepo = repo.replace("/", "__");
@@ -81,7 +96,7 @@ async function processOneIssue(cfg: Config, repo: string): Promise<boolean> {
   await cloneRepo(repo, workdir);
 
   // The orchestrator runs the right specialists and finalizes the issue.
-  await runPipeline(cfg, repo, issue, role, workdir);
+  await runPipeline(cfg, repo, issue, role, workdir, thread);
   return true;
 }
 
