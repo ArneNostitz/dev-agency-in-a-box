@@ -16,3 +16,7 @@
 @arch: architect
 @review: reviewer
 @test: tester
+
+# Tagging the real bot account also works (defaults to the full developer pipeline).
+# Prefer the short handles above when you want a specific teammate (e.g. @plan for planning only).
+@ama-devagency-bot: developer
