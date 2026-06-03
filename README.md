@@ -22,9 +22,15 @@ repo and *proactively recommends* an approach; the **Architect** turns it into a
 technical plan; the proposal is posted and the issue waits. Reply **ok** to build it, or reply
 with changes and it re-proposes. (It only asks up-front questions when genuinely blocked.)
 
-**Watch it work:** in webhook mode the agency serves a live status dashboard at its public URL
-(`https://<your-domain>/`) — issues in flight and recent agent runs (role, model, effort),
-auto-refreshing. The full conversation also lives on each GitHub issue.
+**Watch it work:** in webhook mode the agency serves a live dashboard at its public URL
+(`https://<your-domain>/`) with a **live thought-stream** (each agent's text + tool use,
+streamed over SSE as it happens), the issues in flight (with direct GitHub links), and recent
+agent runs (role, model, effort). Protect it with `DASHBOARD_PASSWORD` (Basic Auth; `/webhook`
+and `/health` stay open). The full conversation also lives on each GitHub issue.
+
+**Redeploys are safe:** the data volume (SQLite memory + watch list) persists, and on startup
+the agency re-queues any issue a restart left mid-run (`recoverOrphans`), so nothing gets
+stranded.
 
 Handles (config/team.txt): `@dev`/`@agency` (full pipeline), `@plan` (planner only),
 `@arch` (quick plan), `@review`, `@test`. Every agent obeys the **engineering harness**

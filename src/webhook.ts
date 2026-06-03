@@ -14,10 +14,28 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { Config } from "./config.js";
-import { recentRuns, recentIssues } from "./store.js";
+import { recentRuns, recentIssues, recentActivity } from "./store.js";
 import { renderDashboard } from "./dashboard.js";
+import { subscribe } from "./activity.js";
+import { effectiveRepos } from "./commands.js";
 
 type ProcessAll = (cfg: Config) => Promise<number>;
+
+/** Gate the dashboard with HTTP Basic Auth if DASHBOARD_PASSWORD is set. */
+function checkAuth(cfg: Config, req: IncomingMessage, res: ServerResponse): boolean {
+  if (!cfg.dashboardPassword) return true;
+  const m = /^Basic (.+)$/.exec((req.headers["authorization"] as string) ?? "");
+  if (m) {
+    const decoded = Buffer.from(m[1], "base64").toString("utf8");
+    const pass = decoded.slice(decoded.indexOf(":") + 1);
+    const a = Buffer.from(pass);
+    const b = Buffer.from(cfg.dashboardPassword);
+    if (a.length === b.length && timingSafeEqual(a, b)) return true;
+  }
+  res.writeHead(401, { "www-authenticate": 'Basic realm="dev-agency"' });
+  res.end("Authentication required.");
+  return false;
+}
 
 function verifySignature(secret: string, body: Buffer, header: string | undefined): boolean {
   if (!secret) return true; // no secret configured -> skip verification (not recommended)
@@ -73,9 +91,40 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll): Promise<v
         res.end("dev-agency: ok");
         return;
       }
+      if (!checkAuth(cfg, req, res)) return;
+
+      if (url === "/events") {
+        // Server-sent events: live thought-stream from the agents.
+        res.writeHead(200, {
+          "content-type": "text/event-stream",
+          "cache-control": "no-cache",
+          connection: "keep-alive",
+        });
+        res.write(": connected\n\n");
+        const unsub = subscribe((e) => {
+          try {
+            res.write(`data: ${JSON.stringify(e)}\n\n`);
+          } catch {
+            /* client gone */
+          }
+        });
+        const keepalive = setInterval(() => {
+          try {
+            res.write(": ping\n\n");
+          } catch {
+            /* ignore */
+          }
+        }, 25000);
+        req.on("close", () => {
+          clearInterval(keepalive);
+          unsub();
+        });
+        return;
+      }
+
       // Live status dashboard.
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(renderDashboard(cfg.targetRepos, recentIssues(25), recentRuns(40)));
+      res.end(renderDashboard(effectiveRepos(cfg), recentIssues(25), recentRuns(40), recentActivity(80)));
       return;
     }
     if (req.method !== "POST") {

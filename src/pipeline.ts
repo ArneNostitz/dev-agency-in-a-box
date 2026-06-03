@@ -21,6 +21,7 @@ import {
 import { runRole } from "./agents/roleAgent.js";
 import type { RoleName } from "./agents/roles.js";
 import { recordRun, recordPlan, lastPlan, recordIssueState } from "./store.js";
+import { setActivityContext } from "./activity.js";
 
 const IN_PROGRESS = "agency:in-progress";
 const READY = "agency:ready";
@@ -292,6 +293,7 @@ export async function runPipeline(
   workdir: string,
   thread: string,
 ): Promise<void> {
+  setActivityContext(repo, issue.number);
   if (role === "developer") {
     await runDeveloperPipeline(repo, issue, workdir, thread);
   } else {

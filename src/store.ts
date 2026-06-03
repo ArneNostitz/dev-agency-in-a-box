@@ -41,6 +41,10 @@ function getDb(): DatabaseSync | null {
         repo TEXT PRIMARY KEY,
         added_at TEXT
       );
+      CREATE TABLE IF NOT EXISTS activity (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        repo TEXT, number INTEGER, role TEXT, kind TEXT, text TEXT, created_at TEXT
+      );
     `);
     db = d;
     console.log(`[agency] memory: SQLite at ${path}`);
@@ -131,6 +135,53 @@ export function recordPlan(repo: string, number: number, plan: string): void {
     );
   } catch (err) {
     console.warn("[agency] memory write (plan) failed:", (err as Error).message);
+  }
+}
+
+export interface ActivityRow {
+  repo: string;
+  number: number;
+  role: string;
+  kind: string;
+  text: string;
+  created_at: string;
+}
+
+/** Append one streamed thought/tool event from an agent. */
+export function recordActivity(
+  repo: string,
+  number: number,
+  role: string,
+  kind: string,
+  text: string,
+): void {
+  const d = getDb();
+  if (!d) return;
+  try {
+    d.prepare(`INSERT INTO activity (repo, number, role, kind, text, created_at) VALUES (?, ?, ?, ?, ?, ?)`).run(
+      repo,
+      number,
+      role,
+      kind,
+      text.slice(0, 4000),
+      now(),
+    );
+  } catch {
+    /* best effort */
+  }
+}
+
+/** Recent activity, oldest-first within the latest `limit` (for the stream panel). */
+export function recentActivity(limit = 80): ActivityRow[] {
+  const d = getDb();
+  if (!d) return [];
+  try {
+    const rows = d
+      .prepare(`SELECT repo, number, role, kind, text, created_at FROM activity ORDER BY id DESC LIMIT ?`)
+      .all(limit) as unknown as ActivityRow[];
+    return rows.reverse();
+  } catch {
+    return [];
   }
 }
 

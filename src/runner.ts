@@ -26,7 +26,7 @@ import {
 import { loadHandleRoleMap, roleForText, type RoleName } from "./agents/roles.js";
 import { runPipeline } from "./pipeline.js";
 import { recordIssueState, getIssueRole } from "./store.js";
-import { handleControlCommands, effectiveRepos, ensureAllRepoAccess } from "./commands.js";
+import { handleControlCommands, effectiveRepos, ensureAllRepoAccess, recoverOrphans } from "./commands.js";
 
 const IN_PROGRESS = "agency:in-progress";
 const LOCK_PATH = join(process.cwd(), ".agency.lock");
@@ -149,6 +149,8 @@ async function main(): Promise<void> {
   // Make sure the bot can operate everywhere it watches (invite as collaborator,
   // register webhooks) before we start doing work.
   await ensureAllRepoAccess(cfg);
+  // Re-queue anything a previous restart left stranded mid-run.
+  await recoverOrphans(cfg);
   if (cfg.runMode === "webhook") {
     const { runWebhook } = await import("./webhook.js");
     await runWebhook(cfg, processAllRepos);

@@ -6,6 +6,20 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { ROLES, modelFor, type RoleName } from "./roles.js";
 import { loadConstitution, loadPersona, loadPlaybooks } from "../memory.js";
+import { pushActivity } from "../activity.js";
+
+/** Pull readable text + tool names out of an assistant message's content blocks. */
+function emitAssistant(role: RoleName, message: unknown): void {
+  const content = (message as { message?: { content?: unknown[] } }).message?.content;
+  if (!Array.isArray(content)) return;
+  for (const block of content as Array<{ type?: string; text?: string; name?: string }>) {
+    if (block.type === "text" && block.text?.trim()) {
+      pushActivity(role, "text", block.text.trim().slice(0, 2000));
+    } else if (block.type === "tool_use" && block.name) {
+      pushActivity(role, "tool", `🔧 ${block.name}`);
+    }
+  }
+}
 
 export interface RoleRunInput {
   /** The concrete task instruction for this invocation. */
@@ -48,6 +62,7 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
   let text = "";
   let turns = 0;
   console.log(`[agency] role:${role} (model ${model})`);
+  pushActivity(role, "start", `started (${model})`);
 
   for await (const message of query({
     prompt: input.task,
@@ -60,10 +75,14 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
       settingSources: [],
     },
   })) {
-    if (message.type === "assistant") turns += 1;
+    if (message.type === "assistant") {
+      turns += 1;
+      emitAssistant(role, message);
+    }
     if ("result" in message && typeof (message as { result?: unknown }).result === "string") {
       text = (message as { result: string }).result;
     }
   }
+  pushActivity(role, "done", `finished (${turns} turns)`);
   return { text, turns, model };
 }

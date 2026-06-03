@@ -10,6 +10,7 @@ import {
   listAllOpenIssues,
   closeIssue,
   commentOnIssue,
+  removeLabel,
   repoExists,
   ensureWebhook,
   ensureCollaborator,
@@ -62,6 +63,27 @@ export async function ensureAllRepoAccess(cfg: Config): Promise<void> {
   for (const repo of effectiveRepos(cfg)) {
     const note = await ensureRepoAccess(cfg, repo);
     if (note) console.log(`[agency] ${repo}:${note}`);
+  }
+}
+
+/**
+ * Re-queue issues stranded in `agency:in-progress` by a restart mid-run. On a fresh process
+ * no work is active, so any in-progress issue is orphaned — drop the label so it's picked up
+ * again. Makes redeploys safe even while an agent was working.
+ */
+export async function recoverOrphans(cfg: Config): Promise<void> {
+  for (const repo of effectiveRepos(cfg)) {
+    try {
+      for (const i of await listAllOpenIssues(repo)) {
+        if (i.labels.includes("agency:in-progress")) {
+          await removeLabel(repo, i.number, "agency:in-progress");
+          await commentOnIssue(repo, i.number, "🔄 Resuming after a restart — re-queuing this issue.");
+          console.log(`[agency] recovered orphaned ${repo} #${i.number}`);
+        }
+      }
+    } catch (err) {
+      console.error(`[agency] recovery error on ${repo}:`, (err as Error).message);
+    }
   }
 }
 

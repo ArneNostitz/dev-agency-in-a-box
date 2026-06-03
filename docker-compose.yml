@@ -14,6 +14,8 @@ services:
       # Public URL of this service (Coolify domain). Set it + the secret and webhook mode
       # auto-registers the GitHub webhooks for you.
       PUBLIC_URL: ${PUBLIC_URL:-}
+      # Password for the status dashboard (Basic Auth). Unset = open.
+      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:-}
       PORT: 3000
 
       # --- GitHub (required) ---

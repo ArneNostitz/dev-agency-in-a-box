@@ -125,6 +125,8 @@ export interface Config {
    * repos. The bot (GITHUB_TOKEN) can't invite itself. Leave unset to invite manually.
    */
   adminToken?: string;
+  /** If set, the status dashboard requires this password (HTTP Basic Auth). */
+  dashboardPassword?: string;
 }
 
 function parseRunMode(v: string | undefined): "once" | "watch" | "webhook" {
@@ -156,6 +158,7 @@ export function loadConfig(): Config {
     publicUrl: process.env.PUBLIC_URL?.trim() || undefined,
     webhookSecret: process.env.GITHUB_WEBHOOK_SECRET?.trim() || undefined,
     adminToken: process.env.ADMIN_GITHUB_TOKEN?.trim() || undefined,
+    dashboardPassword: process.env.DASHBOARD_PASSWORD?.trim() || undefined,
   };
 
   if (cfg.anthropicApiKey) {
