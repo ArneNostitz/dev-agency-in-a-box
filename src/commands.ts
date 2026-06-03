@@ -10,6 +10,7 @@ import {
   listAllOpenIssues,
   closeIssue,
   commentOnIssue,
+  addLabel,
   removeLabel,
   repoExists,
   ensureWebhook,
@@ -76,9 +77,16 @@ export async function recoverOrphans(cfg: Config): Promise<void> {
     try {
       for (const i of await listAllOpenIssues(repo)) {
         if (i.labels.includes("agency:in-progress")) {
+          // Park it — don't auto-requeue (that loops if restarts keep happening / a run keeps
+          // failing). The human re-pins when ready.
           await removeLabel(repo, i.number, "agency:in-progress");
-          await commentOnIssue(repo, i.number, "🔄 Resuming after a restart — re-queuing this issue.");
-          console.log(`[agency] recovered orphaned ${repo} #${i.number}`);
+          await addLabel(repo, i.number, "agency:needs-attention");
+          await commentOnIssue(
+            repo,
+            i.number,
+            "⏸ A restart interrupted this mid-run. Re-pin (`@dev`/`@plan`) to resume.",
+          );
+          console.log(`[agency] parked orphaned ${repo} #${i.number}`);
         }
       }
     } catch (err) {

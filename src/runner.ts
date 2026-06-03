@@ -98,7 +98,17 @@ async function processOneIssue(cfg: Config, repo: string): Promise<boolean> {
   await cloneRepo(repo, workdir);
 
   // The orchestrator runs the right specialists and finalizes the issue.
-  await runPipeline(cfg, repo, issue, role, workdir, thread);
+  try {
+    await runPipeline(cfg, repo, issue, role, workdir, thread);
+  } catch (err) {
+    const msg = (err as Error).message ?? String(err);
+    console.error(`[agency] pipeline error ${repo} #${issue.number}:`, msg);
+    await removeLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
+    await addLabel(repo, issue.number, "agency:needs-attention").catch(() => {});
+    await commentOnIssue(repo, issue.number, `❌ Run failed: ${msg.slice(0, 300)} — fix and re-pin.`).catch(
+      () => {},
+    );
+  }
   return true;
 }
 
@@ -161,7 +171,16 @@ async function main(): Promise<void> {
   }
 }
 
+// Resilience: one bad agent run must never crash the whole agency (which would otherwise
+// restart and re-pick work, looping). Log and keep serving.
+process.on("unhandledRejection", (reason) => {
+  console.error("[agency] unhandledRejection:", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[agency] uncaughtException:", err);
+});
+
 main().catch((err) => {
-  console.error("[agency] fatal error:", err);
+  console.error("[agency] fatal error during startup:", err);
   process.exitCode = 1;
 });

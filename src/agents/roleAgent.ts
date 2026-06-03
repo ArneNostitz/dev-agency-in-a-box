@@ -72,24 +72,31 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
   console.log(`[agency] role:${role} (model ${model})`);
   pushActivity(role, "start", `started (${model})`);
 
-  for await (const message of query({
-    prompt: input.task,
-    options: {
-      cwd: input.workdir,
-      systemPrompt,
-      model,
-      permissionMode: "bypassPermissions",
-      allowedTools: def.tools,
-      settingSources: [],
-    },
-  })) {
-    if (message.type === "assistant") {
-      turns += 1;
-      emitAssistant(role, message);
+  try {
+    for await (const message of query({
+      prompt: input.task,
+      options: {
+        cwd: input.workdir,
+        systemPrompt,
+        model,
+        permissionMode: "bypassPermissions",
+        allowedTools: def.tools,
+        settingSources: [],
+      },
+    })) {
+      if (message.type === "assistant") {
+        turns += 1;
+        emitAssistant(role, message);
+      }
+      if ("result" in message && typeof (message as { result?: unknown }).result === "string") {
+        text = (message as { result: string }).result;
+      }
     }
-    if ("result" in message && typeof (message as { result?: unknown }).result === "string") {
-      text = (message as { result: string }).result;
-    }
+  } catch (err) {
+    const msg = (err as Error).message ?? String(err);
+    console.error(`[agency] role:${role} failed:`, msg);
+    pushActivity(role, "done", `❌ ERROR: ${msg.slice(0, 300)}`);
+    throw err;
   }
   pushActivity(role, "done", `finished (${turns} turns)`);
   return { text, turns, model };
