@@ -50,7 +50,8 @@ export async function ensureRepoAccess(cfg: Config, repo: string): Promise<strin
   }
   if (cfg.runMode === "webhook" && cfg.publicUrl && cfg.webhookSecret) {
     const url = `${cfg.publicUrl.replace(/\/$/, "")}/webhook`;
-    const w = await ensureWebhook(repo, url, cfg.webhookSecret);
+    // Webhook registration needs repo admin -> use the owner token, not the bot's.
+    const w = await ensureWebhook(repo, url, cfg.webhookSecret, cfg.adminToken ?? cfg.githubToken);
     if (w === "created") notes.push("webhook registered");
   }
   return notes.length ? ` (${notes.join("; ")})` : "";
@@ -78,9 +79,9 @@ export async function handleControlCommands(cfg: Config, repo: string): Promise<
       continue;
     }
 
-    // add-repo
+    // add-repo (an owner/admin action — verify with the owner token, not the bot's)
     const target = resolveRepo(cmd.repo, cfg.owner);
-    if (!(await repoExists(target))) {
+    if (!(await repoExists(target, cfg.adminToken ?? cfg.githubToken))) {
       await closeIssue(
         repo,
         issue.number,

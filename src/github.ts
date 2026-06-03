@@ -200,9 +200,11 @@ export async function listAllOpenIssues(repo: string): Promise<Issue[]> {
   }));
 }
 
-export async function repoExists(repo: string): Promise<boolean> {
+export async function repoExists(repo: string, token?: string): Promise<boolean> {
   try {
-    await gh(["repo", "view", repo, "--json", "name"]);
+    const args = ["repo", "view", repo, "--json", "name"];
+    if (token) await ghAs(token, args);
+    else await gh(args);
     return true;
   } catch {
     return false;
@@ -217,9 +219,12 @@ export async function ensureWebhook(
   repo: string,
   url: string,
   secret: string,
+  token?: string,
 ): Promise<"created" | "exists" | "failed"> {
+  // Registering webhooks needs repo admin, so use the owner/admin token when provided.
+  const run = (args: string[]) => (token ? ghAs(token, args) : gh(args));
   try {
-    const existing = await gh(["api", `repos/${repo}/hooks`, "--jq", ".[].config.url"]).catch(() => "");
+    const existing = await run(["api", `repos/${repo}/hooks`, "--jq", ".[].config.url"]).catch(() => "");
     if (existing.split("\n").some((u) => u.trim() === url)) return "exists";
 
     const body = JSON.stringify({
@@ -230,7 +235,7 @@ export async function ensureWebhook(
     });
     const tmp = join(tmpdir(), `agency-hook-${Date.now()}.json`);
     writeFileSync(tmp, body);
-    await gh(["api", `repos/${repo}/hooks`, "-X", "POST", "--input", tmp]);
+    await run(["api", `repos/${repo}/hooks`, "-X", "POST", "--input", tmp]);
     return "created";
   } catch {
     return "failed";
