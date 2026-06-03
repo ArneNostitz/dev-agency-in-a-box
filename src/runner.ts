@@ -21,7 +21,7 @@ import {
   commentOnIssue,
   cloneRepo,
   commentThread,
-  AWAITING_LABEL,
+  AWAITING_LABELS,
 } from "./github.js";
 import { loadHandleRoleMap, roleForText, type RoleName } from "./agents/roles.js";
 import { runPipeline } from "./pipeline.js";
@@ -63,8 +63,8 @@ async function processOneIssue(cfg: Config, repo: string): Promise<boolean> {
 
   const issue = actionable[0];
 
-  // Resuming an issue that was awaiting a human answer? Use its original role.
-  const resuming = issue.labels.includes(AWAITING_LABEL);
+  // Resuming an issue that was paused waiting on the human? Use its original role.
+  const resuming = issue.labels.some((l) => AWAITING_LABELS.includes(l));
   const role: RoleName = resuming
     ? ((getIssueRole(repo, issue.number) as RoleName) ?? "developer")
     : roleForText(`${issue.title}\n${issue.body}`, loadHandleRoleMap()) ?? "developer";
@@ -72,10 +72,11 @@ async function processOneIssue(cfg: Config, repo: string): Promise<boolean> {
     `[agency] ${repo} #${issue.number}: ${issue.title}  ->  role:${role}${resuming ? " (resume)" : ""}`,
   );
 
-  // Move it into the in-progress state.
+  // Move it into the in-progress state. (The pipeline reads issue.labels — the local
+  // snapshot still reflects the prior awaiting state — to decide propose vs build.)
   await addLabel(repo, issue.number, IN_PROGRESS);
   await removeLabel(repo, issue.number, cfg.queueLabel);
-  await removeLabel(repo, issue.number, AWAITING_LABEL);
+  for (const l of AWAITING_LABELS) await removeLabel(repo, issue.number, l);
   recordIssueState(repo, issue.number, { title: issue.title, role, state: IN_PROGRESS });
   if (!resuming) {
     await commentOnIssue(

@@ -64,6 +64,9 @@ export async function listQueuedIssues(repo: string, label: string): Promise<Iss
 /** Labels that mean "already being handled / handled / parked" — skip these. */
 const STATE_LABELS = ["agency:in-progress", "agency:ready", "agency:needs-attention"];
 export const AWAITING_LABEL = "agency:awaiting-answer";
+export const APPROVAL_LABEL = "agency:awaiting-approval";
+/** Any state where the agency is paused waiting on the human. */
+export const AWAITING_LABELS = [AWAITING_LABEL, APPROVAL_LABEL];
 
 export interface ActionableOptions {
   triggerMode: "mention" | "label" | "any";
@@ -113,8 +116,8 @@ export async function listActionableIssues(repo: string, opts: ActionableOptions
   for (const i of mapped) {
     if (i.labels.includes(opts.ignoreLabel)) continue;
 
-    // Awaiting a human answer: re-engage only once the human has replied.
-    if (i.labels.includes(AWAITING_LABEL)) {
+    // Paused waiting on the human (a question or an approval): re-engage once they reply.
+    if (i.labels.some((l) => AWAITING_LABELS.includes(l))) {
       if (await humanRepliedLast(repo, i.number)) result.push(i);
       continue;
     }

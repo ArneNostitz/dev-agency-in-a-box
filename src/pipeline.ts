@@ -10,7 +10,14 @@
  */
 import type { Config } from "./config.js";
 import type { Issue } from "./github.js";
-import { addLabel, removeLabel, commentOnIssue, findPrForBranch, AWAITING_LABEL } from "./github.js";
+import {
+  addLabel,
+  removeLabel,
+  commentOnIssue,
+  findPrForBranch,
+  AWAITING_LABEL,
+  APPROVAL_LABEL,
+} from "./github.js";
 import { runRole } from "./agents/roleAgent.js";
 import type { RoleName } from "./agents/roles.js";
 import { recordRun, recordPlan, lastPlan, recordIssueState } from "./store.js";
@@ -105,42 +112,38 @@ async function finalizeWithPr(repo: string, issue: Issue, branch: string): Promi
   }
 }
 
-/** Full pipeline for a developer pin, fronted by the Planner's question gate. */
-async function runDeveloperPipeline(
-  repo: string,
-  issue: Issue,
-  workdir: string,
-  thread: string,
-): Promise<void> {
+/** Approval words that mean "go build it" — the whole comment must be (essentially) just this. */
+const APPROVAL_RE =
+  /^(ok|okay|k|go|go ahead|proceed|approve|approved|lgtm|yes|yep|do it|ship it|build it|👍|✅)[.! ]*$/i;
+
+/** Did the human approve the proposal? True only if the *latest* comment is a short "ok". */
+export function isApproval(thread: string): boolean {
+  const blocks = thread.split("\n\n---\n\n");
+  const last = (blocks[blocks.length - 1] ?? "").trimStart();
+  if (!last.startsWith("[human]")) return false; // the agency spoke last, not the human
+  return APPROVAL_RE.test(last.replace(/^\s*\[human\]\s*/, "").trim());
+}
+
+async function pause(repo: string, issue: Issue, label: string): Promise<void> {
+  await removeLabel(repo, issue.number, IN_PROGRESS);
+  await addLabel(repo, issue.number, label);
+  recordIssueState(repo, issue.number, { state: label });
+}
+
+/** Build phase: Developer implements -> Tester -> Reviewer (1 revise) -> PR. */
+async function build(repo: string, issue: Issue, workdir: string, planText: string): Promise<void> {
   const branch = `agency/issue-${issue.number}`;
 
-  // 0. Planner — clarify or plan.
-  const decision = await plan(repo, issue, workdir, thread);
-  if (decision.kind === "questions") {
-    await commentOnIssue(repo, issue.number, say("planner", `**A few questions before I plan**\n\n${decision.body}`));
-    await removeLabel(repo, issue.number, IN_PROGRESS);
-    await addLabel(repo, issue.number, AWAITING_LABEL);
-    recordIssueState(repo, issue.number, { state: AWAITING_LABEL });
-    console.log(`[agency] ${repo} #${issue.number} -> awaiting answer.`);
-    return;
-  }
-  await removeLabel(repo, issue.number, AWAITING_LABEL); // in case this is a resume
-  recordPlan(repo, issue.number, decision.body);
-  await commentOnIssue(repo, issue.number, say("planner", `**Plan**\n\n${decision.body}`));
-  const planText = decision.body;
-
-  // 1. Developer — implement on a branch and open a draft PR.
   const dev = await runRole("developer", {
     workdir,
     task:
-      `Implement this issue on a new branch \`${branch}\` off an up-to-date main, following the plan ` +
+      `Implement this issue on a new branch \`${branch}\` off an up-to-date main, following the approved plan ` +
       `and the harness. Reuse existing code; keep the change small. Add/extend tests. Commit, push, and ` +
       `open a DRAFT pull request whose body contains "Closes #${issue.number}".\n\n` +
-      `### Plan\n${planText}\n\n### ${issueHeader(issue)}`,
+      `### Approved plan\n${planText}\n\n### ${issueHeader(issue)}`,
   });
   recordRun(repo, issue.number, "developer", dev.model, dev.turns, "implement");
 
-  // 2. Tester — run the project's checks.
   const test = await runRole("tester", {
     workdir,
     task:
@@ -151,7 +154,6 @@ async function runDeveloperPipeline(
   recordRun(repo, issue.number, "tester", test.model, test.turns, "test");
   await commentOnIssue(repo, issue.number, say("tester", `**Test results**\n\n${test.text}`));
 
-  // 3. Reviewer — review the diff; up to one revise loop.
   for (let round = 0; ; round++) {
     const review = await runRole("reviewer", {
       workdir,
@@ -176,6 +178,63 @@ async function runDeveloperPipeline(
   }
 
   await finalizeWithPr(repo, issue, branch);
+}
+
+/**
+ * Full pipeline for a developer pin — a conversation, not a one-shot:
+ *   1. Planner researches and proactively recommends an approach (or asks if truly blocked).
+ *   2. Architect refines it into a concrete technical plan.
+ *   3. The proposal is posted and the issue waits for your "ok" (agency:awaiting-approval).
+ *   4. You reply "ok" -> build. Anything else -> treated as feedback, re-proposed.
+ */
+async function runDeveloperPipeline(
+  repo: string,
+  issue: Issue,
+  workdir: string,
+  thread: string,
+): Promise<void> {
+  // Resuming a proposal that the human approved? Go straight to building the stored plan.
+  if (issue.labels.includes(APPROVAL_LABEL) && isApproval(thread)) {
+    const planText = lastPlan(repo, issue.number);
+    if (planText) {
+      await removeLabel(repo, issue.number, APPROVAL_LABEL);
+      await commentOnIssue(repo, issue.number, say("developer", "**Approved — building it now.**"));
+      await build(repo, issue, workdir, planText);
+      return;
+    }
+  }
+  // Otherwise (fresh, answered questions, or feedback on a proposal) -> propose.
+  await removeLabel(repo, issue.number, APPROVAL_LABEL);
+
+  // 1. Planner — research + recommend (only asks questions if genuinely blocked).
+  const decision = await plan(repo, issue, workdir, thread);
+  if (decision.kind === "questions") {
+    await commentOnIssue(repo, issue.number, say("planner", `**A few questions before I plan**\n\n${decision.body}`));
+    await pause(repo, issue, AWAITING_LABEL);
+    console.log(`[agency] ${repo} #${issue.number} -> awaiting answer.`);
+    return;
+  }
+
+  // 2. Architect — turn the recommendation into a concrete technical plan.
+  const arch = await runRole("architect", {
+    workdir,
+    task:
+      `Turn this recommended approach into a concrete technical plan for the repo. List the files to add/` +
+      `change grouped by world (UI / logic / infrastructure), the existing pieces to reuse, and any key ` +
+      `structural decisions. Keep it KISS. Do NOT write code.\n\n### Recommended approach\n${decision.body}` +
+      `\n\n### ${issueHeader(issue)}`,
+  });
+  recordRun(repo, issue.number, "architect", arch.model, arch.turns, "design");
+
+  const proposal = `${decision.body}\n\n---\n\n### 🏛 Technical plan (Architect)\n\n${arch.text}`;
+  recordPlan(repo, issue.number, proposal);
+  await commentOnIssue(
+    repo,
+    issue.number,
+    say("planner", `**Proposed approach**\n\n${proposal}\n\n---\n\n👉 Reply **ok** to build this, or tell me what to change.`),
+  );
+  await pause(repo, issue, APPROVAL_LABEL);
+  console.log(`[agency] ${repo} #${issue.number} -> awaiting approval.`);
 }
 
 /** A single specialist pin. @plan/@arch produce a plan (planner can ask questions); @review/@test run that role. */

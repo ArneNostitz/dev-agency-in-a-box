@@ -14,6 +14,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { Config } from "./config.js";
+import { recentRuns, recentIssues } from "./store.js";
+import { renderDashboard } from "./dashboard.js";
 
 type ProcessAll = (cfg: Config) => Promise<number>;
 
@@ -65,8 +67,15 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll): Promise<v
 
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     if (req.method === "GET") {
-      res.writeHead(200, { "content-type": "text/plain" });
-      res.end("dev-agency: ok");
+      const url = (req.url ?? "/").split("?")[0];
+      if (url === "/health") {
+        res.writeHead(200, { "content-type": "text/plain" });
+        res.end("dev-agency: ok");
+        return;
+      }
+      // Live status dashboard.
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(renderDashboard(cfg.targetRepos, recentIssues(25), recentRuns(40)));
       return;
     }
     if (req.method !== "POST") {

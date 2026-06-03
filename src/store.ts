@@ -134,6 +134,50 @@ export function recordPlan(repo: string, number: number, plan: string): void {
   }
 }
 
+export interface RunRow {
+  repo: string;
+  number: number;
+  role: string;
+  model: string;
+  turns: number;
+  kind: string;
+  created_at: string;
+}
+export interface IssueRow {
+  repo: string;
+  number: number;
+  title: string;
+  role: string;
+  state: string;
+  updated_at: string;
+}
+
+/** Recent agent runs, newest first (for the status dashboard). */
+export function recentRuns(limit = 40): RunRow[] {
+  const d = getDb();
+  if (!d) return [];
+  try {
+    return d
+      .prepare(`SELECT repo, number, role, model, turns, kind, created_at FROM runs ORDER BY id DESC LIMIT ?`)
+      .all(limit) as unknown as RunRow[];
+  } catch {
+    return [];
+  }
+}
+
+/** Recent issue states, newest first (for the status dashboard). */
+export function recentIssues(limit = 25): IssueRow[] {
+  const d = getDb();
+  if (!d) return [];
+  try {
+    return d
+      .prepare(`SELECT repo, number, title, role, state, updated_at FROM issues ORDER BY updated_at DESC LIMIT ?`)
+      .all(limit) as unknown as IssueRow[];
+  } catch {
+    return [];
+  }
+}
+
 /** The role last assigned to an issue (so we resume an awaiting issue on the right path). */
 export function getIssueRole(repo: string, number: number): string | null {
   const d = getDb();

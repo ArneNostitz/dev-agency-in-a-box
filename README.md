@@ -12,13 +12,19 @@ Pin a teammate by mentioning its handle in an issue; the orchestrator runs the r
 specialists and drives the work to a reviewed PR:
 
 ```
-@dev <task>  ->  Planner clarifies + plans  ->  Developer implements (branch)
-             ->  Tester runs checks  ->  Reviewer reviews (1 revise)  ->  draft PR  ->  agency:ready
+@dev <task>  ->  Planner researches + recommends  ->  Architect drafts a technical plan
+             ->  posts the proposal, waits for your "ok"  (agency:awaiting-approval)
+   you: ok  ->  Developer implements  ->  Tester  ->  Reviewer (1 revise)  ->  draft PR  ->  agency:ready
 ```
 
-The **Planner** (Opus 4.8, high effort) reads the issue and, if it's under-specified, posts
-clarifying questions and labels the issue `agency:awaiting-answer` instead of guessing. Answer
-in a comment and it resumes automatically — plan, then build.
+It's a conversation, not a one-shot. The **Planner** (Opus 4.8, high effort) researches the
+repo and *proactively recommends* an approach; the **Architect** turns it into a concrete
+technical plan; the proposal is posted and the issue waits. Reply **ok** to build it, or reply
+with changes and it re-proposes. (It only asks up-front questions when genuinely blocked.)
+
+**Watch it work:** in webhook mode the agency serves a live status dashboard at its public URL
+(`https://<your-domain>/`) — issues in flight and recent agent runs (role, model, effort),
+auto-refreshing. The full conversation also lives on each GitHub issue.
 
 Handles (config/team.txt): `@dev`/`@agency` (full pipeline), `@plan` (planner only),
 `@arch` (quick plan), `@review`, `@test`. Every agent obeys the **engineering harness**

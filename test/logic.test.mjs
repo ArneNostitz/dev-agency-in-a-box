@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 
 import { mentionsHandle, AGENCY_MARKER } from "../dist/github.js";
 import { roleForText, loadHandleRoleMap, modelFor, ROLES, MODELS } from "../dist/agents/roles.js";
-import { parsePlannerDecision } from "../dist/pipeline.js";
+import { parsePlannerDecision, isApproval } from "../dist/pipeline.js";
 import { parseControlCommand } from "../dist/commands.js";
 
 test("mentionsHandle matches whole handles only", () => {
@@ -68,6 +68,18 @@ test("parsePlannerDecision reads the leading QUESTIONS/PLAN signal", () => {
 
 test("agency comments carry a hidden marker (to detect human replies)", () => {
   assert.ok(AGENCY_MARKER.includes("dev-agency"));
+});
+
+test("isApproval only fires on a short ok-style last human reply", () => {
+  const sep = "\n\n---\n\n";
+  assert.equal(isApproval(`[agency] **Proposed approach** ...${sep}[human] ok`), true);
+  assert.equal(isApproval(`[agency] proposal${sep}[human] go ahead`), true);
+  assert.equal(isApproval(`[agency] proposal${sep}[human] lgtm!`), true);
+  // feedback, not approval
+  assert.equal(isApproval(`[agency] proposal${sep}[human] ok but use a modal instead`), false);
+  assert.equal(isApproval(`[agency] proposal${sep}[human] can you also add tests?`), false);
+  // last message is the agency's, not the human's
+  assert.equal(isApproval(`[human] ok${sep}[agency] building...`), false);
 });
 
 test("parseControlCommand recognizes /add-repo and /list-repos", () => {
