@@ -20,14 +20,11 @@ import {
   removeLabel,
   commentOnIssue,
   cloneRepo,
-  findPrForBranch,
 } from "./github.js";
-import { loadConstitution, loadPlaybook } from "./memory.js";
-import { runDevAgent } from "./agents/dev.js";
+import { loadHandleRoleMap, roleForText } from "./agents/roles.js";
+import { runPipeline } from "./pipeline.js";
 
 const IN_PROGRESS = "agency:in-progress";
-const READY = "agency:ready";
-const NEEDS_ATTENTION = "agency:needs-attention";
 const LOCK_PATH = join(process.cwd(), ".agency.lock");
 
 /** Prevent overlapping `once` runs (e.g. when a scheduler fires before we finish). */
@@ -61,7 +58,10 @@ async function processOneIssue(cfg: Config, repo: string): Promise<boolean> {
   if (actionable.length === 0) return false;
 
   const issue = actionable[0];
-  console.log(`[agency] ${repo} #${issue.number}: ${issue.title}`);
+
+  // Which teammate was pinned? (defaults to the developer pipeline.)
+  const role = roleForText(`${issue.title}\n${issue.body}`, loadHandleRoleMap()) ?? "developer";
+  console.log(`[agency] ${repo} #${issue.number}: ${issue.title}  ->  role:${role}`);
 
   // Move it into the in-progress state and announce on the thread.
   await addLabel(repo, issue.number, IN_PROGRESS);
@@ -69,7 +69,7 @@ async function processOneIssue(cfg: Config, repo: string): Promise<boolean> {
   await commentOnIssue(
     repo,
     issue.number,
-    `🤖 The dev agency picked up this issue and started working on branch \`agency/issue-${issue.number}\`.`,
+    `🤖 The dev agency picked this up (role: **${role}**) on branch \`agency/issue-${issue.number}\`.`,
   );
 
   // Fresh working copy (namespaced per repo to avoid collisions).
@@ -80,52 +80,8 @@ async function processOneIssue(cfg: Config, repo: string): Promise<boolean> {
   console.log(`[agency] cloning ${repo} into ${workdir}...`);
   await cloneRepo(repo, workdir);
 
-  const [constitution, gitPlaybook] = await Promise.all([
-    loadConstitution(),
-    loadPlaybook("git-workflow"),
-  ]);
-
-  console.log(`[agency] handing ${repo} #${issue.number} to the Developer agent...`);
-  const result = await runDevAgent({
-    issue,
-    repo,
-    workdir,
-    constitution,
-    gitPlaybook,
-    model: cfg.model,
-  });
-  console.log(`[agency] developer finished after ${result.turns} turns.`);
-
-  // The runner owns the terminal state authoritatively, regardless of whether the
-  // agent remembered to update labels/comments itself.
-  const branch = `agency/issue-${issue.number}`;
-  const pr = await findPrForBranch(repo, branch);
-  await removeLabel(repo, issue.number, IN_PROGRESS);
-
-  if (pr) {
-    await addLabel(repo, issue.number, READY);
-    await commentOnIssue(
-      repo,
-      issue.number,
-      [
-        `✅ Work complete. Opened ${pr.isDraft ? "draft " : ""}PR ${pr.url}`,
-        "",
-        "Test it locally:",
-        "```bash",
-        `git fetch origin && git checkout ${branch}`,
-        "```",
-      ].join("\n"),
-    );
-    console.log(`[agency] ${repo} #${issue.number} -> ${READY}. PR: ${pr.url}`);
-  } else {
-    await addLabel(repo, issue.number, NEEDS_ATTENTION);
-    await commentOnIssue(
-      repo,
-      issue.number,
-      "⚠️ The agency finished without opening a pull request. It may need clarification or hit a blocker — see the notes above. Remove the needs-attention label to retry.",
-    );
-    console.log(`[agency] ${repo} #${issue.number} -> ${NEEDS_ATTENTION} (no PR found).`);
-  }
+  // The orchestrator runs the right specialists and finalizes the issue.
+  await runPipeline(cfg, repo, issue, role, workdir);
   return true;
 }
 

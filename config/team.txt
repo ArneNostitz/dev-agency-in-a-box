@@ -1,10 +1,16 @@
 # The agency's team. Mention a handle in an issue to "pin" that teammate.
-# Format:  @handle: role   (role is informational for now; Phase 3 routes by role)
+# Format:  @handle: role
+# Roles: developer | architect | reviewer | tester
 # Keep handles short and easy to type. Lines starting with '#' are comments.
 #
-# Mention ANY of these in an issue's title or body to put the agency to work, e.g.:
-#   "@dev add a /health endpoint"
-# Today every handle maps to the single Developer agent; more roles arrive in Phase 3.
+# Examples:
+#   "@dev add a /health endpoint"      -> full pipeline (architect → dev → test → review → PR)
+#   "@arch how should we structure X"  -> architect produces a plan only
+#   "@review take a look at this"       -> reviewer reviews the branch/proposal
+#   "@test run the checks"              -> tester runs the project's checks
 
 @dev: developer
 @agency: developer
+@arch: architect
+@review: reviewer
+@test: tester

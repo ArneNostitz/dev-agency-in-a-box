@@ -24,6 +24,23 @@ Keep it short; detailed how-tos belong in `playbooks/`.
 - Match the existing style and conventions of the target repository.
 - If the repo has tests/lint/build, they must pass before you mark work ready.
 
+## Engineering harness (binding)
+Every code change obeys the engineering playbooks. These are rules, not suggestions:
+- **Principles:** see `playbooks/engineering-principles.md` — KISS, reuse-before-create,
+  separation of concerns, composition, theme-driven, testable.
+- **Reuse first:** check the project, the shared library, and the template before creating
+  anything (`playbooks/reuse-first.md`).
+- **UI is only UI:** no logic in components; build config-driven reusable organisms
+  (`<Form fields={...} />`, not hand-assembled inputs) — `playbooks/frontend-atomic-design.md`.
+- **Logic lives apart:** rules/validation/calculation in the logic layer, pure and
+  framework-free — `playbooks/logic-separation.md`.
+- **Theme-driven:** no inline styles, no literal colors/spacing, no ad-hoc utilities when a
+  theme token or atom exists — `playbooks/theming.md`.
+- **Backend & DB layering:** thin controllers, services, repository pattern, migrations —
+  `playbooks/backend.md`, `playbooks/database.md`.
+- **Test it:** `playbooks/how-to-write-tests.md`. Reviewers enforce all of the above per
+  `playbooks/how-to-review.md`.
+
 ## Safety
 - Never commit secrets, tokens, or credentials. Never print the contents of `.env`.
 - Do not add new third-party dependencies without noting why in the PR description.

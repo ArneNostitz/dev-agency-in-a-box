@@ -29,3 +29,19 @@ export async function loadConstitution(): Promise<string> {
 export async function loadPlaybook(name: string): Promise<string> {
   return readIfExists(join(memoryRoot, "central", "playbooks", `${name}.md`));
 }
+
+/** Load a role persona from memory/central/agents/<role>.md. */
+export async function loadPersona(role: string): Promise<string> {
+  return readIfExists(join(memoryRoot, "central", "agents", `${role}.md`));
+}
+
+/** Load several playbooks and concatenate them with headers. */
+export async function loadPlaybooks(names: string[]): Promise<string> {
+  const parts = await Promise.all(
+    names.map(async (n) => {
+      const body = await loadPlaybook(n);
+      return body ? `\n----- playbook: ${n} -----\n${body}` : "";
+    }),
+  );
+  return parts.join("\n");
+}

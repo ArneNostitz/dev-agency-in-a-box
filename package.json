@@ -10,6 +10,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "lint": "tsc -p tsconfig.json --noEmit",
     "start": "node --env-file=.env dist/runner.js",
     "dev": "node --env-file=.env --experimental-strip-types src/runner.ts",
     "add-repo": "bash scripts/add-repo.sh"
