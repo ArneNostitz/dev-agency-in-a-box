@@ -31,15 +31,24 @@ RUN npm run build
 # Webhook mode listens here (ignored in watch/once mode).
 EXPOSE 3000
 
-# Set a stable git identity for the agency's commits.
-RUN git config --global user.name "dev-agency-bot" \
-    && git config --global user.email "dev-agency-bot@users.noreply.github.com"
-
 # Default to a long-running watcher (ideal for Coolify / any container host).
 # Override RUN_MODE=once for a one-shot/cron-style run.
 ENV RUN_MODE=watch \
     POLL_INTERVAL_SECONDS=60 \
     DB_PATH=/app/data/agency.db \
+    HOME=/home/node \
     NODE_ENV=production
+
+# Run as a NON-root user: Claude Code refuses --dangerously-skip-permissions (bypassPermissions)
+# when running as root, which is exactly what the agents need. The `node` user ships with the
+# base image. Owning /app (incl. the data dir an empty named volume inherits ownership from)
+# lets the agent write code, clone repos, and persist the SQLite memory.
+RUN mkdir -p /app/data /app/.work \
+    && chown -R node:node /app /home/node
+USER node
+
+# Stable git identity for the agency's commits (written to the node user's home).
+RUN git config --global user.name "dev-agency-bot" \
+    && git config --global user.email "dev-agency-bot@users.noreply.github.com"
 
 CMD ["node", "dist/runner.js"]

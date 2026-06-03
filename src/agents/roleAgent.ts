@@ -69,6 +69,7 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
 
   let text = "";
   let turns = 0;
+  let stderrBuf = "";
   console.log(`[agency] role:${role} (model ${model})`);
   pushActivity(role, "start", `started (${model})`);
 
@@ -79,8 +80,13 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
         cwd: input.workdir,
         systemPrompt,
         model,
-        permissionMode: "bypassPermissions",
         allowedTools: def.tools,
+        // Fully autonomous. Requires the container to run as a NON-root user (Claude Code
+        // refuses --dangerously-skip-permissions as root) — see Dockerfile `USER node`.
+        permissionMode: "bypassPermissions",
+        stderr: (data: string) => {
+          stderrBuf += data;
+        },
         settingSources: [],
       },
     })) {
@@ -93,10 +99,11 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
       }
     }
   } catch (err) {
-    const msg = (err as Error).message ?? String(err);
+    const detail = stderrBuf.trim().split("\n").slice(-3).join(" ").slice(-400);
+    const msg = `${(err as Error).message ?? String(err)}${detail ? ` | ${detail}` : ""}`;
     console.error(`[agency] role:${role} failed:`, msg);
-    pushActivity(role, "done", `❌ ERROR: ${msg.slice(0, 300)}`);
-    throw err;
+    pushActivity(role, "done", `❌ ERROR: ${msg.slice(0, 400)}`);
+    throw new Error(msg);
   }
   pushActivity(role, "done", `finished (${turns} turns)`);
   return { text, turns, model };
