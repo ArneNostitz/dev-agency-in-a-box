@@ -29,6 +29,18 @@ function changesRequested(reviewText: string): boolean {
   return /request\s+changes/i.test(firstLine);
 }
 
+/** Visible worker badge so each comment reads as the teammate that wrote it. */
+const BADGE: Record<RoleName, string> = {
+  planner: "🧠 **Planner**",
+  developer: "💻 **Developer**",
+  reviewer: "🔍 **Reviewer**",
+  tester: "🧪 **Tester**",
+  architect: "🏛 **Architect**",
+};
+function say(role: RoleName, body: string): string {
+  return `${BADGE[role]} · _dev-agency_\n\n${body}`;
+}
+
 export type PlannerDecision = { kind: "questions" | "plan"; body: string };
 
 /** Parse the planner's reply: it signals intent with the first word (QUESTIONS or PLAN). */
@@ -71,14 +83,14 @@ async function finalizeWithPr(repo: string, issue: Issue, branch: string): Promi
     await commentOnIssue(
       repo,
       issue.number,
-      [
-        `✅ Work complete. Opened ${pr.isDraft ? "draft " : ""}PR ${pr.url}`,
+      say("developer", [
+        `**✅ Work complete.** Opened ${pr.isDraft ? "draft " : ""}PR ${pr.url}`,
         "",
         "Test it locally:",
         "```bash",
         `git fetch origin && git checkout ${branch}`,
         "```",
-      ].join("\n"),
+      ].join("\n")),
     );
     console.log(`[agency] ${repo} #${issue.number} -> ${READY}. PR: ${pr.url}`);
   } else {
@@ -105,7 +117,7 @@ async function runDeveloperPipeline(
   // 0. Planner — clarify or plan.
   const decision = await plan(repo, issue, workdir, thread);
   if (decision.kind === "questions") {
-    await commentOnIssue(repo, issue.number, `## 🧠 A few questions before I plan\n\n${decision.body}`);
+    await commentOnIssue(repo, issue.number, say("planner", `**A few questions before I plan**\n\n${decision.body}`));
     await removeLabel(repo, issue.number, IN_PROGRESS);
     await addLabel(repo, issue.number, AWAITING_LABEL);
     recordIssueState(repo, issue.number, { state: AWAITING_LABEL });
@@ -114,7 +126,7 @@ async function runDeveloperPipeline(
   }
   await removeLabel(repo, issue.number, AWAITING_LABEL); // in case this is a resume
   recordPlan(repo, issue.number, decision.body);
-  await commentOnIssue(repo, issue.number, `## 🧠 Plan\n\n${decision.body}`);
+  await commentOnIssue(repo, issue.number, say("planner", `**Plan**\n\n${decision.body}`));
   const planText = decision.body;
 
   // 1. Developer — implement on a branch and open a draft PR.
@@ -137,7 +149,7 @@ async function runDeveloperPipeline(
       `Report each check's status and the first actionable errors if any failed.`,
   });
   recordRun(repo, issue.number, "tester", test.model, test.turns, "test");
-  await commentOnIssue(repo, issue.number, `## 🧪 Test results\n\n${test.text}`);
+  await commentOnIssue(repo, issue.number, say("tester", `**Test results**\n\n${test.text}`));
 
   // 3. Reviewer — review the diff; up to one revise loop.
   for (let round = 0; ; round++) {
@@ -150,7 +162,7 @@ async function runDeveloperPipeline(
         `Test results were:\n${test.text}`,
     });
     recordRun(repo, issue.number, "reviewer", review.model, review.turns, "review");
-    await commentOnIssue(repo, issue.number, `## 🔍 Review (round ${round + 1})\n\n${review.text}`);
+    await commentOnIssue(repo, issue.number, say("reviewer", `**Review (round ${round + 1})**\n\n${review.text}`));
 
     if (!changesRequested(review.text) || round >= MAX_REVISE_ROUNDS) break;
 
@@ -179,7 +191,7 @@ async function runSpecialist(
   if (role === "planner") {
     const decision = await plan(repo, issue, workdir, thread);
     if (decision.kind === "questions") {
-      await commentOnIssue(repo, issue.number, `## 🧠 A few questions\n\n${decision.body}`);
+      await commentOnIssue(repo, issue.number, say("planner", `**A few questions**\n\n${decision.body}`));
       await removeLabel(repo, issue.number, IN_PROGRESS);
       await addLabel(repo, issue.number, AWAITING_LABEL);
       recordIssueState(repo, issue.number, { state: AWAITING_LABEL });
@@ -187,18 +199,13 @@ async function runSpecialist(
     }
     await removeLabel(repo, issue.number, AWAITING_LABEL);
     recordPlan(repo, issue.number, decision.body);
-    await commentOnIssue(repo, issue.number, `## 🧠 Plan\n\n${decision.body}`);
+    await commentOnIssue(repo, issue.number, say("planner", `**Plan**\n\n${decision.body}`));
     await removeLabel(repo, issue.number, IN_PROGRESS);
     await addLabel(repo, issue.number, READY);
     recordIssueState(repo, issue.number, { state: READY });
     return;
   }
 
-  const labels: Record<string, string> = {
-    architect: "🏛 Architect plan",
-    reviewer: "🔍 Review",
-    tester: "🧪 Test results",
-  };
   const tasks: Record<string, string> = {
     architect: `Produce a short technical plan for this issue (no code).\n\n${issueHeader(issue)}`,
     reviewer:
@@ -211,7 +218,7 @@ async function runSpecialist(
 
   const out = await runRole(role, { workdir, task: tasks[role] });
   recordRun(repo, issue.number, role, out.model, out.turns, "specialist");
-  await commentOnIssue(repo, issue.number, `## ${labels[role]}\n\n${out.text}`);
+  await commentOnIssue(repo, issue.number, say(role, out.text));
   await removeLabel(repo, issue.number, IN_PROGRESS);
   await addLabel(repo, issue.number, READY);
   recordIssueState(repo, issue.number, { state: READY });
