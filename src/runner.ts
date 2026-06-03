@@ -26,6 +26,7 @@ import {
 import { loadHandleRoleMap, roleForText, type RoleName } from "./agents/roles.js";
 import { runPipeline } from "./pipeline.js";
 import { recordIssueState, getIssueRole } from "./store.js";
+import { handleControlCommands, effectiveRepos } from "./commands.js";
 
 const IN_PROGRESS = "agency:in-progress";
 const LOCK_PATH = join(process.cwd(), ".agency.lock");
@@ -100,11 +101,13 @@ async function processOneIssue(cfg: Config, repo: string): Promise<boolean> {
   return true;
 }
 
-/** Process one actionable issue per repo across all watched repos. @returns count handled. */
+/** Handle control commands + process actionable issues across all watched repos. */
 export async function processAllRepos(cfg: Config): Promise<number> {
   let handled = 0;
-  for (const repo of cfg.targetRepos) {
+  for (const repo of effectiveRepos(cfg)) {
     try {
+      // First honor any /add-repo /list-repos command issues (then they're closed).
+      await handleControlCommands(cfg, repo);
       // Drain this repo (one issue at a time) until nothing's actionable.
       while (await processOneIssue(cfg, repo)) handled += 1;
     } catch (err) {

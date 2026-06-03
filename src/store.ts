@@ -37,6 +37,10 @@ function getDb(): DatabaseSync | null {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         repo TEXT, number INTEGER, plan TEXT, created_at TEXT
       );
+      CREATE TABLE IF NOT EXISTS watched_repos (
+        repo TEXT PRIMARY KEY,
+        added_at TEXT
+      );
     `);
     db = d;
     console.log(`[agency] memory: SQLite at ${path}`);
@@ -48,6 +52,30 @@ function getDb(): DatabaseSync | null {
 }
 
 const now = () => new Date().toISOString();
+
+/** Add a repo to the dynamic watch list (used by the /add-repo issue command). */
+export function addWatchedRepo(repo: string): void {
+  const d = getDb();
+  if (!d) return;
+  try {
+    d.prepare(`INSERT OR IGNORE INTO watched_repos (repo, added_at) VALUES (?, ?)`).run(repo, now());
+  } catch (err) {
+    console.warn("[agency] memory write (watched_repo) failed:", (err as Error).message);
+  }
+}
+
+/** Repos added at runtime via issue commands (unioned with config/repos.txt). */
+export function listWatchedRepos(): string[] {
+  const d = getDb();
+  if (!d) return [];
+  try {
+    return (d.prepare(`SELECT repo FROM watched_repos ORDER BY repo`).all() as Array<{ repo: string }>).map(
+      (r) => r.repo,
+    );
+  } catch {
+    return [];
+  }
+}
 
 export function recordIssueState(
   repo: string,

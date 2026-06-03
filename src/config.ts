@@ -116,6 +116,10 @@ export interface Config {
   model?: string;
   runMode: "once" | "watch" | "webhook";
   pollIntervalSeconds: number;
+  /** Public base URL (Coolify domain) used to auto-register GitHub webhooks. */
+  publicUrl?: string;
+  /** Shared secret for verifying + registering GitHub webhooks. */
+  webhookSecret?: string;
 }
 
 function parseRunMode(v: string | undefined): "once" | "watch" | "webhook" {
@@ -144,6 +148,8 @@ export function loadConfig(): Config {
     model: process.env.AGENT_MODEL?.trim() || undefined,
     runMode: parseRunMode(process.env.RUN_MODE),
     pollIntervalSeconds: Math.max(10, Number(optional("POLL_INTERVAL_SECONDS", "60")) || 60),
+    publicUrl: process.env.PUBLIC_URL?.trim() || undefined,
+    webhookSecret: process.env.GITHUB_WEBHOOK_SECRET?.trim() || undefined,
   };
 
   if (cfg.anthropicApiKey) {

@@ -5,6 +5,9 @@
  */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const execFileAsync = promisify(execFile);
 
@@ -167,6 +170,62 @@ export async function commentThread(repo: string, issue: number): Promise<string
 export async function cloneRepo(repo: string, dest: string): Promise<void> {
   await gh(["auth", "setup-git"]);
   await gh(["repo", "clone", repo, dest, "--", "--depth", "50"]);
+}
+
+export async function closeIssue(repo: string, issue: number, comment?: string): Promise<void> {
+  if (comment) await commentOnIssue(repo, issue, comment);
+  await gh(["issue", "close", String(issue), "--repo", repo]).catch(() => {});
+}
+
+/** All open issues in a repo (used to scan for control commands). */
+export async function listAllOpenIssues(repo: string): Promise<Issue[]> {
+  const out = await gh([
+    "issue", "list", "--repo", repo, "--state", "open",
+    "--json", "number,title,body,labels", "--limit", "50",
+  ]).catch(() => "[]");
+  const raw = JSON.parse(out) as Array<{
+    number: number; title: string; body: string | null; labels: Array<{ name: string }>;
+  }>;
+  return raw.map((i) => ({
+    number: i.number, title: i.title, body: i.body ?? "", labels: i.labels.map((l) => l.name),
+  }));
+}
+
+export async function repoExists(repo: string): Promise<boolean> {
+  try {
+    await gh(["repo", "view", repo, "--json", "name"]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Ensure a GitHub "issues" webhook pointing at `url` exists on `repo` (idempotent).
+ * Lets the agency register its own hooks so webhook mode needs no manual GitHub setup.
+ */
+export async function ensureWebhook(
+  repo: string,
+  url: string,
+  secret: string,
+): Promise<"created" | "exists" | "failed"> {
+  try {
+    const existing = await gh(["api", `repos/${repo}/hooks`, "--jq", ".[].config.url"]).catch(() => "");
+    if (existing.split("\n").some((u) => u.trim() === url)) return "exists";
+
+    const body = JSON.stringify({
+      name: "web",
+      active: true,
+      events: ["issues"],
+      config: { url, content_type: "json", secret, insecure_ssl: "0" },
+    });
+    const tmp = join(tmpdir(), `agency-hook-${Date.now()}.json`);
+    writeFileSync(tmp, body);
+    await gh(["api", `repos/${repo}/hooks`, "-X", "POST", "--input", tmp]);
+    return "created";
+  } catch {
+    return "failed";
+  }
 }
 
 export interface PullRequest {

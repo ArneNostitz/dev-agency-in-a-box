@@ -38,15 +38,15 @@ normally set `TARGET_REPO` here.
 
 ### Which repos it works in — and adding more
 
-The agency **only** works in repos you explicitly list in **`config/repos.txt`** — never all
-your repos. To add one, run:
+The agency **only** works in repos you explicitly list — never all your repos. Three ways to
+add one (the `GITHUB_TOKEN` must have access to it):
 
-```bash
-./scripts/add-repo.sh my-app        # or: npm run add-repo -- someorg/my-app
-```
-
-That appends the repo, commits, and pushes; with auto-deploy on, Coolify redeploys and it
-starts watching within a minute. (Your `GITHUB_TOKEN` must have access to that repo.)
+1. **From GitHub, no terminal (easiest):** open an issue in any repo the agency already
+   watches with the body `/add-repo <name>` (e.g. `/add-repo reimedy-minimal`). The agency
+   adds it, comments confirmation, and closes the issue — no redeploy. `/list-repos` shows the
+   current list. (These additions live in the agency's SQLite memory on the data volume.)
+2. **Edit `config/repos.txt`** in the `dev-agency` repo (add a line) and push.
+3. **`./scripts/add-repo.sh my-app`** from a local clone (edits the file, commits, pushes).
 
 ### Triggering: pin a teammate with a short @handle
 
@@ -63,19 +63,22 @@ and ready to map to specialist roles in Phase 3. It marks issues `agency:in-prog
 any issue. Prefer a different style? Set `TRIGGER_MODE=label` (only `agency:queue` issues) or
 `TRIGGER_MODE=any` (every new issue).
 
-### Triggering instantly with webhooks (optional)
+### Triggering instantly with webhooks (turnkey)
 
-Polling every 60s is fine, but for instant reaction set `RUN_MODE=webhook` and a
-`GITHUB_WEBHOOK_SECRET`, then in GitHub (repo or org **Settings → Webhooks → Add webhook**):
+For instant reaction instead of polling, set these env vars on the resource:
 
-- **Payload URL:** `https://<your-coolify-domain>/webhook`
-- **Content type:** `application/json`
-- **Secret:** the same `GITHUB_WEBHOOK_SECRET`
-- **Events:** select **Issues**
+- `RUN_MODE=webhook`
+- `GITHUB_WEBHOOK_SECRET=<a long random string>`
+- `PUBLIC_URL=https://<your-coolify-domain>` (the domain Coolify assigned this service)
 
-Coolify exposes the service's port 3000 at the domain it assigns the resource. The agency
-verifies the signature and processes the issue the moment it's opened. A slow safety poll
-still runs so nothing is missed if a delivery is dropped.
+…and make sure the service's port **3000** is exposed at that domain. That's it — on startup
+the agency **registers the GitHub webhook on every watched repo itself** (and on any repo you
+add later), so there's no manual GitHub webhook setup. It verifies each delivery's signature
+and processes the issue the moment it's opened; a slow safety poll still runs as a backstop.
+
+(If you leave `PUBLIC_URL` unset, you can still add the webhook manually in each repo's
+**Settings → Webhooks**: payload `https://<domain>/webhook`, content type `application/json`,
+the same secret, event **Issues**.)
 
 ### Running under a bot identity (so it's not "you")
 

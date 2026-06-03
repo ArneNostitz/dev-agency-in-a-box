@@ -5,4 +5,3 @@
 # To add a repo: add a line here and `git push` (Coolify auto-redeploys and starts watching it).
 
 sandbox-project
-reimedy-minimal
