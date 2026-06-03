@@ -95,6 +95,13 @@ identity:
    now PRs and comments are attributed to the bot account too — and you can revoke it anytime
    without touching your own account.
 
+**Automate the invites.** You don't want to invite the bot to every new repo by hand. Set
+`ADMIN_GITHUB_TOKEN` to your **owner** token (the account that owns the repos; needs repo
+admin) and the agency invites + accepts the bot automatically on startup and on every
+`/add-repo`. So the flow becomes: `/add-repo <name>` → bot auto-added → it starts working —
+no manual collaborator step. (Even cleaner: keep projects in a GitHub **org** and add the bot
+to a team once; then it has access to all org repos with no invites at all.)
+
 `RUN_MODE` defaults to `watch` if unset.
 
 ### 3. Deploy

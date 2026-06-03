@@ -12,6 +12,7 @@ import {
   commentOnIssue,
   repoExists,
   ensureWebhook,
+  ensureCollaborator,
 } from "./github.js";
 import { addWatchedRepo, listWatchedRepos } from "./store.js";
 
@@ -35,11 +36,32 @@ export function effectiveRepos(cfg: Config): string[] {
   return [...new Set([...cfg.targetRepos, ...listWatchedRepos()])];
 }
 
-async function maybeRegisterWebhook(cfg: Config, repo: string): Promise<string> {
-  if (cfg.runMode !== "webhook" || !cfg.publicUrl || !cfg.webhookSecret) return "";
-  const url = `${cfg.publicUrl.replace(/\/$/, "")}/webhook`;
-  const r = await ensureWebhook(repo, url, cfg.webhookSecret);
-  return r === "created" ? " (webhook registered)" : r === "exists" ? " (webhook already set)" : "";
+/**
+ * Make sure the agency can actually operate in `repo`: invite+accept the bot as a
+ * collaborator (if an admin token is configured) and register the webhook (in webhook mode).
+ * Returns a short human-readable note for the confirmation comment.
+ */
+export async function ensureRepoAccess(cfg: Config, repo: string): Promise<string> {
+  const notes: string[] = [];
+  if (cfg.adminToken) {
+    const c = await ensureCollaborator(repo, cfg.adminToken, cfg.githubToken);
+    if (c === "added") notes.push("bot invited + accepted");
+    else if (c === "failed") notes.push("⚠️ couldn't invite bot (check ADMIN_GITHUB_TOKEN access)");
+  }
+  if (cfg.runMode === "webhook" && cfg.publicUrl && cfg.webhookSecret) {
+    const url = `${cfg.publicUrl.replace(/\/$/, "")}/webhook`;
+    const w = await ensureWebhook(repo, url, cfg.webhookSecret);
+    if (w === "created") notes.push("webhook registered");
+  }
+  return notes.length ? ` (${notes.join("; ")})` : "";
+}
+
+/** Ensure access (collaborator + webhook) across every watched repo. Run at startup. */
+export async function ensureAllRepoAccess(cfg: Config): Promise<void> {
+  for (const repo of effectiveRepos(cfg)) {
+    const note = await ensureRepoAccess(cfg, repo);
+    if (note) console.log(`[agency] ${repo}:${note}`);
+  }
 }
 
 /** Scan one repo's open issues for control commands and execute them. */
@@ -68,8 +90,8 @@ export async function handleControlCommands(cfg: Config, repo: string): Promise<
       continue;
     }
     addWatchedRepo(target);
-    const hook = await maybeRegisterWebhook(cfg, target);
-    await closeIssue(repo, issue.number, `✅ Now watching \`${target}\`${hook}. Pin \`@dev\` on an issue there to start.`);
-    console.log(`[agency] ${repo} #${issue.number}: /add-repo ${target} -> watching${hook}`);
+    const access = await ensureRepoAccess(cfg, target);
+    await closeIssue(repo, issue.number, `✅ Now watching \`${target}\`${access}. Pin \`@dev\` on an issue there to start.`);
+    console.log(`[agency] ${repo} #${issue.number}: /add-repo ${target} -> watching${access}`);
   }
 }

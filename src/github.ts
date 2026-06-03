@@ -11,6 +11,15 @@ import { join } from "node:path";
 
 const execFileAsync = promisify(execFile);
 
+/** Run gh with a specific token (for actions that need a different identity than the default). */
+async function ghAs(token: string, args: string[]): Promise<string> {
+  const { stdout } = await execFileAsync("gh", args, {
+    maxBuffer: 10 * 1024 * 1024,
+    env: { ...process.env, GH_TOKEN: token, GITHUB_TOKEN: token },
+  });
+  return stdout.trim();
+}
+
 async function gh(args: string[]): Promise<string> {
   const { stdout } = await execFileAsync("gh", args, {
     maxBuffer: 10 * 1024 * 1024,
@@ -223,6 +232,43 @@ export async function ensureWebhook(
     writeFileSync(tmp, body);
     await gh(["api", `repos/${repo}/hooks`, "-X", "POST", "--input", tmp]);
     return "created";
+  } catch {
+    return "failed";
+  }
+}
+
+/**
+ * Ensure the bot account (owner of `botToken`) is a collaborator on `repo`. The `adminToken`
+ * (repo owner) sends the invite; the bot token accepts it. Idempotent.
+ */
+export async function ensureCollaborator(
+  repo: string,
+  adminToken: string,
+  botToken: string,
+): Promise<"added" | "already" | "failed"> {
+  try {
+    const botLogin = (await ghAs(botToken, ["api", "user", "--jq", ".login"])).trim();
+    if (!botLogin) return "failed";
+
+    // Owner invites the bot (201 = invited, 204 = already a collaborator).
+    await ghAs(adminToken, [
+      "api", "-X", "PUT", `repos/${repo}/collaborators/${botLogin}`, "-f", "permission=push",
+    ]);
+
+    // Bot accepts any pending invitation for this repo.
+    const ids = (
+      await ghAs(botToken, [
+        "api", "/user/repository_invitations",
+        "--jq", `.[] | select(.repository.full_name=="${repo}") | .id`,
+      ]).catch(() => "")
+    )
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    for (const id of ids) {
+      await ghAs(botToken, ["api", "-X", "PATCH", `/user/repository_invitations/${id}`]).catch(() => {});
+    }
+    return ids.length > 0 ? "added" : "already";
   } catch {
     return "failed";
   }

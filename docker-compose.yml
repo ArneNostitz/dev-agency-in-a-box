@@ -17,7 +17,11 @@ services:
       PORT: 3000
 
       # --- GitHub (required) ---
+      # GITHUB_TOKEN = the BOT account's token (so comments/PRs are attributed to the bot).
       GITHUB_TOKEN: ${GITHUB_TOKEN}
+      # ADMIN_GITHUB_TOKEN = your OWNER token; used only to auto-invite the bot as a
+      # collaborator on watched repos (the bot can't invite itself). Optional.
+      ADMIN_GITHUB_TOKEN: ${ADMIN_GITHUB_TOKEN:-}
       GITHUB_OWNER: ${GITHUB_OWNER}
       # Repos come from config/repos.txt; or override with a comma-separated list:
       TARGET_REPOS: ${TARGET_REPOS:-}

@@ -120,6 +120,11 @@ export interface Config {
   publicUrl?: string;
   /** Shared secret for verifying + registering GitHub webhooks. */
   webhookSecret?: string;
+  /**
+   * Owner/admin token used ONLY to invite the bot account as a collaborator on watched
+   * repos. The bot (GITHUB_TOKEN) can't invite itself. Leave unset to invite manually.
+   */
+  adminToken?: string;
 }
 
 function parseRunMode(v: string | undefined): "once" | "watch" | "webhook" {
@@ -150,6 +155,7 @@ export function loadConfig(): Config {
     pollIntervalSeconds: Math.max(10, Number(optional("POLL_INTERVAL_SECONDS", "60")) || 60),
     publicUrl: process.env.PUBLIC_URL?.trim() || undefined,
     webhookSecret: process.env.GITHUB_WEBHOOK_SECRET?.trim() || undefined,
+    adminToken: process.env.ADMIN_GITHUB_TOKEN?.trim() || undefined,
   };
 
   if (cfg.anthropicApiKey) {

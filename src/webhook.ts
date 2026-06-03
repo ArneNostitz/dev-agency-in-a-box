@@ -14,8 +14,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { Config } from "./config.js";
-import { ensureWebhook } from "./github.js";
-import { effectiveRepos } from "./commands.js";
 
 type ProcessAll = (cfg: Config) => Promise<number>;
 
@@ -103,19 +101,8 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll): Promise<v
     console.log(`[agency] mode: webhook, listening on :${port} (POST /webhook)`);
   });
 
-  // Register the GitHub webhook on each watched repo automatically (no manual setup).
-  if (cfg.publicUrl && secret) {
-    const url = `${cfg.publicUrl.replace(/\/$/, "")}/webhook`;
-    for (const repo of effectiveRepos(cfg)) {
-      const r = await ensureWebhook(repo, url, secret);
-      console.log(`[agency] webhook on ${repo}: ${r}`);
-    }
-  } else {
-    console.warn(
-      "[agency] set PUBLIC_URL and GITHUB_WEBHOOK_SECRET to auto-register GitHub webhooks " +
-        "(otherwise add the webhook to your repos manually — see COOLIFY.md).",
-    );
-  }
+  // Webhook + collaborator registration happens in main() via ensureAllRepoAccess before
+  // this server starts. Here we just serve and process.
 
   // Drain anything already queued at startup, then keep a slow safety poll.
   await trigger("startup");
