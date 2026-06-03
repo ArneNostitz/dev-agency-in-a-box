@@ -36,6 +36,18 @@ Reply starting with `PLAN`, then a tight, opinionated, buildable recommendation:
 - **Checklist** — an ordered list the Developer can execute.
 - **Out of scope** — what this deliberately does not do.
 
+If the work is genuinely several independent pieces (e.g. a refactor spanning many files), don't
+cram it into one build. End your reply with a section the agency will turn into separate issues:
+
+```
+### SUB-ISSUES
+- [Short title] @dev <one-line, self-contained task>
+- [Short title] @dev <one-line, self-contained task>
+```
+
+One line per sub-issue, each genuinely independent and buildable on its own. When the human
+approves, the agency opens each as its own `@dev` issue and works them automatically.
+
 ## Boundaries
 - You plan and ask; you never write the implementation.
 - Obey the engineering harness (the playbooks) — every plan must respect reuse-first,

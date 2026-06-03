@@ -14,7 +14,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { Config } from "./config.js";
-import { recentRuns, recentIssues, recentActivity } from "./store.js";
+import { recentRuns, recentIssues, recentActivity, archiveIssue } from "./store.js";
 import { renderDashboard } from "./dashboard.js";
 import { subscribe } from "./activity.js";
 import { effectiveRepos } from "./commands.js";
@@ -124,15 +124,44 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll): Promise<v
         return;
       }
 
-      // Live status dashboard.
+      if (url === "/data") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            repos: effectiveRepos(cfg),
+            issues: recentIssues(40),
+            runs: recentRuns(40),
+            activity: recentActivity(120),
+          }),
+        );
+        return;
+      }
+
+      // Live status dashboard (client fetches /data + /events).
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(renderDashboard(effectiveRepos(cfg), recentIssues(25), recentRuns(40), recentActivity(80)));
+      res.end(renderDashboard());
       return;
     }
     if (req.method !== "POST") {
       res.writeHead(405).end();
       return;
     }
+
+    // Dashboard archive action (password-protected, not a GitHub webhook).
+    if ((req.url ?? "").split("?")[0] === "/archive") {
+      if (!checkAuth(cfg, req, res)) return;
+      void readBody(req).then((body) => {
+        try {
+          const { repo, number } = JSON.parse(body.toString("utf8")) as { repo: string; number: number };
+          if (repo && number) archiveIssue(repo, number);
+        } catch {
+          /* ignore */
+        }
+        res.writeHead(200, { "content-type": "application/json" }).end('{"ok":true}');
+      });
+      return;
+    }
+
     void readBody(req).then((body) => {
       if (!verifySignature(secret, body, req.headers["x-hub-signature-256"] as string)) {
         console.warn("[agency] rejected webhook: bad signature");

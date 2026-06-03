@@ -184,6 +184,18 @@ export async function cloneRepo(repo: string, dest: string): Promise<void> {
   await gh(["repo", "clone", repo, dest, "--", "--depth", "50"]);
 }
 
+/** Create a new issue (used by the planner to decompose work into sub-issues). */
+export async function createIssue(
+  repo: string,
+  title: string,
+  body: string,
+): Promise<{ number: number; url: string }> {
+  const out = await gh(["issue", "create", "--repo", repo, "--title", title, "--body", body]);
+  const url = out.trim().split("\n").pop() ?? "";
+  const m = /\/issues\/(\d+)/.exec(url);
+  return { number: m ? Number(m[1]) : 0, url };
+}
+
 export async function closeIssue(repo: string, issue: number, comment?: string): Promise<void> {
   if (comment) await commentOnIssue(repo, issue, comment);
   await gh(["issue", "close", String(issue), "--repo", repo]).catch(() => {});

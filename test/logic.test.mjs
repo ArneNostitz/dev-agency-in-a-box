@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 
 import { mentionsHandle, AGENCY_MARKER } from "../dist/github.js";
 import { roleForText, loadHandleRoleMap, modelFor, ROLES, MODELS } from "../dist/agents/roles.js";
-import { parsePlannerDecision, isApproval } from "../dist/pipeline.js";
+import { parsePlannerDecision, isApproval, parseSubIssues } from "../dist/pipeline.js";
 import { parseControlCommand } from "../dist/commands.js";
 
 test("mentionsHandle matches whole handles only", () => {
@@ -80,6 +80,15 @@ test("isApproval only fires on a short ok-style last human reply", () => {
   assert.equal(isApproval(`[agency] proposal${sep}[human] can you also add tests?`), false);
   // last message is the agency's, not the human's
   assert.equal(isApproval(`[human] ok${sep}[agency] building...`), false);
+});
+
+test("parseSubIssues reads a SUB-ISSUES breakdown", () => {
+  const plan = "PLAN\nGoal: refactor\n\n### SUB-ISSUES\n- [ScheduleEditor atoms] @dev replace className arrays\n- [Weekday names] @dev source from common.weekdaysLong\n";
+  const subs = parseSubIssues(plan);
+  assert.equal(subs.length, 2);
+  assert.equal(subs[0].title, "ScheduleEditor atoms");
+  assert.ok(subs[0].body.includes("@dev"));
+  assert.deepEqual(parseSubIssues("PLAN\njust build it, one issue"), []);
 });
 
 test("parseControlCommand recognizes /add-repo and /list-repos", () => {

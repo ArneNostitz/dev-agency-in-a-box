@@ -15,6 +15,7 @@ import {
   removeLabel,
   commentOnIssue,
   findPrForBranch,
+  createIssue,
   AWAITING_LABEL,
   APPROVAL_LABEL,
 } from "./github.js";
@@ -125,6 +126,49 @@ export function isApproval(thread: string): boolean {
   return APPROVAL_RE.test(last.replace(/^\s*\[human\]\s*/, "").trim());
 }
 
+/** Parse a `### SUB-ISSUES` section: lines like `- [Short title] @dev <one-line task>`. */
+export function parseSubIssues(planText: string): Array<{ title: string; body: string }> {
+  const idx = planText.search(/#{0,3}\s*SUB-?ISSUES/i);
+  if (idx < 0) return [];
+  const out: Array<{ title: string; body: string }> = [];
+  for (const line of planText.slice(idx).split("\n")) {
+    const m = /^\s*[-*]\s*\[(.+?)\]\s*(.+)$/.exec(line);
+    if (m) out.push({ title: m[1].trim(), body: m[2].trim() });
+  }
+  return out;
+}
+
+/**
+ * If the approved plan proposed a SUB-ISSUES breakdown, open each as its own @dev issue
+ * (the agency then works them automatically) and mark the parent done. Returns true if it
+ * handled the issue (so the caller skips building/accepting).
+ */
+async function maybeDecompose(repo: string, issue: Issue, planText: string): Promise<boolean> {
+  const subs = parseSubIssues(planText);
+  if (subs.length === 0) return false;
+
+  const links: string[] = [];
+  for (const s of subs) {
+    const body = /@\w/.test(s.body) ? s.body : `@dev ${s.body}`;
+    const created = await createIssue(repo, s.title, `${body}\n\n_(split from #${issue.number})_`);
+    links.push(`- #${created.number} — ${s.title}`);
+    recordRun(repo, issue.number, "planner", MODELS_NONE, 0, "create-issue");
+  }
+  await commentOnIssue(
+    repo,
+    issue.number,
+    say("planner", `**Created ${subs.length} sub-issue(s)** — the agency will work them:\n${links.join("\n")}`),
+  );
+  await removeLabel(repo, issue.number, IN_PROGRESS);
+  await removeLabel(repo, issue.number, APPROVAL_LABEL);
+  await addLabel(repo, issue.number, READY);
+  recordIssueState(repo, issue.number, { state: READY });
+  console.log(`[agency] ${repo} #${issue.number} -> decomposed into ${subs.length} issues.`);
+  return true;
+}
+
+const MODELS_NONE = "-";
+
 async function pause(repo: string, issue: Issue, label: string): Promise<void> {
   await removeLabel(repo, issue.number, IN_PROGRESS);
   await addLabel(repo, issue.number, label);
@@ -194,11 +238,13 @@ async function runDeveloperPipeline(
   workdir: string,
   thread: string,
 ): Promise<void> {
-  // Resuming a proposal that the human approved? Go straight to building the stored plan.
+  // Resuming a proposal that the human approved?
   if (issue.labels.includes(APPROVAL_LABEL) && isApproval(thread)) {
     const planText = lastPlan(repo, issue.number);
     if (planText) {
       await removeLabel(repo, issue.number, APPROVAL_LABEL);
+      // If the plan was a decomposition, open the sub-issues instead of building this one.
+      if (await maybeDecompose(repo, issue, planText)) return;
       await commentOnIssue(repo, issue.number, say("developer", "**Approved — building it now.**"));
       await build(repo, issue, workdir, planText);
       return;
@@ -249,9 +295,12 @@ async function runSpecialist(
   const branch = `agency/issue-${issue.number}`;
 
   if (role === "planner") {
-    // Conversational: if you approved the last proposal, accept it and finish.
+    // Conversational: if you approved the last proposal, decompose it (if it proposed
+    // sub-issues) or accept it.
     if (issue.labels.includes(APPROVAL_LABEL) && isApproval(thread)) {
       await removeLabel(repo, issue.number, APPROVAL_LABEL);
+      const planText = lastPlan(repo, issue.number) ?? "";
+      if (await maybeDecompose(repo, issue, planText)) return;
       await removeLabel(repo, issue.number, IN_PROGRESS);
       await addLabel(repo, issue.number, READY);
       await commentOnIssue(repo, issue.number, say("planner", "**👍 Plan accepted.** Pin `@dev` to build it."));

@@ -45,6 +45,10 @@ function getDb(): DatabaseSync | null {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         repo TEXT, number INTEGER, role TEXT, kind TEXT, text TEXT, created_at TEXT
       );
+      CREATE TABLE IF NOT EXISTS archived (
+        repo TEXT NOT NULL, number INTEGER NOT NULL,
+        PRIMARY KEY (repo, number)
+      );
     `);
     db = d;
     console.log(`[agency] memory: SQLite at ${path}`);
@@ -216,16 +220,31 @@ export function recentRuns(limit = 40): RunRow[] {
   }
 }
 
-/** Recent issue states, newest first (for the status dashboard). */
-export function recentIssues(limit = 25): IssueRow[] {
+/** Recent issue states (excluding archived), newest first (for the status dashboard). */
+export function recentIssues(limit = 40): IssueRow[] {
   const d = getDb();
   if (!d) return [];
   try {
     return d
-      .prepare(`SELECT repo, number, title, role, state, updated_at FROM issues ORDER BY updated_at DESC LIMIT ?`)
+      .prepare(
+        `SELECT i.repo, i.number, i.title, i.role, i.state, i.updated_at FROM issues i
+         WHERE NOT EXISTS (SELECT 1 FROM archived a WHERE a.repo = i.repo AND a.number = i.number)
+         ORDER BY i.updated_at DESC LIMIT ?`,
+      )
       .all(limit) as unknown as IssueRow[];
   } catch {
     return [];
+  }
+}
+
+/** Hide an issue from the dashboard. */
+export function archiveIssue(repo: string, number: number): void {
+  const d = getDb();
+  if (!d) return;
+  try {
+    d.prepare(`INSERT OR IGNORE INTO archived (repo, number) VALUES (?, ?)`).run(repo, number);
+  } catch {
+    /* best effort */
   }
 }
 
