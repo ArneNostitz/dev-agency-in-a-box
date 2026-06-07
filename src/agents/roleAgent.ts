@@ -8,15 +8,40 @@ import { ROLES, modelFor, type RoleName } from "./roles.js";
 import { loadConstitution, loadPersona, loadPlaybooks } from "../memory.js";
 import { pushActivity } from "../activity.js";
 
-/** Pull readable text + tool names out of an assistant message's content blocks. */
+/** A short, meaningful one-liner for a tool call (the command/file, not just the tool name). */
+function summarizeTool(name: string, input: Record<string, unknown> = {}): string {
+  const s = (v: unknown) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, 140);
+  switch (name) {
+    case "Bash":
+      return `$ ${s(input.command)}`;
+    case "Write":
+      return `✏️ write ${s(input.file_path)}`;
+    case "Edit":
+      return `✏️ edit ${s(input.file_path)}`;
+    case "Read":
+      return `📖 read ${s(input.file_path)}`;
+    case "Grep":
+      return `🔎 grep ${s(input.pattern)}`;
+    case "Glob":
+      return `🔎 glob ${s(input.pattern)}`;
+    case "WebSearch":
+      return `🌐 search ${s(input.query)}`;
+    case "WebFetch":
+      return `🌐 fetch ${s(input.url)}`;
+    default:
+      return `🔧 ${name}${input.description ? `: ${s(input.description)}` : ""}`;
+  }
+}
+
+/** Pull readable text + tool summaries out of an assistant message's content blocks. */
 function emitAssistant(repo: string, number: number, role: RoleName, message: unknown): void {
   const content = (message as { message?: { content?: unknown[] } }).message?.content;
   if (!Array.isArray(content)) return;
-  for (const block of content as Array<{ type?: string; text?: string; name?: string }>) {
+  for (const block of content as Array<{ type?: string; text?: string; name?: string; input?: Record<string, unknown> }>) {
     if (block.type === "text" && block.text?.trim()) {
-      pushActivity(repo, number, role, "text", block.text.trim().slice(0, 2000));
+      pushActivity(repo, number, role, "text", block.text.trim().slice(0, 1200));
     } else if (block.type === "tool_use" && block.name) {
-      pushActivity(repo, number, role, "tool", `🔧 ${block.name}`);
+      pushActivity(repo, number, role, "tool", summarizeTool(block.name, block.input));
     }
   }
 }

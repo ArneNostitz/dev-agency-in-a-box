@@ -15,7 +15,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { Config } from "./config.js";
 import { recentRuns, recentIssues, recentActivity, archiveIssue } from "./store.js";
-import { renderDashboard } from "./dashboard.js";
+import { renderDashboard, renderHistory } from "./dashboard.js";
 import { subscribe, getActive } from "./activity.js";
 import { effectiveRepos } from "./commands.js";
 
@@ -142,7 +142,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll): Promise<v
 
       // Live status dashboard (client fetches /data + /events).
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(renderDashboard());
+      res.end(url === "/history" ? renderHistory() : renderDashboard());
       return;
     }
     if (req.method !== "POST") {
