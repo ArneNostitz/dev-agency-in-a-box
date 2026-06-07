@@ -24,6 +24,7 @@ import {
 import { runRole } from "./agents/roleAgent.js";
 import type { RoleName } from "./agents/roles.js";
 import { recordRun, recordPlan, lastPlan, recordIssueState } from "./store.js";
+import { runReflection } from "./reflect.js";
 
 const IN_PROGRESS = "agency:in-progress";
 const READY = "agency:ready";
@@ -46,6 +47,7 @@ const BADGE: Record<RoleName, string> = {
   reviewer: "🔍 **Reviewer**",
   tester: "🧪 **Tester**",
   architect: "🏛 **Architect**",
+  librarian: "📚 **Librarian**",
 };
 function say(role: RoleName, body: string): string {
   return `${BADGE[role]} · _dev-agency_\n\n${body}`;
@@ -81,11 +83,12 @@ async function plan(repo: string, issue: Issue, workdir: string, thread: string)
       `Reply starting with "QUESTIONS" (if you need clarification) or "PLAN" (if ready).`,
     ].join("\n"),
   });
-  recordRun(repo, issue.number, "planner", res.model, res.turns, "plan");
+  recordRun(repo, issue.number, "planner", res.model, res.turns, "plan", res.costUsd);
   return parsePlannerDecision(res.text);
 }
 
-async function finalizeWithPr(repo: string, issue: Issue, branch: string): Promise<void> {
+/** Returns true if a PR was found (the build succeeded end-to-end). */
+async function finalizeWithPr(repo: string, issue: Issue, branch: string): Promise<boolean> {
   const pr = await findPrForBranch(repo, branch);
   await removeLabel(repo, issue.number, IN_PROGRESS);
   if (pr) {
@@ -104,6 +107,7 @@ async function finalizeWithPr(repo: string, issue: Issue, branch: string): Promi
       ].join("\n")),
     );
     console.log(`[agency] ${repo} #${issue.number} -> ${READY}. PR: ${pr.url}`);
+    return true;
   } else {
     await addLabel(repo, issue.number, NEEDS_ATTENTION);
     recordIssueState(repo, issue.number, { state: NEEDS_ATTENTION });
@@ -113,6 +117,7 @@ async function finalizeWithPr(repo: string, issue: Issue, branch: string): Promi
       "⚠️ Finished without opening a pull request — it may need clarification or hit a blocker. Re-pin to retry.",
     );
     console.log(`[agency] ${repo} #${issue.number} -> ${NEEDS_ATTENTION} (no PR).`);
+    return false;
   }
 }
 
@@ -203,7 +208,7 @@ async function build(
       `### Approved plan\n${planText}\n\n### ${issueHeader(issue)}` +
       (thread ? `\n\n### Conversation (latest changes apply)\n${thread}` : ""),
   });
-  recordRun(repo, issue.number, "developer", dev.model, dev.turns, "implement");
+  recordRun(repo, issue.number, "developer", dev.model, dev.turns, "implement", dev.costUsd);
 
   const test = await runRole("tester", {
     workdir,
@@ -214,9 +219,10 @@ async function build(
       `typecheck, lint, test, build via \`npm run --if-present <script>\` or documented commands). ` +
       `Report each check's status and the first actionable errors if any failed.`,
   });
-  recordRun(repo, issue.number, "tester", test.model, test.turns, "test");
+  recordRun(repo, issue.number, "tester", test.model, test.turns, "test", test.costUsd);
   await commentOnIssue(repo, issue.number, say("tester", `**Test results**\n\n${test.text}`));
 
+  let lastReview = "";
   for (let round = 0; ; round++) {
     const review = await runRole("reviewer", {
       workdir,
@@ -228,7 +234,8 @@ async function build(
         `Start your reply with exactly "APPROVE" or "REQUEST CHANGES" on the first line, then notes.\n\n` +
         `Test results were:\n${test.text}`,
     });
-    recordRun(repo, issue.number, "reviewer", review.model, review.turns, "review");
+    recordRun(repo, issue.number, "reviewer", review.model, review.turns, "review", review.costUsd);
+    lastReview = review.text;
     await commentOnIssue(repo, issue.number, say("reviewer", `**Review (round ${round + 1})**\n\n${review.text}`));
 
     if (!changesRequested(review.text) || round >= MAX_REVISE_ROUNDS) break;
@@ -241,10 +248,19 @@ async function build(
         `The reviewer requested changes on branch \`${branch}\`. Address each point, commit, and push. ` +
         `Keep the diff focused.\n\n### Review\n${review.text}`,
     });
-    recordRun(repo, issue.number, "developer", revise.model, revise.turns, "revise");
+    recordRun(repo, issue.number, "developer", revise.model, revise.turns, "revise", revise.costUsd);
   }
 
-  await finalizeWithPr(repo, issue, branch);
+  const ok = await finalizeWithPr(repo, issue, branch);
+  if (ok) {
+    // Reflect (cheap, best-effort): what should the agency remember from this build?
+    await runReflection(
+      repo,
+      issue.number,
+      workdir,
+      `Issue: ${issue.title}\n\nPlan (gist):\n${planText.slice(0, 1500)}\n\nTest results:\n${test.text.slice(0, 1500)}\n\nLast review:\n${lastReview.slice(0, 1500)}`,
+    );
+  }
 }
 
 /**
@@ -374,7 +390,7 @@ async function runSpecialist(
   };
 
   const out = await runRole(role, { workdir, repo, issueNumber: issue.number, task: tasks[role] });
-  recordRun(repo, issue.number, role, out.model, out.turns, "specialist");
+  recordRun(repo, issue.number, role, out.model, out.turns, "specialist", out.costUsd);
   await commentOnIssue(repo, issue.number, say(role, out.text));
   await removeLabel(repo, issue.number, IN_PROGRESS);
   await addLabel(repo, issue.number, READY);
@@ -405,7 +421,7 @@ export async function runPrFix(
       `Then address the review feedback below, commit, and push (this updates PR #${pr}). Keep the diff focused; ` +
       `only change what the feedback asks for.\n\n### PR conversation (latest comment is the request)\n${thread}`,
   });
-  recordRun(repo, issueNumber, "developer", dev.model, dev.turns, "pr-fix");
+  recordRun(repo, issueNumber, "developer", dev.model, dev.turns, "pr-fix", dev.costUsd);
 
   const test = await runRole("tester", {
     workdir,
@@ -413,7 +429,7 @@ export async function runPrFix(
     issueNumber: pr,
     task: `On branch \`${branch}\`, run the project's checks and report briefly (pass/fail + first error only).`,
   });
-  recordRun(repo, issueNumber, "tester", test.model, test.turns, "test");
+  recordRun(repo, issueNumber, "tester", test.model, test.turns, "test", test.costUsd);
   await commentOnPr(repo, pr, say("developer", `**Pushed fixes.**\n\n${test.text}`));
 }
 

@@ -31,11 +31,12 @@ const SHARED_CSS = `
 `;
 
 const SHARED_JS = `
-  var ICON={planner:"🧠",architect:"🏛",developer:"💻",reviewer:"🔍",tester:"🧪"};
+  var ICON={planner:"🧠",architect:"🏛",developer:"💻",reviewer:"🔍",tester:"🧪",librarian:"📚"};
   var STATE={"agency:in-progress":"#5c7cfa","agency:awaiting-approval":"#f59f00","agency:awaiting-answer":"#f59f00","agency:ready":"#37b24d","agency:needs-attention":"#e03131"};
   function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;"}[c];});}
   function ago(iso){var s=Math.max(0,(Date.now()-new Date(iso).getTime())/1000);if(s<60)return Math.floor(s)+"s ago";if(s<3600)return Math.floor(s/60)+"m ago";if(s<86400)return Math.floor(s/3600)+"h ago";return Math.floor(s/86400)+"d ago";}
-  function ilink(repo,n){return '<a href="https://github.com/'+esc(repo)+'/issues/'+n+'" target="_blank" rel="noopener">'+esc(repo)+' <b>#'+n+'</b></a>';}
+  function ilink(repo,n){if(!n)return '<a href="https://github.com/'+esc(repo)+'/pulls" target="_blank" rel="noopener">'+esc(repo)+'</a>';return '<a href="https://github.com/'+esc(repo)+'/issues/'+n+'" target="_blank" rel="noopener">'+esc(repo)+' <b>#'+n+'</b></a>';}
+  function spend(d){var s=d.spendToday;return (s&&s.costUsd>0)?' · today: $'+s.costUsd.toFixed(2)+' ('+s.runs+' runs)':'';}
   function badge(st){return '<span class="badge" style="background:'+(STATE[st]||"#868e96")+'">'+esc((st||"").replace("agency:",""))+'</span>';}
   function key(r,n){return r+"#"+n;}
   function lineHtml(a){var cls=a.kind==="tool"?"tool":(a.kind==="start"||a.kind==="done"?"muted":"");return '<div class="line '+cls+'">'+esc(a.text)+'</div>';}
@@ -66,7 +67,7 @@ export function renderDashboard(): string {
   function gid(k){return "c-"+k.replace(/[^a-zA-Z0-9]/g,"_");}
   function render(d){
     ACT=d.active||[]; activeKeys=new Set(ACT.map(function(a){return key(a.repo,a.number);}));
-    document.getElementById("repos").innerHTML="Watching "+(d.repos||[]).map(function(r){return "<code>"+esc(r)+"</code>";}).join(" ");
+    document.getElementById("repos").innerHTML="Watching "+(d.repos||[]).map(function(r){return "<code>"+esc(r)+"</code>";}).join(" ")+spend(d);
     renderNow(ACT);
     var cards=document.getElementById("cards");
     if(!ACT.length){cards.innerHTML='<div class="muted">Nothing running right now.</div>';}
@@ -115,7 +116,7 @@ export function renderHistory(): string {
       return '<details class="iss" '+(activeKeys.has(k)?"open":"")+'><summary>'+(ICON[last.role]||"•")+' <b>'+esc(last.role)+'</b> '+esc(k)+' <span class="muted">('+evs.length+' events)</span></summary><div class="lines">'+evs.slice(-60).map(lineHtml).join("")+'</div></details>';
     }).join(""):'<div class="muted">No activity yet.</div>';
     document.getElementById("runs").innerHTML=(d.runs||[]).length?(d.runs).map(function(r){
-      return '<tr><td>'+(ICON[r.role]||"")+" <b>"+esc(r.role)+'</b></td><td>'+ilink(r.repo,r.number)+'</td><td>'+esc(r.kind)+'</td><td class="muted">'+esc(r.model)+'</td><td>'+r.turns+' turns</td><td class="muted">'+ago(r.created_at)+'</td></tr>';
+      return '<tr><td>'+(ICON[r.role]||"")+" <b>"+esc(r.role)+'</b></td><td>'+ilink(r.repo,r.number)+'</td><td>'+esc(r.kind)+'</td><td class="muted">'+esc(r.model)+'</td><td>'+r.turns+' turns</td><td class="muted">'+(r.cost_usd>0?'$'+r.cost_usd.toFixed(2):'—')+'</td><td class="muted">'+ago(r.created_at)+'</td></tr>';
     }).join(""):'<tr><td class="muted">No runs yet.</td></tr>';
     document.getElementById("issues").innerHTML=(d.issues||[]).length?(d.issues).map(function(i){
       return '<tr><td>'+ilink(i.repo,i.number)+'</td><td>'+esc(i.title)+'</td><td>'+(i.role?(ICON[i.role]||"")+" "+esc(i.role):"")+'</td><td>'+badge(i.state)+'</td><td class="muted">'+ago(i.updated_at)+'</td><td><button class="arch" onclick="ax(\\''+esc(i.repo)+'\\','+i.number+')">archive</button></td></tr>';

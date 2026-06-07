@@ -68,6 +68,11 @@ export async function ensureAllRepoAccess(cfg: Config): Promise<void> {
     const note = await ensureRepoAccess(cfg, repo);
     if (note) console.log(`[agency] ${repo}:${note}`);
   }
+  // The agency's own repo too (collaborator only — needed for self-improvement PRs).
+  if (cfg.selfImprove && cfg.adminToken && !effectiveRepos(cfg).includes(cfg.agencyRepo)) {
+    const c = await ensureCollaborator(cfg.agencyRepo, cfg.adminToken, cfg.githubToken);
+    if (c === "added") console.log(`[agency] ${cfg.agencyRepo}: bot invited + accepted (self-improvement)`);
+  }
 }
 
 const MERGE_RE = /^\s*(\/merge|merge it|merge|ship it|🚀)\s*$/i;

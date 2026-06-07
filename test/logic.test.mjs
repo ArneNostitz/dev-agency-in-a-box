@@ -8,6 +8,8 @@ import { roleForText, loadHandleRoleMap, modelFor, ROLES, MODELS } from "../dist
 import { parsePlannerDecision, isApproval, parseSubIssues } from "../dist/pipeline.js";
 import { parseControlCommand } from "../dist/commands.js";
 import { dispatch, drain } from "../dist/pool.js";
+import { overBudget, loadBudget, UNLIMITED_LABEL } from "../dist/budget.js";
+import { parseLessons } from "../dist/reflect.js";
 
 test("mentionsHandle matches whole handles only", () => {
   const H = ["@dev", "@agency"];
@@ -102,6 +104,36 @@ test("pool dedups by key and runs each unit once", async () => {
   dispatch("k2", async () => { runs++; });
   await drain();
   assert.equal(runs, 2);
+});
+
+test("overBudget enforces cost + turn limits; 0 disables", () => {
+  const limits = { maxIssueCostUsd: 10, maxIssueTurns: 100, maxTurnsPerRun: 50 };
+  assert.equal(overBudget({ costUsd: 2, turns: 30 }, limits), null);
+  assert.ok(overBudget({ costUsd: 12, turns: 30 }, limits)); // over cost
+  assert.ok(overBudget({ costUsd: 2, turns: 150 }, limits)); // over turns
+  assert.equal(overBudget({ costUsd: 999, turns: 9999 }, { ...limits, maxIssueCostUsd: 0, maxIssueTurns: 0 }), null);
+  assert.equal(UNLIMITED_LABEL, "agency:unlimited");
+  // defaults load and are sane
+  const b = loadBudget();
+  assert.ok(b.maxTurnsPerRun > 0);
+});
+
+test("parseLessons reads the librarian's LESSONS/NOTHING reply", () => {
+  assert.deepEqual(parseLessons("NOTHING"), []);
+  assert.deepEqual(parseLessons("  nothing\n"), []);
+  const out = parseLessons("LESSONS:\n- repo uses pnpm, corepack enable first\n- tests need DATABASE_URL set");
+  assert.equal(out.length, 2);
+  assert.ok(out[0].includes("pnpm"));
+  // caps at 3
+  assert.equal(parseLessons("LESSONS:\n- a\n- b\n- c\n- d").length, 3);
+  // no marker -> nothing stored (be conservative)
+  assert.deepEqual(parseLessons("here are some thoughts..."), []);
+});
+
+test("librarian role exists: cheap model, read-only tools", () => {
+  assert.equal(ROLES.librarian.defaultModel, MODELS.haiku);
+  assert.ok(!ROLES.librarian.tools.includes("Bash"));
+  assert.ok(!ROLES.librarian.tools.includes("Write"));
 });
 
 test("parseControlCommand recognizes /add-repo and /list-repos", () => {

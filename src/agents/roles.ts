@@ -17,7 +17,7 @@ export const MODELS = {
   opus: "claude-opus-4-8",
 } as const;
 
-export type RoleName = "planner" | "architect" | "developer" | "reviewer" | "tester";
+export type RoleName = "planner" | "architect" | "developer" | "reviewer" | "tester" | "librarian";
 
 export interface RoleDef {
   name: RoleName;
@@ -87,6 +87,15 @@ export const ROLES: Record<RoleName, RoleDef> = {
     modelEnv: "TESTER_MODEL",
     tools: [...READ_TOOLS, "Bash"],
   },
+  librarian: {
+    name: "librarian",
+    personaFile: "librarian",
+    playbooks: [],
+    // Cheap reflection after each finished build: distill reusable lessons.
+    defaultModel: MODELS.haiku,
+    modelEnv: "LIBRARIAN_MODEL",
+    tools: READ_TOOLS,
+  },
 };
 
 /** Resolve the model for a role: per-role env override, else global AGENT_MODEL, else default. */
@@ -110,7 +119,8 @@ function isRole(s: string): s is RoleName {
     s === "architect" ||
     s === "developer" ||
     s === "reviewer" ||
-    s === "tester"
+    s === "tester" ||
+    s === "librarian"
   );
 }
 

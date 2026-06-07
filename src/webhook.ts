@@ -14,7 +14,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { Config } from "./config.js";
-import { recentRuns, recentIssues, recentActivity, archiveIssue } from "./store.js";
+import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince } from "./store.js";
 import { renderDashboard, renderHistory } from "./dashboard.js";
 import { subscribe, getActive } from "./activity.js";
 import { effectiveRepos } from "./commands.js";
@@ -127,6 +127,8 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll): Promise<v
       }
 
       if (url === "/data") {
+        const midnight = new Date();
+        midnight.setHours(0, 0, 0, 0);
         res.writeHead(200, { "content-type": "application/json" });
         res.end(
           JSON.stringify({
@@ -135,6 +137,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll): Promise<v
             issues: recentIssues(40),
             runs: recentRuns(40),
             activity: recentActivity(400),
+            spendToday: spendSince(midnight.toISOString()),
           }),
         );
         return;

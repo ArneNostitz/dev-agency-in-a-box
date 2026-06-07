@@ -29,9 +29,11 @@ import {
 } from "./github.js";
 import { loadHandleRoleMap, roleForText, type RoleName } from "./agents/roles.js";
 import { runPipeline, runPrFix } from "./pipeline.js";
-import { recordIssueState, getIssueRole, getAutofixCount, incAutofix, resetAutofix } from "./store.js";
+import { recordIssueState, getIssueRole, getAutofixCount, incAutofix, resetAutofix, issueSpend } from "./store.js";
 import { setActive, clearActive } from "./activity.js";
 import { dispatch, drain } from "./pool.js";
+import { loadBudget, overBudget, UNLIMITED_LABEL } from "./budget.js";
+import { maybeSelfImprove } from "./reflect.js";
 import {
   handleControlCommands,
   handleMergeCommands,
@@ -73,6 +75,24 @@ async function processIssue(cfg: Config, repo: string, issue: Issue): Promise<vo
     ? ((getIssueRole(repo, issue.number) as RoleName) ?? "developer")
     : roleForText(`${issue.title}\n${issue.body}`, loadHandleRoleMap()) ?? "developer";
   console.log(`[agency] ${repo} #${issue.number}: ${issue.title} -> role:${role}${resuming ? " (resume)" : ""}`);
+
+  // Budget gate: park runaway issues instead of silently burning more.
+  if (!issue.labels.includes(UNLIMITED_LABEL)) {
+    const reason = overBudget(issueSpend(repo, issue.number), loadBudget());
+    if (reason) {
+      await addLabel(repo, issue.number, "agency:needs-attention");
+      await commentOnIssue(
+        repo,
+        issue.number,
+        `⛔ **Budget exceeded** — this issue has ${reason} across all agent runs. ` +
+          `To continue anyway, add the \`${UNLIMITED_LABEL}\` label and remove \`agency:needs-attention\`, then re-pin. ` +
+          `Or split the work into smaller issues.`,
+      );
+      recordIssueState(repo, issue.number, { state: "agency:needs-attention" });
+      console.log(`[agency] ${repo} #${issue.number}: over budget (${reason}) — parked.`);
+      return;
+    }
+  }
 
   await addLabel(repo, issue.number, IN_PROGRESS);
   await removeLabel(repo, issue.number, cfg.queueLabel);
@@ -220,6 +240,8 @@ export async function processAllRepos(cfg: Config): Promise<number> {
       console.error(`[agency] scan error on ${repo} (continuing):`, (err as Error).message);
     }
   }
+  // Self-evolving loop: fold accumulated lessons into the playbooks via a draft PR.
+  maybeSelfImprove(cfg);
   return 0;
 }
 

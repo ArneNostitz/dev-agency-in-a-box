@@ -53,7 +53,18 @@ function getDb(): DatabaseSync | null {
         repo TEXT NOT NULL, pr INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (repo, pr)
       );
+      CREATE TABLE IF NOT EXISTS lessons (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        repo TEXT, number INTEGER, lesson TEXT NOT NULL,
+        processed INTEGER NOT NULL DEFAULT 0, created_at TEXT
+      );
     `);
+    // Migration for databases created before cost tracking (ALTER fails if it exists — fine).
+    try {
+      d.exec(`ALTER TABLE runs ADD COLUMN cost_usd REAL NOT NULL DEFAULT 0`);
+    } catch {
+      /* column already there */
+    }
     db = d;
     console.log(`[agency] memory: SQLite at ${path}`);
     return db;
@@ -118,16 +129,112 @@ export function recordRun(
   model: string,
   turns: number,
   kind: string,
+  costUsd = 0,
 ): void {
   const d = getDb();
   if (!d) return;
   try {
     d.prepare(
-      `INSERT INTO runs (repo, number, role, model, turns, kind, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).run(repo, number, role, model, turns, kind, now());
+      `INSERT INTO runs (repo, number, role, model, turns, kind, created_at, cost_usd)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(repo, number, role, model, turns, kind, now(), costUsd);
   } catch (err) {
     console.warn("[agency] memory write (run) failed:", (err as Error).message);
+  }
+}
+
+/** Total spend + turns for one issue (the per-issue budget gate). */
+export function issueSpend(repo: string, number: number): { costUsd: number; turns: number } {
+  const d = getDb();
+  if (!d) return { costUsd: 0, turns: 0 };
+  try {
+    const row = d
+      .prepare(
+        `SELECT COALESCE(SUM(cost_usd),0) AS cost, COALESCE(SUM(turns),0) AS turns
+         FROM runs WHERE repo = ? AND number = ?`,
+      )
+      .get(repo, number) as { cost?: number; turns?: number } | undefined;
+    return { costUsd: row?.cost ?? 0, turns: row?.turns ?? 0 };
+  } catch {
+    return { costUsd: 0, turns: 0 };
+  }
+}
+
+/** Spend since an ISO timestamp (for the dashboard's "today" figure). */
+export function spendSince(sinceIso: string): { costUsd: number; runs: number } {
+  const d = getDb();
+  if (!d) return { costUsd: 0, runs: 0 };
+  try {
+    const row = d
+      .prepare(`SELECT COALESCE(SUM(cost_usd),0) AS cost, COUNT(*) AS n FROM runs WHERE created_at >= ?`)
+      .get(sinceIso) as { cost?: number; n?: number } | undefined;
+    return { costUsd: row?.cost ?? 0, runs: row?.n ?? 0 };
+  } catch {
+    return { costUsd: 0, runs: 0 };
+  }
+}
+
+// ---- lessons (the reflection / self-improvement memory) ----
+
+export interface LessonRow {
+  id: number;
+  repo: string;
+  number: number;
+  lesson: string;
+  created_at: string;
+}
+
+/** Store one distilled lesson from a finished run. */
+export function recordLesson(repo: string, number: number, lesson: string): void {
+  const d = getDb();
+  if (!d) return;
+  try {
+    d.prepare(`INSERT INTO lessons (repo, number, lesson, created_at) VALUES (?, ?, ?, ?)`).run(
+      repo,
+      number,
+      lesson.slice(0, 600),
+      now(),
+    );
+  } catch {
+    /* best effort */
+  }
+}
+
+/** Latest lessons (any state) — injected into every agent's prompt as learned memory. */
+export function recentLessons(limit = 12): string[] {
+  const d = getDb();
+  if (!d) return [];
+  try {
+    const rows = d
+      .prepare(`SELECT lesson FROM lessons ORDER BY id DESC LIMIT ?`)
+      .all(limit) as unknown as Array<{ lesson: string }>;
+    return rows.map((r) => r.lesson).reverse();
+  } catch {
+    return [];
+  }
+}
+
+/** Lessons not yet folded into the playbooks (drives the self-improvement PR). */
+export function unprocessedLessons(): LessonRow[] {
+  const d = getDb();
+  if (!d) return [];
+  try {
+    return d
+      .prepare(`SELECT id, repo, number, lesson, created_at FROM lessons WHERE processed = 0 ORDER BY id`)
+      .all() as unknown as LessonRow[];
+  } catch {
+    return [];
+  }
+}
+
+export function markLessonsProcessed(ids: number[]): void {
+  const d = getDb();
+  if (!d || ids.length === 0) return;
+  try {
+    const stmt = d.prepare(`UPDATE lessons SET processed = 1 WHERE id = ?`);
+    for (const id of ids) stmt.run(id);
+  } catch {
+    /* best effort */
   }
 }
 
@@ -200,6 +307,7 @@ export interface RunRow {
   model: string;
   turns: number;
   kind: string;
+  cost_usd: number;
   created_at: string;
 }
 export interface IssueRow {
@@ -217,7 +325,7 @@ export function recentRuns(limit = 40): RunRow[] {
   if (!d) return [];
   try {
     return d
-      .prepare(`SELECT repo, number, role, model, turns, kind, created_at FROM runs ORDER BY id DESC LIMIT ?`)
+      .prepare(`SELECT repo, number, role, model, turns, kind, cost_usd, created_at FROM runs ORDER BY id DESC LIMIT ?`)
       .all(limit) as unknown as RunRow[];
   } catch {
     return [];

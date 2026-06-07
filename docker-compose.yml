@@ -46,6 +46,15 @@ services:
       # Per-role model overrides (defaults: planner=opus 4.8, dev/arch/review=sonnet, tester=haiku)
       PLANNER_MODEL: ${PLANNER_MODEL:-}
       AGENT_MODEL: ${AGENT_MODEL:-}
+
+      # Cost guardrails (per issue / per run; 0 disables)
+      MAX_ISSUE_COST_USD: ${MAX_ISSUE_COST_USD:-}
+      MAX_ISSUE_TURNS: ${MAX_ISSUE_TURNS:-}
+      MAX_TURNS_PER_RUN: ${MAX_TURNS_PER_RUN:-}
+      # Self-evolving loop (librarian lessons -> playbook PRs against AGENCY_REPO)
+      SELF_IMPROVE: ${SELF_IMPROVE:-}
+      LESSONS_PR_THRESHOLD: ${LESSONS_PR_THRESHOLD:-}
+      AGENCY_REPO: ${AGENCY_REPO:-}
       # SQLite memory lives on the mounted volume so it survives redeploys.
       DB_PATH: /app/data/agency.db
     volumes:

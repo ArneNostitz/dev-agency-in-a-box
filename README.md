@@ -1,183 +1,144 @@
-# Dev Agency
+# 🤖 Dev Agency
 
-A self-contained, self-evolving developer agency of AI agents, driven by GitHub issues.
-You file an issue, the agency does the work on a branch and opens a linked pull request,
-and you test it locally. Built on the [Claude Agent SDK](https://code.claude.com/docs/en/agent-sdk/overview).
+A fully autonomous team of AI agents you operate entirely through GitHub issues.
+You write an issue and pin a teammate; the agency plans, asks if it must, waits for your 👍,
+builds on a branch, tests, reviews, and hands you a draft PR. You test locally and say
+"ship it". It runs 24/7 on Coolify (Docker), reacts instantly to webhooks, heals its own
+PRs, learns from every run, and proposes improvements to its own playbooks as PRs.
 
-See [`../dev-agency-architecture.md`](../dev-agency-architecture.md) for the full design and roadmap.
+**Status: all phases live** — roster + orchestrator, SQLite memory, parallel workers,
+self-healing PRs, cost guardrails, and the self-evolving loop (librarian → playbook PRs).
+Full design: [`../dev-agency-architecture.md`](../dev-agency-architecture.md).
 
-## Status: Phase 2/3 — the full roster
+---
 
-Pin a teammate by mentioning its handle in an issue; the orchestrator runs the right
-specialists and drives the work to a reviewed PR:
+## Daily use (the only part you need)
 
-```
-@dev <task>  ->  Planner researches + recommends  ->  Architect drafts a technical plan
-             ->  posts the proposal, waits for your "ok"  (agency:awaiting-approval)
-   you: ok  ->  Developer implements  ->  Tester  ->  Reviewer (1 revise)  ->  draft PR  ->  agency:ready
-```
+### Start work
 
-It's a conversation, not a one-shot. The **Planner** (Opus 4.8, high effort) researches the
-repo and *proactively recommends* an approach; the **Architect** turns it into a concrete
-technical plan; the proposal is posted and the issue waits. Reply **ok** to build it, or reply
-with changes and it re-proposes. (It only asks up-front questions when genuinely blocked.)
+Write an issue in a watched repo and pin a teammate in the title or body:
 
-**Watch it work:** in webhook mode the agency serves a live dashboard at its public URL
-(`https://<your-domain>/`) with a **live thought-stream** (each agent's text + tool use,
-streamed over SSE as it happens), the issues in flight (with direct GitHub links), and recent
-agent runs (role, model, effort). Protect it with `DASHBOARD_PASSWORD` (Basic Auth; `/webhook`
-and `/health` stay open). The full conversation also lives on each GitHub issue.
+| Pin | Who answers | What happens |
+| --- | --- | --- |
+| `@dev` / `@agency` | Full pipeline | Planner (Opus) researches & proposes → you approve → Developer builds → Tester runs checks → Reviewer reviews → draft PR |
+| `@plan` | 🧠 Planner only | Research + plan, conversational — refine it by replying, then `@dev` to build |
+| `@arch` | 🏛 Architect | Technical plan, no code |
+| `@review` | 🔍 Reviewer | Reviews the issue's branch/diff |
+| `@test` | 🧪 Tester | Runs the project's checks and reports |
 
-**Redeploys are safe:** the data volume (SQLite memory + watch list) persists, and on startup
-the agency re-queues any issue a restart left mid-run (`recoverOrphans`), so nothing gets
-stranded.
+The agency reacts 👀 on your comment within seconds and comments 🏗️ when it picks the
+issue up. Small/obvious tasks skip the approval gate entirely (`PLAN AUTO`).
 
-Handles (config/team.txt): `@dev`/`@agency` (full pipeline), `@plan` (planner only),
-`@arch` (quick plan), `@review`, `@test`. Every agent obeys the **engineering harness**
-(`memory/central/playbooks/`) and has an editable persona (`memory/central/agents/`).
+### Approve, steer, merge
 
-**Memory:** a SQLite ledger (`node:sqlite`, no native build) records every issue, agent run
-(role/model/turns), and plan — the audit + recall layer. Lives on the Docker data volume.
+- **Approve a plan**: 👍 the proposal comment, or reply `ok` (also: `go`, `lgtm`, `yes`, `build it`…).
+- **Change a plan**: just reply with the change — the planner answers with the delta only.
+- **Answer questions**: reply normally; the pipeline resumes on its own.
+- **Merge**: comment `/merge` (or `merge`, `ship it`, 🚀) on an `agency:ready` issue —
+  squash-merges the PR, deletes the branch, closes the issue.
+- **Retrigger an issue**: remove its `agency:*` label — it's picked up again instantly.
+- **Mute an issue**: add the `agency:ignore` label.
 
-**Model policy** (cheapest that does the job, override per role with `*_MODEL`):
-planner = Opus 4.8, architect/developer/reviewer = Sonnet, tester = Haiku.
+### Work with PRs
 
-Companion repo: **`project-template`** — the atomic-design, themeable starting point the
-agents build from. Still to come: the SQLite + vector memory and the self-evolving loop.
+- **Request changes**: comment `@dev <what to change>` (or `@fix`) on the PR itself.
+- **Self-healing**: failing CI or merge conflicts are fixed automatically (max 2 attempts,
+  then it asks you for a hint).
+- **Test locally**: `./scripts/checkout-issue.sh <owner/repo> <issue-number>`
+  (or `git fetch origin && git checkout agency/issue-N`). PRs are draft on purpose —
+  you mark ready / just `/merge`.
 
-## Prerequisites
+### Manage repos from GitHub
 
-- **Node 20+**, **git**, and the **GitHub CLI (`gh`)** on your PATH (for local runs), or
-- **Docker Desktop** (for the containerized run).
-- An **Anthropic API key** and a **fine-grained GitHub token** (all-repos; Contents/Issues/PRs/Workflows = read & write).
+File an issue in any watched repo:
 
-## Setup
+- `/add-repo <name | owner/name>` — start watching a repo (bot is auto-invited, webhook auto-registered)
+- `/list-repos` — show what's watched
 
-```bash
-cd dev-agency
-cp .env.example .env      # then edit .env (GITHUB_TOKEN is always required)
-```
+### Labels = state machine
 
-`.env` is gitignored — your token never gets committed.
+`agency:in-progress` → working · `agency:awaiting-answer` / `agency:awaiting-approval` →
+waiting on you · `agency:ready` → PR is up · `agency:needs-attention` + 🚧 → blocked, read
+the last comment · `agency:ignore` → muted · `agency:unlimited` → exempt from budgets.
 
-### Authenticating the agent brains
+### Dashboard
 
-You can use either your **Claude subscription** or a **pay-as-you-go API key**:
+Your Coolify domain serves a password-protected live dashboard: **Working now** + a live
+stream card per active issue/PR (real commands and edits, not just tool names), **Waiting
+on you**, and today's spend. `/history` has the full firehose, every run with cost, and
+archive buttons.
 
-- **Subscription (recommended for local runs):** leave `ANTHROPIC_API_KEY` blank and log in once:
-  ```bash
-  npm install -g @anthropic-ai/claude-code
-  claude            # then type /login and pick your Claude plan
-  ```
-  The SDK reuses that login. Note: from June 15 2026, Agent SDK usage draws from a separate
-  monthly plan credit ($20 Pro / $100 Max 5× / $200 Max 20×), then pauses until refresh.
-- **API key:** set `ANTHROPIC_API_KEY` in `.env`. Pay-as-you-go, no monthly ceiling.
-- **Docker / headless subscription:** generate a token with `claude setup-token` and put it in
-  `.env` as `CLAUDE_CODE_OAUTH_TOKEN` (interactive `/login` won't work inside a container).
+---
 
-The runner prints which auth mode it's using on startup.
+## How it stays good and cheap
 
-## Run it (local)
+**Models** — cheapest that can do the job: Planner = Opus 4.8, Architect/Developer/Reviewer
+= Sonnet, Tester/Librarian = Haiku. Override per role (`PLANNER_MODEL`, …) or all at once
+(`AGENT_MODEL`).
 
-1. In your `sandbox-project` repo, open an issue describing a small change
-   (e.g. "Add a hello() function to a new file src/hello.js that returns 'hello world'").
-2. Add the label **`agency:queue`** to that issue.
-3. From this folder:
+**Cost guardrails** — every run's cost + turns land in the ledger. Per-issue budget
+(default $15 / 800 turns across all runs) parks runaways as `agency:needs-attention`
+instead of burning more; per-run `maxTurns` stops loops. Label an issue `agency:unlimited`
+to exempt it. Tune with `MAX_ISSUE_COST_USD`, `MAX_ISSUE_TURNS`, `MAX_TURNS_PER_RUN`.
 
-```bash
-./scripts/run-local.sh
-# or: npm install && npm run dev
-```
+**Self-evolving loop** — after each finished build a 📚 Librarian (Haiku) distills 0–3
+non-obvious lessons ("repo X needs pnpm", "tests want DATABASE_URL") into memory; recent
+lessons ride along in every agent's prompt immediately. Once ~8 pile up, the agency opens a
+**draft PR against this repo** folding them into the playbooks — you review and merge, Coolify
+redeploys, the agency is permanently smarter. Rule changes never happen silently.
+Disable with `SELF_IMPROVE=false`.
 
-4. Watch the logs. When it finishes, open the issue on GitHub — there'll be a comment and a
-   draft PR. To test locally:
+**Engineering harness** — every agent is bound by `memory/central/`: the CONSTITUTION plus
+playbooks (atomic design, separation of concerns, KISS, reuse-before-create, central theme,
+config-driven organisms, test & review standards). Edit the markdown, push, redeploy =
+new rules. New projects start from the
+[project-template](https://github.com/ArneNostitz/project-template).
 
-```bash
-git fetch origin && git checkout agency/issue-<N>
-# run / inspect the change
-```
+---
 
-## Deploy always-on (Coolify — recommended)
+## Setup (once)
 
-The recommended home for the agency is a container host running 24/7. On Coolify it
-runs as a single long-lived watcher (`RUN_MODE=watch`) that polls issues every minute.
-Full steps in **[COOLIFY.md](COOLIFY.md)** — connect the repo, set the env secrets, deploy.
+Runs on Coolify as a Docker Compose resource — step-by-step in **[COOLIFY.md](COOLIFY.md)**.
+The short version:
 
-Edit `memory/` and `git push` to update the agents' rules; with Coolify auto-deploy, the
-running agency updates itself on push.
+1. Create a Docker Compose resource from this repo; set the domain (container port 3000).
+2. Set env vars:
 
-## Run it (Docker, locally)
+| Variable | What |
+| --- | --- |
+| `CLAUDE_CODE_OAUTH_TOKEN` | from `claude setup-token` (subscription) — or `ANTHROPIC_API_KEY` |
+| `GITHUB_TOKEN` | the **bot account's classic** token (`repo` scope) — actions are attributed to the bot |
+| `ADMIN_GITHUB_TOKEN` | your owner token — only used to auto-invite the bot to repos |
+| `GITHUB_OWNER` | e.g. `ArneNostitz` |
+| `RUN_MODE` | `webhook` (instant; webhooks auto-register) |
+| `PUBLIC_URL` | e.g. `https://devagency.mynu.me` (no port) |
+| `GITHUB_WEBHOOK_SECRET` | long random **alphanumeric** string (no `$` — compose mangles it) |
+| `DASHBOARD_PASSWORD` | for the dashboard (alphanumeric) |
 
-```bash
-docker compose build
-# one-shot:
-docker compose run --rm -e RUN_MODE=once agency
-# or the long-running watcher:
-docker compose up
-```
+3. Deploy. Add repos with `/add-repo`, then pin `@dev` on an issue. That's it.
 
-## Run it always-on (macOS, e.g. a dedicated older Mac)
+Watched repos live in `config/repos.txt` (plus `/add-repo` additions in the DB volume);
+handles in `config/team.txt`. Local/macOS run: `scripts/setup-macos.sh`, `scripts/run-local.sh`.
 
-This turns a Mac into the agency's home: a launchd service checks for queued issues
-every minute and processes them. Heavy compute stays in the cloud (LLM inference +
-GitHub Actions CI), so even modest hardware is plenty.
+---
 
-```bash
-cd dev-agency
-claude            # type /login once to use your subscription (or set a token in .env)
-./scripts/setup-macos.sh
-```
-
-The script installs Node + gh (via Homebrew), builds, installs the background service,
-and disables sleep while on power. After that you only ever file issues — the Mac runs
-itself. Useful commands:
-
-```bash
-tail -f logs/agency.log                                   # watch it work
-launchctl unload ~/Library/LaunchAgents/com.devagency.runner.plist   # stop
-launchctl load   ~/Library/LaunchAgents/com.devagency.runner.plist   # start
-```
-
-### Cloud CI for projects
-
-Copy `templates/github-actions-ci.yml` into a target repo as `.github/workflows/ci.yml`
-so tests/builds run on GitHub's runners instead of the local Mac. With branch protection
-requiring that check, the agency physically can't merge red.
-
-### Issue labels (the state machine)
-
-`agency:queue` → you mark an issue ready for the agency.
-`agency:in-progress` → being worked on.
-`agency:ready` → PR opened, ready for your review.
-`agency:needs-attention` → stopped without a PR (needs clarification or hit a blocker).
-
-## How behavior is controlled
-
-Everything the agents may and may not do lives in **`memory/central/CONSTITUTION.md`**,
-which is loaded into every agent on every task. Edit that file (in prose) to change the
-rules — no code change, no restart. Detailed how-tos live in `memory/central/playbooks/`.
-
-## Layout
+## Under the hood
 
 ```
-dev-agency/
-├── src/
-│   ├── runner.ts        # Phase 1 loop: find issue -> clone -> run dev agent
-│   ├── config.ts        # env-based configuration
-│   ├── github.ts        # gh CLI wrappers
-│   ├── memory.ts        # loads Constitution + playbooks
-│   └── agents/dev.ts    # the Developer agent definition
-├── memory/
-│   └── central/
-│       ├── CONSTITUTION.md
-│       └── playbooks/git-workflow.md
-├── Dockerfile
-├── docker-compose.yml
-└── .env.example
+src/
+├── runner.ts      scan GitHub -> dispatch to a bounded worker pool (AGENCY_CONCURRENCY=3)
+├── pipeline.ts    plan -> approve -> build -> test -> review -> PR (+ reflection)
+├── agents/        roles (model + tools + persona), the Agent SDK runner
+├── reflect.ts     librarian lessons + self-improvement PRs
+├── budget.ts      cost guardrails
+├── github.ts      gh CLI wrappers, labels, reactions, webhooks, collaborator invites
+├── commands.ts    /add-repo, /merge, orphan recovery
+├── store.ts       SQLite ledger (issues, runs+cost, plans, lessons, activity)
+├── webhook.ts     event server + dashboard routes (+ safety poll)
+└── dashboard.ts   live status + /history
+memory/central/    CONSTITUTION, playbooks, personas  <- the agency's editable brain
 ```
 
-## Safety note
-
-Phase 1 runs the agent with `bypassPermissions` against a **throwaway sandbox repo**, so it
-can work without approval prompts. Before pointing the agency at real repositories we add the
-reviewer/tester gates, branch protection, and a tighter permission policy (see the architecture doc).
+Issues/PRs are worked **in parallel** (default 3 at once), each in its own clone. Agent
+runs use `bypassPermissions` inside the container (non-root), with the bot's git identity.
+`npm test` runs the unit suite.

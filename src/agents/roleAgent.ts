@@ -7,6 +7,8 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import { ROLES, modelFor, type RoleName } from "./roles.js";
 import { loadConstitution, loadPersona, loadPlaybooks } from "../memory.js";
 import { pushActivity } from "../activity.js";
+import { recentLessons } from "../store.js";
+import { loadBudget } from "../budget.js";
 
 /** A short, meaningful one-liner for a tool call (the command/file, not just the tool name). */
 function summarizeTool(name: string, input: Record<string, unknown> = {}): string {
@@ -62,6 +64,8 @@ export interface RoleRunResult {
   text: string;
   turns: number;
   model: string;
+  /** USD cost the SDK reported for this run (0 when not reported, e.g. subscription auth). */
+  costUsd: number;
 }
 
 async function buildSystemPrompt(role: RoleName): Promise<string> {
@@ -71,6 +75,7 @@ async function buildSystemPrompt(role: RoleName): Promise<string> {
     loadConstitution(),
     loadPlaybooks(def.playbooks),
   ]);
+  const lessons = recentLessons(12);
   return [
     "=== OUTPUT STYLE (strict) ===",
     "Be maximally terse — spend the fewest tokens that fully do the job. No preamble, no",
@@ -87,6 +92,9 @@ async function buildSystemPrompt(role: RoleName): Promise<string> {
     "",
     "=== PLAYBOOKS (how we build — binding) ===",
     playbooks,
+    ...(lessons.length
+      ? ["", "=== LESSONS (distilled from our past runs — apply them) ===", ...lessons.map((l) => `- ${l}`)]
+      : []),
   ].join("\n");
 }
 
@@ -97,6 +105,7 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
 
   let text = "";
   let turns = 0;
+  let costUsd = 0;
   let stderrBuf = "";
   const { repo, issueNumber } = input;
   console.log(`[agency] role:${role} ${repo}#${issueNumber} (model ${model})`);
@@ -113,6 +122,8 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
         // Fully autonomous. Requires the container to run as a NON-root user (Claude Code
         // refuses --dangerously-skip-permissions as root) — see Dockerfile `USER node`.
         permissionMode: "bypassPermissions",
+        // Per-run guardrail: a single agent can't loop forever.
+        maxTurns: loadBudget().maxTurnsPerRun,
         stderr: (data: string) => {
           stderrBuf += data;
         },
@@ -126,6 +137,8 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
       if ("result" in message && typeof (message as { result?: unknown }).result === "string") {
         text = (message as { result: string }).result;
       }
+      const cost = (message as { total_cost_usd?: unknown }).total_cost_usd;
+      if (typeof cost === "number" && Number.isFinite(cost)) costUsd = cost;
     }
   } catch (err) {
     const detail = stderrBuf.trim().split("\n").slice(-3).join(" ").slice(-400);
@@ -134,6 +147,6 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
     pushActivity(repo, issueNumber, role, "done", `❌ ERROR: ${msg.slice(0, 400)}`);
     throw new Error(msg);
   }
-  pushActivity(repo, issueNumber, role, "done", `finished (${turns} turns)`);
-  return { text, turns, model };
+  pushActivity(repo, issueNumber, role, "done", `finished (${turns} turns${costUsd ? `, $${costUsd.toFixed(2)}` : ""})`);
+  return { text, turns, model, costUsd };
 }

@@ -127,6 +127,10 @@ export interface Config {
   adminToken?: string;
   /** If set, the status dashboard requires this password (HTTP Basic Auth). */
   dashboardPassword?: string;
+  /** The agency's own repo (self-improvement PRs target it). */
+  agencyRepo: string;
+  /** Allow the agency to open playbook-improvement PRs against its own repo. */
+  selfImprove: boolean;
 }
 
 function parseRunMode(v: string | undefined): "once" | "watch" | "webhook" {
@@ -159,6 +163,8 @@ export function loadConfig(): Config {
     webhookSecret: process.env.GITHUB_WEBHOOK_SECRET?.trim() || undefined,
     adminToken: process.env.ADMIN_GITHUB_TOKEN?.trim() || undefined,
     dashboardPassword: process.env.DASHBOARD_PASSWORD?.trim() || undefined,
+    agencyRepo: resolveRepo(optional("AGENCY_REPO", "dev-agency"), owner),
+    selfImprove: bool("SELF_IMPROVE", true),
   };
 
   if (cfg.anthropicApiKey) {
