@@ -58,6 +58,7 @@ function readBody(req: IncomingMessage): Promise<Buffer> {
 // "unlabeled" lets you retrigger an issue instantly: remove its agency:* label and it
 // becomes actionable again (the @handle in the body re-pins it) — no need to rewrite anything.
 const RELEVANT_ACTIONS = new Set(["opened", "reopened", "labeled", "unlabeled", "edited"]);
+const PR_ACTIONS = new Set(["opened", "reopened", "synchronize", "ready_for_review", "edited"]);
 
 export async function runWebhook(cfg: Config, processAll: ProcessAll): Promise<void> {
   const port = Number(process.env.PORT?.trim() || "3000");
@@ -187,6 +188,14 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll): Promise<v
         // A new comment may be an answer/approval to resume a paused issue. (The agency's own
         // comments are ignored downstream — they don't count as a human reply.)
         void trigger("issue_comment");
+      } else if ((event === "check_suite" || event === "workflow_run") && action === "completed") {
+        // CI finished — react instantly to fix failures.
+        void trigger(`${event}.completed`);
+      } else if (event === "pull_request" && PR_ACTIONS.has(action)) {
+        void trigger(`pull_request.${action}`);
+      } else if (event === "push") {
+        // Base-branch (or any) push can create/clear merge conflicts.
+        void trigger("push");
       }
     });
   });

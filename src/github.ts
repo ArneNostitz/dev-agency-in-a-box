@@ -349,7 +349,9 @@ export async function ensureWebhook(
 ): Promise<"created" | "exists" | "failed"> {
   // Registering webhooks needs repo admin, so use the owner/admin token when provided.
   const run = (args: string[]) => (token ? ghAs(token, args) : gh(args));
-  const wantEvents = ["issues", "issue_comment"];
+  // issues/comments for pins+replies; check_suite/workflow_run for CI results; pull_request +
+  // push so PR updates and base-branch changes (conflicts) are reacted to instantly.
+  const wantEvents = ["issues", "issue_comment", "check_suite", "workflow_run", "pull_request", "push"];
   try {
     const json = await run(["api", `repos/${repo}/hooks`]).catch(() => "[]");
     const hooks = JSON.parse(json) as Array<{ id: number; config?: { url?: string }; events?: string[] }>;
