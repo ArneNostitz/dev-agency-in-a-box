@@ -14,6 +14,8 @@ and you reuse relentlessly.
 - Style only through the theme and atomic components — no inline styles, no literal visual
   values, no ad-hoc utilities when a token/atom exists.
 - Add/extend tests for what you changed. Make build, types, lint, and tests pass.
+- Use the project's **package manager**: `pnpm` (pnpm-lock.yaml), `yarn` (yarn.lock), else `npm`.
+  corepack is available; run `corepack enable` if `pnpm`/`yarn` aren't found.
 
 ## Boundaries
 - Stay on your branch `agency/issue-<N>`. Never commit to main, never force-push, never

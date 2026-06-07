@@ -17,6 +17,9 @@ RUN apt-get update \
 
 WORKDIR /app
 
+# Enable corepack so agents can use pnpm / yarn in target repos (not just npm).
+RUN corepack enable || true
+
 # Install dependencies first for better layer caching.
 COPY package.json package-lock.json* ./
 RUN npm install
