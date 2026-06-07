@@ -25,10 +25,18 @@ export function renderDashboard(): string {
   .badge{color:#fff;padding:2px 8px;border-radius:10px;font-size:12px}
   .arch{cursor:pointer;color:#5b6470;font-size:12px;border:none;background:none}
   .arch:hover{color:#e03131}
+  .nowbar{border-radius:8px;padding:12px 16px;margin:12px 0 4px;font-size:15px}
+  .nowbar.active{background:#10261a;border:1px solid #2b8a3e}
+  .nowbar.idle{background:#1d2026;border:1px solid #2c313a;color:#9aa4b2;font-size:13px}
+  .pulse{display:inline-block;width:10px;height:10px;border-radius:50%;background:#37b24d;margin-right:8px;vertical-align:middle;animation:pulse 1.2s infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(55,178,77,.6)}70%{box-shadow:0 0 0 8px rgba(55,178,77,0)}100%{box-shadow:0 0 0 0 rgba(55,178,77,0)}}
+  tr.activerow{background:#10261a}
   .foot{margin-top:24px;color:#5b6470;font-size:12px}
 </style></head><body>
   <h1>🤖 Dev Agency — live status</h1>
   <div class="repos" id="repos">…</div>
+
+  <div id="now" class="nowbar idle">…</div>
 
   <h2><span class="dot" id="live"></span>Agent thought-stream</h2>
   <div id="stream"><div class="muted">Loading…</div></div>
@@ -53,13 +61,22 @@ export function renderDashboard(): string {
   function ago(iso){var s=Math.max(0,(Date.now()-new Date(iso).getTime())/1000);if(s<60)return Math.floor(s)+"s ago";if(s<3600)return Math.floor(s/60)+"m ago";if(s<86400)return Math.floor(s/3600)+"h ago";return Math.floor(s/86400)+"d ago";}
   function ilink(repo,n){return '<a href="https://github.com/'+esc(repo)+'/issues/'+n+'" target="_blank" rel="noopener">'+esc(repo)+' <b>#'+n+'</b></a>';}
   function badge(st){return '<span class="badge" style="background:'+(STATE[st]||"#868e96")+'">'+esc((st||"").replace("agency:",""))+'</span>';}
+  var ACT=null;
+  function isActive(i){ return ACT && ACT.repo===i.repo && ACT.number===i.number; }
   function issueRow(i){
-    return '<tr><td>'+ilink(i.repo,i.number)+'</td><td>'+esc(i.title)+'</td>'+
+    return '<tr class="'+(isActive(i)?"activerow":"")+'"><td>'+(isActive(i)?"▶ ":"")+ilink(i.repo,i.number)+'</td><td>'+esc(i.title)+'</td>'+
       '<td>'+(i.role?(ICON[i.role]||"")+" "+esc(i.role):"")+'</td><td>'+badge(i.state)+'</td>'+
       '<td class="muted">'+ago(i.updated_at)+'</td>'+
       '<td><button class="arch" onclick="agencyArchive(\\''+esc(i.repo)+'\\','+i.number+')">archive</button></td></tr>';
   }
+  function renderNow(a){
+    var now=document.getElementById("now");
+    if(a){ now.className="nowbar active";
+      now.innerHTML='<span class="pulse"></span><b>Working now</b> — '+(ICON[a.role]||"")+" <b>"+esc(a.role)+'</b> on '+ilink(a.repo,a.number)+' <span class="muted">('+esc(a.kind)+', '+ago(new Date(a.since).toISOString())+')</span>';
+    } else { now.className="nowbar idle"; now.innerHTML='● Idle — nothing running. Waiting for work or your reply.'; }
+  }
   function renderTables(d){
+    ACT=d.active||null; renderNow(ACT);
     document.getElementById("repos").innerHTML="Watching: "+(d.repos||[]).map(function(r){return "<code>"+esc(r)+"</code>";}).join(" ");
     var active=[],done=[];
     (d.issues||[]).forEach(function(i){ (ACTIVE[i.state]?active:done).push(i); });
@@ -99,7 +116,7 @@ export function renderDashboard(): string {
   }).catch(function(){}); }
   load(); setInterval(load, 12000);
   try{ var es=new EventSource("/events");
-    es.onmessage=function(ev){ try{ appendLine(JSON.parse(ev.data)); }catch(e){} };
+    es.onmessage=function(ev){ try{ var a=JSON.parse(ev.data); appendLine(a); if(a.kind!=="done"&&a.number) renderNow({repo:a.repo,number:a.number,role:a.role,kind:"issue",since:Date.now()}); }catch(e){} };
     es.onerror=function(){ document.getElementById("live").style.background="#e03131"; };
   }catch(e){}
 })();

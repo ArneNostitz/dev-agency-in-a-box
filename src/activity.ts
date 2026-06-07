@@ -20,11 +20,34 @@ export function setActivityContext(repo: string, number: number): void {
   context = { repo, number };
 }
 
+// The single unit of work currently running (processing is serial → one at a time, or none).
+export interface ActiveWork {
+  repo: string;
+  number: number;
+  kind: "issue" | "pr";
+  role: string;
+  since: number;
+}
+let active: ActiveWork | null = null;
+export function setActive(repo: string, number: number, kind: "issue" | "pr", role: string): void {
+  active = { repo, number, kind, role, since: Date.now() };
+}
+export function updateActiveRole(role: string): void {
+  if (active) active.role = role;
+}
+export function clearActive(): void {
+  active = null;
+}
+export function getActive(): ActiveWork | null {
+  return active;
+}
+
 const buffer: ActivityEvent[] = [];
 const MAX = 200;
 const subscribers = new Set<(e: ActivityEvent) => void>();
 
 export function pushActivity(role: string, kind: ActivityEvent["kind"], text: string): void {
+  if (kind === "start") updateActiveRole(role); // reflect the current role in "working now"
   const event: ActivityEvent = { ts: Date.now(), repo: context.repo, number: context.number, role, kind, text };
   buffer.push(event);
   if (buffer.length > MAX) buffer.shift();

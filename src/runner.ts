@@ -32,6 +32,7 @@ import {
 import { loadHandleRoleMap, roleForText, type RoleName } from "./agents/roles.js";
 import { runPipeline, runPrFix } from "./pipeline.js";
 import { recordIssueState, getIssueRole, getAutofixCount, incAutofix, resetAutofix } from "./store.js";
+import { setActive, clearActive } from "./activity.js";
 import {
   handleControlCommands,
   handleMergeCommands,
@@ -112,6 +113,7 @@ async function processOneIssue(cfg: Config, repo: string): Promise<boolean> {
   await cloneRepo(repo, workdir);
 
   // The orchestrator runs the right specialists and finalizes the issue.
+  setActive(repo, issue.number, "issue", role);
   try {
     await runPipeline(cfg, repo, issue, role, workdir, thread);
   } catch (err) {
@@ -123,6 +125,8 @@ async function processOneIssue(cfg: Config, repo: string): Promise<boolean> {
     await commentOnIssue(repo, issue.number, `❌ Run failed: ${msg.slice(0, 300)} — fix and re-pin.`).catch(
       () => {},
     );
+  } finally {
+    clearActive();
   }
   return true;
 }
@@ -140,10 +144,15 @@ async function processPrFeedback(cfg: Config, repo: string): Promise<void> {
     console.log(`[agency] PR feedback ${repo} PR#${pr.number} (issue #${pr.issueNumber}) -> developer fix`);
     await reactToIssue(repo, pr.number, "eyes");
     await cloneRepo(repo, workdir);
+    setActive(repo, pr.number, "pr", "developer");
     try {
       await runPrFix(repo, pr.issueNumber, pr.number, pr.branch, workdir, thread);
     } catch (err) {
-      console.error(`[agency] pr-fix error ${repo} PR#${pr.number}:`, (err as Error).message);
+      const msg = (err as Error).message ?? String(err);
+      console.error(`[agency] pr-fix error ${repo} PR#${pr.number}:`, msg);
+      await commentOnPr(repo, pr.number, `❌ Couldn't apply the fix: ${msg.slice(0, 300)}`).catch(() => {});
+    } finally {
+      clearActive();
     }
   }
 }
@@ -188,10 +197,15 @@ async function processUnhealthyPrs(repo: string): Promise<void> {
     console.log(`[agency] auto-heal ${repo} PR#${pr.number}: ${health.detail} (attempt ${attempts + 1})`);
     await reactToIssue(repo, pr.number, "eyes");
     await cloneRepo(repo, workdir);
+    setActive(repo, pr.number, "pr", "developer");
     try {
       await runPrFix(repo, pr.issueNumber, pr.number, pr.branch, workdir, instruction);
     } catch (err) {
-      console.error(`[agency] auto-heal error ${repo} PR#${pr.number}:`, (err as Error).message);
+      const msg = (err as Error).message ?? String(err);
+      console.error(`[agency] auto-heal error ${repo} PR#${pr.number}:`, msg);
+      await commentOnPr(repo, pr.number, `❌ Auto-heal failed: ${msg.slice(0, 300)}`).catch(() => {});
+    } finally {
+      clearActive();
     }
   }
 }
