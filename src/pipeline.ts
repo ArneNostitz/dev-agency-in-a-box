@@ -394,10 +394,12 @@ export async function runPrFix(
   workdir: string,
   thread: string,
 ): Promise<void> {
+  // Stream activity under the PR number — it must match setActive's key, otherwise the
+  // dashboard's live card for this PR stays empty.
   const dev = await runRole("developer", {
     workdir,
     repo,
-    issueNumber: issueNumber,
+    issueNumber: pr,
     task:
       `Update the existing pull request. First run \`git fetch origin ${branch} && git checkout ${branch}\`. ` +
       `Then address the review feedback below, commit, and push (this updates PR #${pr}). Keep the diff focused; ` +
@@ -408,7 +410,7 @@ export async function runPrFix(
   const test = await runRole("tester", {
     workdir,
     repo,
-    issueNumber: issueNumber,
+    issueNumber: pr,
     task: `On branch \`${branch}\`, run the project's checks and report briefly (pass/fail + first error only).`,
   });
   recordRun(repo, issueNumber, "tester", test.model, test.turns, "test");

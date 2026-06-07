@@ -61,7 +61,7 @@ export function renderDashboard(): string {
   var ACT=[], activeKeys=new Set();
   function renderNow(list){var now=document.getElementById("now");
     if(list&&list.length){now.className="nowbar active";
-      now.innerHTML='<span class="pulse"></span><b>Working now ('+list.length+')</b><br>'+list.map(function(a){return (ICON[a.role]||"")+' <b>'+esc(a.role)+'</b> on '+ilink(a.repo,a.number)+' <span class="muted">('+esc(a.kind)+', '+ago(new Date(a.since).toISOString())+')</span>';}).join("<br>");
+      now.innerHTML='<span class="pulse"></span><b>Working now ('+list.length+')</b><br>'+list.map(function(a){return (ICON[a.role]||"")+' <b>'+esc(a.role)+'</b> on '+ilink(a.repo,a.number)+(a.title?' — '+esc(a.title):'')+' <span class="muted">('+esc(a.kind)+', '+ago(new Date(a.since).toISOString())+')</span>';}).join("<br>");
     }else{now.className="nowbar idle";now.innerHTML='● Idle — nothing running. Waiting for work or your reply.';}}
   function gid(k){return "c-"+k.replace(/[^a-zA-Z0-9]/g,"_");}
   function render(d){
@@ -71,8 +71,9 @@ export function renderDashboard(): string {
     var cards=document.getElementById("cards");
     if(!ACT.length){cards.innerHTML='<div class="muted">Nothing running right now.</div>';}
     else{cards.innerHTML=ACT.map(function(a){var k=key(a.repo,a.number);
-      var evs=(d.activity||[]).filter(function(x){return key(x.repo,x.number)===k;}).slice(-30);
-      return '<div class="card" id="'+gid(k)+'"><div class="cardhead">'+(ICON[a.role]||"")+' <b>'+esc(a.role)+'</b> · '+ilink(a.repo,a.number)+' <span class="muted">('+esc(a.kind)+')</span></div><div class="lines">'+evs.map(lineHtml).join("")+'</div></div>';
+      var evs=(d.activity||[]).filter(function(x){return key(x.repo,x.number)===k;}).slice(-40);
+      var body=evs.length?evs.map(lineHtml).join(""):'<div class="line muted">Warming up — first agent turn can take a minute…</div>';
+      return '<div class="card" id="'+gid(k)+'"><div class="cardhead">'+(ICON[a.role]||"")+' <b>'+esc(a.role)+'</b> · '+ilink(a.repo,a.number)+(a.title?' — '+esc(a.title):'')+' <span class="muted">('+esc(a.kind)+')</span></div><div class="lines">'+body+'</div></div>';
     }).join("");
       ACT.forEach(function(a){var el=document.getElementById(gid(key(a.repo,a.number)));if(el){var l=el.querySelector(".lines");l.scrollTop=l.scrollHeight;}});}
     var waiting=(d.issues||[]).filter(function(i){return i.state==="agency:awaiting-approval"||i.state==="agency:awaiting-answer";});

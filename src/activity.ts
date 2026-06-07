@@ -20,12 +20,13 @@ export interface ActiveWork {
   number: number;
   kind: "issue" | "pr";
   role: string;
+  title: string;
   since: number;
 }
 const akey = (repo: string, number: number) => `${repo}#${number}`;
 const active = new Map<string, ActiveWork>();
-export function setActive(repo: string, number: number, kind: "issue" | "pr", role: string): void {
-  active.set(akey(repo, number), { repo, number, kind, role, since: Date.now() });
+export function setActive(repo: string, number: number, kind: "issue" | "pr", role: string, title = ""): void {
+  active.set(akey(repo, number), { repo, number, kind, role, title, since: Date.now() });
 }
 export function updateActiveRole(repo: string, number: number, role: string): void {
   const a = active.get(akey(repo, number));

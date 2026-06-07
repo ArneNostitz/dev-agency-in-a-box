@@ -134,7 +134,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll): Promise<v
             active: getActive(),
             issues: recentIssues(40),
             runs: recentRuns(40),
-            activity: recentActivity(120),
+            activity: recentActivity(400),
           }),
         );
         return;

@@ -265,14 +265,19 @@ export async function createIssue(
 /** Open PRs whose head is an agency branch (agency/issue-N). */
 export async function listAgencyPrs(
   repo: string,
-): Promise<Array<{ number: number; branch: string; issueNumber: number }>> {
+): Promise<Array<{ number: number; title: string; branch: string; issueNumber: number }>> {
   const out = await gh([
-    "pr", "list", "--repo", repo, "--state", "open", "--json", "number,headRefName", "--limit", "50",
+    "pr", "list", "--repo", repo, "--state", "open", "--json", "number,title,headRefName", "--limit", "50",
   ]).catch(() => "[]");
-  const arr = JSON.parse(out) as Array<{ number: number; headRefName: string }>;
+  const arr = JSON.parse(out) as Array<{ number: number; title: string; headRefName: string }>;
   return arr
     .filter((p) => /^agency\/issue-\d+$/.test(p.headRefName))
-    .map((p) => ({ number: p.number, branch: p.headRefName, issueNumber: Number(p.headRefName.split("-").pop()) }));
+    .map((p) => ({
+      number: p.number,
+      title: p.title,
+      branch: p.headRefName,
+      issueNumber: Number(p.headRefName.split("-").pop()),
+    }));
 }
 
 /** Health of an agency PR: merge conflicts and CI checks. */

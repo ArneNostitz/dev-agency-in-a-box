@@ -89,7 +89,7 @@ async function processIssue(cfg: Config, repo: string, issue: Issue): Promise<vo
   await mkdir(join(workdir, ".."), { recursive: true });
   await cloneRepo(repo, workdir);
 
-  setActive(repo, issue.number, "issue", role);
+  setActive(repo, issue.number, "issue", role, issue.title);
   try {
     await runPipeline(cfg, repo, issue, role, workdir, thread);
   } catch (err) {
@@ -105,13 +105,17 @@ async function processIssue(cfg: Config, repo: string, issue: Issue): Promise<vo
 }
 
 /** Apply review feedback (@dev/@fix) left on a PR. */
-async function processPrFeedbackOne(repo: string, pr: { number: number; branch: string; issueNumber: number }, thread: string): Promise<void> {
+async function processPrFeedbackOne(
+  repo: string,
+  pr: { number: number; title: string; branch: string; issueNumber: number },
+  thread: string,
+): Promise<void> {
   await acknowledge(repo, pr.number);
   const workdir = workdirFor(repo, `pr-${pr.number}`);
   await rm(workdir, { recursive: true, force: true });
   await mkdir(join(workdir, ".."), { recursive: true });
   await cloneRepo(repo, workdir);
-  setActive(repo, pr.number, "pr", "developer");
+  setActive(repo, pr.number, "pr", "developer", pr.title);
   try {
     await runPrFix(repo, pr.issueNumber, pr.number, pr.branch, workdir, thread);
   } catch (err) {
@@ -124,7 +128,10 @@ async function processPrFeedbackOne(repo: string, pr: { number: number; branch: 
 }
 
 /** Self-heal one PR (merge conflict / failing CI), bounded by MAX_AUTOFIX. */
-async function processHealOne(repo: string, pr: { number: number; branch: string; issueNumber: number }): Promise<void> {
+async function processHealOne(
+  repo: string,
+  pr: { number: number; title: string; branch: string; issueNumber: number },
+): Promise<void> {
   const health = await prHealth(repo, pr.number);
   if (health.status === "ok") {
     resetAutofix(repo, pr.number);
@@ -156,7 +163,7 @@ async function processHealOne(repo: string, pr: { number: number; branch: string
   await rm(workdir, { recursive: true, force: true });
   await mkdir(join(workdir, ".."), { recursive: true });
   await cloneRepo(repo, workdir);
-  setActive(repo, pr.number, "pr", "developer");
+  setActive(repo, pr.number, "pr", "developer", pr.title);
   try {
     await runPrFix(repo, pr.issueNumber, pr.number, pr.branch, workdir, instruction);
   } catch (err) {
