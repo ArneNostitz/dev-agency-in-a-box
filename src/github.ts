@@ -193,6 +193,30 @@ export async function reactToIssue(repo: string, issue: number, content: string)
   );
 }
 
+/**
+ * Acknowledge a request with 👀 — on the latest HUMAN comment if there is one (so it's clear
+ * which comment was seen), otherwise on the issue/PR itself.
+ */
+export async function acknowledge(repo: string, number: number): Promise<void> {
+  const out = await gh([
+    "api", `repos/${repo}/issues/${number}/comments`, "--paginate", "--jq", "[.[]|{id,body}]",
+  ]).catch(() => "[]");
+  try {
+    const arr = JSON.parse(out) as Array<{ id: number; body: string }>;
+    for (let i = arr.length - 1; i >= 0; i--) {
+      if (!arr[i].body.includes(AGENCY_MARKER)) {
+        await gh([
+          "api", "-X", "POST", `repos/${repo}/issues/comments/${arr[i].id}/reactions`, "-f", "content=eyes",
+        ]).catch(() => {});
+        return;
+      }
+    }
+  } catch {
+    /* fall through */
+  }
+  await reactToIssue(repo, number, "eyes");
+}
+
 /** True if the latest agency comment on the issue has a 👍 reaction (approval by emoji). */
 export async function approvedByReaction(repo: string, issue: number): Promise<boolean> {
   const out = await gh([

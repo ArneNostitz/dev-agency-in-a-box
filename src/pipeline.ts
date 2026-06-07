@@ -24,7 +24,6 @@ import {
 import { runRole } from "./agents/roleAgent.js";
 import type { RoleName } from "./agents/roles.js";
 import { recordRun, recordPlan, lastPlan, recordIssueState } from "./store.js";
-import { setActivityContext } from "./activity.js";
 
 const IN_PROGRESS = "agency:in-progress";
 const READY = "agency:ready";
@@ -70,6 +69,8 @@ async function plan(repo: string, issue: Issue, workdir: string, thread: string)
   const prior = lastPlan(repo, issue.number);
   const res = await runRole("planner", {
     workdir,
+    repo,
+    issueNumber: issue.number,
     task: [
       `Plan the work for this issue. Inspect the repository and project memory first.`,
       ``,
@@ -193,6 +194,8 @@ async function build(
 
   const dev = await runRole("developer", {
     workdir,
+    repo,
+    issueNumber: issue.number,
     task:
       `Implement this issue on a new branch \`${branch}\` off an up-to-date main, following the approved plan ` +
       `and the harness. Reuse existing code; keep the change small. Add/extend tests. Commit, push, and ` +
@@ -204,6 +207,8 @@ async function build(
 
   const test = await runRole("tester", {
     workdir,
+    repo,
+    issueNumber: issue.number,
     task:
       `You are in the repository on branch \`${branch}\`. Run the project's checks (install if needed, then ` +
       `typecheck, lint, test, build via \`npm run --if-present <script>\` or documented commands). ` +
@@ -215,6 +220,8 @@ async function build(
   for (let round = 0; ; round++) {
     const review = await runRole("reviewer", {
       workdir,
+      repo,
+      issueNumber: issue.number,
       task:
         `Review the changes on branch \`${branch}\` for issue #${issue.number} against the harness. ` +
         `Inspect the diff vs main (e.g. \`git diff main...HEAD\`). ` +
@@ -228,6 +235,8 @@ async function build(
 
     const revise = await runRole("developer", {
       workdir,
+      repo,
+      issueNumber: issue.number,
       task:
         `The reviewer requested changes on branch \`${branch}\`. Address each point, commit, and push. ` +
         `Keep the diff focused.\n\n### Review\n${review.text}`,
@@ -286,6 +295,8 @@ async function runDeveloperPipeline(
   // 2. Architect — turn the recommendation into a concrete technical plan.
   const arch = await runRole("architect", {
     workdir,
+    repo,
+    issueNumber: issue.number,
     task:
       `Turn this recommended approach into a concrete technical plan for the repo. List the files to add/` +
       `change grouped by world (UI / logic / infrastructure), the existing pieces to reuse, and any key ` +
@@ -362,7 +373,7 @@ async function runSpecialist(
       `exists, test that; otherwise the default branch.\n\n${issueHeader(issue)}`,
   };
 
-  const out = await runRole(role, { workdir, task: tasks[role] });
+  const out = await runRole(role, { workdir, repo, issueNumber: issue.number, task: tasks[role] });
   recordRun(repo, issue.number, role, out.model, out.turns, "specialist");
   await commentOnIssue(repo, issue.number, say(role, out.text));
   await removeLabel(repo, issue.number, IN_PROGRESS);
@@ -383,9 +394,10 @@ export async function runPrFix(
   workdir: string,
   thread: string,
 ): Promise<void> {
-  setActivityContext(repo, issueNumber);
   const dev = await runRole("developer", {
     workdir,
+    repo,
+    issueNumber: issueNumber,
     task:
       `Update the existing pull request. First run \`git fetch origin ${branch} && git checkout ${branch}\`. ` +
       `Then address the review feedback below, commit, and push (this updates PR #${pr}). Keep the diff focused; ` +
@@ -395,6 +407,8 @@ export async function runPrFix(
 
   const test = await runRole("tester", {
     workdir,
+    repo,
+    issueNumber: issueNumber,
     task: `On branch \`${branch}\`, run the project's checks and report briefly (pass/fail + first error only).`,
   });
   recordRun(repo, issueNumber, "tester", test.model, test.turns, "test");
@@ -409,7 +423,6 @@ export async function runPipeline(
   workdir: string,
   thread: string,
 ): Promise<void> {
-  setActivityContext(repo, issue.number);
   if (role === "developer") {
     await runDeveloperPipeline(repo, issue, workdir, thread);
   } else {

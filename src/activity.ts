@@ -1,7 +1,7 @@
 /**
  * In-process activity bus: agents emit their streamed thoughts + tool uses here as they
- * work. The dashboard reads recent activity (persisted in SQLite) and subscribes for a
- * live feed over SSE — so you can watch the agents think, like a chat.
+ * work. The dashboard reads recent activity (persisted in SQLite) and subscribes for a live
+ * feed over SSE. Everything is keyed by repo+issue so it's correct under parallel runs.
  */
 import { recordActivity } from "./store.js";
 
@@ -14,13 +14,7 @@ export interface ActivityEvent {
   text: string;
 }
 
-// Which issue the running agent is working on (set by the pipeline before each role runs).
-let context = { repo: "", number: 0 };
-export function setActivityContext(repo: string, number: number): void {
-  context = { repo, number };
-}
-
-// The single unit of work currently running (processing is serial → one at a time, or none).
+// Units of work currently running (concurrent → can be several at once).
 export interface ActiveWork {
   repo: string;
   number: number;
@@ -28,30 +22,38 @@ export interface ActiveWork {
   role: string;
   since: number;
 }
-let active: ActiveWork | null = null;
+const akey = (repo: string, number: number) => `${repo}#${number}`;
+const active = new Map<string, ActiveWork>();
 export function setActive(repo: string, number: number, kind: "issue" | "pr", role: string): void {
-  active = { repo, number, kind, role, since: Date.now() };
+  active.set(akey(repo, number), { repo, number, kind, role, since: Date.now() });
 }
-export function updateActiveRole(role: string): void {
-  if (active) active.role = role;
+export function updateActiveRole(repo: string, number: number, role: string): void {
+  const a = active.get(akey(repo, number));
+  if (a) a.role = role;
 }
-export function clearActive(): void {
-  active = null;
+export function clearActive(repo: string, number: number): void {
+  active.delete(akey(repo, number));
 }
-export function getActive(): ActiveWork | null {
-  return active;
+export function getActive(): ActiveWork[] {
+  return [...active.values()].sort((a, b) => a.since - b.since);
 }
 
 const buffer: ActivityEvent[] = [];
-const MAX = 200;
+const MAX = 300;
 const subscribers = new Set<(e: ActivityEvent) => void>();
 
-export function pushActivity(role: string, kind: ActivityEvent["kind"], text: string): void {
-  if (kind === "start") updateActiveRole(role); // reflect the current role in "working now"
-  const event: ActivityEvent = { ts: Date.now(), repo: context.repo, number: context.number, role, kind, text };
+export function pushActivity(
+  repo: string,
+  number: number,
+  role: string,
+  kind: ActivityEvent["kind"],
+  text: string,
+): void {
+  if (kind === "start") updateActiveRole(repo, number, role);
+  const event: ActivityEvent = { ts: Date.now(), repo, number, role, kind, text };
   buffer.push(event);
   if (buffer.length > MAX) buffer.shift();
-  recordActivity(event.repo, event.number, role, kind, text);
+  recordActivity(repo, number, role, kind, text);
   for (const fn of subscribers) {
     try {
       fn(event);

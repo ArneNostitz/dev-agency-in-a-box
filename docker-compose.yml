@@ -10,6 +10,8 @@ services:
       # Trigger style: "watch" polls; "webhook" reacts instantly (set up a GitHub webhook).
       RUN_MODE: ${RUN_MODE:-watch}
       POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-60}
+      # How many issues/PRs to work on in parallel.
+      AGENCY_CONCURRENCY: ${AGENCY_CONCURRENCY:-3}
       GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
       # Public URL of this service (Coolify domain). Set it + the secret and webhook mode
       # auto-registers the GitHub webhooks for you.

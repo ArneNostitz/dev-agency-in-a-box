@@ -7,6 +7,7 @@ import { mentionsHandle, AGENCY_MARKER } from "../dist/github.js";
 import { roleForText, loadHandleRoleMap, modelFor, ROLES, MODELS } from "../dist/agents/roles.js";
 import { parsePlannerDecision, isApproval, parseSubIssues } from "../dist/pipeline.js";
 import { parseControlCommand } from "../dist/commands.js";
+import { dispatch, drain } from "../dist/pool.js";
 
 test("mentionsHandle matches whole handles only", () => {
   const H = ["@dev", "@agency"];
@@ -92,6 +93,15 @@ test("parseSubIssues reads a SUB-ISSUES breakdown", () => {
   assert.equal(subs[0].title, "ScheduleEditor atoms");
   assert.ok(subs[0].body.includes("@dev"));
   assert.deepEqual(parseSubIssues("PLAN\njust build it, one issue"), []);
+});
+
+test("pool dedups by key and runs each unit once", async () => {
+  let runs = 0;
+  dispatch("k1", async () => { runs++; await new Promise((r) => setTimeout(r, 10)); });
+  dispatch("k1", async () => { runs++; }); // ignored: k1 already in flight
+  dispatch("k2", async () => { runs++; });
+  await drain();
+  assert.equal(runs, 2);
 });
 
 test("parseControlCommand recognizes /add-repo and /list-repos", () => {
