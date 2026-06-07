@@ -25,7 +25,7 @@ In the resource's **Environment Variables** tab, add these (mark the tokens as s
 | Variable | Value |
 |---|---|
 | `GITHUB_TOKEN` | your fine-grained GitHub token (ideally the **bot account's** — see below) |
-| `GITHUB_OWNER` | `ArneNostitz` |
+| `GITHUB_OWNER` | your GitHub username or org |
 | `CLAUDE_CODE_OAUTH_TOKEN` | output of `claude setup-token` (subscription) |
 | `ANTHROPIC_API_KEY` | *(only if not using the subscription token)* |
 | `RUN_MODE` | `watch` (poll) or `webhook` (instant — see below) |
@@ -110,7 +110,7 @@ TypeScript) and starts the container. Watch the **Logs** tab — you should see:
 
 ```
 [agency] auth: CLAUDE_CODE_OAUTH_TOKEN (subscription, headless)
-[agency] target repo: ArneNostitz/sandbox-project (mode: watch, every 60s)
+[agency] target repo: my-org/sandbox-project (mode: watch, every 60s)
 [agency] queue empty; sleeping 60s...
 ```
 

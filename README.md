@@ -91,8 +91,8 @@ Disable with `SELF_IMPROVE=false`.
 **Engineering harness** — every agent is bound by `memory/central/`: the CONSTITUTION plus
 playbooks (atomic design, separation of concerns, KISS, reuse-before-create, central theme,
 config-driven organisms, test & review standards). Edit the markdown, push, redeploy =
-new rules. New projects start from the
-[project-template](https://github.com/ArneNostitz/project-template).
+new rules. New projects start from a companion `project-template` repo that ships the same
+harness as a working skeleton.
 
 ---
 
@@ -109,9 +109,9 @@ The short version:
 | `CLAUDE_CODE_OAUTH_TOKEN` | from `claude setup-token` (subscription) — or `ANTHROPIC_API_KEY` |
 | `GITHUB_TOKEN` | the **bot account's classic** token (`repo` scope) — actions are attributed to the bot |
 | `ADMIN_GITHUB_TOKEN` | your owner token — only used to auto-invite the bot to repos |
-| `GITHUB_OWNER` | e.g. `ArneNostitz` |
+| `GITHUB_OWNER` | your GitHub username or org |
 | `RUN_MODE` | `webhook` (instant; webhooks auto-register) |
-| `PUBLIC_URL` | e.g. `https://devagency.mynu.me` (no port) |
+| `PUBLIC_URL` | e.g. `https://agency.example.com` (no port) |
 | `GITHUB_WEBHOOK_SECRET` | long random **alphanumeric** string (no `$` — compose mangles it) |
 | `DASHBOARD_PASSWORD` | for the dashboard (alphanumeric) |
 

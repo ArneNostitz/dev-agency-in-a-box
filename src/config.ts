@@ -142,8 +142,9 @@ export function loadConfig(): Config {
   const owner = required("GITHUB_OWNER");
   const targetRepos = loadRepos(owner);
   if (targetRepos.length === 0) {
-    throw new Error(
-      "No repositories configured. Add to config/repos.txt, or set TARGET_REPOS / TARGET_REPO.",
+    // Not fatal: repos added at runtime via /add-repo live in the SQLite watch list.
+    console.warn(
+      "[agency] no repos in config/repos.txt or TARGET_REPOS — relying on the /add-repo watch list.",
     );
   }
 

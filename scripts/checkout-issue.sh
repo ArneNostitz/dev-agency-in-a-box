@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Pull an agency issue's branch onto your machine so you can run/test it locally.
 # Usage:  ./scripts/checkout-issue.sh <owner/repo> <issue-number>
-#   e.g.  ./scripts/checkout-issue.sh ArneNostitz/reimedy-minimal 53
+#   e.g.  ./scripts/checkout-issue.sh my-org/my-app 53
 set -euo pipefail
 
 REPO="${1:-}"; N="${2:-}"
