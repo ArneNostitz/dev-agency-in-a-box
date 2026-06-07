@@ -8,6 +8,7 @@
 import type { Config } from "./config.js";
 import {
   listAllOpenIssues,
+  listComments,
   closeIssue,
   commentOnIssue,
   addLabel,
@@ -15,6 +16,8 @@ import {
   repoExists,
   ensureWebhook,
   ensureCollaborator,
+  mergePrForBranch,
+  AGENCY_MARKER,
 } from "./github.js";
 import { addWatchedRepo, listWatchedRepos } from "./store.js";
 
@@ -64,6 +67,32 @@ export async function ensureAllRepoAccess(cfg: Config): Promise<void> {
   for (const repo of effectiveRepos(cfg)) {
     const note = await ensureRepoAccess(cfg, repo);
     if (note) console.log(`[agency] ${repo}:${note}`);
+  }
+}
+
+const MERGE_RE = /^\s*(\/merge|merge it|merge|ship it|🚀)\s*$/i;
+
+/**
+ * Merge an issue's PR when you comment `/merge` (or `merge`, `ship it`, 🚀) on a `ready` issue.
+ * One-line command; the agency squash-merges the linked PR, deletes the branch, closes the issue.
+ */
+export async function handleMergeCommands(cfg: Config, repo: string): Promise<void> {
+  for (const i of await listAllOpenIssues(repo)) {
+    if (!i.labels.includes("agency:ready")) continue; // only issues with an open PR
+    const comments = await listComments(repo, i.number);
+    const last = comments[comments.length - 1];
+    if (!last || last.body.includes(AGENCY_MARKER)) continue; // last word must be yours
+    if (!MERGE_RE.test(last.body)) continue;
+
+    const r = await mergePrForBranch(repo, `agency/issue-${i.number}`);
+    if (r.ok) {
+      await closeIssue(repo, i.number, `🚀 Merged ${r.msg} and closed.`);
+      console.log(`[agency] merged ${repo} #${i.number}`);
+    } else {
+      await removeLabel(repo, i.number, "agency:ready");
+      await addLabel(repo, i.number, "agency:needs-attention");
+      await commentOnIssue(repo, i.number, `⚠️ Couldn't merge: ${r.msg}`);
+    }
   }
 }
 

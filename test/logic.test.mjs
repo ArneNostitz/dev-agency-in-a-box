@@ -64,6 +64,9 @@ test("parsePlannerDecision reads the leading QUESTIONS/PLAN signal", () => {
   assert.equal(parsePlannerDecision("PLAN: do the thing").body, "do the thing");
   // No marker -> treat as a plan and proceed.
   assert.equal(parsePlannerDecision("Here is what I'd do...").kind, "plan");
+  // AUTO marker for small tasks -> build without approval.
+  assert.equal(parsePlannerDecision("PLAN AUTO\nadd a field").auto, true);
+  assert.equal(parsePlannerDecision("PLAN\nbig thing").auto, false);
 });
 
 test("agency comments carry a hidden marker (to detect human replies)", () => {

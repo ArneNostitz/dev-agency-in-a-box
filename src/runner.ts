@@ -21,12 +21,19 @@ import {
   commentOnIssue,
   cloneRepo,
   commentThread,
+  reactToIssue,
   AWAITING_LABELS,
 } from "./github.js";
 import { loadHandleRoleMap, roleForText, type RoleName } from "./agents/roles.js";
 import { runPipeline } from "./pipeline.js";
 import { recordIssueState, getIssueRole } from "./store.js";
-import { handleControlCommands, effectiveRepos, ensureAllRepoAccess, recoverOrphans } from "./commands.js";
+import {
+  handleControlCommands,
+  handleMergeCommands,
+  effectiveRepos,
+  ensureAllRepoAccess,
+  recoverOrphans,
+} from "./commands.js";
 
 const IN_PROGRESS = "agency:in-progress";
 const LOCK_PATH = join(process.cwd(), ".agency.lock");
@@ -78,11 +85,13 @@ async function processOneIssue(cfg: Config, repo: string): Promise<boolean> {
   await removeLabel(repo, issue.number, cfg.queueLabel);
   for (const l of AWAITING_LABELS) await removeLabel(repo, issue.number, l);
   recordIssueState(repo, issue.number, { title: issue.title, role, state: IN_PROGRESS });
+  // Instant visual "I'm on it" (👀 — GitHub has no 🏗️ reaction; the dashboard shows live build).
+  await reactToIssue(repo, issue.number, "eyes");
   if (!resuming) {
     await commentOnIssue(
       repo,
       issue.number,
-      `🤖 Picked up (role: **${role}**) on branch \`agency/issue-${issue.number}\`.`,
+      `🏗️ On it (role: **${role}**) — working on branch \`agency/issue-${issue.number}\`.`,
     );
   }
 
@@ -105,6 +114,7 @@ async function processOneIssue(cfg: Config, repo: string): Promise<boolean> {
     console.error(`[agency] pipeline error ${repo} #${issue.number}:`, msg);
     await removeLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
     await addLabel(repo, issue.number, "agency:needs-attention").catch(() => {});
+    await addLabel(repo, issue.number, "🚧 blocked").catch(() => {});
     await commentOnIssue(repo, issue.number, `❌ Run failed: ${msg.slice(0, 300)} — fix and re-pin.`).catch(
       () => {},
     );
@@ -117,8 +127,9 @@ export async function processAllRepos(cfg: Config): Promise<number> {
   let handled = 0;
   for (const repo of effectiveRepos(cfg)) {
     try {
-      // First honor any /add-repo /list-repos command issues (then they're closed).
+      // First honor control commands (/add-repo, /list-repos) and /merge requests.
       await handleControlCommands(cfg, repo);
+      await handleMergeCommands(cfg, repo);
       // Drain this repo (one issue at a time) until nothing's actionable.
       while (await processOneIssue(cfg, repo)) handled += 1;
     } catch (err) {

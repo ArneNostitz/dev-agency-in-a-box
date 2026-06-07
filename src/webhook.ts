@@ -62,7 +62,8 @@ const RELEVANT_ACTIONS = new Set(["opened", "reopened", "labeled", "unlabeled", 
 export async function runWebhook(cfg: Config, processAll: ProcessAll): Promise<void> {
   const port = Number(process.env.PORT?.trim() || "3000");
   const secret = process.env.GITHUB_WEBHOOK_SECRET?.trim() || "";
-  const safetyPollMs = Math.max(60, cfg.pollIntervalSeconds * 5) * 1000;
+  // Catches 👍 reactions (GitHub doesn't webhook those) and anything a delivery missed.
+  const safetyPollMs = Math.max(30, cfg.pollIntervalSeconds) * 1000;
 
   // Serialize processing: a single chain, with a "pending" flag to coalesce bursts.
   let running = false;

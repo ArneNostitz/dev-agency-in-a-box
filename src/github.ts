@@ -116,9 +116,11 @@ export async function listActionableIssues(repo: string, opts: ActionableOptions
   for (const i of mapped) {
     if (i.labels.includes(opts.ignoreLabel)) continue;
 
-    // Paused waiting on the human (a question or an approval): re-engage once they reply.
+    // Paused waiting on the human: re-engage once they reply OR 👍 the proposal.
     if (i.labels.some((l) => AWAITING_LABELS.includes(l))) {
-      if (await humanRepliedLast(repo, i.number)) result.push(i);
+      if ((await humanRepliedLast(repo, i.number)) || (await approvedByReaction(repo, i.number))) {
+        result.push(i);
+      }
       continue;
     }
     // Already being handled / done / parked.
@@ -182,6 +184,46 @@ export async function commentThread(repo: string, issue: number): Promise<string
 export async function cloneRepo(repo: string, dest: string): Promise<void> {
   await gh(["auth", "setup-git"]);
   await gh(["repo", "clone", repo, dest, "--", "--depth", "50"]);
+}
+
+/** Add a reaction to an issue (allowed: +1,-1,laugh,hooray,confused,heart,rocket,eyes). */
+export async function reactToIssue(repo: string, issue: number, content: string): Promise<void> {
+  await gh(["api", "-X", "POST", `repos/${repo}/issues/${issue}/reactions`, "-f", `content=${content}`]).catch(
+    () => {},
+  );
+}
+
+/** True if the latest agency comment on the issue has a 👍 reaction (approval by emoji). */
+export async function approvedByReaction(repo: string, issue: number): Promise<boolean> {
+  const out = await gh([
+    "api", `repos/${repo}/issues/${issue}/comments`, "--paginate",
+    "--jq", '[.[] | {body: .body, plus: .reactions["+1"]}]',
+  ]).catch(() => "[]");
+  try {
+    const arr = JSON.parse(out) as Array<{ body: string; plus: number }>;
+    for (let i = arr.length - 1; i >= 0; i--) {
+      if (arr[i].body.includes(AGENCY_MARKER)) return (arr[i].plus ?? 0) > 0;
+    }
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
+
+/** Mark the issue's PR ready (if draft) and squash-merge it. */
+export async function mergePrForBranch(
+  repo: string,
+  branch: string,
+): Promise<{ ok: boolean; msg: string }> {
+  const pr = await findPrForBranch(repo, branch);
+  if (!pr) return { ok: false, msg: "no open PR for this issue" };
+  try {
+    if (pr.isDraft) await gh(["pr", "ready", String(pr.number), "--repo", repo]).catch(() => {});
+    await gh(["pr", "merge", String(pr.number), "--repo", repo, "--squash", "--delete-branch"]);
+    return { ok: true, msg: pr.url };
+  } catch (err) {
+    return { ok: false, msg: (err as Error).message };
+  }
 }
 
 /** Create a new issue (used by the planner to decompose work into sub-issues). */

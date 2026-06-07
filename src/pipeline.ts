@@ -16,6 +16,7 @@ import {
   commentOnIssue,
   findPrForBranch,
   createIssue,
+  approvedByReaction,
   AWAITING_LABEL,
   APPROVAL_LABEL,
 } from "./github.js";
@@ -50,18 +51,17 @@ function say(role: RoleName, body: string): string {
   return `${BADGE[role]} · _dev-agency_\n\n${body}`;
 }
 
-export type PlannerDecision = { kind: "questions" | "plan"; body: string };
+export type PlannerDecision = { kind: "questions" | "plan"; body: string; auto: boolean };
 
-/** Parse the planner's reply: it signals intent with the first word (QUESTIONS or PLAN). */
+/** Parse the planner's reply: first word signals intent (QUESTIONS / PLAN [AUTO]). */
 export function parsePlannerDecision(text: string): PlannerDecision {
   const trimmed = text.trim();
-  const m = /^\s*(QUESTIONS|PLAN)\b[:\-\s]*/i.exec(trimmed);
+  const m = /^\s*(QUESTIONS|PLAN)(\s+AUTO)?\b[:\-\s]*/i.exec(trimmed);
   if (m) {
     const kind = m[1].toLowerCase() === "questions" ? "questions" : "plan";
-    return { kind, body: trimmed.slice(m[0].length).trim() || trimmed };
+    return { kind, auto: Boolean(m[2]), body: trimmed.slice(m[0].length).trim() || trimmed };
   }
-  // No explicit marker -> assume it's a plan and proceed.
-  return { kind: "plan", body: trimmed };
+  return { kind: "plan", auto: false, body: trimmed };
 }
 
 /** Run the Planner once. Returns the decision and the model used (for the ledger). */
@@ -118,12 +118,17 @@ async function finalizeWithPr(repo: string, issue: Issue, branch: string): Promi
 const APPROVAL_RE =
   /^(ok|okay|k|go|go ahead|proceed|approve|approved|lgtm|yes|yep|do it|ship it|build it|👍|✅)[.! ]*$/i;
 
-/** Did the human approve the proposal? True only if the *latest* comment is a short "ok". */
+/** Did the human approve via a short "ok" comment? */
 export function isApproval(thread: string): boolean {
   const blocks = thread.split("\n\n---\n\n");
   const last = (blocks[blocks.length - 1] ?? "").trimStart();
   if (!last.startsWith("[human]")) return false; // the agency spoke last, not the human
   return APPROVAL_RE.test(last.replace(/^\s*\[human\]\s*/, "").trim());
+}
+
+/** Approved either by a 👍 on the proposal comment or a short "ok" reply. */
+async function approved(repo: string, issue: Issue, thread: string): Promise<boolean> {
+  return isApproval(thread) || (await approvedByReaction(repo, issue.number));
 }
 
 /** Parse a `### SUB-ISSUES` section: lines like `- [Short title] @dev <one-line task>`. */
@@ -176,7 +181,13 @@ async function pause(repo: string, issue: Issue, label: string): Promise<void> {
 }
 
 /** Build phase: Developer implements -> Tester -> Reviewer (1 revise) -> PR. */
-async function build(repo: string, issue: Issue, workdir: string, planText: string): Promise<void> {
+async function build(
+  repo: string,
+  issue: Issue,
+  workdir: string,
+  planText: string,
+  thread: string,
+): Promise<void> {
   const branch = `agency/issue-${issue.number}`;
 
   const dev = await runRole("developer", {
@@ -185,7 +196,8 @@ async function build(repo: string, issue: Issue, workdir: string, planText: stri
       `Implement this issue on a new branch \`${branch}\` off an up-to-date main, following the approved plan ` +
       `and the harness. Reuse existing code; keep the change small. Add/extend tests. Commit, push, and ` +
       `open a DRAFT pull request whose body contains "Closes #${issue.number}".\n\n` +
-      `### Approved plan\n${planText}\n\n### ${issueHeader(issue)}`,
+      `### Approved plan\n${planText}\n\n### ${issueHeader(issue)}` +
+      (thread ? `\n\n### Conversation (latest changes apply)\n${thread}` : ""),
   });
   recordRun(repo, issue.number, "developer", dev.model, dev.turns, "implement");
 
@@ -238,15 +250,15 @@ async function runDeveloperPipeline(
   workdir: string,
   thread: string,
 ): Promise<void> {
-  // Resuming a proposal that the human approved?
-  if (issue.labels.includes(APPROVAL_LABEL) && isApproval(thread)) {
+  // Resuming a proposal that the human approved (by 👍 or "ok")?
+  if (issue.labels.includes(APPROVAL_LABEL) && (await approved(repo, issue, thread))) {
     const planText = lastPlan(repo, issue.number);
     if (planText) {
       await removeLabel(repo, issue.number, APPROVAL_LABEL);
       // If the plan was a decomposition, open the sub-issues instead of building this one.
       if (await maybeDecompose(repo, issue, planText)) return;
       await commentOnIssue(repo, issue.number, say("developer", "**Approved — building it now.**"));
-      await build(repo, issue, workdir, planText);
+      await build(repo, issue, workdir, planText, thread);
       return;
     }
   }
@@ -259,6 +271,14 @@ async function runDeveloperPipeline(
     await commentOnIssue(repo, issue.number, say("planner", `**A few questions before I plan**\n\n${decision.body}`));
     await pause(repo, issue, AWAITING_LABEL);
     console.log(`[agency] ${repo} #${issue.number} -> awaiting answer.`);
+    return;
+  }
+
+  // Small/obvious task -> the planner said PLAN AUTO: build immediately, no approval gate.
+  if (decision.auto) {
+    recordPlan(repo, issue.number, decision.body);
+    await commentOnIssue(repo, issue.number, say("planner", `**Plan (auto — small task, building now)**\n\n${decision.body}`));
+    await build(repo, issue, workdir, decision.body, thread);
     return;
   }
 
@@ -278,7 +298,7 @@ async function runDeveloperPipeline(
   await commentOnIssue(
     repo,
     issue.number,
-    say("planner", `**Proposed approach**\n\n${proposal}\n\n---\n\n👉 Reply **ok** to build this, or tell me what to change.`),
+    say("planner", `**Proposed approach**\n\n${proposal}\n\n---\n\n👉 **👍 this comment** (or reply \`ok\`) to build it. For changes, just reply with the change — no need to restate the plan.`),
   );
   await pause(repo, issue, APPROVAL_LABEL);
   console.log(`[agency] ${repo} #${issue.number} -> awaiting approval.`);
@@ -295,9 +315,9 @@ async function runSpecialist(
   const branch = `agency/issue-${issue.number}`;
 
   if (role === "planner") {
-    // Conversational: if you approved the last proposal, decompose it (if it proposed
-    // sub-issues) or accept it.
-    if (issue.labels.includes(APPROVAL_LABEL) && isApproval(thread)) {
+    // Conversational: if you approved the last proposal (👍 or "ok"), decompose it (if it
+    // proposed sub-issues) or accept it.
+    if (issue.labels.includes(APPROVAL_LABEL) && (await approved(repo, issue, thread))) {
       await removeLabel(repo, issue.number, APPROVAL_LABEL);
       const planText = lastPlan(repo, issue.number) ?? "";
       if (await maybeDecompose(repo, issue, planText)) return;
@@ -323,7 +343,7 @@ async function runSpecialist(
     await commentOnIssue(
       repo,
       issue.number,
-      say("planner", `**Plan**\n\n${decision.body}\n\n---\n\n👉 Reply with changes to refine, or **ok** to accept.`),
+      say("planner", `**Plan**\n\n${decision.body}\n\n---\n\n👉 **👍** (or reply \`ok\`) to accept. For changes, just reply with the change.`),
     );
     await removeLabel(repo, issue.number, IN_PROGRESS);
     await addLabel(repo, issue.number, APPROVAL_LABEL);
