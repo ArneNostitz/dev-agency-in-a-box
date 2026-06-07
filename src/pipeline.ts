@@ -17,6 +17,7 @@ import {
   findPrForBranch,
   createIssue,
   approvedByReaction,
+  commentOnPr,
   AWAITING_LABEL,
   APPROVAL_LABEL,
 } from "./github.js";
@@ -368,6 +369,36 @@ async function runSpecialist(
   await addLabel(repo, issue.number, READY);
   recordIssueState(repo, issue.number, { state: READY });
   console.log(`[agency] ${repo} #${issue.number} -> ${READY} (${role}).`);
+}
+
+/**
+ * Address review feedback left on an agency PR: the developer checks out the branch, makes
+ * the requested change, pushes (updating the PR), and the tester re-checks.
+ */
+export async function runPrFix(
+  repo: string,
+  issueNumber: number,
+  pr: number,
+  branch: string,
+  workdir: string,
+  thread: string,
+): Promise<void> {
+  setActivityContext(repo, issueNumber);
+  const dev = await runRole("developer", {
+    workdir,
+    task:
+      `Update the existing pull request. First run \`git fetch origin ${branch} && git checkout ${branch}\`. ` +
+      `Then address the review feedback below, commit, and push (this updates PR #${pr}). Keep the diff focused; ` +
+      `only change what the feedback asks for.\n\n### PR conversation (latest comment is the request)\n${thread}`,
+  });
+  recordRun(repo, issueNumber, "developer", dev.model, dev.turns, "pr-fix");
+
+  const test = await runRole("tester", {
+    workdir,
+    task: `On branch \`${branch}\`, run the project's checks and report briefly (pass/fail + first error only).`,
+  });
+  recordRun(repo, issueNumber, "tester", test.model, test.turns, "test");
+  await commentOnPr(repo, pr, say("developer", `**Pushed fixes.**\n\n${test.text}`));
 }
 
 export async function runPipeline(

@@ -238,6 +238,43 @@ export async function createIssue(
   return { number: m ? Number(m[1]) : 0, url };
 }
 
+/** Open PRs whose head is an agency branch (agency/issue-N). */
+export async function listAgencyPrs(
+  repo: string,
+): Promise<Array<{ number: number; branch: string; issueNumber: number }>> {
+  const out = await gh([
+    "pr", "list", "--repo", repo, "--state", "open", "--json", "number,headRefName", "--limit", "50",
+  ]).catch(() => "[]");
+  const arr = JSON.parse(out) as Array<{ number: number; headRefName: string }>;
+  return arr
+    .filter((p) => /^agency\/issue-\d+$/.test(p.headRefName))
+    .map((p) => ({ number: p.number, branch: p.headRefName, issueNumber: Number(p.headRefName.split("-").pop()) }));
+}
+
+/** Comments on an issue OR PR (REST works for both), tagged [human]/[agency]. */
+export async function commentThreadByNumber(repo: string, number: number): Promise<{ thread: string; lastHumanBody: string }> {
+  const out = await gh([
+    "api", `repos/${repo}/issues/${number}/comments`, "--paginate", "--jq", "[.[]|{body:.body}]",
+  ]).catch(() => "[]");
+  let comments: Array<{ body: string }> = [];
+  try {
+    comments = JSON.parse(out);
+  } catch {
+    /* ignore */
+  }
+  const thread = comments
+    .map((c) => `${c.body.includes(AGENCY_MARKER) ? "[agency]" : "[human]"} ${c.body.replace(AGENCY_MARKER, "").trim()}`)
+    .join("\n\n---\n\n");
+  const last = comments[comments.length - 1];
+  const lastHumanBody = last && !last.body.includes(AGENCY_MARKER) ? last.body : "";
+  return { thread, lastHumanBody };
+}
+
+/** Comment on a PR (issue-comment endpoint works, but gh pr comment is clearer). */
+export async function commentOnPr(repo: string, pr: number, body: string): Promise<void> {
+  await gh(["pr", "comment", String(pr), "--repo", repo, "--body", `${body}\n\n${AGENCY_MARKER}`]).catch(() => {});
+}
+
 export async function closeIssue(repo: string, issue: number, comment?: string): Promise<void> {
   if (comment) await commentOnIssue(repo, issue, comment);
   await gh(["issue", "close", String(issue), "--repo", repo]).catch(() => {});

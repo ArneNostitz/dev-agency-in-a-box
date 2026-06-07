@@ -22,10 +22,13 @@ import {
   cloneRepo,
   commentThread,
   reactToIssue,
+  listAgencyPrs,
+  commentThreadByNumber,
+  mentionsHandle,
   AWAITING_LABELS,
 } from "./github.js";
 import { loadHandleRoleMap, roleForText, type RoleName } from "./agents/roles.js";
-import { runPipeline } from "./pipeline.js";
+import { runPipeline, runPrFix } from "./pipeline.js";
 import { recordIssueState, getIssueRole } from "./store.js";
 import {
   handleControlCommands,
@@ -122,6 +125,27 @@ async function processOneIssue(cfg: Config, repo: string): Promise<boolean> {
   return true;
 }
 
+/** Re-engage the developer on any agency PR whose latest comment is @dev/@fix feedback. */
+async function processPrFeedback(cfg: Config, repo: string): Promise<void> {
+  for (const pr of await listAgencyPrs(repo)) {
+    const { thread, lastHumanBody } = await commentThreadByNumber(repo, pr.number);
+    if (!lastHumanBody || !mentionsHandle(lastHumanBody, ["@dev", "@fix"])) continue;
+
+    const safeRepo = repo.replace("/", "__");
+    const workdir = join(process.cwd(), ".work", safeRepo, `pr-${pr.number}`);
+    await rm(workdir, { recursive: true, force: true });
+    await mkdir(join(process.cwd(), ".work", safeRepo), { recursive: true });
+    console.log(`[agency] PR feedback ${repo} PR#${pr.number} (issue #${pr.issueNumber}) -> developer fix`);
+    await reactToIssue(repo, pr.number, "eyes");
+    await cloneRepo(repo, workdir);
+    try {
+      await runPrFix(repo, pr.issueNumber, pr.number, pr.branch, workdir, thread);
+    } catch (err) {
+      console.error(`[agency] pr-fix error ${repo} PR#${pr.number}:`, (err as Error).message);
+    }
+  }
+}
+
 /** Handle control commands + process actionable issues across all watched repos. */
 export async function processAllRepos(cfg: Config): Promise<number> {
   let handled = 0;
@@ -130,6 +154,8 @@ export async function processAllRepos(cfg: Config): Promise<number> {
       // First honor control commands (/add-repo, /list-repos) and /merge requests.
       await handleControlCommands(cfg, repo);
       await handleMergeCommands(cfg, repo);
+      // Address any @dev/@fix feedback left on agency PRs.
+      await processPrFeedback(cfg, repo);
       // Drain this repo (one issue at a time) until nothing's actionable.
       while (await processOneIssue(cfg, repo)) handled += 1;
     } catch (err) {
