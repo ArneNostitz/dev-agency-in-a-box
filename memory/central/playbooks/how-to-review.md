@@ -22,6 +22,9 @@ would merge. The reviewer never wrote the code it reviews (separation of duties)
 **Quality**
 - Matches project conventions. Small, focused diff. Clear names. No secrets. No new
   dependency without justification.
+- **No generated/auto-created files in the diff** — `node_modules/`, `dist/`, `build/`,
+  `coverage/`, `*.log`, compiled output, etc. If present, REQUEST CHANGES: they must be
+  removed and added to `.gitignore`.
 
 ## How to respond
 - If it meets the bar: approve, with a one-line note.
