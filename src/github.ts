@@ -251,6 +251,38 @@ export async function listAgencyPrs(
     .map((p) => ({ number: p.number, branch: p.headRefName, issueNumber: Number(p.headRefName.split("-").pop()) }));
 }
 
+/** Health of an agency PR: merge conflicts and CI checks. */
+export async function prHealth(
+  repo: string,
+  pr: number,
+): Promise<{ status: "ok" | "pending" | "failing" | "conflict"; detail: string }> {
+  const out = await gh([
+    "pr", "view", String(pr), "--repo", repo, "--json", "mergeable,statusCheckRollup",
+  ]).catch(() => "");
+  if (!out) return { status: "ok", detail: "" };
+  let d: { mergeable?: string; statusCheckRollup?: Array<{ status?: string; conclusion?: string; state?: string }> } = {};
+  try {
+    d = JSON.parse(out);
+  } catch {
+    return { status: "ok", detail: "" };
+  }
+  if (d.mergeable === "CONFLICTING") return { status: "conflict", detail: "merge conflicts with the base branch" };
+
+  const checks = d.statusCheckRollup ?? [];
+  if (checks.length > 0) {
+    const pending = checks.some((c) => (c.status && c.status !== "COMPLETED") || c.state === "PENDING");
+    if (pending) return { status: "pending", detail: "checks running" };
+    const failing = checks.some(
+      (c) =>
+        ["FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE"].includes(c.conclusion ?? "") ||
+        c.state === "FAILURE" ||
+        c.state === "ERROR",
+    );
+    if (failing) return { status: "failing", detail: "CI checks failing" };
+  }
+  return { status: "ok", detail: "" };
+}
+
 /** Comments on an issue OR PR (REST works for both), tagged [human]/[agency]. */
 export async function commentThreadByNumber(repo: string, number: number): Promise<{ thread: string; lastHumanBody: string }> {
   const out = await gh([

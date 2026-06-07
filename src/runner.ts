@@ -24,12 +24,14 @@ import {
   reactToIssue,
   listAgencyPrs,
   commentThreadByNumber,
+  commentOnPr,
+  prHealth,
   mentionsHandle,
   AWAITING_LABELS,
 } from "./github.js";
 import { loadHandleRoleMap, roleForText, type RoleName } from "./agents/roles.js";
 import { runPipeline, runPrFix } from "./pipeline.js";
-import { recordIssueState, getIssueRole } from "./store.js";
+import { recordIssueState, getIssueRole, getAutofixCount, incAutofix, resetAutofix } from "./store.js";
 import {
   handleControlCommands,
   handleMergeCommands,
@@ -146,6 +148,54 @@ async function processPrFeedback(cfg: Config, repo: string): Promise<void> {
   }
 }
 
+const MAX_AUTOFIX = 2;
+
+/**
+ * Self-heal agency PRs: if a PR has merge conflicts or failing CI, the developer fixes it
+ * automatically (bounded to MAX_AUTOFIX attempts, then it pings a human instead of looping).
+ */
+async function processUnhealthyPrs(repo: string): Promise<void> {
+  for (const pr of await listAgencyPrs(repo)) {
+    const health = await prHealth(repo, pr.number);
+    if (health.status === "ok") {
+      resetAutofix(repo, pr.number);
+      continue;
+    }
+    if (health.status === "pending") continue; // CI still running — wait
+
+    const attempts = getAutofixCount(repo, pr.number);
+    if (attempts > MAX_AUTOFIX) continue; // already gave up + pinged
+    if (attempts === MAX_AUTOFIX) {
+      await commentOnPr(
+        repo,
+        pr.number,
+        `⚠️ Still unhealthy (${health.detail}) after ${MAX_AUTOFIX} auto-fix attempts — needs a human. Comment \`@dev <hint>\` to guide me.`,
+      );
+      incAutofix(repo, pr.number); // -> MAX+1 so we don't re-ping
+      continue;
+    }
+    incAutofix(repo, pr.number);
+
+    const instruction =
+      health.status === "conflict"
+        ? `[system] This PR has merge conflicts. Check out the branch, merge the latest base branch (origin/main) into it, resolve ALL conflicts, run the project's checks, commit, and push.`
+        : `[system] The PR's CI checks are failing. Run the project's checks locally, find and fix the failures (and anything blocking the tests), commit, and push.`;
+
+    const safeRepo = repo.replace("/", "__");
+    const workdir = join(process.cwd(), ".work", safeRepo, `pr-${pr.number}`);
+    await rm(workdir, { recursive: true, force: true });
+    await mkdir(join(process.cwd(), ".work", safeRepo), { recursive: true });
+    console.log(`[agency] auto-heal ${repo} PR#${pr.number}: ${health.detail} (attempt ${attempts + 1})`);
+    await reactToIssue(repo, pr.number, "eyes");
+    await cloneRepo(repo, workdir);
+    try {
+      await runPrFix(repo, pr.issueNumber, pr.number, pr.branch, workdir, instruction);
+    } catch (err) {
+      console.error(`[agency] auto-heal error ${repo} PR#${pr.number}:`, (err as Error).message);
+    }
+  }
+}
+
 /** Handle control commands + process actionable issues across all watched repos. */
 export async function processAllRepos(cfg: Config): Promise<number> {
   let handled = 0;
@@ -156,6 +206,8 @@ export async function processAllRepos(cfg: Config): Promise<number> {
       await handleMergeCommands(cfg, repo);
       // Address any @dev/@fix feedback left on agency PRs.
       await processPrFeedback(cfg, repo);
+      // Self-heal PRs that have merge conflicts or failing CI.
+      await processUnhealthyPrs(repo);
       // Drain this repo (one issue at a time) until nothing's actionable.
       while (await processOneIssue(cfg, repo)) handled += 1;
     } catch (err) {
