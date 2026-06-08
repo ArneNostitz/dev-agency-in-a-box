@@ -14,7 +14,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { Config } from "./config.js";
-import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, epicsByParent } from "./store.js";
+import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, epicsByParent, getSetting, setSetting } from "./store.js";
 import { mergeEpic, isEpic } from "./epics.js";
 import { renderDashboard, renderHistory } from "./dashboard.js";
 import { subscribe, getActive } from "./activity.js";
@@ -25,6 +25,14 @@ import { dispatch } from "./pool.js";
 
 type ProcessAll = (cfg: Config) => Promise<number>;
 type Resume = (repo: string, number: number) => Promise<void>;
+
+/** Session window/budget come from dashboard settings first, then env, then defaults. */
+function sessionWindowHours(): number {
+  return Number(getSetting("window_hours")) || Number(process.env.SESSION_WINDOW_HOURS?.trim()) || 5;
+}
+function sessionBudget(): number {
+  return Number(getSetting("token_budget")) || Number(process.env.SESSION_TOKEN_BUDGET?.trim()) || 0;
+}
 
 /** Gate the dashboard with HTTP Basic Auth if DASHBOARD_PASSWORD is set. */
 function checkAuth(cfg: Config, req: IncomingMessage, res: ServerResponse): boolean {
@@ -164,9 +172,10 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
                 : null,
             };
           });
-          const winH = Number(process.env.SESSION_WINDOW_HOURS?.trim()) || 5;
-          const budget = Number(process.env.SESSION_TOKEN_BUDGET?.trim()) || 0;
-          const sess = tokensSince(new Date(Date.now() - winH * 3600_000).toISOString());
+          const winH = sessionWindowHours();
+          const budget = sessionBudget();
+          const since = new Date(Date.now() - winH * 3600_000).toISOString();
+          const sess = tokensSince(since);
           res.writeHead(200, { "content-type": "application/json" });
           res.end(
             JSON.stringify({
@@ -176,7 +185,13 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               runs: recentRuns(40),
               activity: recentActivity(400),
               spendToday: spendSince(midnight.toISOString()),
-              session: { tokens: sess.tokens, costUsd: sess.costUsd, budget, windowHours: winH },
+              session: {
+                tokens: sess.tokens,
+                costUsd: sess.costUsd,
+                budget,
+                windowHours: winH,
+                byModel: tokensByModelSince(since),
+              },
             }),
           );
         })();
@@ -214,7 +229,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
 
     // Dashboard actions (password-protected, not GitHub webhooks).
     const path = (req.url ?? "").split("?")[0];
-    if (["/archive", "/comment", "/run-checks", "/merge", "/delete", "/resume", "/new-issue", "/approve"].includes(path)) {
+    if (["/archive", "/comment", "/run-checks", "/merge", "/delete", "/resume", "/new-issue", "/approve", "/settings"].includes(path)) {
       if (!checkAuth(cfg, req, res)) return;
       void readBody(req).then(async (body) => {
         let p: { repo?: string; number?: number; body?: string; title?: string; role?: string } = {};
@@ -243,6 +258,13 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           } catch (err) {
             return res.writeHead(500).end(JSON.stringify({ error: (err as Error).message }));
           }
+        }
+        if (path === "/settings") {
+          // Save token-budget settings from the dashboard (no redeploy needed).
+          const set = p as { windowHours?: number; budget?: number };
+          if (set.windowHours && set.windowHours > 0) setSetting("window_hours", String(Math.round(set.windowHours)));
+          if (set.budget !== undefined && set.budget >= 0) setSetting("token_budget", String(Math.round(set.budget)));
+          return ok();
         }
         if (path === "/approve") {
           // One-click accept of a proposal: posts "ok" as you, which the pipeline treats as approval.

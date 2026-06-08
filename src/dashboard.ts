@@ -78,7 +78,8 @@ const STYLE = `
   .gauge i{display:block;height:100%;background:var(--green)}
   .wrap{padding:6px 8px 40px}
   .repo{margin:12px 6px 2px;font-weight:650;font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px}
-  .section{border-radius:14px;margin:6px 4px;padding:4px 4px 2px}
+  .sections{display:flex;gap:12px;overflow-x:auto;padding:6px;-webkit-overflow-scrolling:touch;align-items:flex-start}
+  .section{flex:0 0 auto;border-radius:14px;padding:2px 4px 4px}
   .section .sechead{font-size:11px;text-transform:uppercase;letter-spacing:.05em;font-weight:650;padding:8px 10px 2px}
   .section .sechead span{color:var(--muted);font-weight:550}
   .section.attn{background:#eaf1ff;border:1px solid #d3e1ff}
@@ -88,9 +89,9 @@ const STYLE = `
   .section.done{background:#eef0f2;border:1px solid var(--line);opacity:.72}
   .section.done .sechead{color:#7a828c}
   .section.done .card{background:#f6f7f9;box-shadow:none}
-  .lanes{display:flex;gap:10px;overflow-x:auto;padding:6px;scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch}
-  .lane{flex:0 0 78vw;max-width:330px;scroll-snap-align:start}
-  @media(min-width:760px){.lane{flex:0 0 270px}}
+  .lanes{display:flex;gap:10px;padding:4px}
+  .lane{flex:0 0 72vw;max-width:300px}
+  @media(min-width:760px){.lane{flex:0 0 248px}}
   .lane h3{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:2px 4px 8px;display:flex;justify-content:space-between}
   .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:8px;box-shadow:var(--shadow);cursor:pointer}
   .card:active{transform:scale(.99)}
@@ -131,6 +132,11 @@ const STYLE = `
   .toast{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);background:#1d2430;color:#fff;padding:8px 14px;border-radius:999px;font-size:13px;opacity:0;transition:opacity .2s;z-index:30}
   .toast.on{opacity:1}
   .newbtn{margin-left:auto;border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:9px;padding:5px 11px;font-size:13px;font-weight:540;cursor:pointer}
+  .iconbtn{border:1px solid var(--line);background:var(--card);color:var(--muted);border-radius:9px;padding:5px 9px;font-size:14px;cursor:pointer;margin-left:6px}
+  .usage{border:1px solid var(--line);border-radius:10px;overflow:hidden;margin-top:4px}
+  .urow{display:flex;justify-content:space-between;padding:7px 11px;font-size:13px;border-bottom:1px solid var(--line)}
+  .urow:last-child{border-bottom:none}.urow.tot{font-weight:650;background:var(--bg)}
+  .clk{cursor:pointer;border-bottom:1px dotted var(--muted)}
   .composer{position:fixed;left:0;right:0;bottom:0;z-index:25;background:var(--card);border-top:1px solid var(--line);border-radius:16px 16px 0 0;padding:14px 14px 18px;max-height:92dvh;overflow:auto;transform:translateY(105%);transition:transform .2s ease;box-shadow:0 -8px 30px rgba(15,22,35,.18)}
   .composer.on{transform:translateY(0)}
   @media(min-width:760px){.composer{left:auto;right:24px;bottom:24px;width:440px;border:1px solid var(--line);border-radius:16px}}
@@ -148,7 +154,7 @@ export function renderDashboard(): string {
 <meta name="color-scheme" content="light"><title>Dev Agency</title>
 <style>${STYLE}</style></head><body>
   <div class="top">
-    <h1>🤖 Dev Agency <span id="live"></span><button class="newbtn" onclick="openComposer()">+ New</button></h1>
+    <h1>🤖 Dev Agency <span id="live"></span><button class="newbtn" onclick="openComposer()">+ New</button><button class="iconbtn" onclick="openSettings()" aria-label="Settings">⚙</button></h1>
     <div class="sub" id="sub">Loading…</div>
   </div>
   <div class="chips" id="repochips"></div>
@@ -192,6 +198,17 @@ export function renderDashboard(): string {
     <label>Description</label><textarea id="c_body" placeholder="What needs doing? Context, acceptance criteria…"></textarea>
     <div class="row"><button class="btn" onclick="closeComposer()">Cancel</button><button class="btn primary" id="c_create" onclick="submitIssue()">Create</button></div>
   </div>
+  <div class="scrim" id="sscrim" onclick="closeSettings()"></div>
+  <div class="composer" id="settings">
+    <div class="ch"><div class="t">Token budget</div><button class="x" style="margin-left:auto" onclick="closeSettings()" aria-label="Close">×</button></div>
+    <label>Session window (hours)</label><input id="s_win" type="number" min="1" max="168" step="1">
+    <div class="sec" style="margin:12px 2px 4px">Used this window</div>
+    <div id="s_usage" class="usage"></div>
+    <label>Calibrate: enter the % the Claude app shows now</label>
+    <div style="display:flex;gap:8px"><input id="s_pct" type="number" min="1" max="100" placeholder="e.g. 42"><button class="btn" onclick="calcBudget()">Set from %</button></div>
+    <label>Budget — tokens per window (0 = show tokens only)</label><input id="s_budget" type="number" min="0" step="1000">
+    <div class="row"><button class="btn" onclick="closeSettings()">Cancel</button><button class="btn primary" id="s_save" onclick="saveSettings()">Save</button></div>
+  </div>
   <div class="toast" id="toast"></div>
 
 <script>
@@ -232,12 +249,13 @@ ${CLIENT_HELPERS}
     var sp=DATA.spendToday&&DATA.spendToday.costUsd>0? ' · today $'+DATA.spendToday.costUsd.toFixed(2):'';
     var sess="", s=DATA.session;
     if(s&&(s.tokens||s.budget)){
-      sess=' · '+fmtTok(s.tokens)+' tok';
+      sess=' · <span class="clk" onclick="openSettings()">'+fmtTok(s.tokens)+' tok';
       if(s.budget>0){var pct=Math.min(100,Math.round(100*s.tokens/s.budget));
         var col=pct>=90?'var(--red)':pct>=70?'var(--amber)':'var(--green)';
-        sess+=' <span class="gauge"><i style="width:'+pct+'%;background:'+col+'"></i></span> '+pct+'% of '+(s.windowHours||5)+'h limit';
+        sess+=' <span class="gauge"><i style="width:'+pct+'%;background:'+col+'"></i></span> '+pct+'% of '+(s.windowHours||5)+'h';
       } else { sess+=' (last '+(s.windowHours||5)+'h)'; }
-    }
+      sess+='</span>';
+    } else { sess=' · <span class="clk" onclick="openSettings()">set token budget</span>'; }
     document.getElementById("sub").innerHTML = (n? n+' working now':'Idle')+sp+sess+' · <a href="/history">history</a>';
   }
   function renderChips(){
@@ -271,12 +289,52 @@ ${CLIENT_HELPERS}
         var n=ri.filter(function(i){return sec.cols.indexOf(classify(i))>=0;}).length;
         return '<div class="section '+sec.k+'"><div class="sechead">'+sec.label+' <span>'+(n||"")+'</span></div><div class="lanes">'+lanes+'</div></div>';
       }).join("");
-      return '<div class="repo">'+esc(r)+'</div>'+secs;
+      return '<div class="repo">'+esc(r)+'</div><div class="sections">'+secs+'</div>';
     }).join("");
     document.getElementById("board").innerHTML = html||'<div class="empty">No repos yet. File a /add-repo issue.</div>';
   }
   window.onSearch=function(v){query=v;renderBoard();};
   window.onSort=function(v){sortKey=v;renderBoard();};
+
+  // ---- token settings ----
+  function modelName(m){if(/opus/i.test(m))return "Opus";if(/sonnet/i.test(m))return "Sonnet";if(/haiku/i.test(m))return "Haiku";return m||"?";}
+  function renderUsage(){
+    var s=DATA.session||{}, bm=s.byModel||[];
+    var rows=bm.map(function(m){return '<div class="urow"><span>'+esc(modelName(m.model))+'</span><span>'+fmtTok(m.tokens)+' tok'+(m.costUsd>0?' · $'+m.costUsd.toFixed(2):'')+'</span></div>';}).join("");
+    var tot='<div class="urow tot"><span>Total</span><span>'+fmtTok(s.tokens||0)+' tok</span></div>';
+    document.getElementById("s_usage").innerHTML=(rows||'<div class="urow"><span class="muted">No usage yet this window</span></div>')+tot;
+  }
+  window.openSettings=function(){
+    var s=DATA.session||{};
+    document.getElementById("s_win").value=s.windowHours||5;
+    document.getElementById("s_budget").value=s.budget||"";
+    document.getElementById("s_pct").value="";
+    renderUsage();
+    document.getElementById("settings").classList.add("on");
+    document.getElementById("sscrim").classList.add("on");
+    document.body.classList.add("noscroll");
+  };
+  window.closeSettings=function(){
+    document.getElementById("settings").classList.remove("on");
+    document.getElementById("sscrim").classList.remove("on");
+    document.body.classList.remove("noscroll");
+  };
+  window.calcBudget=function(){
+    var s=DATA.session||{}, pct=Number(document.getElementById("s_pct").value);
+    if(!pct||pct<=0||!(s.tokens>0)){toast("Need a % and some usage");return;}
+    var budget=Math.round(s.tokens/(pct/100));
+    document.getElementById("s_budget").value=budget;
+    toast("Budget ≈ "+fmtTok(budget)+" tok");
+  };
+  window.saveSettings=function(){
+    var win=Number(document.getElementById("s_win").value)||5;
+    var budget=Number(document.getElementById("s_budget").value)||0;
+    var btn=document.getElementById("s_save"); btn.disabled=true;
+    fetch("/settings",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({windowHours:win,budget:budget})})
+      .then(function(r){if(!r.ok)throw 0; toast("Saved"); closeSettings(); setTimeout(load,400);})
+      .catch(function(){toast("Couldn’t save");})
+      .then(function(){btn.disabled=false;});
+  };
 
   // ---- new issue composer ----
   window.openComposer=function(){
@@ -410,7 +468,7 @@ ${CLIENT_HELPERS}
   }catch(e){}
 
   load(); setInterval(load,5000);
-  document.addEventListener("keydown",function(e){if(e.key==="Escape"){closeDrawer();closeComposer();}});
+  document.addEventListener("keydown",function(e){if(e.key==="Escape"){closeDrawer();closeComposer();closeSettings();}});
 })();
 </script></body></html>`;
 }

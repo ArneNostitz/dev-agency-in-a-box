@@ -78,6 +78,7 @@ function getDb(): DatabaseSync | null {
         tracker_hash TEXT, reviewed INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (repo, parent)
       );
+      CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
     `);
     // Migrations for older databases (ALTER fails harmlessly if the column already exists).
     for (const sql of [
@@ -213,6 +214,46 @@ export function tokensSince(sinceIso: string): { tokens: number; costUsd: number
     return { tokens: row?.t ?? 0, costUsd: row?.c ?? 0 };
   } catch {
     return { tokens: 0, costUsd: 0 };
+  }
+}
+
+/** Per-model token + cost totals since an ISO timestamp. */
+export function tokensByModelSince(sinceIso: string): Array<{ model: string; tokens: number; costUsd: number }> {
+  const d = getDb();
+  if (!d) return [];
+  try {
+    return d
+      .prepare(
+        `SELECT COALESCE(model,'?') AS model, COALESCE(SUM(tokens),0) AS tokens, COALESCE(SUM(cost_usd),0) AS costUsd
+         FROM token_usage WHERE ts >= ? GROUP BY model ORDER BY tokens DESC`,
+      )
+      .all(sinceIso) as unknown as Array<{ model: string; tokens: number; costUsd: number }>;
+  } catch {
+    return [];
+  }
+}
+
+// ---- settings (editable from the dashboard, no redeploy) ----
+export function getSetting(key: string): string | null {
+  const d = getDb();
+  if (!d) return null;
+  try {
+    const row = d.prepare(`SELECT value FROM settings WHERE key = ?`).get(key) as { value?: string } | undefined;
+    return row?.value ?? null;
+  } catch {
+    return null;
+  }
+}
+export function setSetting(key: string, value: string): void {
+  const d = getDb();
+  if (!d) return;
+  try {
+    d.prepare(`INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(
+      key,
+      value,
+    );
+  } catch {
+    /* best effort */
   }
 }
 
