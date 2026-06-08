@@ -211,6 +211,7 @@ ${CLIENT_HELPERS}
     var a='<a class="btn" href="'+gh(repo,n)+'" target="_blank" rel="noopener">Issue ↗</a>';
     if(i.pr_url) a+='<a class="btn" href="'+i.pr_url+'" target="_blank" rel="noopener">PR ↗</a>';
     if(i.previewUrl) a+='<a class="btn primary" href="'+i.previewUrl+'" target="_blank" rel="noopener">Open preview ↗</a>';
+    a+='<button class="btn" id="d_resume" onclick="doResume(this)">⟳ Resume</button>';
     a+='<button class="btn" id="d_checks" onclick="runChecks()">▶ Run checks</button>';
     if(i.pr_number) a+='<button class="btn" onclick="confirmAct(this,\\'merge\\')">⤵ Merge</button>';
     a+='<button class="btn danger" onclick="confirmAct(this,\\'delete\\')">🗑 Delete</button>';
@@ -262,6 +263,13 @@ ${CLIENT_HELPERS}
       .then(function(r){if(!r.ok)throw 0; toast(kind==="merge"?"Merged 🚀":"Deleted"); closeDrawer(); load();})
       .catch(function(){btn.disabled=false;btn.classList.remove("armed");toast("Couldn’t "+kind);});
   }
+  window.doResume=function(btn){
+    if(!open)return; btn.disabled=true;
+    fetch("/resume",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({repo:open.repo,number:open.number})})
+      .then(function(r){if(!r.ok)throw 0; toast("Resumed ⟳");setTimeout(load,1200);})
+      .catch(function(){toast("Couldn’t resume");})
+      .then(function(){setTimeout(function(){btn.disabled=false;},2000);});
+  };
   window.runChecks=function(){
     if(!open)return; var b=document.getElementById("d_checks"); b.disabled=true;
     fetch("/run-checks",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({repo:open.repo,number:open.number,title:(open.issue&&open.issue.title)||""})})

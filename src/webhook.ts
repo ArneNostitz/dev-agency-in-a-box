@@ -23,6 +23,7 @@ import { previewUrlFor, runChecksNow } from "./preview.js";
 import { dispatch } from "./pool.js";
 
 type ProcessAll = (cfg: Config) => Promise<number>;
+type Resume = (repo: string, number: number) => Promise<void>;
 
 /** Gate the dashboard with HTTP Basic Auth if DASHBOARD_PASSWORD is set. */
 function checkAuth(cfg: Config, req: IncomingMessage, res: ServerResponse): boolean {
@@ -63,7 +64,7 @@ function readBody(req: IncomingMessage): Promise<Buffer> {
 const RELEVANT_ACTIONS = new Set(["opened", "reopened", "labeled", "unlabeled", "edited"]);
 const PR_ACTIONS = new Set(["opened", "reopened", "synchronize", "ready_for_review", "edited"]);
 
-export async function runWebhook(cfg: Config, processAll: ProcessAll): Promise<void> {
+export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: Resume): Promise<void> {
   const port = Number(process.env.PORT?.trim() || "3000");
   const secret = process.env.GITHUB_WEBHOOK_SECRET?.trim() || "";
   // Catches 👍 reactions (GitHub doesn't webhook those) and anything a delivery missed.
@@ -196,7 +197,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll): Promise<v
 
     // Dashboard actions (password-protected, not GitHub webhooks).
     const path = (req.url ?? "").split("?")[0];
-    if (["/archive", "/comment", "/run-checks", "/merge", "/delete"].includes(path)) {
+    if (["/archive", "/comment", "/run-checks", "/merge", "/delete", "/resume"].includes(path)) {
       if (!checkAuth(cfg, req, res)) return;
       void readBody(req).then(async (body) => {
         let p: { repo?: string; number?: number; body?: string; title?: string } = {};
@@ -243,6 +244,12 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll): Promise<v
           if (!r.ok) await closeIssue(repo, number).catch(() => {});
           archiveIssue(repo, number);
           return ok(JSON.stringify({ ok: true, deleted: r.ok }));
+        }
+        if (path === "/resume") {
+          // Unstick an issue and re-run it, whatever state it's in.
+          if (!repo || !number || !resume) return res.writeHead(400).end("{}");
+          await resume(repo, number).catch(() => {});
+          return ok();
         }
         // /run-checks -> run the tester on the issue's branch now (no merge).
         if (!repo || !number) return res.writeHead(400).end("{}");

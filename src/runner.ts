@@ -22,6 +22,7 @@ import {
   listRecentThreads,
   threadSignals,
   reopenIssue,
+  getIssue,
   isNoOpComment,
   findPrForBranch,
   approvedByReaction,
@@ -44,7 +45,7 @@ import {
   getThreadCursor,
   setThreadCursor,
 } from "./store.js";
-import { setActive, clearActive } from "./activity.js";
+import { setActive, clearActive, getActive } from "./activity.js";
 import { dispatch, drain } from "./pool.js";
 import { loadBudget, overBudget, UNLIMITED_LABEL } from "./budget.js";
 import { maybeSelfImprove } from "./reflect.js";
@@ -62,6 +63,8 @@ const NEEDS_ATTENTION = "agency:needs-attention";
 const MAX_AUTOFIX = 2;
 /** Don't re-engage closed threads older than this (keeps the scan cheap). */
 const FOLLOWUP_WINDOW_DAYS = Number(process.env.FOLLOWUP_WINDOW_DAYS?.trim()) || 21;
+/** An in-progress issue with no live run, idle this long, is treated as an orphan. */
+const ORPHAN_GRACE_MS = (Number(process.env.ORPHAN_GRACE_MIN?.trim()) || 12) * 60_000;
 const LOCK_PATH = join(process.cwd(), ".agency.lock");
 
 function acquireLock(): boolean {
@@ -245,6 +248,25 @@ async function processFollowUp(cfg: Config, repo: string, issue: Issue): Promise
   }
 }
 
+/**
+ * Manual "Resume" from the dashboard: unstick an issue no matter what state it's in (orphaned
+ * in-progress, parked needs-attention, blocked, or just quiet) and re-run it. Clears the agency
+ * labels + any zombie active entry, then re-dispatches the pipeline.
+ */
+export async function forceResume(cfg: Config, repo: string, number: number): Promise<void> {
+  const issue = await getIssue(repo, number);
+  if (!issue) return;
+  await reopenIssue(repo, number).catch(() => {});
+  for (const l of [IN_PROGRESS, NEEDS_ATTENTION, "🚧 blocked", ...AWAITING_LABELS]) {
+    await removeLabel(repo, number, l).catch(() => {});
+  }
+  setThreadCursor(repo, number, 0); // let any prior comment count again
+  clearActive(repo, number); // drop a zombie "working" entry if a run died
+  console.log(`[agency] manual resume ${repo} #${number}`);
+  const fresh: Issue = { ...issue, labels: issue.labels.filter((l) => !l.startsWith("agency:")) };
+  dispatch(`${repo}#${number}`, () => processIssue(cfg, repo, fresh));
+}
+
 // ---- scan + dispatch ----
 
 const recentEnough = (iso: string): boolean =>
@@ -273,7 +295,24 @@ async function scanRepo(cfg: Config, repo: string): Promise<void> {
       }
     }
 
-    if (t.labels.includes(IN_PROGRESS)) continue;
+    if (t.labels.includes(IN_PROGRESS)) {
+      // Actually running in this process? leave it. Otherwise it's an orphan from an
+      // interrupted run — if it's been idle a while, park it so it surfaces (and Resume works).
+      const running = getActive().some((a) => a.repo === repo && a.number === t.number);
+      const idleMs = t.updatedAt ? Date.now() - new Date(t.updatedAt).getTime() : Infinity;
+      if (!running && idleMs > ORPHAN_GRACE_MS) {
+        await removeLabel(repo, t.number, IN_PROGRESS).catch(() => {});
+        await addLabel(repo, t.number, NEEDS_ATTENTION).catch(() => {});
+        recordIssueState(repo, t.number, { state: NEEDS_ATTENTION });
+        await commentOnIssue(
+          repo,
+          t.number,
+          "⏸ This looked stuck — a run was interrupted with nothing now working on it. Moved to needs-attention. Press **Resume** on the dashboard (or re-pin) to retry.",
+        ).catch(() => {});
+        console.log(`[agency] parked stuck ${repo} #${t.number}`);
+      }
+      continue;
+    }
     if (t.closed && !recentEnough(t.updatedAt)) continue; // ignore stale closed threads
 
     const ownedByLabel = t.labels.some((l) => l.startsWith("agency:"));
@@ -399,7 +438,7 @@ async function main(): Promise<void> {
   await recoverOrphans(cfg);
   if (cfg.runMode === "webhook") {
     const { runWebhook } = await import("./webhook.js");
-    await runWebhook(cfg, processAllRepos);
+    await runWebhook(cfg, processAllRepos, (repo, number) => forceResume(cfg, repo, number));
   } else if (cfg.runMode === "watch") {
     await runWatch(cfg);
   } else {

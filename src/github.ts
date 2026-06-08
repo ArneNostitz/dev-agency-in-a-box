@@ -512,6 +512,20 @@ export async function closeIssue(repo: string, issue: number, comment?: string):
   await gh(["issue", "close", String(issue), "--repo", repo]).catch(() => {});
 }
 
+/** Fetch a single issue (any state) as an Issue, or null if it can't be read. */
+export async function getIssue(repo: string, number: number): Promise<Issue | null> {
+  const out = await gh([
+    "issue", "view", String(number), "--repo", repo, "--json", "number,title,body,labels",
+  ]).catch(() => "");
+  if (!out) return null;
+  try {
+    const i = JSON.parse(out) as { number: number; title: string; body: string | null; labels: Array<{ name: string }> };
+    return { number: i.number, title: i.title, body: i.body ?? "", labels: (i.labels ?? []).map((l) => l.name) };
+  } catch {
+    return null;
+  }
+}
+
 /** All open issues in a repo (used to scan for control commands). */
 export async function listAllOpenIssues(repo: string): Promise<Issue[]> {
   const out = await gh([
