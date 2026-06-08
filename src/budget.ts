@@ -19,7 +19,9 @@ export interface BudgetLimits {
 }
 
 const num = (name: string, fallback: number): number => {
-  const v = Number(process.env[name]?.trim());
+  const trimmed = process.env[name]?.trim();
+  if (!trimmed) return fallback;
+  const v = Number(trimmed);
   return Number.isFinite(v) && v >= 0 ? v : fallback;
 };
 
