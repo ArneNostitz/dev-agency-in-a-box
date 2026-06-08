@@ -312,9 +312,14 @@ export async function getThreadFull(repo: string, number: number): Promise<Threa
  * Post a comment that counts as the HUMAN speaking (no agency marker), used by the dashboard's
  * inline reply. It therefore re-engages the agency exactly like a comment typed in GitHub.
  * Works on both issues and PRs (PRs share the issues comment endpoint).
+ *
+ * If `asToken` is given (the owner's token), the comment is authored by THAT account — so
+ * dashboard replies appear under your own name, not the bot's. Falls back to the bot token.
  */
-export async function commentAsHuman(repo: string, number: number, body: string): Promise<void> {
-  await gh(["api", "-X", "POST", `repos/${repo}/issues/${number}/comments`, "-f", `body=${body}`]);
+export async function commentAsHuman(repo: string, number: number, body: string, asToken?: string): Promise<void> {
+  const args = ["api", "-X", "POST", `repos/${repo}/issues/${number}/comments`, "-f", `body=${body}`];
+  if (asToken) await ghAs(asToken, args);
+  else await gh(args);
 }
 
 /**

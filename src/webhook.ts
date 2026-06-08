@@ -185,8 +185,12 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         return;
       }
 
-      // Live status dashboard (client fetches /data + /events).
-      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      // Live status dashboard (client fetches /data + /events). No-store so a redeploy's new
+      // UI shows up immediately instead of the browser serving a stale cached page.
+      res.writeHead(200, {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "no-store, must-revalidate",
+      });
       res.end(url === "/history" ? renderHistory() : renderDashboard());
       return;
     }
@@ -219,7 +223,8 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           // Inline reply -> posts to GitHub as the human (no agency marker) so it re-engages.
           if (!repo || !number || !p.body?.trim()) return res.writeHead(400).end("{}");
           try {
-            await commentAsHuman(repo, number, p.body.trim());
+            // Post under the owner's account (admin token) so it shows your name, not the bot's.
+            await commentAsHuman(repo, number, p.body.trim(), cfg.adminToken);
             void trigger("dashboard-comment");
             return ok();
           } catch (err) {
