@@ -64,11 +64,17 @@ function getDb(): DatabaseSync | null {
         PRIMARY KEY (repo, number)
       );
     `);
-    // Migration for databases created before cost tracking (ALTER fails if it exists — fine).
-    try {
-      d.exec(`ALTER TABLE runs ADD COLUMN cost_usd REAL NOT NULL DEFAULT 0`);
-    } catch {
-      /* column already there */
+    // Migrations for older databases (ALTER fails harmlessly if the column already exists).
+    for (const sql of [
+      `ALTER TABLE runs ADD COLUMN cost_usd REAL NOT NULL DEFAULT 0`,
+      `ALTER TABLE issues ADD COLUMN pr_number INTEGER`,
+      `ALTER TABLE issues ADD COLUMN pr_url TEXT`,
+    ]) {
+      try {
+        d.exec(sql);
+      } catch {
+        /* column already there */
+      }
     }
     db = d;
     console.log(`[agency] memory: SQLite at ${path}`);
@@ -322,6 +328,24 @@ export interface IssueRow {
   role: string;
   state: string;
   updated_at: string;
+  pr_number: number | null;
+  pr_url: string | null;
+}
+
+/** Record the PR a delivered issue produced (for the dashboard's links + preview). */
+export function recordPr(repo: string, number: number, prNumber: number, prUrl: string): void {
+  const d = getDb();
+  if (!d) return;
+  try {
+    d.prepare(`UPDATE issues SET pr_number = ?, pr_url = ? WHERE repo = ? AND number = ?`).run(
+      prNumber,
+      prUrl,
+      repo,
+      number,
+    );
+  } catch {
+    /* best effort */
+  }
 }
 
 /** Recent agent runs, newest first (for the status dashboard). */
@@ -344,7 +368,7 @@ export function recentIssues(limit = 40): IssueRow[] {
   try {
     return d
       .prepare(
-        `SELECT i.repo, i.number, i.title, i.role, i.state, i.updated_at FROM issues i
+        `SELECT i.repo, i.number, i.title, i.role, i.state, i.updated_at, i.pr_number, i.pr_url FROM issues i
          WHERE NOT EXISTS (SELECT 1 FROM archived a WHERE a.repo = i.repo AND a.number = i.number)
          ORDER BY i.updated_at DESC LIMIT ?`,
       )

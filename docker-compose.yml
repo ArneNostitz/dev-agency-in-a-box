@@ -55,6 +55,9 @@ services:
       SELF_IMPROVE: ${SELF_IMPROVE:-}
       LESSONS_PR_THRESHOLD: ${LESSONS_PR_THRESHOLD:-}
       AGENCY_REPO: ${AGENCY_REPO:-}
+      # Re-engagement window + dashboard "Open preview" link template
+      FOLLOWUP_WINDOW_DAYS: ${FOLLOWUP_WINDOW_DAYS:-}
+      PREVIEW_URL_TEMPLATE: ${PREVIEW_URL_TEMPLATE:-}
       # SQLite memory lives on the mounted volume so it survives redeploys.
       DB_PATH: /app/data/agency.db
     volumes:

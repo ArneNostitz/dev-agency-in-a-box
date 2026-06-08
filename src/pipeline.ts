@@ -23,7 +23,7 @@ import {
 } from "./github.js";
 import { runRole } from "./agents/roleAgent.js";
 import type { RoleName } from "./agents/roles.js";
-import { recordRun, recordPlan, lastPlan, recordIssueState } from "./store.js";
+import { recordRun, recordPlan, lastPlan, recordIssueState, recordPr } from "./store.js";
 import { runReflection } from "./reflect.js";
 
 const IN_PROGRESS = "agency:in-progress";
@@ -94,6 +94,7 @@ async function finalizeWithPr(repo: string, issue: Issue, branch: string): Promi
   if (pr) {
     await addLabel(repo, issue.number, READY);
     recordIssueState(repo, issue.number, { state: READY });
+    recordPr(repo, issue.number, pr.number, pr.url);
     await commentOnIssue(
       repo,
       issue.number,

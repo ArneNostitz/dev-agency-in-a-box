@@ -89,12 +89,20 @@ worth given follow-ups need no tag.
 waiting on you · `agency:ready` → PR is up · `agency:needs-attention` + 🚧 → blocked, read
 the last comment · `agency:ignore` → muted · `agency:unlimited` → exempt from budgets.
 
-### Dashboard
+### Dashboard (mobile-first)
 
-Your Coolify domain serves a password-protected live dashboard: **Working now** + a live
-stream card per active issue/PR (real commands and edits, not just tool names), **Waiting
-on you**, and today's spend. `/history` has the full firehose, every run with cost, and
-archive buttons.
+Your Coolify domain serves a password-protected, light, **mobile-first kanban**, grouped by
+repo then state (Working · Waiting on you · Ready · Needs attention · Merged). Tap a card to
+open a detail drawer with:
+
+- **Direct links** to the issue and the PR, plus **Open preview ↗** (the PR running live, no
+  merge — see COOLIFY.md to enable).
+- **Run checks ▶** — runs the tests on the branch and reports back, no merge.
+- The **live agent stream** for that card, and the full **GitHub conversation** (markdown).
+- An **inline reply** box that posts straight to GitHub — which re-engages the agency. So you
+  can drive the whole thing from your phone without leaving the board.
+
+`/history` has the full firehose, every run with its cost, and archive buttons.
 
 ---
 

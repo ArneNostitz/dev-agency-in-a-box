@@ -255,6 +255,68 @@ export async function reopenIssue(repo: string, number: number): Promise<void> {
   await gh(["issue", "reopen", String(number), "--repo", repo]).catch(() => {});
 }
 
+export interface ThreadComment {
+  author: string;
+  body: string;
+  createdAt: string;
+  isAgency: boolean;
+}
+export interface ThreadFull {
+  title: string;
+  body: string;
+  author: string;
+  createdAt: string;
+  state: string;
+  comments: ThreadComment[];
+}
+
+/** The full structured conversation for the dashboard side panel (issue or PR). */
+export async function getThreadFull(repo: string, number: number): Promise<ThreadFull> {
+  const head = await gh([
+    "api", `repos/${repo}/issues/${number}`,
+    "--jq", "{title:.title, body:.body, author:.user.login, createdAt:.created_at, state:.state}",
+  ]).catch(() => "{}");
+  let h: { title?: string; body?: string; author?: string; createdAt?: string; state?: string } = {};
+  try {
+    h = JSON.parse(head);
+  } catch {
+    /* ignore */
+  }
+  const out = await gh([
+    "api", `repos/${repo}/issues/${number}/comments`, "--paginate",
+    "--jq", "[.[]|{author:.user.login, body:.body, createdAt:.created_at}]",
+  ]).catch(() => "[]");
+  let raw: Array<{ author?: string; body?: string; createdAt?: string }> = [];
+  try {
+    raw = JSON.parse(out);
+  } catch {
+    /* ignore */
+  }
+  const comments: ThreadComment[] = raw.map((c) => ({
+    author: c.author ?? "?",
+    body: (c.body ?? "").replace(AGENCY_MARKER, "").trim(),
+    createdAt: c.createdAt ?? "",
+    isAgency: (c.body ?? "").includes(AGENCY_MARKER),
+  }));
+  return {
+    title: h.title ?? `#${number}`,
+    body: h.body ?? "",
+    author: h.author ?? "?",
+    createdAt: h.createdAt ?? "",
+    state: h.state ?? "open",
+    comments,
+  };
+}
+
+/**
+ * Post a comment that counts as the HUMAN speaking (no agency marker), used by the dashboard's
+ * inline reply. It therefore re-engages the agency exactly like a comment typed in GitHub.
+ * Works on both issues and PRs (PRs share the issues comment endpoint).
+ */
+export async function commentAsHuman(repo: string, number: number, body: string): Promise<void> {
+  await gh(["api", "-X", "POST", `repos/${repo}/issues/${number}/comments`, "-f", `body=${body}`]);
+}
+
 /** The full thread as readable text, each comment tagged [human] or [agency]. */
 export async function commentThread(repo: string, issue: number): Promise<string> {
   const comments = await listComments(repo, issue);

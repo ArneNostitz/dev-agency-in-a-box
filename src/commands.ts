@@ -19,7 +19,7 @@ import {
   mergePrForBranch,
   AGENCY_MARKER,
 } from "./github.js";
-import { addWatchedRepo, listWatchedRepos } from "./store.js";
+import { addWatchedRepo, listWatchedRepos, recordIssueState } from "./store.js";
 
 export type ControlCommand = { type: "add-repo"; repo: string } | { type: "list-repos" };
 
@@ -92,6 +92,7 @@ export async function handleMergeCommands(cfg: Config, repo: string): Promise<vo
     const r = await mergePrForBranch(repo, `agency/issue-${i.number}`);
     if (r.ok) {
       await closeIssue(repo, i.number, `🚀 Merged ${r.msg} and closed.`);
+      recordIssueState(repo, i.number, { state: "merged" });
       console.log(`[agency] merged ${repo} #${i.number}`);
     } else {
       await removeLabel(repo, i.number, "agency:ready");

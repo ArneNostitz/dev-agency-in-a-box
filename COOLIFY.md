@@ -125,13 +125,30 @@ agents behave, edit those files and `git push`. Enable **Auto Deploy** on the Co
 resource (Webhooks) and a push redeploys the container automatically — so editing
 prose updates the running agency. This is the "self-contained, evolving via git" model.
 
+## Open a PR preview without merging ("see the app")
+
+The dashboard can show an **Open preview ↗** button on each PR so you can try the running
+branch on your phone before merging. The preview itself is deployed by **Coolify's PR preview
+deployments** (not by the agency) — set it up once per app:
+
+1. In Coolify, the app repo must be connected via the **GitHub App** integration (not a plain
+   deploy key) so Coolify sees PRs.
+2. On that application: **Configuration → Preview Deployments → enable**, and set a wildcard
+   preview domain (you'll need a `*.preview.example.com` DNS record pointing at the server).
+3. Coolify now auto-deploys every PR to a URL following your wildcard pattern.
+4. Tell the agency that pattern via `PREVIEW_URL_TEMPLATE` (placeholders `{owner} {repo}
+   {repofull} {pr} {branch}`), e.g. `https://{repo}-pr-{pr}.preview.example.com`. The dashboard
+   fills it in per PR.
+
+The **Run checks ▶** button needs no setup — it runs the project's tests on the branch and
+reports back in the thread.
+
 ## Notes
 
-- **Persistence:** a named volume `agency-data` is mounted at `/app/data`, reserved for
-  the SQLite + vector memory added in Phase 2. Markdown memory ships in the image and is
-  versioned in git.
-- **One target repo per deployment** for now. To run several projects, deploy multiple
-  copies with different `TARGET_REPO` values, or wait for the orchestrator (Phase 3),
-  which will manage multiple repos from one deployment.
+- **Persistence:** the named volume `agency-data` at `/app/data` holds the SQLite memory
+  (issues, runs+cost, plans, lessons, comment cursors) so it survives redeploys. Markdown
+  memory ships in the image and is versioned in git.
+- **Many repos, one deployment:** the orchestrator watches every repo in `config/repos.txt`
+  plus any added at runtime via a `/add-repo` issue — no need for one deployment per repo.
 - **Resources:** the container is lightweight (it mostly waits on the cloud API). A small
   Coolify app allocation is plenty.

@@ -18,6 +18,9 @@ import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince } fr
 import { renderDashboard, renderHistory } from "./dashboard.js";
 import { subscribe, getActive } from "./activity.js";
 import { effectiveRepos } from "./commands.js";
+import { getThreadFull, commentAsHuman } from "./github.js";
+import { previewUrlFor, runChecksNow } from "./preview.js";
+import { dispatch } from "./pool.js";
 
 type ProcessAll = (cfg: Config) => Promise<number>;
 
@@ -129,17 +132,36 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll): Promise<v
       if (url === "/data") {
         const midnight = new Date();
         midnight.setHours(0, 0, 0, 0);
+        const issues = recentIssues(60).map((i) => ({
+          ...i,
+          previewUrl: i.pr_number ? previewUrlFor(i.repo, i.pr_number, `agency/issue-${i.number}`) : null,
+        }));
         res.writeHead(200, { "content-type": "application/json" });
         res.end(
           JSON.stringify({
             repos: effectiveRepos(cfg),
             active: getActive(),
-            issues: recentIssues(40),
+            issues,
             runs: recentRuns(40),
             activity: recentActivity(400),
             spendToday: spendSince(midnight.toISOString()),
           }),
         );
+        return;
+      }
+
+      // Side-panel: the full GitHub conversation for one issue/PR.
+      if (url === "/thread") {
+        const q = new URLSearchParams((req.url ?? "").split("?")[1] ?? "");
+        const repo = q.get("repo") ?? "";
+        const number = Number(q.get("number"));
+        if (!repo || !number) {
+          res.writeHead(400).end("{}");
+          return;
+        }
+        void getThreadFull(repo, number)
+          .then((t) => res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(t)))
+          .catch(() => res.writeHead(200, { "content-type": "application/json" }).end("{}"));
         return;
       }
 
@@ -153,17 +175,41 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll): Promise<v
       return;
     }
 
-    // Dashboard archive action (password-protected, not a GitHub webhook).
-    if ((req.url ?? "").split("?")[0] === "/archive") {
+    // Dashboard actions (password-protected, not GitHub webhooks).
+    const path = (req.url ?? "").split("?")[0];
+    if (path === "/archive" || path === "/comment" || path === "/run-checks") {
       if (!checkAuth(cfg, req, res)) return;
-      void readBody(req).then((body) => {
+      void readBody(req).then(async (body) => {
+        let p: { repo?: string; number?: number; body?: string; title?: string } = {};
         try {
-          const { repo, number } = JSON.parse(body.toString("utf8")) as { repo: string; number: number };
-          if (repo && number) archiveIssue(repo, number);
+          p = JSON.parse(body.toString("utf8"));
         } catch {
           /* ignore */
         }
-        res.writeHead(200, { "content-type": "application/json" }).end('{"ok":true}');
+        const repo = p.repo ?? "";
+        const number = Number(p.number);
+        const ok = (payload = '{"ok":true}') =>
+          res.writeHead(200, { "content-type": "application/json" }).end(payload);
+
+        if (path === "/archive") {
+          if (repo && number) archiveIssue(repo, number);
+          return ok();
+        }
+        if (path === "/comment") {
+          // Inline reply -> posts to GitHub as the human (no agency marker) so it re-engages.
+          if (!repo || !number || !p.body?.trim()) return res.writeHead(400).end("{}");
+          try {
+            await commentAsHuman(repo, number, p.body.trim());
+            void trigger("dashboard-comment");
+            return ok();
+          } catch (err) {
+            return res.writeHead(500).end(JSON.stringify({ error: (err as Error).message }));
+          }
+        }
+        // /run-checks -> run the tester on the issue's branch now (no merge).
+        if (!repo || !number) return res.writeHead(400).end("{}");
+        dispatch(`${repo}#checks-${number}`, () => runChecksNow(repo, number, p.title ?? ""));
+        return ok();
       });
       return;
     }
