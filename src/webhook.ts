@@ -14,11 +14,11 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { Config } from "./config.js";
-import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState } from "./store.js";
+import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr } from "./store.js";
 import { renderDashboard, renderHistory } from "./dashboard.js";
 import { subscribe, getActive } from "./activity.js";
 import { effectiveRepos } from "./commands.js";
-import { getThreadFull, commentAsHuman, mergePrForBranch, closeIssue, deleteIssueHard } from "./github.js";
+import { getThreadFull, commentAsHuman, mergePrForBranch, closeIssue, deleteIssueHard, findPrForBranch } from "./github.js";
 import { previewUrlFor, runChecksNow } from "./preview.js";
 import { dispatch } from "./pool.js";
 
@@ -132,21 +132,40 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll): Promise<v
       if (url === "/data") {
         const midnight = new Date();
         midnight.setHours(0, 0, 0, 0);
-        const issues = recentIssues(60).map((i) => ({
-          ...i,
-          previewUrl: i.pr_number ? previewUrlFor(i.repo, i.pr_number, `agency/issue-${i.number}`) : null,
-        }));
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(
-          JSON.stringify({
-            repos: effectiveRepos(cfg),
-            active: getActive(),
-            issues,
-            runs: recentRuns(40),
-            activity: recentActivity(400),
-            spendToday: spendSince(midnight.toISOString()),
-          }),
-        );
+        void (async () => {
+          const issues = recentIssues(60);
+          // Backfill PR links for delivered issues opened before PR linkage existed (one-time:
+          // we persist what we find, so later polls read it straight from the DB).
+          for (const i of issues) {
+            if (!i.pr_number && i.state === "agency:ready") {
+              try {
+                const pr = await findPrForBranch(i.repo, `agency/issue-${i.number}`);
+                if (pr) {
+                  i.pr_number = pr.number;
+                  i.pr_url = pr.url;
+                  recordPr(i.repo, i.number, pr.number, pr.url);
+                }
+              } catch {
+                /* ignore */
+              }
+            }
+          }
+          const enriched = issues.map((i) => ({
+            ...i,
+            previewUrl: i.pr_number ? previewUrlFor(i.repo, i.pr_number, `agency/issue-${i.number}`) : null,
+          }));
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(
+            JSON.stringify({
+              repos: effectiveRepos(cfg),
+              active: getActive(),
+              issues: enriched,
+              runs: recentRuns(40),
+              activity: recentActivity(400),
+              spendToday: spendSince(midnight.toISOString()),
+            }),
+          );
+        })();
         return;
       }
 
