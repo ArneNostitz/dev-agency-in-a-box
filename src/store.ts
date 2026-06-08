@@ -58,6 +58,11 @@ function getDb(): DatabaseSync | null {
         repo TEXT, number INTEGER, lesson TEXT NOT NULL,
         processed INTEGER NOT NULL DEFAULT 0, created_at TEXT
       );
+      CREATE TABLE IF NOT EXISTS thread_cursor (
+        repo TEXT NOT NULL, number INTEGER NOT NULL,
+        last_comment_id INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (repo, number)
+      );
     `);
     // Migration for databases created before cost tracking (ALTER fails if it exists — fine).
     try {
@@ -379,6 +384,35 @@ export function resetAutofix(repo: string, pr: number): void {
   if (!d) return;
   try {
     d.prepare(`DELETE FROM pr_autofix WHERE repo = ? AND pr = ?`).run(repo, pr);
+  } catch {
+    /* best effort */
+  }
+}
+
+// ---- comment cursor (handle each human comment exactly once) ----
+
+/** The id of the last human comment we acted on for this thread (0 if none). */
+export function getThreadCursor(repo: string, number: number): number {
+  const d = getDb();
+  if (!d) return 0;
+  try {
+    const row = d.prepare(`SELECT last_comment_id FROM thread_cursor WHERE repo = ? AND number = ?`).get(repo, number) as
+      | { last_comment_id?: number }
+      | undefined;
+    return row?.last_comment_id ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+export function setThreadCursor(repo: string, number: number, commentId: number): void {
+  const d = getDb();
+  if (!d || !commentId) return;
+  try {
+    d.prepare(
+      `INSERT INTO thread_cursor (repo, number, last_comment_id) VALUES (?, ?, ?)
+       ON CONFLICT(repo, number) DO UPDATE SET last_comment_id = excluded.last_comment_id`,
+    ).run(repo, number, commentId);
   } catch {
     /* best effort */
   }

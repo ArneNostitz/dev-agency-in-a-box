@@ -15,10 +15,9 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { Config } from "./config.js";
 import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince } from "./store.js";
-import { renderDashboard, renderHistory, renderBoard } from "./dashboard.js";
+import { renderDashboard, renderHistory } from "./dashboard.js";
 import { subscribe, getActive } from "./activity.js";
 import { effectiveRepos } from "./commands.js";
-import { issueDetail, removeLabel, addLabel } from "./github.js";
 
 type ProcessAll = (cfg: Config) => Promise<number>;
 
@@ -135,7 +134,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll): Promise<v
           JSON.stringify({
             repos: effectiveRepos(cfg),
             active: getActive(),
-            issues: recentIssues(100),
+            issues: recentIssues(40),
             runs: recentRuns(40),
             activity: recentActivity(400),
             spendToday: spendSince(midnight.toISOString()),
@@ -144,28 +143,9 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll): Promise<v
         return;
       }
 
-      if (url === "/issue") {
-        // Return detail (labels + comments) for a single issue.
-        const qs = new URLSearchParams((req.url ?? "").split("?")[1] ?? "");
-        const repo = qs.get("repo") ?? "";
-        const number = parseInt(qs.get("number") ?? "0", 10);
-        if (!repo || !number) {
-          res.writeHead(400, { "content-type": "application/json" }).end('{"error":"missing repo or number"}');
-          return;
-        }
-        void issueDetail(repo, number).then((detail) => {
-          res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(detail));
-        }).catch(() => {
-          res.writeHead(500, { "content-type": "application/json" }).end('{"error":"failed"}');
-        });
-        return;
-      }
-
       // Live status dashboard (client fetches /data + /events).
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      if (url === "/history") res.end(renderHistory());
-      else if (url === "/board") res.end(renderBoard());
-      else res.end(renderDashboard());
+      res.end(url === "/history" ? renderHistory() : renderDashboard());
       return;
     }
     if (req.method !== "POST") {
@@ -180,26 +160,6 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll): Promise<v
         try {
           const { repo, number } = JSON.parse(body.toString("utf8")) as { repo: string; number: number };
           if (repo && number) archiveIssue(repo, number);
-        } catch {
-          /* ignore */
-        }
-        res.writeHead(200, { "content-type": "application/json" }).end('{"ok":true}');
-      });
-      return;
-    }
-
-    // Label add/remove from the kanban board.
-    if ((req.url ?? "").split("?")[0] === "/label") {
-      if (!checkAuth(cfg, req, res)) return;
-      void readBody(req).then(async (body) => {
-        try {
-          const { repo, number, label, op } = JSON.parse(body.toString("utf8")) as {
-            repo: string; number: number; label: string; op: "remove" | "add";
-          };
-          if (repo && number && label) {
-            if (op === "remove") await removeLabel(repo, number, label);
-            else await addLabel(repo, number, label);
-          }
         } catch {
           /* ignore */
         }

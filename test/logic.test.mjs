@@ -10,6 +10,8 @@ import { parseControlCommand } from "../dist/commands.js";
 import { dispatch, drain } from "../dist/pool.js";
 import { overBudget, loadBudget, UNLIMITED_LABEL } from "../dist/budget.js";
 import { parseLessons } from "../dist/reflect.js";
+import { decideThreadAction } from "../dist/route.js";
+import { isNoOpComment } from "../dist/github.js";
 
 test("mentionsHandle matches whole handles only", () => {
   const H = ["@dev", "@agency"];
@@ -134,6 +136,42 @@ test("librarian role exists: cheap model, read-only tools", () => {
   assert.equal(ROLES.librarian.defaultModel, MODELS.haiku);
   assert.ok(!ROLES.librarian.tools.includes("Bash"));
   assert.ok(!ROLES.librarian.tools.includes("Write"));
+});
+
+test("decideThreadAction: once owned, a new comment re-engages (no re-tag)", () => {
+  const base = {
+    ignored: false, inProgress: false, closed: false, ready: false, needsAttention: false,
+    awaiting: false, owned: false, newHumanComment: false, approvedReaction: false,
+    hasOpenPr: false, triggerMatch: false,
+  };
+  // fresh untouched issue: needs the trigger
+  assert.equal(decideThreadAction({ ...base, triggerMatch: true }), "fresh");
+  assert.equal(decideThreadAction({ ...base, triggerMatch: false }), "skip");
+  // owned + new comment, no PR, open -> re-run pipeline (no tag needed)
+  assert.equal(decideThreadAction({ ...base, owned: true, newHumanComment: true }), "fresh");
+  // owned + new comment on a CLOSED/merged thread -> follow-up build
+  assert.equal(decideThreadAction({ ...base, owned: true, newHumanComment: true, closed: true }), "followup");
+  assert.equal(decideThreadAction({ ...base, owned: true, newHumanComment: true, ready: true }), "followup");
+  // a new comment with an OPEN PR -> PR fix
+  assert.equal(decideThreadAction({ ...base, owned: true, newHumanComment: true, ready: true, hasOpenPr: true }), "prfix");
+  // paused: resume on a reply OR a 👍, skip otherwise
+  assert.equal(decideThreadAction({ ...base, awaiting: true, owned: true, newHumanComment: true }), "resume");
+  assert.equal(decideThreadAction({ ...base, awaiting: true, owned: true, approvedReaction: true }), "resume");
+  assert.equal(decideThreadAction({ ...base, awaiting: true, owned: true }), "skip");
+  // never double-dispatch or touch ignored / in-progress
+  assert.equal(decideThreadAction({ ...base, inProgress: true, owned: true, newHumanComment: true }), "skip");
+  assert.equal(decideThreadAction({ ...base, ignored: true, owned: true, newHumanComment: true }), "skip");
+  // untouched closed issue with a stray comment: do nothing
+  assert.equal(decideThreadAction({ ...base, closed: true, newHumanComment: true }), "skip");
+});
+
+test("isNoOpComment skips praise, lets real requests through", () => {
+  assert.equal(isNoOpComment("thanks!"), true);
+  assert.equal(isNoOpComment("looks good"), true);
+  assert.equal(isNoOpComment("👍"), true);
+  assert.equal(isNoOpComment("LGTM"), true);
+  assert.equal(isNoOpComment("the header is misaligned, fix it"), false);
+  assert.equal(isNoOpComment("also add a logout button"), false);
 });
 
 test("parseControlCommand recognizes /add-repo and /list-repos", () => {

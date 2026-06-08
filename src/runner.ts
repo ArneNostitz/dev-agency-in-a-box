@@ -12,7 +12,6 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig, type Config } from "./config.js";
 import {
-  listActionableIssues,
   addLabel,
   removeLabel,
   commentOnIssue,
@@ -20,16 +19,31 @@ import {
   commentThread,
   acknowledge,
   listAgencyPrs,
-  commentThreadByNumber,
+  listRecentThreads,
+  threadSignals,
+  reopenIssue,
+  isNoOpComment,
+  findPrForBranch,
+  approvedByReaction,
   commentOnPr,
   prHealth,
   mentionsHandle,
   AWAITING_LABELS,
   type Issue,
 } from "./github.js";
+import { decideThreadAction } from "./route.js";
 import { loadHandleRoleMap, roleForText, type RoleName } from "./agents/roles.js";
-import { runPipeline, runPrFix } from "./pipeline.js";
-import { recordIssueState, getIssueRole, getAutofixCount, incAutofix, resetAutofix, issueSpend } from "./store.js";
+import { runPipeline, runPrFix, runFollowUp } from "./pipeline.js";
+import {
+  recordIssueState,
+  getIssueRole,
+  getAutofixCount,
+  incAutofix,
+  resetAutofix,
+  issueSpend,
+  getThreadCursor,
+  setThreadCursor,
+} from "./store.js";
 import { setActive, clearActive } from "./activity.js";
 import { dispatch, drain } from "./pool.js";
 import { loadBudget, overBudget, UNLIMITED_LABEL } from "./budget.js";
@@ -43,7 +57,11 @@ import {
 } from "./commands.js";
 
 const IN_PROGRESS = "agency:in-progress";
+const READY = "agency:ready";
+const NEEDS_ATTENTION = "agency:needs-attention";
 const MAX_AUTOFIX = 2;
+/** Don't re-engage closed threads older than this (keeps the scan cheap). */
+const FOLLOWUP_WINDOW_DAYS = Number(process.env.FOLLOWUP_WINDOW_DAYS?.trim()) || 21;
 const LOCK_PATH = join(process.cwd(), ".agency.lock");
 
 function acquireLock(): boolean {
@@ -195,7 +213,42 @@ async function processHealOne(
   }
 }
 
+/** Re-engage a thread the agency already delivered (often after a merge): build a fix PR. */
+async function processFollowUp(cfg: Config, repo: string, issue: Issue): Promise<void> {
+  console.log(`[agency] ${repo} #${issue.number}: follow-up on a new comment`);
+  await reopenIssue(repo, issue.number); // no-op if already open
+  await addLabel(repo, issue.number, IN_PROGRESS);
+  for (const l of [READY, NEEDS_ATTENTION, "🚧 blocked", ...AWAITING_LABELS]) {
+    await removeLabel(repo, issue.number, l);
+  }
+  recordIssueState(repo, issue.number, { title: issue.title, role: "developer", state: IN_PROGRESS });
+  await acknowledge(repo, issue.number);
+
+  const thread = await commentThread(repo, issue.number);
+  const workdir = workdirFor(repo, `${issue.number}`);
+  await rm(workdir, { recursive: true, force: true });
+  await mkdir(join(workdir, ".."), { recursive: true });
+  await cloneRepo(repo, workdir);
+
+  setActive(repo, issue.number, "issue", "developer", issue.title);
+  try {
+    await runFollowUp(repo, issue, workdir, thread);
+  } catch (err) {
+    const msg = (err as Error).message ?? String(err);
+    console.error(`[agency] follow-up error ${repo} #${issue.number}:`, msg);
+    await removeLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
+    await addLabel(repo, issue.number, NEEDS_ATTENTION).catch(() => {});
+    await addLabel(repo, issue.number, "🚧 blocked").catch(() => {});
+    await commentOnIssue(repo, issue.number, `❌ Follow-up failed: ${msg.slice(0, 300)} — comment again to retry.`).catch(() => {});
+  } finally {
+    clearActive(repo, issue.number);
+  }
+}
+
 // ---- scan + dispatch ----
+
+const recentEnough = (iso: string): boolean =>
+  !iso || Date.now() - new Date(iso).getTime() <= FOLLOWUP_WINDOW_DAYS * 86400_000;
 
 /** Scan one repo and dispatch all eligible work to the pool (deduped by key). */
 async function scanRepo(cfg: Config, repo: string): Promise<void> {
@@ -203,23 +256,83 @@ async function scanRepo(cfg: Config, repo: string): Promise<void> {
   await handleControlCommands(cfg, repo);
   await handleMergeCommands(cfg, repo);
 
-  // Actionable issues.
-  const issues = await listActionableIssues(repo, {
-    triggerMode: cfg.triggerMode,
-    handles: cfg.handles,
-    queueLabel: cfg.queueLabel,
-    ignoreLabel: cfg.ignoreLabel,
-  });
-  for (const issue of issues) {
-    dispatch(`${repo}#${issue.number}`, () => processIssue(cfg, repo, issue));
+  // Pass 1 — issues (any state). One rule: once the agency has touched a thread, a new comment
+  // re-engages it (open or closed, no re-tag); untouched issues need the configured trigger.
+  for (const t of await listRecentThreads(repo)) {
+    if (t.labels.includes(cfg.ignoreLabel)) continue;
+    if (t.labels.includes(IN_PROGRESS)) continue;
+    if (t.closed && !recentEnough(t.updatedAt)) continue; // ignore stale closed threads
+
+    const ownedByLabel = t.labels.some((l) => l.startsWith("agency:"));
+    const awaiting = t.labels.some((l) => AWAITING_LABELS.includes(l));
+    const triggerMatch =
+      cfg.triggerMode === "label"
+        ? t.labels.includes(cfg.queueLabel)
+        : cfg.triggerMode === "any"
+          ? !t.closed
+          : mentionsHandle(`${t.title}\n${t.body}`, cfg.handles);
+
+    // Only inspect comments when it can matter (owned, has comments, or paused).
+    let owned = ownedByLabel;
+    let newHumanComment = false;
+    let approvedReaction = false;
+    let lastCommentId = 0;
+    if (ownedByLabel || awaiting || t.comments > 0) {
+      const sig = await threadSignals(repo, t.number);
+      owned = owned || sig.agencyEverCommented;
+      lastCommentId = sig.lastCommentId;
+      newHumanComment = sig.lastIsHuman && sig.lastCommentId > getThreadCursor(repo, t.number);
+      if (awaiting && !newHumanComment) approvedReaction = await approvedByReaction(repo, t.number);
+    }
+
+    // Is there an open PR for this issue? (only relevant when there's a new comment to route)
+    let openPr: { number: number; isDraft: boolean } | null = null;
+    if (newHumanComment && owned && !awaiting) {
+      openPr = await findPrForBranch(repo, `agency/issue-${t.number}`);
+    }
+
+    const action = decideThreadAction({
+      ignored: false,
+      inProgress: false,
+      closed: t.closed,
+      ready: t.labels.includes(READY),
+      needsAttention: t.labels.includes(NEEDS_ATTENTION),
+      awaiting,
+      owned,
+      newHumanComment,
+      approvedReaction,
+      hasOpenPr: Boolean(openPr),
+      triggerMatch,
+    });
+    if (action === "skip") continue;
+
+    const issue: Issue = { number: t.number, title: t.title, body: t.body, labels: t.labels };
+    // Mark this comment handled now so re-polls during the run don't double-fire.
+    if (newHumanComment) setThreadCursor(repo, t.number, lastCommentId);
+
+    if (action === "prfix" && openPr) {
+      const thread = await commentThread(repo, t.number);
+      const pr = { number: openPr.number, title: t.title, branch: `agency/issue-${t.number}`, issueNumber: t.number };
+      dispatch(`${repo}#pr-${pr.number}`, () => processPrFeedbackOne(repo, pr, thread));
+    } else if (action === "followup") {
+      dispatch(`${repo}#${t.number}`, () => processFollowUp(cfg, repo, issue));
+    } else {
+      // fresh or resume — processIssue picks the role and sorts approve/answer/change.
+      dispatch(`${repo}#${t.number}`, () => processIssue(cfg, repo, issue));
+    }
   }
 
-  // Agency PRs: review feedback takes priority over auto-heal.
+  // Pass 2 — open agency PRs: comments on the PR's own thread, then auto-heal.
   for (const pr of await listAgencyPrs(repo)) {
-    const { thread, lastHumanBody } = await commentThreadByNumber(repo, pr.number);
-    if (lastHumanBody && mentionsHandle(lastHumanBody, ["@dev", "@fix"])) {
-      dispatch(`${repo}#pr-${pr.number}`, () => processPrFeedbackOne(repo, pr, thread));
-      continue;
+    const sig = await threadSignals(repo, pr.number);
+    const newComment = sig.lastIsHuman && sig.lastCommentId > getThreadCursor(repo, pr.number);
+    if (newComment) {
+      setThreadCursor(repo, pr.number, sig.lastCommentId);
+      if (!isNoOpComment(sig.lastHumanBody)) {
+        const thread = await commentThread(repo, pr.number);
+        dispatch(`${repo}#pr-${pr.number}`, () => processPrFeedbackOne(repo, pr, thread));
+        continue;
+      }
     }
     if (getAutofixCount(repo, pr.number) > MAX_AUTOFIX) continue; // already gave up
     const health = await prHealth(repo, pr.number);

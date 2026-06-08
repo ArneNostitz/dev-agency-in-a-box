@@ -29,6 +29,18 @@ Write an issue in a watched repo and pin a teammate in the title or body:
 The agency reacts 👀 on your comment within seconds and comments 🏗️ when it picks the
 issue up. Small/obvious tasks skip the approval gate entirely (`PLAN AUTO`).
 
+**When do I need to tag a handle?** Only the **first** time, to start a thread (so the agency
+doesn't jump on every random issue). After that the thread is "owned" — **just comment, no
+tag.** Any later comment re-engages it, even after you've merged and the issue/PR is closed:
+
+- Reply on an **open issue** → it continues / replans with your note.
+- Reply on a **plan** → 👍 (or `ok`) to build, or write the change to refine it.
+- Comment on the **PR** → it pushes the fix to that PR.
+- Comment on a **closed/merged issue or PR** → it reopens, builds your fix on a fresh branch
+  off the latest `main`, and opens a new PR. No more reopening things by hand.
+
+(Pure "thanks / lgtm / 👍" comments are ignored so they don't trigger a pointless build.)
+
 ### Approve, steer, merge
 
 - **Approve a plan**: 👍 the proposal comment, or reply `ok` (also: `go`, `lgtm`, `yes`, `build it`…).
@@ -54,6 +66,22 @@ File an issue in any watched repo:
 
 - `/add-repo <name | owner/name>` — start watching a repo (bot is auto-invited, webhook auto-registered)
 - `/list-repos` — show what's watched
+
+### About the `@dev` / `@plan` autocomplete
+
+GitHub only autocompletes **real accounts and teams** in the `@` box — `@dev`/`@plan` are
+plain text the agency parses, so they can't appear there, and that's by design (no extra
+collaborators or accounts needed). Two ways to make this painless:
+
+- **You rarely type them anyway** — only the first comment on a thread needs a handle.
+  Everything after is just a plain reply (see above).
+- **For the first comment**, `@dev` etc. are 4–5 characters; or mention the **bot account**
+  (`@your-bot`), which *does* autocomplete once it has commented in the repo, and put the
+  role word in the text (e.g. "@your-bot please plan this").
+
+If you want true autocomplete for each role, the only real options are GitHub **org Teams**
+(`@org/dev` in org repos) or dedicated bot accounts per role — both heavier than they're
+worth given follow-ups need no tag.
 
 ### Labels = state machine
 

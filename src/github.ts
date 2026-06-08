@@ -169,6 +169,92 @@ export async function humanRepliedLast(repo: string, issue: number): Promise<boo
   return !comments[comments.length - 1].body.includes(AGENCY_MARKER);
 }
 
+export interface ThreadInspect {
+  /** the agency has commented on this thread at least once. */
+  agencyEverCommented: boolean;
+  /** the latest comment is from a human (not the agency). */
+  lastIsHuman: boolean;
+  /** id of the latest comment (0 if none) — used as a per-thread cursor. */
+  lastCommentId: number;
+  /** body of the latest comment if it's a human's, else "". */
+  lastHumanBody: string;
+}
+
+/** One API call that tells us everything the router needs about a thread's comments. */
+export async function threadSignals(repo: string, number: number): Promise<ThreadInspect> {
+  const out = await gh([
+    "api", `repos/${repo}/issues/${number}/comments`, "--paginate", "--jq", "[.[]|{id,body}]",
+  ]).catch(() => "[]");
+  let arr: Array<{ id: number; body: string }> = [];
+  try {
+    arr = JSON.parse(out);
+  } catch {
+    /* ignore */
+  }
+  const agencyEverCommented = arr.some((c) => c.body.includes(AGENCY_MARKER));
+  const last = arr[arr.length - 1];
+  const lastIsHuman = Boolean(last) && !last.body.includes(AGENCY_MARKER);
+  return {
+    agencyEverCommented,
+    lastIsHuman,
+    lastCommentId: last?.id ?? 0,
+    lastHumanBody: lastIsHuman ? last.body : "",
+  };
+}
+
+/** A short "thanks/looks good" style comment that should NOT trigger a code change. */
+const NO_OP_RE =
+  /^\s*(thanks?|thank you|ty|nice|great|good( job)?|perfect|cool|awesome|love it|looks good|lgtm|done|ok|okay|👍|👌|🎉|🙏|❤️|💯)[.! ]*$/i;
+export function isNoOpComment(body: string): boolean {
+  return NO_OP_RE.test((body || "").trim());
+}
+
+export interface RecentThread {
+  number: number;
+  title: string;
+  body: string;
+  labels: string[];
+  closed: boolean;
+  comments: number;
+  updatedAt: string;
+}
+
+/** Issues updated recently, ANY state, with the bits the router needs. */
+export async function listRecentThreads(repo: string, limit = 60): Promise<RecentThread[]> {
+  const out = await gh([
+    "issue", "list", "--repo", repo, "--state", "all",
+    "--json", "number,title,body,labels,state,comments,updatedAt", "--limit", String(limit),
+  ]).catch(() => "[]");
+  let raw: Array<{
+    number: number;
+    title: string;
+    body: string | null;
+    labels: Array<{ name: string }>;
+    state: string;
+    comments: number | unknown[];
+    updatedAt: string;
+  }> = [];
+  try {
+    raw = JSON.parse(out);
+  } catch {
+    /* ignore */
+  }
+  return raw.map((i) => ({
+    number: i.number,
+    title: i.title,
+    body: i.body ?? "",
+    labels: i.labels.map((l) => l.name),
+    closed: (i.state ?? "").toUpperCase() === "CLOSED",
+    // gh returns `comments` as a count (number) on most versions, an array on some.
+    comments: Array.isArray(i.comments) ? i.comments.length : Number(i.comments) || 0,
+    updatedAt: i.updatedAt ?? "",
+  }));
+}
+
+export async function reopenIssue(repo: string, number: number): Promise<void> {
+  await gh(["issue", "reopen", String(number), "--repo", repo]).catch(() => {});
+}
+
 /** The full thread as readable text, each comment tagged [human] or [agency]. */
 export async function commentThread(repo: string, issue: number): Promise<string> {
   const comments = await listComments(repo, issue);
@@ -454,42 +540,6 @@ export interface PullRequest {
   number: number;
   url: string;
   isDraft: boolean;
-}
-
-export interface IssueDetail {
-  labels: string[];
-  comments: Array<{ who: "human" | "agency"; body: string; createdAt: string }>;
-}
-
-/** Pure mapping of raw gh JSON to IssueDetail — exported for unit testing. */
-export function mapIssueDetail(data: {
-  labels?: Array<{ name: string }>;
-  comments?: Array<{ body: string; createdAt: string }>;
-}): IssueDetail {
-  return {
-    labels: (data.labels ?? []).map((l) => l.name),
-    comments: (data.comments ?? []).map((c) => ({
-      who: c.body.includes(AGENCY_MARKER) ? "agency" : "human",
-      body: c.body.replace(AGENCY_MARKER, "").trim(),
-      createdAt: c.createdAt,
-    })),
-  };
-}
-
-/**
- * Fetch labels + comment thread for a single issue. Each comment is tagged human/agency
- * via AGENCY_MARKER. One `gh issue view` call.
- */
-export async function issueDetail(repo: string, number: number): Promise<IssueDetail> {
-  const out = await gh([
-    "issue", "view", String(number), "--repo", repo,
-    "--json", "labels,comments",
-  ]).catch(() => '{"labels":[],"comments":[]}');
-  const data = JSON.parse(out) as {
-    labels?: Array<{ name: string }>;
-    comments?: Array<{ body: string; createdAt: string }>;
-  };
-  return mapIssueDetail(data);
 }
 
 /** Find an open PR whose head branch matches `branch`, if any. */

@@ -447,3 +447,27 @@ export async function runPipeline(
     await runSpecialist(repo, issue, role, workdir, thread);
   }
 }
+
+/**
+ * A follow-up on a thread the agency already delivered: the human left a new comment after a
+ * previous build (often after merging, when the issue/PR is closed). No planner gate — the
+ * comment IS the instruction. The developer applies it on a fresh branch off the now-current
+ * main and opens a new draft PR; tester + reviewer run as usual.
+ */
+export async function runFollowUp(
+  repo: string,
+  issue: Issue,
+  workdir: string,
+  thread: string,
+): Promise<void> {
+  await commentOnIssue(
+    repo,
+    issue.number,
+    say("developer", "**On your note — preparing a fix.** Building on a fresh branch off the latest `main`."),
+  );
+  const planText =
+    "FOLLOW-UP: a previous version of this issue was already delivered (and may have been merged). " +
+    "Apply the human's latest comment(s) below as the change set. Branch off an up-to-date main so you " +
+    "include any already-merged work. Keep the diff focused on what the comment asks for.";
+  await build(repo, issue, workdir, planText, thread);
+}
