@@ -77,7 +77,17 @@ const STYLE = `
   .gauge{display:inline-block;width:64px;height:6px;border-radius:3px;background:var(--line);vertical-align:middle;overflow:hidden;margin:0 4px}
   .gauge i{display:block;height:100%;background:var(--green)}
   .wrap{padding:6px 8px 40px}
-  .repo{margin:10px 6px 4px;font-weight:650;font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px}
+  .repo{margin:12px 6px 2px;font-weight:650;font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px}
+  .section{border-radius:14px;margin:6px 4px;padding:4px 4px 2px}
+  .section .sechead{font-size:11px;text-transform:uppercase;letter-spacing:.05em;font-weight:650;padding:8px 10px 2px}
+  .section .sechead span{color:var(--muted);font-weight:550}
+  .section.attn{background:#eaf1ff;border:1px solid #d3e1ff}
+  .section.attn .sechead{color:#2f5bd0}
+  .section.work{background:#fff7e9;border:1px solid #f3e2c2}
+  .section.work .sechead{color:#a76a00}
+  .section.done{background:#eef0f2;border:1px solid var(--line);opacity:.72}
+  .section.done .sechead{color:#7a828c}
+  .section.done .card{background:#f6f7f9;box-shadow:none}
   .lanes{display:flex;gap:10px;overflow-x:auto;padding:6px;scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch}
   .lane{flex:0 0 78vw;max-width:330px;scroll-snap-align:start}
   @media(min-width:760px){.lane{flex:0 0 270px}}
@@ -188,14 +198,13 @@ export function renderDashboard(): string {
 ${CLIENT_HELPERS}
 (function(){
   var DATA={issues:[],active:[],activity:[],repos:[]}, repoFilter=null, open=null, query="", sortKey="updated";
-  // Order: New → Waiting for reply → Working → Ready for review → Done. Each issue lands in
-  // exactly one column (classify), so "waiting on you" and "needs attention" are one bucket.
-  var COLS=[
-    {k:"new",     label:"New"},
-    {k:"waiting", label:"Waiting for reply"},
-    {k:"working", label:"Working"},
-    {k:"review",  label:"Ready for review"},
-    {k:"done",    label:"Done"}
+  // Columns grouped into 3 sections. "Needs you" (New, Waiting/Needs attention, Ready for
+  // review) is prominent; "Working" is the agency busy; "Done" is greyed out.
+  var COL={new:"New", waiting:"Waiting / Needs attention", review:"Ready for review", working:"Working", done:"Done"};
+  var SECTIONS=[
+    {k:"attn", label:"Needs you",  cols:["new","waiting","review"]},
+    {k:"work", label:"Working",    cols:["working"]},
+    {k:"done", label:"Done",       cols:["done"]}
   ];
   function classify(i){
     if(i.active||i.state==="agency:in-progress")return "working";
@@ -248,17 +257,21 @@ ${CLIENT_HELPERS}
       '<div class="t">'+(i.active?'<span class="dot"></span> ':'')+esc(i.title||("#"+i.number))+'</div>'+
       '<div class="m">'+role+'#'+i.number+' '+tags+'<span style="margin-left:auto">'+ago(i.updated_at)+'</span></div></div>';
   }
+  function lane(ck,items){
+    return '<div class="lane"><h3>'+COL[ck]+'<span>'+(items.length||"")+'</span></h3>'+
+      (items.length?items.map(card).join(""):'<div class="empty">—</div>')+'</div>';
+  }
   function renderBoard(){
     var repos=(DATA.repos||[]).filter(function(r){return !repoFilter||r===repoFilter;});
     var items=DATA.issues.filter(matchQ).slice().sort(cmp);
     var html=repos.map(function(r){
       var ri=items.filter(function(i){return i.repo===r;});
-      var lanes=COLS.map(function(col){
-        var inCol=ri.filter(function(i){return classify(i)===col.k;});
-        return '<div class="lane"><h3>'+col.label+'<span>'+(inCol.length||"")+'</span></h3>'+
-          (inCol.length?inCol.map(card).join(""):'<div class="empty">—</div>')+'</div>';
+      var secs=SECTIONS.map(function(sec){
+        var lanes=sec.cols.map(function(ck){return lane(ck,ri.filter(function(i){return classify(i)===ck;}));}).join("");
+        var n=ri.filter(function(i){return sec.cols.indexOf(classify(i))>=0;}).length;
+        return '<div class="section '+sec.k+'"><div class="sechead">'+sec.label+' <span>'+(n||"")+'</span></div><div class="lanes">'+lanes+'</div></div>';
       }).join("");
-      return '<div class="repo">'+esc(r)+'</div><div class="lanes">'+lanes+'</div>';
+      return '<div class="repo">'+esc(r)+'</div>'+secs;
     }).join("");
     document.getElementById("board").innerHTML = html||'<div class="empty">No repos yet. File a /add-repo issue.</div>';
   }
