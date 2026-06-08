@@ -346,6 +346,44 @@ export async function commentAsHuman(repo: string, number: number, body: string,
   else await gh(args);
 }
 
+/** 👍 the latest agency comment so approvedByReaction() passes — a direct, reliable approval. */
+export async function approveLastProposal(repo: string, number: number): Promise<void> {
+  const out = await gh([
+    "api", `repos/${repo}/issues/${number}/comments`, "--paginate", "--jq", "[.[]|{id,body}]",
+  ]).catch(() => "[]");
+  try {
+    const arr = JSON.parse(out) as Array<{ id: number; body: string }>;
+    for (let i = arr.length - 1; i >= 0; i--) {
+      if (arr[i].body.includes(AGENCY_MARKER)) {
+        await gh(["api", "-X", "POST", `repos/${repo}/issues/comments/${arr[i].id}/reactions`, "-f", "content=+1"]).catch(() => {});
+        return;
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Commit a file to a repo (create or update) via the contents API, as the given token. */
+export async function putRepoFile(
+  repo: string,
+  path: string,
+  content: string,
+  message: string,
+  token: string,
+): Promise<{ ok: boolean; msg: string }> {
+  try {
+    const sha = (await ghAs(token, ["api", `repos/${repo}/contents/${path}`, "--jq", ".sha"]).catch(() => "")).trim();
+    const b64 = Buffer.from(content, "utf8").toString("base64");
+    const args = ["api", "-X", "PUT", `repos/${repo}/contents/${path}`, "-f", `message=${message}`, "-f", `content=${b64}`];
+    if (sha) args.push("-f", `sha=${sha}`);
+    await ghAs(token, args);
+    return { ok: true, msg: "committed" };
+  } catch (err) {
+    return { ok: false, msg: (err as Error).message };
+  }
+}
+
 /**
  * Permanently delete an issue (owner-only GraphQL mutation, so it needs the admin token).
  * Returns ok=false if no admin token or the API refuses — the caller can fall back to close.

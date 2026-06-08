@@ -26,6 +26,7 @@ import {
   isNoOpComment,
   findPrForBranch,
   approvedByReaction,
+  approveLastProposal,
   commentOnPr,
   prHealth,
   mentionsHandle,
@@ -271,6 +272,23 @@ export async function forceResume(cfg: Config, repo: string, number: number): Pr
   dispatch(`${repo}#${number}`, () => processIssue(cfg, repo, fresh));
 }
 
+/**
+ * One-click approve from the dashboard: mark the proposal approved (👍 the agency comment so
+ * the pipeline's approval check passes), move the issue to Working *immediately* (so it never
+ * sits in "waiting" while it queues), and dispatch the build.
+ */
+export async function forceApprove(cfg: Config, repo: string, number: number): Promise<void> {
+  const issue = await getIssue(repo, number);
+  if (!issue) return;
+  await approveLastProposal(repo, number).catch(() => {});
+  // Instant UI: show it as working even if the pool is at capacity (it'll be queued).
+  await addLabel(repo, number, IN_PROGRESS).catch(() => {});
+  for (const l of AWAITING_LABELS) await removeLabel(repo, number, l).catch(() => {});
+  recordIssueState(repo, number, { state: IN_PROGRESS });
+  console.log(`[agency] approve+build ${repo} #${number}`);
+  dispatch(`${repo}#${number}`, () => processIssue(cfg, repo, issue));
+}
+
 // ---- scan + dispatch ----
 
 const recentEnough = (iso: string): boolean =>
@@ -457,7 +475,12 @@ async function main(): Promise<void> {
   await recoverOrphans(cfg);
   if (cfg.runMode === "webhook") {
     const { runWebhook } = await import("./webhook.js");
-    await runWebhook(cfg, processAllRepos, (repo, number) => forceResume(cfg, repo, number));
+    await runWebhook(
+      cfg,
+      processAllRepos,
+      (repo, number) => forceResume(cfg, repo, number),
+      (repo, number) => forceApprove(cfg, repo, number),
+    );
   } else if (cfg.runMode === "watch") {
     await runWatch(cfg);
   } else {

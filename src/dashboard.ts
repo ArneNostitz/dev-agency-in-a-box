@@ -119,7 +119,11 @@ const STYLE = `
   .btn:disabled{opacity:.5}
   .dbody{flex:1;overflow:auto;-webkit-overflow-scrolling:touch;padding:12px 14px 18px}
   .sec{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin:14px 2px 6px}
-  .stream{background:#0e1422;color:#cfe;border-radius:10px;padding:8px 10px;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;max-height:30vh;overflow:auto}
+  .dstream{flex:none;background:var(--card);border-bottom:1px solid var(--line)}
+  .streamhd{display:flex;justify-content:space-between;align-items:center;padding:7px 14px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);cursor:pointer;user-select:none}
+  .dstream.collapsed .stream{display:none}
+  .dstream .stream{margin:0 12px 10px}
+  .stream{background:#0e1422;color:#cfe;border-radius:10px;padding:8px 10px;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;max-height:26vh;overflow:auto}
   .stream .l{white-space:pre-wrap;border-bottom:1px solid rgba(255,255,255,.05);padding:1px 0}
   .stream .tool{color:#86c5ff} .stream .muted{color:#8aa}
   .cmt{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 11px;margin-bottom:8px}
@@ -175,6 +179,10 @@ export function renderDashboard(): string {
       <button class="x" onclick="closeDrawer()" aria-label="Close">×</button>
     </div>
     <div class="dactions" id="d_actions"></div>
+    <div class="dstream" id="d_streamwrap">
+      <div class="streamhd" onclick="toggleStream()"><span>● Live</span><span id="d_caret">▾</span></div>
+      <div class="stream" id="d_stream"></div>
+    </div>
     <div class="dbody" id="d_body"></div>
     <div class="reply">
       <textarea id="d_reply" placeholder="Reply… (posts to GitHub)" rows="1"
@@ -202,12 +210,23 @@ export function renderDashboard(): string {
   <div class="composer" id="settings">
     <div class="ch"><div class="t">Token budget</div><button class="x" style="margin-left:auto" onclick="closeSettings()" aria-label="Close">×</button></div>
     <label>Session window (hours)</label><input id="s_win" type="number" min="1" max="168" step="1">
-    <div class="sec" style="margin:12px 2px 4px">Used this window</div>
+    <div id="s_window" class="muted" style="font-size:12px;margin:6px 2px"></div>
+    <button class="btn" onclick="resetWindow()">Start window now</button>
+    <div class="sec" style="margin:14px 2px 4px">Used this window</div>
     <div id="s_usage" class="usage"></div>
     <label>Calibrate: enter the % the Claude app shows now</label>
     <div style="display:flex;gap:8px"><input id="s_pct" type="number" min="1" max="100" placeholder="e.g. 42"><button class="btn" onclick="calcBudget()">Set from %</button></div>
     <label>Budget — tokens per window (0 = show tokens only)</label><input id="s_budget" type="number" min="0" step="1000">
     <div class="row"><button class="btn" onclick="closeSettings()">Cancel</button><button class="btn primary" id="s_save" onclick="saveSettings()">Save</button></div>
+    <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:10px"><button class="btn" onclick="openAgents()">✎ Edit agents &amp; playbooks →</button></div>
+  </div>
+  <div class="scrim" id="ascrim" onclick="closeAgents()"></div>
+  <div class="composer" id="agents">
+    <div class="ch"><div class="t">Edit agents &amp; playbooks</div><button class="x" style="margin-left:auto" onclick="closeAgents()" aria-label="Close">×</button></div>
+    <label>File</label><select id="a_file" onchange="loadAgent()"></select>
+    <textarea id="a_content" spellcheck="false" style="min-height:46vh;font:13px ui-monospace,Menlo,monospace"></textarea>
+    <div class="muted" style="font-size:12px;margin-top:6px">Saving commits to the agency repo and redeploys (graceful — running work finishes first).</div>
+    <div class="row"><button class="btn" onclick="closeAgents()">Cancel</button><button class="btn primary" id="a_save" onclick="saveAgent()">Save &amp; redeploy</button></div>
   </div>
   <div class="toast" id="toast"></div>
 
@@ -241,6 +260,7 @@ ${CLIENT_HELPERS}
   function load(){getJSON("/data").then(function(d){
     DATA=d; DATA.issues=(d.issues||[]).map(function(i){i.active=activeKey(i);return i;});
     renderSub(); renderChips(); renderBoard(); if(open) refreshDrawerLive();
+    if(document.getElementById("settings").classList.contains("on")) refreshSettings();
   }).catch(function(){});}
 
   function renderSub(){
@@ -298,21 +318,29 @@ ${CLIENT_HELPERS}
 
   // ---- token settings ----
   function modelName(m){if(/opus/i.test(m))return "Opus";if(/sonnet/i.test(m))return "Sonnet";if(/haiku/i.test(m))return "Haiku";return m||"?";}
-  function renderUsage(){
+  function hm(d){return d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});}
+  function refreshSettings(){
     var s=DATA.session||{}, bm=s.byModel||[];
     var rows=bm.map(function(m){return '<div class="urow"><span>'+esc(modelName(m.model))+'</span><span>'+fmtTok(m.tokens)+' tok'+(m.costUsd>0?' · $'+m.costUsd.toFixed(2):'')+'</span></div>';}).join("");
     var tot='<div class="urow tot"><span>Total</span><span>'+fmtTok(s.tokens||0)+' tok</span></div>';
-    document.getElementById("s_usage").innerHTML=(rows||'<div class="urow"><span class="muted">No usage yet this window</span></div>')+tot;
+    var u=document.getElementById("s_usage"); if(u)u.innerHTML=(rows||'<div class="urow"><span class="muted">No usage yet this window</span></div>')+tot;
+    var w=document.getElementById("s_window");
+    if(w)w.innerHTML = s.windowStart? ((s.anchored?'Anchored':'Rolling')+' · started '+hm(new Date(s.windowStart))+', resets '+hm(new Date(s.resetsAt))) : '';
   }
   window.openSettings=function(){
     var s=DATA.session||{};
     document.getElementById("s_win").value=s.windowHours||5;
     document.getElementById("s_budget").value=s.budget||"";
     document.getElementById("s_pct").value="";
-    renderUsage();
+    refreshSettings();
     document.getElementById("settings").classList.add("on");
     document.getElementById("sscrim").classList.add("on");
     document.body.classList.add("noscroll");
+  };
+  window.resetWindow=function(){
+    fetch("/settings",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({anchorNow:true})})
+      .then(function(r){if(!r.ok)throw 0; toast("Window started now"); setTimeout(function(){load();setTimeout(refreshSettings,400);},300);})
+      .catch(function(){toast("Couldn’t set");});
   };
   window.closeSettings=function(){
     document.getElementById("settings").classList.remove("on");
@@ -333,6 +361,37 @@ ${CLIENT_HELPERS}
     fetch("/settings",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({windowHours:win,budget:budget})})
       .then(function(r){if(!r.ok)throw 0; toast("Saved"); closeSettings(); setTimeout(load,400);})
       .catch(function(){toast("Couldn’t save");})
+      .then(function(){btn.disabled=false;});
+  };
+
+  // ---- agent / playbook editor ----
+  window.openAgents=function(){
+    closeSettings();
+    getJSON("/agents").then(function(d){
+      var sel=document.getElementById("a_file");
+      sel.innerHTML=(d.files||[]).map(function(f){return '<option value="'+esc(f.path)+'">'+esc(f.group)+' · '+esc(f.label)+'</option>';}).join("");
+      loadAgent();
+    }).catch(function(){});
+    document.getElementById("agents").classList.add("on");
+    document.getElementById("ascrim").classList.add("on");
+    document.body.classList.add("noscroll");
+  };
+  window.closeAgents=function(){
+    document.getElementById("agents").classList.remove("on");
+    document.getElementById("ascrim").classList.remove("on");
+    document.body.classList.remove("noscroll");
+  };
+  window.loadAgent=function(){
+    var p=document.getElementById("a_file").value; if(!p)return;
+    document.getElementById("a_content").value="Loading…";
+    getJSON("/agent?path="+encodeURIComponent(p)).then(function(d){document.getElementById("a_content").value=d.content||"";}).catch(function(){});
+  };
+  window.saveAgent=function(){
+    var p=document.getElementById("a_file").value, c=document.getElementById("a_content").value;
+    var btn=document.getElementById("a_save"); btn.disabled=true;
+    fetch("/agent-save",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({path:p,content:c})})
+      .then(function(r){if(!r.ok)throw 0; toast("Saved — redeploying"); closeAgents();})
+      .catch(function(){toast("Couldn’t save (needs admin token)");})
       .then(function(){btn.disabled=false;});
   };
 
@@ -384,7 +443,9 @@ ${CLIENT_HELPERS}
       ehtml='<div class="sec">Sub-issues — '+i.epic.done+'/'+i.epic.total+' done</div><div class="ebar"><i style="width:'+pct+'%"></i></div><div class="epiclist">'+
         (i.epic.children||[]).map(function(c){return '<a href="'+gh(i.repo,c.child)+'" target="_blank" rel="noopener"><span class="ck'+(c.closed?'':' o')+'">'+(c.closed?'✓':'○')+'</span> #'+c.child+' '+esc(c.title)+'<span class="st">'+esc(c.state||'')+'</span></a>';}).join("")+'</div>';
     }
-    document.getElementById("d_body").innerHTML=ehtml+'<div class="sec">Live</div><div class="stream" id="d_stream"></div><div class="sec">Conversation</div><div id="d_thread"><div class="empty">Loading…</div></div>';
+    document.getElementById("d_stream").innerHTML="";
+    document.getElementById("d_body").innerHTML=ehtml+'<div class="sec">Conversation</div><div id="d_thread"><div class="empty">Loading…</div></div>';
+    applyStreamCollapse();
     renderStream(); loadThread(true);
     document.getElementById("drawer").classList.add("on");
     document.getElementById("scrim").classList.add("on");
@@ -393,6 +454,16 @@ ${CLIENT_HELPERS}
   };
   window.closeDrawer=function(){open=null;document.getElementById("drawer").classList.remove("on");document.getElementById("scrim").classList.remove("on");document.getElementById("drawer").setAttribute("aria-hidden","true");document.body.classList.remove("noscroll");};
 
+  window.toggleStream=function(){
+    var w=document.getElementById("d_streamwrap"); var c=w.classList.toggle("collapsed");
+    try{localStorage.setItem("streamCollapsed",c?"1":"0");}catch(e){}
+    document.getElementById("d_caret").textContent=c?"▸":"▾";
+  };
+  function applyStreamCollapse(){
+    var c=false; try{c=localStorage.getItem("streamCollapsed")==="1";}catch(e){}
+    var w=document.getElementById("d_streamwrap"); if(c)w.classList.add("collapsed");else w.classList.remove("collapsed");
+    document.getElementById("d_caret").textContent=c?"▸":"▾";
+  }
   function lineHtml(a){var c=a.kind==="tool"?"tool":(a.kind==="start"||a.kind==="done"?"muted":"");return '<div class="l '+c+'">'+esc(a.text)+'</div>';}
   function renderStream(){
     if(!open)return; var el=document.getElementById("d_stream"); if(!el)return;
@@ -468,7 +539,7 @@ ${CLIENT_HELPERS}
   }catch(e){}
 
   load(); setInterval(load,5000);
-  document.addEventListener("keydown",function(e){if(e.key==="Escape"){closeDrawer();closeComposer();closeSettings();}});
+  document.addEventListener("keydown",function(e){if(e.key==="Escape"){closeDrawer();closeComposer();closeSettings();closeAgents();}});
 })();
 </script></body></html>`;
 }

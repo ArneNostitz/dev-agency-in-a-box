@@ -19,7 +19,8 @@ import { mergeEpic, isEpic } from "./epics.js";
 import { renderDashboard, renderHistory } from "./dashboard.js";
 import { subscribe, getActive } from "./activity.js";
 import { effectiveRepos } from "./commands.js";
-import { getThreadFull, commentAsHuman, mergePrForBranch, closeIssue, deleteIssueHard, findPrForBranch, createIssue } from "./github.js";
+import { getThreadFull, commentAsHuman, mergePrForBranch, closeIssue, deleteIssueHard, findPrForBranch, createIssue, putRepoFile } from "./github.js";
+import { listAgentFiles, readAgentFile, isSafeAgentPath, agentFileRepoPath } from "./memory.js";
 import { previewUrlFor, runChecksNow } from "./preview.js";
 import { dispatch } from "./pool.js";
 
@@ -32,6 +33,23 @@ function sessionWindowHours(): number {
 }
 function sessionBudget(): number {
   return Number(getSetting("token_budget")) || Number(process.env.SESSION_TOKEN_BUDGET?.trim()) || 0;
+}
+/**
+ * Start of the current window. If you've set an anchor (the moment your real session window
+ * began), we align to it and roll forward in fixed `windowHours` steps; otherwise it's a plain
+ * rolling "last N hours". Returns the window start + when it next resets.
+ */
+function sessionWindow(): { startIso: string; resetsIso: string } {
+  const winMs = sessionWindowHours() * 3600_000;
+  const now = Date.now();
+  const anchor = Date.parse(getSetting("window_anchor") ?? "");
+  let start: number;
+  if (Number.isFinite(anchor) && anchor <= now) {
+    start = anchor + Math.floor((now - anchor) / winMs) * winMs;
+  } else {
+    start = now - winMs;
+  }
+  return { startIso: new Date(start).toISOString(), resetsIso: new Date(start + winMs).toISOString() };
 }
 
 /** Gate the dashboard with HTTP Basic Auth if DASHBOARD_PASSWORD is set. */
@@ -73,7 +91,7 @@ function readBody(req: IncomingMessage): Promise<Buffer> {
 const RELEVANT_ACTIONS = new Set(["opened", "reopened", "labeled", "unlabeled", "edited"]);
 const PR_ACTIONS = new Set(["opened", "reopened", "synchronize", "ready_for_review", "edited"]);
 
-export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: Resume): Promise<void> {
+export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: Resume, approve?: Resume): Promise<void> {
   const port = Number(process.env.PORT?.trim() || "3000");
   const secret = process.env.GITHUB_WEBHOOK_SECRET?.trim() || "";
   // Catches 👍 reactions (GitHub doesn't webhook those) and anything a delivery missed.
@@ -174,8 +192,8 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           });
           const winH = sessionWindowHours();
           const budget = sessionBudget();
-          const since = new Date(Date.now() - winH * 3600_000).toISOString();
-          const sess = tokensSince(since);
+          const win = sessionWindow();
+          const sess = tokensSince(win.startIso);
           res.writeHead(200, { "content-type": "application/json" });
           res.end(
             JSON.stringify({
@@ -190,11 +208,36 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
                 costUsd: sess.costUsd,
                 budget,
                 windowHours: winH,
-                byModel: tokensByModelSince(since),
+                windowStart: win.startIso,
+                resetsAt: win.resetsIso,
+                anchored: Boolean(Date.parse(getSetting("window_anchor") ?? "")),
+                byModel: tokensByModelSince(win.startIso),
               },
             }),
           );
         })();
+        return;
+      }
+
+      // Agent editor: list the editable memory files, or fetch one's content.
+      if (url === "/agents") {
+        void listAgentFiles()
+          .then((files) => res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ files })))
+          .catch(() => res.writeHead(200, { "content-type": "application/json" }).end('{"files":[]}'));
+        return;
+      }
+      if (url === "/agent") {
+        const q = new URLSearchParams((req.url ?? "").split("?")[1] ?? "");
+        const p = q.get("path") ?? "";
+        if (!isSafeAgentPath(p)) {
+          res.writeHead(400).end("{}");
+          return;
+        }
+        void readAgentFile(p)
+          .then((content) =>
+            res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ path: p, content: content ?? "" })),
+          )
+          .catch(() => res.writeHead(200, { "content-type": "application/json" }).end("{}"));
         return;
       }
 
@@ -229,10 +272,10 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
 
     // Dashboard actions (password-protected, not GitHub webhooks).
     const path = (req.url ?? "").split("?")[0];
-    if (["/archive", "/comment", "/run-checks", "/merge", "/delete", "/resume", "/new-issue", "/approve", "/settings"].includes(path)) {
+    if (["/archive", "/comment", "/run-checks", "/merge", "/delete", "/resume", "/new-issue", "/approve", "/settings", "/agent-save"].includes(path)) {
       if (!checkAuth(cfg, req, res)) return;
       void readBody(req).then(async (body) => {
-        let p: { repo?: string; number?: number; body?: string; title?: string; role?: string } = {};
+        let p: { repo?: string; number?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean } = {};
         try {
           p = JSON.parse(body.toString("utf8"));
         } catch {
@@ -261,21 +304,30 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         }
         if (path === "/settings") {
           // Save token-budget settings from the dashboard (no redeploy needed).
-          const set = p as { windowHours?: number; budget?: number };
-          if (set.windowHours && set.windowHours > 0) setSetting("window_hours", String(Math.round(set.windowHours)));
-          if (set.budget !== undefined && set.budget >= 0) setSetting("token_budget", String(Math.round(set.budget)));
+          if (p.windowHours && p.windowHours > 0) setSetting("window_hours", String(Math.round(p.windowHours)));
+          if (p.budget !== undefined && p.budget >= 0) setSetting("token_budget", String(Math.round(p.budget)));
+          if (p.anchorNow) setSetting("window_anchor", new Date().toISOString()); // "my window starts now"
           return ok();
         }
+        if (path === "/agent-save") {
+          // Edit an agent's persona/playbook/constitution: commit to the agency repo (persists
+          // in git + redeploys). Owner token required.
+          if (!p.path || !isSafeAgentPath(p.path) || typeof p.content !== "string") return res.writeHead(400).end("{}");
+          if (!cfg.adminToken) return res.writeHead(409).end(JSON.stringify({ error: "needs ADMIN_GITHUB_TOKEN" }));
+          const r = await putRepoFile(
+            cfg.agencyRepo,
+            agentFileRepoPath(p.path),
+            p.content,
+            `agency: edit ${p.path} via dashboard`,
+            cfg.adminToken,
+          );
+          return r.ok ? ok() : res.writeHead(500).end(JSON.stringify({ error: r.msg }));
+        }
         if (path === "/approve") {
-          // One-click accept of a proposal: posts "ok" as you, which the pipeline treats as approval.
-          if (!repo || !number) return res.writeHead(400).end("{}");
-          try {
-            await commentAsHuman(repo, number, "ok", cfg.adminToken);
-            void trigger("dashboard-approve");
-            return ok();
-          } catch (err) {
-            return res.writeHead(500).end(JSON.stringify({ error: (err as Error).message }));
-          }
+          // Direct approve: marks it approved + moves it to Working immediately, then builds.
+          if (!repo || !number || !approve) return res.writeHead(400).end("{}");
+          await approve(repo, number).catch(() => {});
+          return ok();
         }
         if (path === "/merge") {
           // One-tap merge: squash the issue's PR (or, for an epic, all sub-issue PRs).
