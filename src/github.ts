@@ -431,8 +431,11 @@ export async function createIssue(
   repo: string,
   title: string,
   body: string,
+  asToken?: string,
 ): Promise<{ number: number; url: string }> {
-  const out = await gh(["issue", "create", "--repo", repo, "--title", title, "--body", body]);
+  const args = ["issue", "create", "--repo", repo, "--title", title, "--body", body];
+  // asToken (owner token) makes you the author; else the bot creates it.
+  const out = asToken ? await ghAs(asToken, args) : await gh(args);
   const url = out.trim().split("\n").pop() ?? "";
   const m = /\/issues\/(\d+)/.exec(url);
   return { number: m ? Number(m[1]) : 0, url };

@@ -18,7 +18,7 @@ import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, rec
 import { renderDashboard, renderHistory } from "./dashboard.js";
 import { subscribe, getActive } from "./activity.js";
 import { effectiveRepos } from "./commands.js";
-import { getThreadFull, commentAsHuman, mergePrForBranch, closeIssue, deleteIssueHard, findPrForBranch } from "./github.js";
+import { getThreadFull, commentAsHuman, mergePrForBranch, closeIssue, deleteIssueHard, findPrForBranch, createIssue } from "./github.js";
 import { previewUrlFor, runChecksNow } from "./preview.js";
 import { dispatch } from "./pool.js";
 
@@ -201,10 +201,10 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
 
     // Dashboard actions (password-protected, not GitHub webhooks).
     const path = (req.url ?? "").split("?")[0];
-    if (["/archive", "/comment", "/run-checks", "/merge", "/delete", "/resume"].includes(path)) {
+    if (["/archive", "/comment", "/run-checks", "/merge", "/delete", "/resume", "/new-issue"].includes(path)) {
       if (!checkAuth(cfg, req, res)) return;
       void readBody(req).then(async (body) => {
-        let p: { repo?: string; number?: number; body?: string; title?: string } = {};
+        let p: { repo?: string; number?: number; body?: string; title?: string; role?: string } = {};
         try {
           p = JSON.parse(body.toString("utf8"));
         } catch {
@@ -255,6 +255,19 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           if (!repo || !number || !resume) return res.writeHead(400).end("{}");
           await resume(repo, number).catch(() => {});
           return ok();
+        }
+        if (path === "/new-issue") {
+          // Create a new issue from the dashboard (authored by you) and kick the agency.
+          if (!repo || !p.title?.trim()) return res.writeHead(400).end("{}");
+          const handle = (p.role ?? "@dev").trim();
+          const issueBody = `${handle} ${p.body ?? ""}`.trim();
+          try {
+            const created = await createIssue(repo, p.title.trim(), issueBody, cfg.adminToken);
+            void trigger("dashboard-new-issue");
+            return ok(JSON.stringify({ ok: true, number: created.number, url: created.url }));
+          } catch (err) {
+            return res.writeHead(500).end(JSON.stringify({ error: (err as Error).message }));
+          }
         }
         // /run-checks -> run the tester on the issue's branch now (no merge).
         if (!repo || !number) return res.writeHead(400).end("{}");

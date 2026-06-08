@@ -112,6 +112,15 @@ const STYLE = `
   .reply .btn{height:42px}
   .toast{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);background:#1d2430;color:#fff;padding:8px 14px;border-radius:999px;font-size:13px;opacity:0;transition:opacity .2s;z-index:30}
   .toast.on{opacity:1}
+  .newbtn{margin-left:auto;border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:9px;padding:5px 11px;font-size:13px;font-weight:540;cursor:pointer}
+  .composer{position:fixed;left:0;right:0;bottom:0;z-index:25;background:var(--card);border-top:1px solid var(--line);border-radius:16px 16px 0 0;padding:14px 14px 18px;max-height:92dvh;overflow:auto;transform:translateY(105%);transition:transform .2s ease;box-shadow:0 -8px 30px rgba(15,22,35,.18)}
+  .composer.on{transform:translateY(0)}
+  @media(min-width:760px){.composer{left:auto;right:24px;bottom:24px;width:440px;border:1px solid var(--line);border-radius:16px}}
+  .composer .ch{display:flex;align-items:center;margin-bottom:6px}.composer .ch .t{font-weight:650;font-size:15px}
+  .composer label{display:block;font-size:12px;color:var(--muted);margin:10px 2px 4px}
+  .composer input,.composer select,.composer textarea{width:100%;border:1px solid var(--line);border-radius:10px;padding:9px 11px;font:14px inherit;background:var(--bg);color:var(--ink)}
+  .composer textarea{resize:vertical;min-height:96px}
+  .composer .row{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
 `;
 
 /** The light, mobile-first kanban + detail drawer. */
@@ -121,7 +130,7 @@ export function renderDashboard(): string {
 <meta name="color-scheme" content="light"><title>Dev Agency</title>
 <style>${STYLE}</style></head><body>
   <div class="top">
-    <h1>🤖 Dev Agency <span id="live"></span></h1>
+    <h1>🤖 Dev Agency <span id="live"></span><button class="newbtn" onclick="openComposer()">+ New</button></h1>
     <div class="sub" id="sub">Loading…</div>
   </div>
   <div class="chips" id="repochips"></div>
@@ -141,6 +150,22 @@ export function renderDashboard(): string {
       <button class="btn primary" id="d_send" onclick="sendReply()">Send</button>
     </div>
   </aside>
+  <div class="scrim" id="cscrim" onclick="closeComposer()"></div>
+  <div class="composer" id="composer">
+    <div class="ch"><div class="t">New issue</div><button class="x" style="margin-left:auto" onclick="closeComposer()" aria-label="Close">×</button></div>
+    <label>Repo</label><select id="c_repo"></select>
+    <label>Assign to</label>
+    <select id="c_role">
+      <option value="@dev">@dev — full pipeline (plan → build → PR)</option>
+      <option value="@plan">@plan — plan only</option>
+      <option value="@arch">@arch — architect</option>
+      <option value="@review">@review — review</option>
+      <option value="@test">@test — run checks</option>
+    </select>
+    <label>Title</label><input id="c_title" placeholder="Short title" autocomplete="off">
+    <label>Description</label><textarea id="c_body" placeholder="What needs doing? Context, acceptance criteria…"></textarea>
+    <div class="row"><button class="btn" onclick="closeComposer()">Cancel</button><button class="btn primary" id="c_create" onclick="submitIssue()">Create</button></div>
+  </div>
   <div class="toast" id="toast"></div>
 
 <script>
@@ -200,6 +225,32 @@ ${CLIENT_HELPERS}
     }).join("");
     document.getElementById("board").innerHTML = html||'<div class="empty">No repos yet. File a /add-repo issue.</div>';
   }
+
+  // ---- new issue composer ----
+  window.openComposer=function(){
+    var rs=document.getElementById("c_repo");
+    rs.innerHTML=(DATA.repos||[]).map(function(r){return '<option value="'+esc(r)+'"'+(repoFilter===r?' selected':'')+'>'+esc(r)+'</option>';}).join("");
+    document.getElementById("composer").classList.add("on");
+    document.getElementById("cscrim").classList.add("on");
+    document.body.classList.add("noscroll");
+    setTimeout(function(){document.getElementById("c_title").focus();},250);
+  };
+  window.closeComposer=function(){
+    document.getElementById("composer").classList.remove("on");
+    document.getElementById("cscrim").classList.remove("on");
+    document.body.classList.remove("noscroll");
+  };
+  window.submitIssue=function(){
+    var repo=document.getElementById("c_repo").value, role=document.getElementById("c_role").value;
+    var title=document.getElementById("c_title").value.trim(), body=document.getElementById("c_body").value.trim();
+    if(!repo||!title){toast("Repo + title needed");return;}
+    var btn=document.getElementById("c_create"); btn.disabled=true;
+    fetch("/new-issue",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({repo:repo,role:role,title:title,body:body})})
+      .then(function(r){if(!r.ok)throw 0;return r.json();})
+      .then(function(d){toast("Created #"+(d.number||""));document.getElementById("c_title").value="";document.getElementById("c_body").value="";closeComposer();setTimeout(load,1200);})
+      .catch(function(){toast("Couldn’t create");})
+      .then(function(){btn.disabled=false;});
+  };
 
   // ---- drawer ----
   function findIssue(repo,n){return DATA.issues.filter(function(i){return i.repo===repo&&i.number===n;})[0];}
@@ -294,7 +345,7 @@ ${CLIENT_HELPERS}
   }catch(e){}
 
   load(); setInterval(load,5000);
-  document.addEventListener("keydown",function(e){if(e.key==="Escape")closeDrawer();});
+  document.addEventListener("keydown",function(e){if(e.key==="Escape"){closeDrawer();closeComposer();}});
 })();
 </script></body></html>`;
 }
