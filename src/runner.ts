@@ -44,6 +44,7 @@ import {
   issueSpend,
   getThreadCursor,
   setThreadCursor,
+  recentIssues,
 } from "./store.js";
 import { setActive, clearActive, getActive } from "./activity.js";
 import { dispatch, drain } from "./pool.js";
@@ -137,8 +138,9 @@ async function processIssue(cfg: Config, repo: string, issue: Issue): Promise<vo
     const msg = (err as Error).message ?? String(err);
     console.error(`[agency] pipeline error ${repo} #${issue.number}:`, msg);
     await removeLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
-    await addLabel(repo, issue.number, "agency:needs-attention").catch(() => {});
+    await addLabel(repo, issue.number, NEEDS_ATTENTION).catch(() => {});
     await addLabel(repo, issue.number, "🚧 blocked").catch(() => {});
+    recordIssueState(repo, issue.number, { state: NEEDS_ATTENTION });
     await commentOnIssue(repo, issue.number, `❌ Run failed: ${msg.slice(0, 300)} — fix and re-pin.`).catch(() => {});
   } finally {
     clearActive(repo, issue.number);
@@ -242,6 +244,7 @@ async function processFollowUp(cfg: Config, repo: string, issue: Issue): Promise
     await removeLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
     await addLabel(repo, issue.number, NEEDS_ATTENTION).catch(() => {});
     await addLabel(repo, issue.number, "🚧 blocked").catch(() => {});
+    recordIssueState(repo, issue.number, { state: NEEDS_ATTENTION });
     await commentOnIssue(repo, issue.number, `❌ Follow-up failed: ${msg.slice(0, 300)} — comment again to retry.`).catch(() => {});
   } finally {
     clearActive(repo, issue.number);
@@ -295,24 +298,7 @@ async function scanRepo(cfg: Config, repo: string): Promise<void> {
       }
     }
 
-    if (t.labels.includes(IN_PROGRESS)) {
-      // Actually running in this process? leave it. Otherwise it's an orphan from an
-      // interrupted run — if it's been idle a while, park it so it surfaces (and Resume works).
-      const running = getActive().some((a) => a.repo === repo && a.number === t.number);
-      const idleMs = t.updatedAt ? Date.now() - new Date(t.updatedAt).getTime() : Infinity;
-      if (!running && idleMs > ORPHAN_GRACE_MS) {
-        await removeLabel(repo, t.number, IN_PROGRESS).catch(() => {});
-        await addLabel(repo, t.number, NEEDS_ATTENTION).catch(() => {});
-        recordIssueState(repo, t.number, { state: NEEDS_ATTENTION });
-        await commentOnIssue(
-          repo,
-          t.number,
-          "⏸ This looked stuck — a run was interrupted with nothing now working on it. Moved to needs-attention. Press **Resume** on the dashboard (or re-pin) to retry.",
-        ).catch(() => {});
-        console.log(`[agency] parked stuck ${repo} #${t.number}`);
-      }
-      continue;
-    }
+    if (t.labels.includes(IN_PROGRESS)) continue; // being handled (or swept below if stale)
     if (t.closed && !recentEnough(t.updatedAt)) continue; // ignore stale closed threads
 
     const ownedByLabel = t.labels.some((l) => l.startsWith("agency:"));
@@ -396,6 +382,30 @@ async function scanRepo(cfg: Config, repo: string): Promise<void> {
   }
 }
 
+/**
+ * Sweep stored state for "stuck" issues: anything marked in-progress that no run is actually
+ * working on, idle past the grace window, is parked to needs-attention (in the DB *and* on
+ * GitHub). This is what stops a card sitting in "Working" forever after an interrupted run —
+ * the dashboard reads stored state, so the stored state must reflect reality.
+ */
+async function sweepStuck(): Promise<void> {
+  for (const i of recentIssues(100)) {
+    if (i.state !== "agency:in-progress") continue;
+    const running = getActive().some((a) => a.repo === i.repo && a.number === i.number);
+    const idleMs = i.updated_at ? Date.now() - new Date(i.updated_at).getTime() : Infinity;
+    if (running || idleMs <= ORPHAN_GRACE_MS) continue;
+    recordIssueState(i.repo, i.number, { state: NEEDS_ATTENTION });
+    await removeLabel(i.repo, i.number, IN_PROGRESS).catch(() => {});
+    await addLabel(i.repo, i.number, NEEDS_ATTENTION).catch(() => {});
+    await commentOnIssue(
+      i.repo,
+      i.number,
+      "⏸ This looked stuck — a run was interrupted with nothing now working on it. Moved to needs-attention. Press **Resume** on the dashboard (or re-pin) to retry.",
+    ).catch(() => {});
+    console.log(`[agency] swept stuck ${i.repo} #${i.number}`);
+  }
+}
+
 /** Scan every watched repo and dispatch work. Returns immediately; the pool runs it. */
 export async function processAllRepos(cfg: Config): Promise<number> {
   for (const repo of effectiveRepos(cfg)) {
@@ -405,6 +415,7 @@ export async function processAllRepos(cfg: Config): Promise<number> {
       console.error(`[agency] scan error on ${repo} (continuing):`, (err as Error).message);
     }
   }
+  await sweepStuck().catch(() => {});
   // Self-evolving loop: fold accumulated lessons into the playbooks via a draft PR.
   maybeSelfImprove(cfg);
   return 0;
