@@ -461,6 +461,21 @@ export interface IssueDetail {
   comments: Array<{ who: "human" | "agency"; body: string; createdAt: string }>;
 }
 
+/** Pure mapping of raw gh JSON to IssueDetail — exported for unit testing. */
+export function mapIssueDetail(data: {
+  labels?: Array<{ name: string }>;
+  comments?: Array<{ body: string; createdAt: string }>;
+}): IssueDetail {
+  return {
+    labels: (data.labels ?? []).map((l) => l.name),
+    comments: (data.comments ?? []).map((c) => ({
+      who: c.body.includes(AGENCY_MARKER) ? "agency" : "human",
+      body: c.body.replace(AGENCY_MARKER, "").trim(),
+      createdAt: c.createdAt,
+    })),
+  };
+}
+
 /**
  * Fetch labels + comment thread for a single issue. Each comment is tagged human/agency
  * via AGENCY_MARKER. One `gh issue view` call.
@@ -474,14 +489,7 @@ export async function issueDetail(repo: string, number: number): Promise<IssueDe
     labels?: Array<{ name: string }>;
     comments?: Array<{ body: string; createdAt: string }>;
   };
-  return {
-    labels: (data.labels ?? []).map((l) => l.name),
-    comments: (data.comments ?? []).map((c) => ({
-      who: c.body.includes(AGENCY_MARKER) ? "agency" : "human",
-      body: c.body.replace(AGENCY_MARKER, "").trim(),
-      createdAt: c.createdAt,
-    })),
-  };
+  return mapIssueDetail(data);
 }
 
 /** Find an open PR whose head branch matches `branch`, if any. */

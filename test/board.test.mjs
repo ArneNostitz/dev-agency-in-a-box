@@ -1,22 +1,10 @@
 // Unit tests for issueDetail comment classification logic.
-// We test the mapping rules (AGENCY_MARKER tagging, label passthrough) inline
-// rather than mocking the gh CLI, following the convention in logic.test.mjs.
+// Imports the real mapIssueDetail() from github.ts (via dist/) to ensure the test
+// stays in sync with the implementation — same pattern as logic.test.mjs.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { AGENCY_MARKER } from "../dist/github.js";
-
-/** Mirrors the transformation inside issueDetail() — isolated for unit testing. */
-function mapIssueDetail(raw) {
-  return {
-    labels: (raw.labels ?? []).map((l) => l.name),
-    comments: (raw.comments ?? []).map((c) => ({
-      who: c.body.includes(AGENCY_MARKER) ? "agency" : "human",
-      body: c.body.replace(AGENCY_MARKER, "").trim(),
-      createdAt: c.createdAt,
-    })),
-  };
-}
+import { AGENCY_MARKER, mapIssueDetail } from "../dist/github.js";
 
 test("issueDetail: human/agency comment classification via AGENCY_MARKER", () => {
   const raw = {
