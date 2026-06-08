@@ -317,6 +317,29 @@ export async function commentAsHuman(repo: string, number: number, body: string)
   await gh(["api", "-X", "POST", `repos/${repo}/issues/${number}/comments`, "-f", `body=${body}`]);
 }
 
+/**
+ * Permanently delete an issue (owner-only GraphQL mutation, so it needs the admin token).
+ * Returns ok=false if no admin token or the API refuses — the caller can fall back to close.
+ */
+export async function deleteIssueHard(
+  repo: string,
+  number: number,
+  adminToken?: string,
+): Promise<{ ok: boolean; msg: string }> {
+  if (!adminToken) return { ok: false, msg: "no admin token" };
+  try {
+    const nodeId = (await gh(["api", `repos/${repo}/issues/${number}`, "--jq", ".node_id"])).trim();
+    if (!nodeId) return { ok: false, msg: "issue not found" };
+    await ghAs(adminToken, [
+      "api", "graphql", "-f",
+      `query=mutation{deleteIssue(input:{issueId:"${nodeId}"}){clientMutationId}}`,
+    ]);
+    return { ok: true, msg: "deleted" };
+  } catch (err) {
+    return { ok: false, msg: (err as Error).message };
+  }
+}
+
 /** The full thread as readable text, each comment tagged [human] or [agency]. */
 export async function commentThread(repo: string, issue: number): Promise<string> {
   const comments = await listComments(repo, issue);

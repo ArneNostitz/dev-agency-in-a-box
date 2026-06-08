@@ -258,8 +258,21 @@ async function scanRepo(cfg: Config, repo: string): Promise<void> {
 
   // Pass 1 — issues (any state). One rule: once the agency has touched a thread, a new comment
   // re-engages it (open or closed, no re-tag); untouched issues need the configured trigger.
+  const LIVE_LABELS = [IN_PROGRESS, READY, NEEDS_ATTENTION, ...AWAITING_LABELS];
   for (const t of await listRecentThreads(repo)) {
     if (t.labels.includes(cfg.ignoreLabel)) continue;
+
+    // Backstop for PRs merged/closed on GitHub directly: a closed thread that still carries a
+    // live agency label is finished — record it terminal and strip the labels (once).
+    if (t.closed) {
+      const had = t.labels.filter((l) => LIVE_LABELS.includes(l));
+      if (had.length) {
+        recordIssueState(repo, t.number, { title: t.title, state: "merged" });
+        for (const l of had) await removeLabel(repo, t.number, l).catch(() => {});
+        t.labels = t.labels.filter((l) => !LIVE_LABELS.includes(l));
+      }
+    }
+
     if (t.labels.includes(IN_PROGRESS)) continue;
     if (t.closed && !recentEnough(t.updatedAt)) continue; // ignore stale closed threads
 

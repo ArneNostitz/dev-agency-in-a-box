@@ -14,11 +14,11 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { Config } from "./config.js";
-import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince } from "./store.js";
+import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState } from "./store.js";
 import { renderDashboard, renderHistory } from "./dashboard.js";
 import { subscribe, getActive } from "./activity.js";
 import { effectiveRepos } from "./commands.js";
-import { getThreadFull, commentAsHuman } from "./github.js";
+import { getThreadFull, commentAsHuman, mergePrForBranch, closeIssue, deleteIssueHard } from "./github.js";
 import { previewUrlFor, runChecksNow } from "./preview.js";
 import { dispatch } from "./pool.js";
 
@@ -177,7 +177,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll): Promise<v
 
     // Dashboard actions (password-protected, not GitHub webhooks).
     const path = (req.url ?? "").split("?")[0];
-    if (path === "/archive" || path === "/comment" || path === "/run-checks") {
+    if (["/archive", "/comment", "/run-checks", "/merge", "/delete"].includes(path)) {
       if (!checkAuth(cfg, req, res)) return;
       void readBody(req).then(async (body) => {
         let p: { repo?: string; number?: number; body?: string; title?: string } = {};
@@ -206,6 +206,25 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll): Promise<v
             return res.writeHead(500).end(JSON.stringify({ error: (err as Error).message }));
           }
         }
+        if (path === "/merge") {
+          // One-tap merge: squash the issue's PR, delete the branch, close + mark merged.
+          if (!repo || !number) return res.writeHead(400).end("{}");
+          const r = await mergePrForBranch(repo, `agency/issue-${number}`);
+          if (r.ok) {
+            await closeIssue(repo, number, `🚀 Merged ${r.msg} from the dashboard.`).catch(() => {});
+            recordIssueState(repo, number, { state: "merged" });
+            return ok();
+          }
+          return res.writeHead(409).end(JSON.stringify({ error: r.msg }));
+        }
+        if (path === "/delete") {
+          // Try a real delete (owner-only); otherwise close + hide from the board.
+          if (!repo || !number) return res.writeHead(400).end("{}");
+          const r = await deleteIssueHard(repo, number, cfg.adminToken);
+          if (!r.ok) await closeIssue(repo, number).catch(() => {});
+          archiveIssue(repo, number);
+          return ok(JSON.stringify({ ok: true, deleted: r.ok }));
+        }
         // /run-checks -> run the tester on the issue's branch now (no merge).
         if (!repo || !number) return res.writeHead(400).end("{}");
         dispatch(`${repo}#checks-${number}`, () => runChecksNow(repo, number, p.title ?? ""));
@@ -221,12 +240,17 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll): Promise<v
         return;
       }
       const event = req.headers["x-github-event"] as string;
-      let action = "";
+      let payload: {
+        action?: string;
+        pull_request?: { merged?: boolean; head?: { ref?: string } };
+        repository?: { full_name?: string };
+      } = {};
       try {
-        action = (JSON.parse(body.toString("utf8")) as { action?: string }).action ?? "";
+        payload = JSON.parse(body.toString("utf8"));
       } catch {
         /* ignore */
       }
+      const action = payload.action ?? "";
       // Respond immediately; process in the background.
       res.writeHead(202).end("accepted");
 
@@ -241,6 +265,16 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll): Promise<v
       } else if ((event === "check_suite" || event === "workflow_run") && action === "completed") {
         // CI finished — react instantly to fix failures.
         void trigger(`${event}.completed`);
+      } else if (event === "pull_request" && action === "closed") {
+        // Merged on GitHub directly -> move the linked issue to "merged" right away.
+        const ref = payload.pull_request?.head?.ref ?? "";
+        const full = payload.repository?.full_name ?? "";
+        const m = /^agency\/issue-(\d+)$/.exec(ref);
+        if (payload.pull_request?.merged && full && m) {
+          recordIssueState(full, Number(m[1]), { state: "merged" });
+          console.log(`[agency] ${full} #${m[1]} -> merged (PR closed)`);
+        }
+        void trigger("pull_request.closed");
       } else if (event === "pull_request" && PR_ACTIONS.has(action)) {
         void trigger(`pull_request.${action}`);
       } else if (event === "push") {

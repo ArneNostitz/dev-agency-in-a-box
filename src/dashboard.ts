@@ -95,6 +95,8 @@ const STYLE = `
   .dactions{display:flex;gap:8px;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--card)}
   .btn{border:1px solid var(--line);background:var(--card);border-radius:9px;padding:7px 11px;font-size:13px;color:var(--ink);cursor:pointer;display:inline-flex;gap:6px;align-items:center;font-weight:540}
   .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .btn.danger{color:var(--red);border-color:#f0ccd1}
+  .btn.armed{background:var(--amber);border-color:var(--amber);color:#fff}
   .btn:disabled{opacity:.5}
   .dbody{flex:1;overflow:auto;-webkit-overflow-scrolling:touch;padding:12px 14px 18px}
   .sec{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin:14px 2px 6px}
@@ -150,7 +152,7 @@ ${CLIENT_HELPERS}
     {k:"waiting",  label:"Waiting on you",  match:function(i){return i.state==="agency:awaiting-approval"||i.state==="agency:awaiting-answer";}},
     {k:"ready",    label:"Ready · PR",      match:function(i){return i.state==="agency:ready";}},
     {k:"attention",label:"Needs attention", match:function(i){return i.state==="agency:needs-attention";}},
-    {k:"merged",   label:"Merged",          match:function(i){return i.state==="merged"||i.state==="agency:merged";}}
+    {k:"done",     label:"Done · Merged",   match:function(i){return i.state==="merged"||i.state==="agency:merged"||i.state==="closed"||i.state==="done";}}
   ];
   function toast(t){var e=document.getElementById("toast");e.textContent=t;e.classList.add("on");setTimeout(function(){e.classList.remove("on");},1800);}
   function activeKey(i){return DATA.active.some(function(a){return a.repo===i.repo&&a.number===i.number;});}
@@ -176,8 +178,8 @@ ${CLIENT_HELPERS}
 
   function card(i){
     var tags='';
-    if(i.pr_number) tags+='<span class="tag pr">PR #'+i.pr_number+'</span>';
-    if(i.previewUrl) tags+='<span class="tag prev">preview</span>';
+    if(i.pr_number) tags+='<a class="tag pr" href="'+(i.pr_url||gh(i.repo,i.pr_number))+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">PR #'+i.pr_number+' ↗</a>';
+    if(i.previewUrl) tags+='<a class="tag prev" href="'+i.previewUrl+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">preview ↗</a>';
     var role=i.role?(ICON[i.role]||"")+" ":"";
     return '<div class="card" onclick=\\'openDrawer('+JSON.stringify(i.repo)+','+i.number+')\\'>'+
       '<div class="t">'+(i.active?'<span class="dot"></span> ':'')+esc(i.title||("#"+i.number))+'</div>'+
@@ -210,9 +212,11 @@ ${CLIENT_HELPERS}
     if(i.pr_url) a+='<a class="btn" href="'+i.pr_url+'" target="_blank" rel="noopener">PR ↗</a>';
     if(i.previewUrl) a+='<a class="btn primary" href="'+i.previewUrl+'" target="_blank" rel="noopener">Open preview ↗</a>';
     a+='<button class="btn" id="d_checks" onclick="runChecks()">▶ Run checks</button>';
+    if(i.pr_number) a+='<button class="btn" onclick="confirmAct(this,\\'merge\\')">⤵ Merge</button>';
+    a+='<button class="btn danger" onclick="confirmAct(this,\\'delete\\')">🗑 Delete</button>';
     document.getElementById("d_actions").innerHTML=a;
     document.getElementById("d_body").innerHTML='<div class="sec">Live</div><div class="stream" id="d_stream"></div><div class="sec">Conversation</div><div id="d_thread"><div class="empty">Loading…</div></div>';
-    renderStream(); loadThread();
+    renderStream(); loadThread(true);
     document.getElementById("drawer").classList.add("on");
     document.getElementById("scrim").classList.add("on");
     document.getElementById("drawer").setAttribute("aria-hidden","false");
@@ -229,13 +233,15 @@ ${CLIENT_HELPERS}
   }
   function refreshDrawerLive(){renderStream(); var i=findIssue(open.repo,open.number); if(i){open.issue=i;}}
 
-  function loadThread(){
+  function loadThread(scrollToEnd){
     getJSON("/thread?repo="+encodeURIComponent(open.repo)+"&number="+open.number).then(function(t){
       if(!open)return; var el=document.getElementById("d_thread"); if(!el)return;
       var parts=[];
       if(t.body) parts.push(cmtHtml({author:t.author,createdAt:t.createdAt,body:t.body,isAgency:false}));
       (t.comments||[]).forEach(function(c){parts.push(cmtHtml(c));});
       el.innerHTML=parts.length?parts.join(""):'<div class="empty">No description.</div>';
+      // Open on the latest message (the bottom of the conversation).
+      if(scrollToEnd){var body=document.getElementById("d_body");if(body)setTimeout(function(){body.scrollTop=body.scrollHeight;},60);}
     }).catch(function(){});
   }
   function cmtHtml(c){
@@ -243,6 +249,19 @@ ${CLIENT_HELPERS}
       ' · '+ago(c.createdAt)+'</div><div class="b">'+md(c.body)+'</div></div>';
   }
 
+  // Two-tap confirm for destructive actions (no modal — phone-friendly).
+  window.confirmAct=function(btn,kind){
+    if(btn.dataset.armed){ btn.dataset.armed=""; doAct(kind,btn); return; }
+    var orig=btn.textContent; btn.dataset.armed="1"; btn.classList.add("armed");
+    btn.textContent=kind==="merge"?"Confirm merge?":"Confirm delete?";
+    setTimeout(function(){if(btn.dataset.armed){btn.dataset.armed="";btn.classList.remove("armed");btn.textContent=orig;}},3000);
+  };
+  function doAct(kind,btn){
+    if(!open)return; btn.disabled=true;
+    fetch(kind==="merge"?"/merge":"/delete",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({repo:open.repo,number:open.number})})
+      .then(function(r){if(!r.ok)throw 0; toast(kind==="merge"?"Merged 🚀":"Deleted"); closeDrawer(); load();})
+      .catch(function(){btn.disabled=false;btn.classList.remove("armed");toast("Couldn’t "+kind);});
+  }
   window.runChecks=function(){
     if(!open)return; var b=document.getElementById("d_checks"); b.disabled=true;
     fetch("/run-checks",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({repo:open.repo,number:open.number,title:(open.issue&&open.issue.title)||""})})
@@ -253,7 +272,7 @@ ${CLIENT_HELPERS}
     if(!open)return; var ta=document.getElementById("d_reply"); var body=ta.value.trim(); if(!body)return;
     var btn=document.getElementById("d_send"); btn.disabled=true;
     fetch("/comment",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({repo:open.repo,number:open.number,body:body})})
-      .then(function(r){if(!r.ok)throw 0; ta.value="";ta.style.height="auto";toast("Sent");setTimeout(loadThread,900);})
+      .then(function(r){if(!r.ok)throw 0; ta.value="";ta.style.height="auto";toast("Sent");setTimeout(function(){loadThread(true);},900);})
       .catch(function(){toast("Couldn’t send");})
       .then(function(){btn.disabled=false;});
   };
