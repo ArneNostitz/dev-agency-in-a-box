@@ -33,6 +33,7 @@ import {
   type Issue,
 } from "./github.js";
 import { decideThreadAction } from "./route.js";
+import { reconcileEpics } from "./epics.js";
 import { loadHandleRoleMap, roleForText, type RoleName } from "./agents/roles.js";
 import { runPipeline, runPrFix, runFollowUp } from "./pipeline.js";
 import {
@@ -284,7 +285,9 @@ async function scanRepo(cfg: Config, repo: string): Promise<void> {
   // Pass 1 — issues (any state). One rule: once the agency has touched a thread, a new comment
   // re-engages it (open or closed, no re-tag); untouched issues need the configured trigger.
   const LIVE_LABELS = [IN_PROGRESS, READY, NEEDS_ATTENTION, ...AWAITING_LABELS];
-  for (const t of await listRecentThreads(repo)) {
+  const threads = await listRecentThreads(repo);
+  const threadMap = new Map(threads.map((t) => [t.number, t]));
+  for (const t of threads) {
     if (t.labels.includes(cfg.ignoreLabel)) continue;
 
     // Backstop for PRs merged/closed on GitHub directly: a closed thread that still carries a
@@ -380,6 +383,11 @@ async function scanRepo(cfg: Config, repo: string): Promise<void> {
       resetAutofix(repo, pr.number);
     }
   }
+
+  // Epics: refresh sub-issue tracking and review the parent when all children are done.
+  await reconcileEpics(repo, threadMap).catch((err) =>
+    console.error(`[agency] epic reconcile error on ${repo}:`, (err as Error).message),
+  );
 }
 
 /**

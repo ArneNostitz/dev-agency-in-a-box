@@ -12,6 +12,7 @@ import { overBudget, loadBudget, UNLIMITED_LABEL } from "../dist/budget.js";
 import { parseLessons } from "../dist/reflect.js";
 import { decideThreadAction } from "../dist/route.js";
 import { isNoOpComment } from "../dist/github.js";
+import { renderEpicTracker, childStatus } from "../dist/epics.js";
 
 test("mentionsHandle matches whole handles only", () => {
   const H = ["@dev", "@agency"];
@@ -172,6 +173,24 @@ test("isNoOpComment skips praise, lets real requests through", () => {
   assert.equal(isNoOpComment("LGTM"), true);
   assert.equal(isNoOpComment("the header is misaligned, fix it"), false);
   assert.equal(isNoOpComment("also add a logout button"), false);
+});
+
+test("epic tracker renders a progress checklist", () => {
+  const t = renderEpicTracker([
+    { child: 12, title: "Schema", state: "done", closed: 1 },
+    { child: 13, title: "API", state: "in review", closed: 0 },
+  ]);
+  assert.ok(t.includes("1/2 done"));
+  assert.ok(t.includes("- [x] #12"));
+  assert.ok(t.includes("- [ ] #13"));
+});
+
+test("childStatus maps labels/closed to a human status", () => {
+  assert.equal(childStatus({ closed: true, labels: [] }), "done");
+  assert.equal(childStatus({ closed: false, labels: ["agency:ready"] }), "in review");
+  assert.equal(childStatus({ closed: false, labels: ["agency:in-progress"] }), "working");
+  assert.equal(childStatus({ closed: false, labels: ["agency:needs-attention"] }), "blocked");
+  assert.equal(childStatus({ closed: false, labels: [] }), "open");
 });
 
 test("parseControlCommand recognizes /add-repo and /list-repos", () => {

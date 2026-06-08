@@ -255,6 +255,30 @@ export async function reopenIssue(repo: string, number: number): Promise<void> {
   await gh(["issue", "reopen", String(number), "--repo", repo]).catch(() => {});
 }
 
+/** Marker on the single epic tracking comment so we update it in place instead of spamming. */
+export const EPIC_MARKER = "<!-- epic-tracker -->";
+
+/** Create-or-update the one epic tracking comment on a parent issue. */
+export async function upsertTrackerComment(repo: string, parent: number, body: string): Promise<void> {
+  const full = `${body}\n\n${EPIC_MARKER}\n${AGENCY_MARKER}`;
+  const out = await gh([
+    "api", `repos/${repo}/issues/${parent}/comments`, "--paginate", "--jq", "[.[]|{id,body}]",
+  ]).catch(() => "[]");
+  let id = 0;
+  try {
+    for (const c of JSON.parse(out) as Array<{ id: number; body: string }>) {
+      if (c.body.includes(EPIC_MARKER)) id = c.id;
+    }
+  } catch {
+    /* ignore */
+  }
+  if (id) {
+    await gh(["api", "-X", "PATCH", `repos/${repo}/issues/comments/${id}`, "-f", `body=${full}`]).catch(() => {});
+  } else {
+    await gh(["api", "-X", "POST", `repos/${repo}/issues/${parent}/comments`, "-f", `body=${full}`]).catch(() => {});
+  }
+}
+
 export interface ThreadComment {
   author: string;
   body: string;

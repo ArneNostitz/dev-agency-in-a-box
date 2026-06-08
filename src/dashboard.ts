@@ -87,7 +87,10 @@ const STYLE = `
   .card .t{font-weight:560;font-size:14px;margin:1px 0 6px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
   .card .m{display:flex;gap:6px;align-items:center;flex-wrap:wrap;color:var(--muted);font-size:12px}
   .tag{font-size:11px;padding:1px 7px;border-radius:999px;background:#eef1f5;color:var(--muted)}
-  .tag.pr{background:var(--accent-weak);color:var(--accent)} .tag.prev{background:#e9f8ef;color:var(--green)}
+  .tag.pr{background:var(--accent-weak);color:var(--accent)} .tag.prev{background:#e9f8ef;color:var(--green)} .tag.epic{background:#efe9ff;color:#6741d9}
+  .epiclist{margin:2px 0 4px} .epiclist a{display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid var(--line);font-size:13px;color:var(--ink)}
+  .epiclist .st{margin-left:auto;font-size:11px;color:var(--muted)} .epiclist .ck{color:var(--green)} .epiclist .ck.o{color:#c9ced6}
+  .ebar{height:6px;border-radius:3px;background:var(--line);overflow:hidden;margin:6px 0}.ebar i{display:block;height:100%;background:#6741d9}
   .empty{color:#aeb6c0;font-size:12px;padding:8px 4px}
   /* drawer */
   .scrim{position:fixed;inset:0;background:rgba(15,22,35,.34);opacity:0;pointer-events:none;transition:opacity .18s;z-index:20}
@@ -196,6 +199,7 @@ ${CLIENT_HELPERS}
   ];
   function classify(i){
     if(i.active||i.state==="agency:in-progress")return "working";
+    if(i.state==="agency:epic")return (i.epic&&i.epic.done>=i.epic.total)?"review":"working";
     if(i.state==="agency:awaiting-approval"||i.state==="agency:awaiting-answer"||i.state==="agency:needs-attention")return "waiting";
     if(i.state==="agency:ready")return "review";
     if(i.state==="merged"||i.state==="agency:merged"||i.state==="closed"||i.state==="done")return "done";
@@ -236,6 +240,7 @@ ${CLIENT_HELPERS}
 
   function card(i){
     var tags='';
+    if(i.epic) tags+='<span class="tag epic">🧩 '+i.epic.done+'/'+i.epic.total+'</span>';
     if(i.pr_number) tags+='<a class="tag pr" href="'+(i.pr_url||gh(i.repo,i.pr_number))+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">PR #'+i.pr_number+' ↗</a>';
     if(i.previewUrl) tags+='<a class="tag prev" href="'+i.previewUrl+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">preview ↗</a>';
     var role=i.role?(ICON[i.role]||"")+" ":"";
@@ -300,9 +305,15 @@ ${CLIENT_HELPERS}
     a+='<button class="btn" id="d_resume" onclick="doResume(this)">⟳ Resume</button>';
     a+='<button class="btn" id="d_checks" onclick="runChecks()">▶ Run checks</button>';
     if(i.pr_number) a+='<button class="btn" onclick="confirmAct(this,\\'merge\\')">⤵ Merge</button>';
+    else if(i.epic) a+='<button class="btn" onclick="confirmAct(this,\\'merge\\')">⤵ Merge all sub-issues</button>';
     a+='<button class="btn danger" onclick="confirmAct(this,\\'delete\\')">🗑 Delete</button>';
     document.getElementById("d_actions").innerHTML=a;
-    document.getElementById("d_body").innerHTML='<div class="sec">Live</div><div class="stream" id="d_stream"></div><div class="sec">Conversation</div><div id="d_thread"><div class="empty">Loading…</div></div>';
+    var ehtml="";
+    if(i.epic){var pct=Math.round(100*i.epic.done/Math.max(1,i.epic.total));
+      ehtml='<div class="sec">Sub-issues — '+i.epic.done+'/'+i.epic.total+' done</div><div class="ebar"><i style="width:'+pct+'%"></i></div><div class="epiclist">'+
+        (i.epic.children||[]).map(function(c){return '<a href="'+gh(i.repo,c.child)+'" target="_blank" rel="noopener"><span class="ck'+(c.closed?'':' o')+'">'+(c.closed?'✓':'○')+'</span> #'+c.child+' '+esc(c.title)+'<span class="st">'+esc(c.state||'')+'</span></a>';}).join("")+'</div>';
+    }
+    document.getElementById("d_body").innerHTML=ehtml+'<div class="sec">Live</div><div class="stream" id="d_stream"></div><div class="sec">Conversation</div><div id="d_thread"><div class="empty">Loading…</div></div>';
     renderStream(); loadThread(true);
     document.getElementById("drawer").classList.add("on");
     document.getElementById("scrim").classList.add("on");

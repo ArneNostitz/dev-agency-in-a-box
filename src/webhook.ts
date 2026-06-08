@@ -14,7 +14,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { Config } from "./config.js";
-import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince } from "./store.js";
+import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, epicsByParent } from "./store.js";
+import { mergeEpic, isEpic } from "./epics.js";
 import { renderDashboard, renderHistory } from "./dashboard.js";
 import { subscribe, getActive } from "./activity.js";
 import { effectiveRepos } from "./commands.js";
@@ -151,10 +152,18 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               }
             }
           }
-          const enriched = issues.map((i) => ({
-            ...i,
-            previewUrl: i.pr_number ? previewUrlFor(i.repo, i.pr_number, `agency/issue-${i.number}`) : null,
-          }));
+          const epicCache: Record<string, ReturnType<typeof epicsByParent>> = {};
+          const enriched = issues.map((i) => {
+            const byParent = (epicCache[i.repo] ??= epicsByParent(i.repo));
+            const kids = byParent[i.number];
+            return {
+              ...i,
+              previewUrl: i.pr_number ? previewUrlFor(i.repo, i.pr_number, `agency/issue-${i.number}`) : null,
+              epic: kids
+                ? { total: kids.length, done: kids.filter((c) => c.closed).length, children: kids }
+                : null,
+            };
+          });
           const winH = Number(process.env.SESSION_WINDOW_HOURS?.trim()) || 5;
           const budget = Number(process.env.SESSION_TOKEN_BUDGET?.trim()) || 0;
           const sess = tokensSince(new Date(Date.now() - winH * 3600_000).toISOString());
@@ -247,8 +256,12 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           }
         }
         if (path === "/merge") {
-          // One-tap merge: squash the issue's PR, delete the branch, close + mark merged.
+          // One-tap merge: squash the issue's PR (or, for an epic, all sub-issue PRs).
           if (!repo || !number) return res.writeHead(400).end("{}");
+          if (isEpic(repo, number)) {
+            const e = await mergeEpic(repo, number);
+            return e.ok ? ok() : res.writeHead(409).end(JSON.stringify({ error: e.msg }));
+          }
           const r = await mergePrForBranch(repo, `agency/issue-${number}`);
           if (r.ok) {
             await closeIssue(repo, number, `🚀 Merged ${r.msg} from the dashboard.`).catch(() => {});

@@ -18,12 +18,14 @@ import {
   createIssue,
   approvedByReaction,
   commentOnPr,
+  upsertTrackerComment,
   AWAITING_LABEL,
   APPROVAL_LABEL,
 } from "./github.js";
+import { EPIC_LABEL, renderEpicTracker } from "./epics.js";
 import { runRole } from "./agents/roleAgent.js";
 import type { RoleName } from "./agents/roles.js";
-import { recordRun, recordPlan, lastPlan, recordIssueState, recordPr } from "./store.js";
+import { recordRun, recordPlan, lastPlan, recordIssueState, recordPr, addEpicChild, listEpicChildren } from "./store.js";
 import { runReflection } from "./reflect.js";
 
 const IN_PROGRESS = "agency:in-progress";
@@ -160,23 +162,25 @@ async function maybeDecompose(repo: string, issue: Issue, planText: string): Pro
   const subs = parseSubIssues(planText);
   if (subs.length === 0) return false;
 
-  const links: string[] = [];
   for (const s of subs) {
+    // Link each sub-issue back to the parent so the relationship is explicit in GitHub.
     const body = /@\w/.test(s.body) ? s.body : `@dev ${s.body}`;
-    const created = await createIssue(repo, s.title, `${body}\n\n_(split from #${issue.number})_`);
-    links.push(`- #${created.number} — ${s.title}`);
+    const created = await createIssue(repo, s.title, `${body}\n\nPart of epic #${issue.number}.`);
+    addEpicChild(repo, issue.number, created.number, s.title);
     recordRun(repo, issue.number, "planner", MODELS_NONE, 0, "create-issue");
   }
   await commentOnIssue(
     repo,
     issue.number,
-    say("planner", `**Created ${subs.length} sub-issue(s)** — the agency will work them:\n${links.join("\n")}`),
+    say("planner", `**Created ${subs.length} sub-issue(s)** — tracking them below. This becomes an **epic**: it completes (and becomes reviewable/mergeable) when all sub-issues are done.`),
   );
+  // Post the live checklist and keep the parent as an epic (not "ready" yet).
+  await upsertTrackerComment(repo, issue.number, renderEpicTracker(listEpicChildren(repo, issue.number)));
   await removeLabel(repo, issue.number, IN_PROGRESS);
   await removeLabel(repo, issue.number, APPROVAL_LABEL);
-  await addLabel(repo, issue.number, READY);
-  recordIssueState(repo, issue.number, { state: READY });
-  console.log(`[agency] ${repo} #${issue.number} -> decomposed into ${subs.length} issues.`);
+  await addLabel(repo, issue.number, EPIC_LABEL);
+  recordIssueState(repo, issue.number, { state: EPIC_LABEL });
+  console.log(`[agency] ${repo} #${issue.number} -> epic of ${subs.length} sub-issues.`);
   return true;
 }
 
