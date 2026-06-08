@@ -194,6 +194,14 @@ export function renderBoard(): string {
     document.getElementById("group-by").onchange=render;
     document.getElementById("drawer-overlay").onclick=closeDrawer;
     document.addEventListener("keydown",function(e){if(e.key==="Escape")closeDrawer();});
+    document.getElementById("board").addEventListener("click",function(e){
+      var card=e.target.closest(".kcard");
+      if(card)openDrawer(card.dataset.repo,Number(card.dataset.number));
+    });
+    document.getElementById("drawer").addEventListener("click",function(e){
+      var btn=e.target.closest(".chip-x");
+      if(btn)removeLabel(btn.dataset.repo,Number(btn.dataset.number),btn.dataset.label);
+    });
   }
 
   function getSorted(issues){
@@ -211,7 +219,7 @@ export function renderBoard(): string {
 
   function cardHtml(i){
     var stateColor=STATE[i.state]||"#868e96";
-    return '<div class="kcard" onclick="openDrawer('+JSON.stringify(i.repo)+','+i.number+')">'
+    return '<div class="kcard" data-repo="'+esc(i.repo)+'" data-number="'+i.number+'">'
       +'<div class="kmeta"><span style="font-size:15px">'+(ICON[i.role]||"📋")+'</span>'
       +'<span class="badge" style="background:'+stateColor+';font-size:11px">'+esc((i.state||"").replace("agency:",""))+'</span></div>'
       +'<div class="ktitle">'+esc(i.title)+'</div>'
@@ -270,7 +278,7 @@ export function renderBoard(): string {
         // Labels
         labels.innerHTML=(det.labels||[]).map(function(l){
           return '<span class="chip">'+esc(l)
-            +'<button class="chip-x" title="Remove label" onclick="removeLabel('+JSON.stringify(repo)+','+number+','+JSON.stringify(l)+')">✕</button>'
+            +'<button class="chip-x" title="Remove label" data-repo="'+esc(repo)+'" data-number="'+number+'" data-label="'+esc(l)+'">✕</button>'
             +'</span>';
         }).join("");
         // Thread
