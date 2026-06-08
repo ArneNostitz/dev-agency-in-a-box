@@ -456,6 +456,34 @@ export interface PullRequest {
   isDraft: boolean;
 }
 
+export interface IssueDetail {
+  labels: string[];
+  comments: Array<{ who: "human" | "agency"; body: string; createdAt: string }>;
+}
+
+/**
+ * Fetch labels + comment thread for a single issue. Each comment is tagged human/agency
+ * via AGENCY_MARKER. One `gh issue view` call.
+ */
+export async function issueDetail(repo: string, number: number): Promise<IssueDetail> {
+  const out = await gh([
+    "issue", "view", String(number), "--repo", repo,
+    "--json", "labels,comments",
+  ]).catch(() => '{"labels":[],"comments":[]}');
+  const data = JSON.parse(out) as {
+    labels?: Array<{ name: string }>;
+    comments?: Array<{ body: string; createdAt: string }>;
+  };
+  return {
+    labels: (data.labels ?? []).map((l) => l.name),
+    comments: (data.comments ?? []).map((c) => ({
+      who: c.body.includes(AGENCY_MARKER) ? "agency" : "human",
+      body: c.body.replace(AGENCY_MARKER, "").trim(),
+      createdAt: c.createdAt,
+    })),
+  };
+}
+
 /** Find an open PR whose head branch matches `branch`, if any. */
 export async function findPrForBranch(repo: string, branch: string): Promise<PullRequest | null> {
   const out = await gh([
