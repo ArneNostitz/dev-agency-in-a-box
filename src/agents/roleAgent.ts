@@ -7,7 +7,7 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import { ROLES, modelFor, type RoleName } from "./roles.js";
 import { loadConstitution, loadPersona, loadPlaybooks } from "../memory.js";
 import { pushActivity } from "../activity.js";
-import { recentLessons } from "../store.js";
+import { recentLessons, recordTokens } from "../store.js";
 import { loadBudget } from "../budget.js";
 
 /** A short, meaningful one-liner for a tool call (the command/file, not just the tool name). */
@@ -106,6 +106,7 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
   let text = "";
   let turns = 0;
   let costUsd = 0;
+  let tokens = 0;
   let stderrBuf = "";
   const { repo, issueNumber } = input;
   console.log(`[agency] role:${role} ${repo}#${issueNumber} (model ${model})`);
@@ -139,6 +140,15 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
       }
       const cost = (message as { total_cost_usd?: unknown }).total_cost_usd;
       if (typeof cost === "number" && Number.isFinite(cost)) costUsd = cost;
+      const u = (message as { usage?: Record<string, unknown> }).usage;
+      if (u) {
+        const n = (k: string) => (typeof u[k] === "number" ? (u[k] as number) : 0);
+        tokens =
+          n("input_tokens") +
+          n("output_tokens") +
+          n("cache_creation_input_tokens") +
+          n("cache_read_input_tokens");
+      }
     }
   } catch (err) {
     const detail = stderrBuf.trim().split("\n").slice(-3).join(" ").slice(-400);
@@ -147,6 +157,7 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
     pushActivity(repo, issueNumber, role, "done", `❌ ERROR: ${msg.slice(0, 400)}`);
     throw new Error(msg);
   }
+  recordTokens(tokens, costUsd, model);
   pushActivity(repo, issueNumber, role, "done", `finished (${turns} turns${costUsd ? `, $${costUsd.toFixed(2)}` : ""})`);
   return { text, turns, model, costUsd };
 }

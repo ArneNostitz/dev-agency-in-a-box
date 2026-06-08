@@ -63,6 +63,11 @@ function getDb(): DatabaseSync | null {
         last_comment_id INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (repo, number)
       );
+      CREATE TABLE IF NOT EXISTS token_usage (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ts TEXT NOT NULL, tokens INTEGER NOT NULL DEFAULT 0,
+        cost_usd REAL NOT NULL DEFAULT 0, model TEXT
+      );
     `);
     // Migrations for older databases (ALTER fails harmlessly if the column already exists).
     for (const sql of [
@@ -168,6 +173,36 @@ export function issueSpend(repo: string, number: number): { costUsd: number; tur
     return { costUsd: row?.cost ?? 0, turns: row?.turns ?? 0 };
   } catch {
     return { costUsd: 0, turns: 0 };
+  }
+}
+
+/** Record token usage for one agent run (drives the session-allowance gauge). */
+export function recordTokens(tokens: number, costUsd: number, model: string): void {
+  const d = getDb();
+  if (!d || (!tokens && !costUsd)) return;
+  try {
+    d.prepare(`INSERT INTO token_usage (ts, tokens, cost_usd, model) VALUES (?, ?, ?, ?)`).run(
+      now(),
+      Math.round(tokens),
+      costUsd,
+      model,
+    );
+  } catch {
+    /* best effort */
+  }
+}
+
+/** Tokens + cost used since an ISO timestamp (for the rolling session window). */
+export function tokensSince(sinceIso: string): { tokens: number; costUsd: number } {
+  const d = getDb();
+  if (!d) return { tokens: 0, costUsd: 0 };
+  try {
+    const row = d
+      .prepare(`SELECT COALESCE(SUM(tokens),0) AS t, COALESCE(SUM(cost_usd),0) AS c FROM token_usage WHERE ts >= ?`)
+      .get(sinceIso) as { t?: number; c?: number } | undefined;
+    return { tokens: row?.t ?? 0, costUsd: row?.c ?? 0 };
+  } catch {
+    return { tokens: 0, costUsd: 0 };
   }
 }
 

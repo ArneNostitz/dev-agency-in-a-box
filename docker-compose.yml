@@ -6,6 +6,9 @@ services:
   agency:
     build: .
     restart: unless-stopped
+    # Let in-flight agent runs finish on deploy/restart before the platform force-kills the
+    # container (pairs with the app's graceful drain). Raise if your builds run longer.
+    stop_grace_period: 600s
     environment:
       # Trigger style: "watch" polls; "webhook" reacts instantly (set up a GitHub webhook).
       RUN_MODE: ${RUN_MODE:-watch}
@@ -58,6 +61,10 @@ services:
       # Re-engagement window + dashboard "Open preview" link template
       FOLLOWUP_WINDOW_DAYS: ${FOLLOWUP_WINDOW_DAYS:-}
       PREVIEW_URL_TEMPLATE: ${PREVIEW_URL_TEMPLATE:-}
+      # Session token gauge + graceful deploys
+      SESSION_WINDOW_HOURS: ${SESSION_WINDOW_HOURS:-}
+      SESSION_TOKEN_BUDGET: ${SESSION_TOKEN_BUDGET:-}
+      GRACEFUL_SHUTDOWN_MS: ${GRACEFUL_SHUTDOWN_MS:-}
       # SQLite memory lives on the mounted volume so it survives redeploys.
       DB_PATH: /app/data/agency.db
     volumes:

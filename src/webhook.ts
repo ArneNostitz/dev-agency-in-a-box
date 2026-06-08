@@ -14,7 +14,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { Config } from "./config.js";
-import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr } from "./store.js";
+import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince } from "./store.js";
 import { renderDashboard, renderHistory } from "./dashboard.js";
 import { subscribe, getActive } from "./activity.js";
 import { effectiveRepos } from "./commands.js";
@@ -155,6 +155,9 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
             ...i,
             previewUrl: i.pr_number ? previewUrlFor(i.repo, i.pr_number, `agency/issue-${i.number}`) : null,
           }));
+          const winH = Number(process.env.SESSION_WINDOW_HOURS?.trim()) || 5;
+          const budget = Number(process.env.SESSION_TOKEN_BUDGET?.trim()) || 0;
+          const sess = tokensSince(new Date(Date.now() - winH * 3600_000).toISOString());
           res.writeHead(200, { "content-type": "application/json" });
           res.end(
             JSON.stringify({
@@ -164,6 +167,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               runs: recentRuns(40),
               activity: recentActivity(400),
               spendToday: spendSince(midnight.toISOString()),
+              session: { tokens: sess.tokens, costUsd: sess.costUsd, budget, windowHours: winH },
             }),
           );
         })();
@@ -201,7 +205,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
 
     // Dashboard actions (password-protected, not GitHub webhooks).
     const path = (req.url ?? "").split("?")[0];
-    if (["/archive", "/comment", "/run-checks", "/merge", "/delete", "/resume", "/new-issue"].includes(path)) {
+    if (["/archive", "/comment", "/run-checks", "/merge", "/delete", "/resume", "/new-issue", "/approve"].includes(path)) {
       if (!checkAuth(cfg, req, res)) return;
       void readBody(req).then(async (body) => {
         let p: { repo?: string; number?: number; body?: string; title?: string; role?: string } = {};
@@ -226,6 +230,17 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
             // Post under the owner's account (admin token) so it shows your name, not the bot's.
             await commentAsHuman(repo, number, p.body.trim(), cfg.adminToken);
             void trigger("dashboard-comment");
+            return ok();
+          } catch (err) {
+            return res.writeHead(500).end(JSON.stringify({ error: (err as Error).message }));
+          }
+        }
+        if (path === "/approve") {
+          // One-click accept of a proposal: posts "ok" as you, which the pipeline treats as approval.
+          if (!repo || !number) return res.writeHead(400).end("{}");
+          try {
+            await commentAsHuman(repo, number, "ok", cfg.adminToken);
+            void trigger("dashboard-approve");
             return ok();
           } catch (err) {
             return res.writeHead(500).end(JSON.stringify({ error: (err as Error).message }));

@@ -7,9 +7,15 @@
 const MAX = Math.max(1, Number(process.env.AGENCY_CONCURRENCY ?? "3"));
 
 let running = 0;
+let stopped = false;
 const queue: Array<() => Promise<void>> = [];
 const inFlight = new Set<string>();
 const drainWaiters: Array<() => void> = [];
+
+/** Stop accepting new work (used for graceful shutdown — let in-flight runs finish). */
+export function stop(): void {
+  stopped = true;
+}
 
 function pump(): void {
   while (running < MAX && queue.length > 0) {
@@ -27,9 +33,9 @@ function pump(): void {
   }
 }
 
-/** Queue fn under `key`; ignored if that key is already running/queued. */
+/** Queue fn under `key`; ignored if that key is already running/queued (or shutting down). */
 export function dispatch(key: string, fn: () => Promise<void>): void {
-  if (inFlight.has(key)) return;
+  if (stopped || inFlight.has(key)) return;
   inFlight.add(key);
   queue.push(async () => {
     try {

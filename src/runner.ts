@@ -47,7 +47,7 @@ import {
   recentIssues,
 } from "./store.js";
 import { setActive, clearActive, getActive } from "./activity.js";
-import { dispatch, drain } from "./pool.js";
+import { dispatch, drain, stop as stopPool, poolStatus } from "./pool.js";
 import { loadBudget, overBudget, UNLIMITED_LABEL } from "./budget.js";
 import { maybeSelfImprove } from "./reflect.js";
 import {
@@ -456,6 +456,24 @@ async function main(): Promise<void> {
     await runOnce(cfg);
   }
 }
+
+// Graceful shutdown: on deploy/restart, stop taking new work and let in-flight agent runs
+// finish (up to GRACEFUL_SHUTDOWN_MS) instead of killing them mid-build. Pair this with a
+// matching `stop_grace_period` in docker-compose so the platform waits before SIGKILL.
+let shuttingDown = false;
+async function gracefulShutdown(signal: string): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  stopPool(); // no new dispatches
+  const { running, queued } = poolStatus();
+  const graceMs = Number(process.env.GRACEFUL_SHUTDOWN_MS?.trim()) || 570_000; // ~9.5 min
+  console.log(`[agency] ${signal}: draining ${running} running + ${queued} queued (grace ${Math.round(graceMs / 1000)}s)…`);
+  await Promise.race([drain(), new Promise((r) => setTimeout(r, graceMs))]);
+  console.log("[agency] drained — exiting cleanly.");
+  process.exit(0);
+}
+process.on("SIGTERM", () => void gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => void gracefulShutdown("SIGINT"));
 
 // Resilience: a bad run must never crash the agency (which would restart and loop).
 process.on("unhandledRejection", (reason) => console.error("[agency] unhandledRejection:", reason));

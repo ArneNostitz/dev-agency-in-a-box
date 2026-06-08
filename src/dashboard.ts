@@ -71,6 +71,11 @@ const STYLE = `
   .chips{display:flex;gap:6px;overflow:auto;padding:8px 14px 2px;-webkit-overflow-scrolling:touch}
   .chip{flex:0 0 auto;border:1px solid var(--line);background:var(--card);border-radius:999px;padding:5px 11px;font-size:13px;color:var(--muted);cursor:pointer}
   .chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+  .toolbar{display:flex;gap:8px;padding:8px 14px 2px}
+  .toolbar input{flex:1;border:1px solid var(--line);border-radius:9px;padding:7px 11px;font:14px inherit;background:var(--card);color:var(--ink)}
+  .toolbar select{border:1px solid var(--line);border-radius:9px;padding:7px 9px;font:13px inherit;background:var(--card);color:var(--ink)}
+  .gauge{display:inline-block;width:64px;height:6px;border-radius:3px;background:var(--line);vertical-align:middle;overflow:hidden;margin:0 4px}
+  .gauge i{display:block;height:100%;background:var(--green)}
   .wrap{padding:6px 8px 40px}
   .repo{margin:10px 6px 4px;font-weight:650;font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px}
   .lanes{display:flex;gap:10px;overflow-x:auto;padding:6px;scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch}
@@ -134,6 +139,14 @@ export function renderDashboard(): string {
     <div class="sub" id="sub">Loading…</div>
   </div>
   <div class="chips" id="repochips"></div>
+  <div class="toolbar">
+    <input id="q" placeholder="Search title or #number…" autocomplete="off" oninput="onSearch(this.value)">
+    <select id="sort" onchange="onSort(this.value)">
+      <option value="updated">Newest</option>
+      <option value="number">By number</option>
+      <option value="title">By name</option>
+    </select>
+  </div>
   <div class="wrap" id="board"><div class="empty">Loading…</div></div>
 
   <div class="scrim" id="scrim" onclick="closeDrawer()"></div>
@@ -171,14 +184,26 @@ export function renderDashboard(): string {
 <script>
 ${CLIENT_HELPERS}
 (function(){
-  var DATA={issues:[],active:[],activity:[],repos:[]}, repoFilter=null, open=null;
+  var DATA={issues:[],active:[],activity:[],repos:[]}, repoFilter=null, open=null, query="", sortKey="updated";
+  // Order: New → Waiting for reply → Working → Ready for review → Done. Each issue lands in
+  // exactly one column (classify), so "waiting on you" and "needs attention" are one bucket.
   var COLS=[
-    {k:"working",  label:"Working",        match:function(i){return i.active||i.state==="agency:in-progress";}},
-    {k:"waiting",  label:"Waiting on you",  match:function(i){return i.state==="agency:awaiting-approval"||i.state==="agency:awaiting-answer";}},
-    {k:"ready",    label:"Ready · PR",      match:function(i){return i.state==="agency:ready";}},
-    {k:"attention",label:"Needs attention", match:function(i){return i.state==="agency:needs-attention";}},
-    {k:"done",     label:"Done · Merged",   match:function(i){return i.state==="merged"||i.state==="agency:merged"||i.state==="closed"||i.state==="done";}}
+    {k:"new",     label:"New"},
+    {k:"waiting", label:"Waiting for reply"},
+    {k:"working", label:"Working"},
+    {k:"review",  label:"Ready for review"},
+    {k:"done",    label:"Done"}
   ];
+  function classify(i){
+    if(i.active||i.state==="agency:in-progress")return "working";
+    if(i.state==="agency:awaiting-approval"||i.state==="agency:awaiting-answer"||i.state==="agency:needs-attention")return "waiting";
+    if(i.state==="agency:ready")return "review";
+    if(i.state==="merged"||i.state==="agency:merged"||i.state==="closed"||i.state==="done")return "done";
+    return "new";
+  }
+  function fmtTok(n){if(n>=1e6)return (n/1e6).toFixed(2)+"M";if(n>=1e3)return Math.round(n/1e3)+"k";return ""+(n||0);}
+  function matchQ(i){if(!query)return true;var q=query.toLowerCase();return (i.title||"").toLowerCase().indexOf(q)>=0||(""+i.number).indexOf(q)>=0;}
+  function cmp(a,b){if(sortKey==="number")return a.number-b.number;if(sortKey==="title")return (a.title||"").localeCompare(b.title||"");return new Date(b.updated_at||0)-new Date(a.updated_at||0);}
   function toast(t){var e=document.getElementById("toast");e.textContent=t;e.classList.add("on");setTimeout(function(){e.classList.remove("on");},1800);}
   function activeKey(i){return DATA.active.some(function(a){return a.repo===i.repo&&a.number===i.number;});}
 
@@ -192,7 +217,15 @@ ${CLIENT_HELPERS}
     var n=(DATA.active||[]).length;
     document.getElementById("live").innerHTML = n? '<span class="dot"></span>' : '';
     var sp=DATA.spendToday&&DATA.spendToday.costUsd>0? ' · today $'+DATA.spendToday.costUsd.toFixed(2):'';
-    document.getElementById("sub").innerHTML = (n? n+' working now':'Idle')+sp+' · <a href="/history">history</a>';
+    var sess="", s=DATA.session;
+    if(s&&(s.tokens||s.budget)){
+      sess=' · '+fmtTok(s.tokens)+' tok';
+      if(s.budget>0){var pct=Math.min(100,Math.round(100*s.tokens/s.budget));
+        var col=pct>=90?'var(--red)':pct>=70?'var(--amber)':'var(--green)';
+        sess+=' <span class="gauge"><i style="width:'+pct+'%;background:'+col+'"></i></span> '+pct+'% of '+(s.windowHours||5)+'h limit';
+      } else { sess+=' (last '+(s.windowHours||5)+'h)'; }
+    }
+    document.getElementById("sub").innerHTML = (n? n+' working now':'Idle')+sp+sess+' · <a href="/history">history</a>';
   }
   function renderChips(){
     var repos=DATA.repos||[]; var c=document.getElementById("repochips");
@@ -212,12 +245,11 @@ ${CLIENT_HELPERS}
   }
   function renderBoard(){
     var repos=(DATA.repos||[]).filter(function(r){return !repoFilter||r===repoFilter;});
-    var byRepo={}; repos.forEach(function(r){byRepo[r]=[];});
-    DATA.issues.forEach(function(i){ if(byRepo[i.repo]) byRepo[i.repo].push(i); });
+    var items=DATA.issues.filter(matchQ).slice().sort(cmp);
     var html=repos.map(function(r){
-      var items=byRepo[r]||[];
+      var ri=items.filter(function(i){return i.repo===r;});
       var lanes=COLS.map(function(col){
-        var inCol=items.filter(col.match);
+        var inCol=ri.filter(function(i){return classify(i)===col.k;});
         return '<div class="lane"><h3>'+col.label+'<span>'+(inCol.length||"")+'</span></h3>'+
           (inCol.length?inCol.map(card).join(""):'<div class="empty">—</div>')+'</div>';
       }).join("");
@@ -225,6 +257,8 @@ ${CLIENT_HELPERS}
     }).join("");
     document.getElementById("board").innerHTML = html||'<div class="empty">No repos yet. File a /add-repo issue.</div>';
   }
+  window.onSearch=function(v){query=v;renderBoard();};
+  window.onSort=function(v){sortKey=v;renderBoard();};
 
   // ---- new issue composer ----
   window.openComposer=function(){
@@ -262,6 +296,7 @@ ${CLIENT_HELPERS}
     var a='<a class="btn" href="'+gh(repo,n)+'" target="_blank" rel="noopener">Issue ↗</a>';
     if(i.pr_url) a+='<a class="btn" href="'+i.pr_url+'" target="_blank" rel="noopener">PR ↗</a>';
     if(i.previewUrl) a+='<a class="btn primary" href="'+i.previewUrl+'" target="_blank" rel="noopener">Open preview ↗</a>';
+    if(i.state==="agency:awaiting-approval") a+='<button class="btn primary" onclick="doApprove(this)">✓ Approve &amp; build</button>';
     a+='<button class="btn" id="d_resume" onclick="doResume(this)">⟳ Resume</button>';
     a+='<button class="btn" id="d_checks" onclick="runChecks()">▶ Run checks</button>';
     if(i.pr_number) a+='<button class="btn" onclick="confirmAct(this,\\'merge\\')">⤵ Merge</button>';
@@ -314,6 +349,12 @@ ${CLIENT_HELPERS}
       .then(function(r){if(!r.ok)throw 0; toast(kind==="merge"?"Merged 🚀":"Deleted"); closeDrawer(); load();})
       .catch(function(){btn.disabled=false;btn.classList.remove("armed");toast("Couldn’t "+kind);});
   }
+  window.doApprove=function(btn){
+    if(!open)return; btn.disabled=true;
+    fetch("/approve",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({repo:open.repo,number:open.number})})
+      .then(function(r){if(!r.ok)throw 0; toast("Approved — building ✓"); closeDrawer(); setTimeout(load,1200);})
+      .catch(function(){btn.disabled=false;toast("Couldn’t approve");});
+  };
   window.doResume=function(btn){
     if(!open)return; btn.disabled=true;
     fetch("/resume",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({repo:open.repo,number:open.number})})
