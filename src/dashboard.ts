@@ -104,6 +104,7 @@ const STYLE = `
   .tag{font-size:11px;padding:1px 7px;border-radius:999px;background:#eef1f5;color:var(--muted)}
   .tag.pr{background:var(--accent-weak);color:var(--accent)} .tag.prev{background:#e9f8ef;color:var(--green)} .tag.epic{background:#efe9ff;color:#6741d9} .tag.q{background:#f0f1f3;color:#7a828c} .tag.rl{background:#fff1d6;color:#a76a00}
   .cardbtn{border:1px solid #cdebd6;background:#e9f8ef;color:var(--green);border-radius:7px;padding:1px 8px;font-size:11px;cursor:pointer;font-weight:560}
+  .cardbtn.rs{border-color:#d3def0;background:#eef3fb;color:#3b6cc9}
   .epiclist{margin:2px 0 4px} .epiclist a{display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid var(--line);font-size:13px;color:var(--ink)}
   .epiclist .st{margin-left:auto;font-size:11px;color:var(--muted)} .epiclist .ck{color:var(--green)} .epiclist .ck.o{color:#c9ced6}
   .ebar{height:6px;border-radius:3px;background:var(--line);overflow:hidden;margin:6px 0}.ebar i{display:block;height:100%;background:#6741d9}
@@ -344,7 +345,9 @@ ${CLIENT_HELPERS}
     if(i.pr_number) tags+='<a class="tag pr" href="'+(i.pr_url||gh(i.repo,i.pr_number))+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">PR #'+i.pr_number+' ↗</a>';
     if(i.previewUrl) tags+='<a class="tag prev" href="'+i.previewUrl+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">preview ↗</a>';
     var role=i.role?(ICON[i.role]||"")+" ":"";
-    var quick=i.state==="agency:awaiting-approval"?'<button class="cardbtn" onclick=\\'cardApprove('+JSON.stringify(i.repo)+','+i.number+',event)\\'>✓ approve</button> ':'';
+    var quick='';
+    if(i.state==="agency:awaiting-approval") quick+='<button class="cardbtn" onclick=\\'cardApprove('+JSON.stringify(i.repo)+','+i.number+',event)\\'>✓ approve</button> ';
+    if(i.state==="agency:needs-attention"||i.state==="agency:rate-limited") quick+='<button class="cardbtn rs" onclick=\\'cardResume('+JSON.stringify(i.repo)+','+i.number+',event)\\'>⟳ resume</button> ';
     return '<div class="card" onclick=\\'openDrawer('+JSON.stringify(i.repo)+','+i.number+')\\'>'+
       '<div class="t">'+(i.active?'<span class="dot"></span> ':'')+esc(i.title||("#"+i.number))+'</div>'+
       '<div class="m">'+role+'#'+i.number+' '+tags+'<span style="margin-left:auto">'+quick+ago(i.updated_at)+'</span></div></div>';
@@ -354,6 +357,12 @@ ${CLIENT_HELPERS}
     fetch("/approve",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({repo:repo,number:number})})
       .then(function(r){if(!r.ok)throw 0; toast("Approved — building ✓"); setTimeout(load,1000);})
       .catch(function(){toast("Couldn’t approve");});
+  };
+  window.cardResume=function(repo,number,ev){
+    if(ev){ev.stopPropagation();}
+    fetch("/resume",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({repo:repo,number:number})})
+      .then(function(r){if(!r.ok)throw 0; toast("Resuming ↻"); setTimeout(load,1000);})
+      .catch(function(){toast("Couldn’t resume");});
   };
   function lane(ck,items){
     var inner=items.length?items.map(card).join(""):'<div class="empty">—</div>';

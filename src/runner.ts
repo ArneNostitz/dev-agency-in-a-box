@@ -19,6 +19,9 @@ import {
   commentThread,
   acknowledge,
   listAgencyPrs,
+  listAllOpenIssues,
+  listComments,
+  AGENCY_MARKER,
   listRecentThreads,
   threadSignals,
   reopenIssue,
@@ -600,6 +603,53 @@ async function runWatch(cfg: Config): Promise<void> {
 }
 
 /**
+ * One-shot reconcile at startup: find issues that were parked as "needs-attention" by a run
+ * that actually hit the usage/session limit (before the rate-limit detection existed, or while
+ * a previous build lacked the fix). We detect them by scanning each needs-attention issue's
+ * recent agency comments for a usage-limit signal, then move them into the rate-limited state so
+ * they show the ⌛ hourglass in Working and auto-resume after the reset. Pure GitHub reads + DB —
+ * no agent/AI calls, zero tokens. This is what makes "scan all issues after redeploy" work.
+ */
+async function reconcileRateLimited(cfg: Config): Promise<void> {
+  let moved = 0;
+  for (const repo of effectiveRepos(cfg)) {
+    let issues: Issue[];
+    try {
+      issues = await listAllOpenIssues(repo);
+    } catch {
+      continue;
+    }
+    for (const issue of issues) {
+      try {
+        if (!issue.labels.includes(NEEDS_ATTENTION)) continue;
+        if (issue.labels.includes(RATE_LIMITED)) continue;
+        const comments = await listComments(repo, issue.number).catch(() => [] as Array<{ body: string }>);
+        // Only trust an agency-authored failure note as the rate-limit signal.
+        const hit = comments
+          .slice(-6)
+          .reverse()
+          .find((c) => c.body.includes(AGENCY_MARKER) && parseRateLimit(c.body).limited);
+        if (!hit) continue;
+        const rl = parseRateLimit(hit.body);
+        const at = rl.resetAt && rl.resetAt > Date.now() ? rl.resetAt : nextResetMs();
+        setRateLimited(repo, issue.number, new Date(at).toISOString());
+        recordIssueState(repo, issue.number, { state: RATE_LIMITED });
+        await removeLabel(repo, issue.number, NEEDS_ATTENTION).catch(() => {});
+        await removeLabel(repo, issue.number, "🚧 blocked").catch(() => {});
+        await addLabel(repo, issue.number, RATE_LIMITED).catch(() => {});
+        // If the reset is still in the future, hold new dispatch too so we don't re-hit the wall.
+        if (at > Date.now()) pauseAgents(at);
+        moved++;
+        console.log(`[agency] reconciled rate-limited ${repo} #${issue.number} (auto-resume ${new Date(at).toISOString()})`);
+      } catch (err) {
+        console.error(`[agency] reconcile error on ${repo} #${issue.number}:`, (err as Error).message);
+      }
+    }
+  }
+  if (moved) console.log(`[agency] reconcile: moved ${moved} parked issue(s) into auto-resume.`);
+}
+
+/**
  * Pure-script auto-resume: every minute, re-run any issue whose usage-limit reset time has
  * passed, and lift the global pause once it's over. No agent/AI calls — works with zero tokens.
  */
@@ -627,6 +677,7 @@ async function main(): Promise<void> {
   const cfg = loadConfig();
   await ensureAllRepoAccess(cfg);
   await recoverOrphans(cfg);
+  await reconcileRateLimited(cfg).catch((e) => console.error("[agency] reconcile failed:", (e as Error).message));
   startAutoResume(cfg);
   startPreviewSweeper();
   if (cfg.runMode === "webhook") {
