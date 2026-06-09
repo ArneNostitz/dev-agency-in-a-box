@@ -76,7 +76,9 @@ async function buildSystemPrompt(role: RoleName): Promise<string> {
     loadPlaybooks(def.playbooks),
     loadLearned(def.personaFile),
   ]);
-  const lessons = recentLessons(12);
+  // Keep the self-improving parts bounded so the (cache-written) system prompt stays small.
+  const lessons = recentLessons(8);
+  const learnedCapped = learned.length > 3500 ? learned.slice(0, 3500) + "\n…(truncated)" : learned;
   return [
     "=== OUTPUT STYLE (strict) ===",
     "Be maximally terse — spend the fewest tokens that fully do the job. No preamble, no",
@@ -93,8 +95,8 @@ async function buildSystemPrompt(role: RoleName): Promise<string> {
     "",
     "=== PLAYBOOKS (how we build — binding) ===",
     playbooks,
-    ...(learned.trim()
-      ? ["", "=== LEARNED (self-improving notes — the agency's evolving experience; apply them) ===", learned]
+    ...(learnedCapped.trim()
+      ? ["", "=== LEARNED (self-improving notes — the agency's evolving experience; apply them) ===", learnedCapped]
       : []),
     ...(lessons.length
       ? ["", "=== RECENT LESSONS (newest takeaways — apply them) ===", ...lessons.map((l) => `- ${l}`)]

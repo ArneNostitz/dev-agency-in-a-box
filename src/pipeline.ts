@@ -313,20 +313,24 @@ async function runDeveloperPipeline(
     return;
   }
 
-  // 2. Architect — turn the recommendation into a concrete technical plan.
-  const arch = await runRole("architect", {
-    workdir,
-    repo,
-    issueNumber: issue.number,
-    task:
-      `Turn this recommended approach into a concrete technical plan for the repo. List the files to add/` +
-      `change grouped by world (UI / logic / infrastructure), the existing pieces to reuse, and any key ` +
-      `structural decisions. Keep it KISS. Do NOT write code.\n\n### Recommended approach\n${decision.body}` +
-      `\n\n### ${issueHeader(issue)}`,
-  });
-  recordRun(repo, issue.number, "architect", arch.model, arch.turns, "design");
-
-  const proposal = `${decision.body}\n\n---\n\n### 🏛 Technical plan (Architect)\n\n${arch.text}`;
+  // 2. Architect — optional. By default the Opus planner already produces the technical plan,
+  // so we skip a second agent that re-reads the whole repo (big token saving). Set
+  // SKIP_ARCHITECT=false to bring back a separate Sonnet architect refinement.
+  let proposal = decision.body;
+  if (process.env.SKIP_ARCHITECT?.trim().toLowerCase() === "false") {
+    const arch = await runRole("architect", {
+      workdir,
+      repo,
+      issueNumber: issue.number,
+      task:
+        `Turn this recommended approach into a concrete technical plan for the repo. List the files to add/` +
+        `change grouped by world (UI / logic / infrastructure), the existing pieces to reuse, and any key ` +
+        `structural decisions. Keep it KISS. Do NOT write code.\n\n### Recommended approach\n${decision.body}` +
+        `\n\n### ${issueHeader(issue)}`,
+    });
+    recordRun(repo, issue.number, "architect", arch.model, arch.turns, "design", arch.costUsd);
+    proposal = `${decision.body}\n\n---\n\n### 🏛 Technical plan (Architect)\n\n${arch.text}`;
+  }
   recordPlan(repo, issue.number, proposal);
   await commentOnIssue(
     repo,

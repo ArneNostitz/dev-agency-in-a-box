@@ -55,6 +55,8 @@ services:
       MAX_ISSUE_TURNS: ${MAX_ISSUE_TURNS:-}
       MAX_TURNS_PER_RUN: ${MAX_TURNS_PER_RUN:-}
       MAX_TOKENS_PER_RUN: ${MAX_TOKENS_PER_RUN:-}
+      # Skip the separate architect pass (planner already plans) — saves a full agent run
+      SKIP_ARCHITECT: ${SKIP_ARCHITECT:-}
       # Self-evolving loop (librarian lessons -> playbook PRs against AGENCY_REPO)
       SELF_IMPROVE: ${SELF_IMPROVE:-}
       LESSONS_PR_THRESHOLD: ${LESSONS_PR_THRESHOLD:-}

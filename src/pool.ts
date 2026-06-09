@@ -50,6 +50,10 @@ export function dispatch(key: string, fn: () => Promise<void>): void {
 export function maxConcurrency(): number {
   return MAX;
 }
+/** Keys currently dispatched (running OR waiting for a slot) — for the "queued" UI. */
+export function inFlightKeys(): string[] {
+  return [...inFlight];
+}
 export function poolStatus(): { running: number; queued: number; max: number } {
   return { running, queued: queue.length, max: MAX };
 }
