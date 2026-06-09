@@ -94,6 +94,8 @@ const STYLE = `
   .lane{flex:0 0 72vw;max-width:300px}
   @media(min-width:760px){.lane{flex:0 0 248px}}
   .lane h3{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:2px 4px 8px;display:flex;justify-content:space-between}
+  /* Show ~8 cards, then scroll within the lane (cards are ~84px tall). */
+  .lanecards{max-height:min(72vh,672px);overflow-y:auto;padding:0 4px 2px;-webkit-overflow-scrolling:touch}
   .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:8px;box-shadow:var(--shadow);cursor:pointer}
   .card:active{transform:scale(.99)}
   .card .t{font-weight:560;font-size:14px;margin:1px 0 6px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
@@ -323,8 +325,8 @@ ${CLIENT_HELPERS}
       '<div class="m">'+role+'#'+i.number+' '+tags+'<span style="margin-left:auto">'+ago(i.updated_at)+'</span></div></div>';
   }
   function lane(ck,items){
-    return '<div class="lane"><h3>'+COL[ck]+'<span>'+(items.length||"")+'</span></h3>'+
-      (items.length?items.map(card).join(""):'<div class="empty">—</div>')+'</div>';
+    var inner=items.length?items.map(card).join(""):'<div class="empty">—</div>';
+    return '<div class="lane"><h3>'+COL[ck]+'<span>'+(items.length||"")+'</span></h3><div class="lanecards">'+inner+'</div></div>';
   }
   function renderBoard(){
     var repos=(DATA.repos||[]).filter(function(r){return !repoFilter||r===repoFilter;});
