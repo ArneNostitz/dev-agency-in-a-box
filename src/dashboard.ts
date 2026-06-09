@@ -211,7 +211,9 @@ export function renderDashboard(): string {
     <div class="ch"><div class="t">Token budget</div><button class="x" style="margin-left:auto" onclick="closeSettings()" aria-label="Close">×</button></div>
     <label>Session window (hours)</label><input id="s_win" type="number" min="1" max="168" step="1">
     <div id="s_window" class="muted" style="font-size:12px;margin:6px 2px"></div>
-    <button class="btn" onclick="resetWindow()">Start window now</button>
+    <label>Window start — set it if you know when your session began</label>
+    <div style="display:flex;gap:8px"><input id="s_anchor" type="datetime-local"><button class="btn" onclick="setAnchor()">Set</button></div>
+    <button class="btn" style="margin-top:6px" onclick="resetWindow()">Start window now</button>
     <div class="sec" style="margin:14px 2px 4px">Used this window</div>
     <div id="s_usage" class="usage"></div>
     <label>Calibrate: enter the % the Claude app shows now</label>
@@ -224,9 +226,11 @@ export function renderDashboard(): string {
   <div class="composer" id="agents">
     <div class="ch"><div class="t">Edit agents &amp; playbooks</div><button class="x" style="margin-left:auto" onclick="closeAgents()" aria-label="Close">×</button></div>
     <label>File</label><select id="a_file" onchange="loadAgent()"></select>
-    <textarea id="a_content" spellcheck="false" style="min-height:46vh;font:13px ui-monospace,Menlo,monospace"></textarea>
-    <div class="muted" style="font-size:12px;margin-top:6px">Saving commits to the agency repo and redeploys (graceful — running work finishes first).</div>
-    <div class="row"><button class="btn" onclick="closeAgents()">Cancel</button><button class="btn primary" id="a_save" onclick="saveAgent()">Save &amp; redeploy</button></div>
+    <div id="a_kind" class="muted" style="font-size:12px;margin:4px 2px"></div>
+    <textarea id="a_content" spellcheck="false" style="min-height:44vh;font:13px ui-monospace,Menlo,monospace"></textarea>
+    <div id="a_hist" class="usage" style="display:none;margin-top:6px"></div>
+    <div class="muted" style="font-size:12px;margin-top:6px">Applies live on the next agent run (stored + versioned, no redeploy).</div>
+    <div class="row"><button class="btn" onclick="revertAgent()">Revert to default</button><button class="btn" onclick="toggleHist()">History</button><button class="btn primary" id="a_save" onclick="saveAgent()">Save</button></div>
   </div>
   <div class="toast" id="toast"></div>
 
@@ -319,6 +323,7 @@ ${CLIENT_HELPERS}
   // ---- token settings ----
   function modelName(m){if(/opus/i.test(m))return "Opus";if(/sonnet/i.test(m))return "Sonnet";if(/haiku/i.test(m))return "Haiku";return m||"?";}
   function hm(d){return d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});}
+  function localInput(d){var p=function(n){return (n<10?"0":"")+n;};return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+"T"+p(d.getHours())+":"+p(d.getMinutes());}
   function refreshSettings(){
     var s=DATA.session||{}, bm=s.byModel||[];
     var rows=bm.map(function(m){return '<div class="urow"><span>'+esc(modelName(m.model))+'</span><span>'+fmtTok(m.tokens)+' tok'+(m.costUsd>0?' · $'+m.costUsd.toFixed(2):'')+'</span></div>';}).join("");
@@ -326,12 +331,20 @@ ${CLIENT_HELPERS}
     var u=document.getElementById("s_usage"); if(u)u.innerHTML=(rows||'<div class="urow"><span class="muted">No usage yet this window</span></div>')+tot;
     var w=document.getElementById("s_window");
     if(w)w.innerHTML = s.windowStart? ((s.anchored?'Anchored':'Rolling')+' · started '+hm(new Date(s.windowStart))+', resets '+hm(new Date(s.resetsAt))) : '';
+    var a=document.getElementById("s_anchor"); if(a&&!a.value&&s.windowStart)a.value=localInput(new Date(s.windowStart));
   }
+  window.setAnchor=function(){
+    var v=document.getElementById("s_anchor").value; if(!v){toast("Pick a date & time");return;}
+    fetch("/settings",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({anchor:new Date(v).toISOString()})})
+      .then(function(r){if(!r.ok)throw 0; toast("Window start set"); setTimeout(function(){load();setTimeout(refreshSettings,400);},300);})
+      .catch(function(){toast("Couldn’t set");});
+  };
   window.openSettings=function(){
     var s=DATA.session||{};
     document.getElementById("s_win").value=s.windowHours||5;
     document.getElementById("s_budget").value=s.budget||"";
     document.getElementById("s_pct").value="";
+    document.getElementById("s_anchor").value="";
     refreshSettings();
     document.getElementById("settings").classList.add("on");
     document.getElementById("sscrim").classList.add("on");
@@ -364,14 +377,17 @@ ${CLIENT_HELPERS}
       .then(function(){btn.disabled=false;});
   };
 
-  // ---- agent / playbook editor ----
+  // ---- agent / playbook editor (fixed vs learning, live + versioned) ----
+  var AFILES=[], AREVS=[];
+  function fillAgentSelect(sel){
+    var s=document.getElementById("a_file");
+    s.innerHTML=AFILES.map(function(f){var g=f.group==="learning"?"learning":"fixed";return '<option value="'+esc(f.path)+'">'+g+' · '+esc(f.label)+(f.edited?" ✎":"")+'</option>';}).join("");
+    if(sel)s.value=sel;
+  }
+  function fetchAgents(sel){return getJSON("/agents").then(function(d){AFILES=d.files||[];fillAgentSelect(sel);});}
   window.openAgents=function(){
     closeSettings();
-    getJSON("/agents").then(function(d){
-      var sel=document.getElementById("a_file");
-      sel.innerHTML=(d.files||[]).map(function(f){return '<option value="'+esc(f.path)+'">'+esc(f.group)+' · '+esc(f.label)+'</option>';}).join("");
-      loadAgent();
-    }).catch(function(){});
+    fetchAgents().then(function(){loadAgent();}).catch(function(){});
     document.getElementById("agents").classList.add("on");
     document.getElementById("ascrim").classList.add("on");
     document.body.classList.add("noscroll");
@@ -383,15 +399,34 @@ ${CLIENT_HELPERS}
   };
   window.loadAgent=function(){
     var p=document.getElementById("a_file").value; if(!p)return;
+    var f=AFILES.filter(function(x){return x.path===p;})[0]||{};
+    var learning=f.group==="learning";
+    document.getElementById("a_kind").innerHTML=(learning?'🤖 Learning — self-improving (the agency edits this too)':'🔒 Fixed — only you edit this')+(f.edited?' · <b>edited</b>':'');
+    document.getElementById("a_hist").style.display="none";
     document.getElementById("a_content").value="Loading…";
-    getJSON("/agent?path="+encodeURIComponent(p)).then(function(d){document.getElementById("a_content").value=d.content||"";}).catch(function(){});
+    getJSON("/agent?path="+encodeURIComponent(p)).then(function(d){document.getElementById("a_content").value=d.content||"";AREVS=d.revisions||[];}).catch(function(){});
+  };
+  window.toggleHist=function(){
+    var h=document.getElementById("a_hist");
+    if(h.style.display!=="none"){h.style.display="none";return;}
+    h.innerHTML=AREVS.length?AREVS.map(function(r){return '<div class="urow" style="cursor:pointer" onclick="loadRevision('+r.id+')"><span>'+esc(r.source||"")+(r.note?" · "+esc(r.note):"")+'</span><span class="muted">'+ago(r.created_at)+'</span></div>';}).join(""):'<div class="urow"><span class="muted">No edits yet</span></div>';
+    h.style.display="block";
+  };
+  window.loadRevision=function(id){
+    getJSON("/agent-revision?id="+id).then(function(d){document.getElementById("a_content").value=d.content||"";toast("Loaded older version — Save to apply");});
+  };
+  window.revertAgent=function(){
+    var p=document.getElementById("a_file").value;
+    fetch("/agent-revert",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({path:p})})
+      .then(function(r){if(!r.ok)throw 0; toast("Reverted to default"); fetchAgents(p).then(loadAgent);})
+      .catch(function(){toast("Couldn’t revert");});
   };
   window.saveAgent=function(){
     var p=document.getElementById("a_file").value, c=document.getElementById("a_content").value;
     var btn=document.getElementById("a_save"); btn.disabled=true;
     fetch("/agent-save",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({path:p,content:c})})
-      .then(function(r){if(!r.ok)throw 0; toast("Saved — redeploying"); closeAgents();})
-      .catch(function(){toast("Couldn’t save (needs admin token)");})
+      .then(function(r){if(!r.ok)throw 0; toast("Saved — applies on next run"); fetchAgents(p).then(loadAgent);})
+      .catch(function(){toast("Couldn’t save");})
       .then(function(){btn.disabled=false;});
   };
 

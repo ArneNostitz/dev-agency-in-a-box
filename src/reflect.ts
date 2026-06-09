@@ -5,17 +5,23 @@
  *      and distills 0–3 reusable lessons into SQLite. Recent lessons are injected into every
  *      agent's system prompt, so the agency immediately benefits.
  *
- *   2. IMPROVE (when enough lessons pile up): a developer agent folds the accumulated
- *      lessons into the playbooks/personas of the agency's OWN repo and opens a draft PR.
- *      The human reviews/merges -> Coolify redeploys -> the agency is permanently smarter.
- *      Rule changes always go through a PR — the agency never edits its own rules silently.
+ *   2. IMPROVE (when enough lessons pile up): a librarian agent folds the accumulated lessons
+ *      into the LEARNING part of the agents — the DB-backed "Learned (shared)" doc that's
+ *      injected into every agent. This applies live (no redeploy) and every change is kept in
+ *      the agent_revisions history (auditable + revertible). The self-improvement loop only
+ *      ever touches the LEARNING part — the FIXED persona/playbooks/constitution are user-only.
  */
-import { rm, mkdir } from "node:fs/promises";
-import { join } from "node:path";
 import type { Config } from "./config.js";
 import { runRole } from "./agents/roleAgent.js";
-import { cloneRepo, findPrForBranch } from "./github.js";
-import { recordLesson, recordRun, unprocessedLessons, markLessonsProcessed, type LessonRow } from "./store.js";
+import { readAgentFile, SHARED_LEARNED_PATH } from "./memory.js";
+import {
+  recordLesson,
+  recordRun,
+  unprocessedLessons,
+  markLessonsProcessed,
+  setAgentOverride,
+  type LessonRow,
+} from "./store.js";
 import { setActive, clearActive } from "./activity.js";
 import { dispatch } from "./pool.js";
 
@@ -82,37 +88,31 @@ export function maybeSelfImprove(cfg: Config): void {
 async function selfImprove(cfg: Config, lessons: LessonRow[]): Promise<void> {
   improving = true;
   const repo = cfg.agencyRepo;
-  const branch = `agency/self-improve-${new Date().toISOString().slice(0, 10)}`;
-  const workdir = join(process.cwd(), ".work", "self", "improve");
-  console.log(`[agency] self-improvement: folding ${lessons.length} lessons into ${repo}`);
+  console.log(`[agency] self-improvement: folding ${lessons.length} lessons into the Learned doc`);
+  setActive(repo, 0, "issue", "librarian", `self-improvement (${lessons.length} lessons)`);
   try {
-    await rm(workdir, { recursive: true, force: true });
-    await mkdir(join(workdir, ".."), { recursive: true });
-    await cloneRepo(repo, workdir);
-
-    setActive(repo, 0, "pr", "developer", `self-improvement (${lessons.length} lessons)`);
+    const current = (await readAgentFile(SHARED_LEARNED_PATH)) || "";
     const list = lessons.map((l) => `- (${l.repo}#${l.number}) ${l.lesson}`).join("\n");
-    const res = await runRole("developer", {
-      workdir,
+    const res = await runRole("librarian", {
+      workdir: process.cwd(),
       repo,
       issueNumber: 0,
       task:
-        `Self-improvement task on the agency's own repo. The lessons below were distilled from real runs. ` +
-        `Fold the ones with lasting value into the markdown under \`memory/central/\` (playbooks/, agents/, ` +
-        `CONSTITUTION.md) — edit existing sections rather than adding new files; keep each edit minimal and in ` +
-        `the existing voice; drop redundant or one-off lessons. Touch ONLY markdown under memory/. ` +
-        `Then: create branch \`${branch}\`, commit, push, and open a DRAFT PR titled ` +
-        `"self-improvement: fold ${lessons.length} lessons into the playbooks" whose body lists which lessons ` +
-        `you applied and which you dropped (with one-line reasons).\n\n### Lessons\n${list}`,
+        `Maintain our LEARNED playbook — durable, reusable, cross-project guidance distilled from real runs, ` +
+        `injected into every agent. Fold the new lessons into the current doc: merge related points, dedupe, ` +
+        `organise by theme, and DROP anything noisy, one-off, or already covered by our fixed playbooks. ` +
+        `Keep it tight.\n\n### Current LEARNED playbook\n${current || "(empty)"}\n\n### New lessons\n${list}\n\n` +
+        `Output ONLY the complete updated LEARNED playbook as markdown — no preamble, no commentary.`,
     });
-    recordRun(repo, 0, "developer", res.model, res.turns, "self-improve", res.costUsd);
-
-    const pr = await findPrForBranch(repo, branch);
-    if (pr) {
+    const content = res.text.trim();
+    recordRun(repo, 0, "librarian", res.model, res.turns, "self-improve", res.costUsd);
+    if (content) {
+      // Live + versioned: applies on the next agent run, history kept in agent_revisions.
+      setAgentOverride(SHARED_LEARNED_PATH, content, "self-improve", `folded ${lessons.length} lessons`);
       markLessonsProcessed(lessons.map((l) => l.id));
-      console.log(`[agency] self-improvement PR: ${pr.url}`);
+      console.log(`[agency] self-improvement: Learned doc updated (+${lessons.length} lessons, live)`);
     } else {
-      console.warn("[agency] self-improvement run finished without a PR — lessons stay queued.");
+      console.warn("[agency] self-improvement produced no content — lessons stay queued.");
     }
   } catch (err) {
     console.error("[agency] self-improvement failed:", (err as Error).message);

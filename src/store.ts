@@ -79,6 +79,12 @@ function getDb(): DatabaseSync | null {
         PRIMARY KEY (repo, parent)
       );
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
+      CREATE TABLE IF NOT EXISTS rate_limited (repo TEXT NOT NULL, number INTEGER NOT NULL, resume_at TEXT, PRIMARY KEY (repo, number));
+      CREATE TABLE IF NOT EXISTS agent_overrides (path TEXT PRIMARY KEY, content TEXT, updated_at TEXT);
+      CREATE TABLE IF NOT EXISTS agent_revisions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        path TEXT NOT NULL, content TEXT, source TEXT, note TEXT, created_at TEXT
+      );
     `);
     // Migrations for older databases (ALTER fails harmlessly if the column already exists).
     for (const sql of [
@@ -228,6 +234,127 @@ export function tokensByModelSince(sinceIso: string): Array<{ model: string; tok
          FROM token_usage WHERE ts >= ? GROUP BY model ORDER BY tokens DESC`,
       )
       .all(sinceIso) as unknown as Array<{ model: string; tokens: number; costUsd: number }>;
+  } catch {
+    return [];
+  }
+}
+
+// ---- rate-limit parking (auto-resume after the usage window resets) ----
+export function setRateLimited(repo: string, number: number, resumeAtIso: string): void {
+  const d = getDb();
+  if (!d) return;
+  try {
+    d.prepare(
+      `INSERT INTO rate_limited (repo, number, resume_at) VALUES (?, ?, ?)
+       ON CONFLICT(repo, number) DO UPDATE SET resume_at = excluded.resume_at`,
+    ).run(repo, number, resumeAtIso);
+  } catch {
+    /* best effort */
+  }
+}
+export function clearRateLimited(repo: string, number: number): void {
+  const d = getDb();
+  if (!d) return;
+  try {
+    d.prepare(`DELETE FROM rate_limited WHERE repo = ? AND number = ?`).run(repo, number);
+  } catch {
+    /* best effort */
+  }
+}
+/** Parked issues whose resume time has passed — ready to re-run, no tokens needed to find them. */
+export function dueRateLimited(nowIso: string): Array<{ repo: string; number: number }> {
+  const d = getDb();
+  if (!d) return [];
+  try {
+    return d
+      .prepare(`SELECT repo, number FROM rate_limited WHERE resume_at <= ? ORDER BY resume_at`)
+      .all(nowIso) as unknown as Array<{ repo: string; number: number }>;
+  } catch {
+    return [];
+  }
+}
+
+// ---- live agent overrides (dashboard edits, applied without a redeploy) ----
+
+/** The edited content for an agent file, or null if it uses the on-disk default. */
+export function getAgentOverride(path: string): string | null {
+  const d = getDb();
+  if (!d) return null;
+  try {
+    const row = d.prepare(`SELECT content FROM agent_overrides WHERE path = ?`).get(path) as { content?: string } | undefined;
+    return row?.content ?? null;
+  } catch {
+    return null;
+  }
+}
+export function setAgentOverride(path: string, content: string, source = "dashboard", note = ""): void {
+  const d = getDb();
+  if (!d) return;
+  try {
+    d.prepare(
+      `INSERT INTO agent_overrides (path, content, updated_at) VALUES (?, ?, ?)
+       ON CONFLICT(path) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at`,
+    ).run(path, content, now());
+    // Keep a full history so every change (dashboard or self-improvement) is auditable/revertible.
+    d.prepare(`INSERT INTO agent_revisions (path, content, source, note, created_at) VALUES (?, ?, ?, ?, ?)`).run(
+      path,
+      content,
+      source,
+      note,
+      now(),
+    );
+  } catch {
+    /* best effort */
+  }
+}
+
+export interface AgentRevision {
+  id: number;
+  path: string;
+  source: string;
+  note: string;
+  created_at: string;
+}
+
+/** Revision history for one agent file (metadata only — newest first). */
+export function listAgentRevisions(path: string, limit = 20): AgentRevision[] {
+  const d = getDb();
+  if (!d) return [];
+  try {
+    return d
+      .prepare(`SELECT id, path, source, note, created_at FROM agent_revisions WHERE path = ? ORDER BY id DESC LIMIT ?`)
+      .all(path, limit) as unknown as AgentRevision[];
+  } catch {
+    return [];
+  }
+}
+
+/** The content of a specific revision (for viewing/reverting). */
+export function getAgentRevision(id: number): string | null {
+  const d = getDb();
+  if (!d) return null;
+  try {
+    const row = d.prepare(`SELECT content FROM agent_revisions WHERE id = ?`).get(id) as { content?: string } | undefined;
+    return row?.content ?? null;
+  } catch {
+    return null;
+  }
+}
+/** Remove an override so the file reverts to its on-disk default. */
+export function deleteAgentOverride(path: string): void {
+  const d = getDb();
+  if (!d) return;
+  try {
+    d.prepare(`DELETE FROM agent_overrides WHERE path = ?`).run(path);
+  } catch {
+    /* best effort */
+  }
+}
+export function listAgentOverridePaths(): string[] {
+  const d = getDb();
+  if (!d) return [];
+  try {
+    return (d.prepare(`SELECT path FROM agent_overrides`).all() as Array<{ path: string }>).map((r) => r.path);
   } catch {
     return [];
   }

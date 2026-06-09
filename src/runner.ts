@@ -47,7 +47,13 @@ import {
   getThreadCursor,
   setThreadCursor,
   recentIssues,
+  getSetting,
+  setSetting,
+  setRateLimited,
+  clearRateLimited,
+  dueRateLimited,
 } from "./store.js";
+import { parseRateLimit, nextWindowReset } from "./ratelimit.js";
 import { setActive, clearActive, getActive } from "./activity.js";
 import { dispatch, drain, stop as stopPool, poolStatus } from "./pool.js";
 import { loadBudget, overBudget, UNLIMITED_LABEL } from "./budget.js";
@@ -63,7 +69,51 @@ import {
 const IN_PROGRESS = "agency:in-progress";
 const READY = "agency:ready";
 const NEEDS_ATTENTION = "agency:needs-attention";
+const RATE_LIMITED = "agency:rate-limited";
 const MAX_AUTOFIX = 2;
+
+// ---- usage-limit handling (pure script — works with zero tokens) ----
+
+/** Pause all NEW agent dispatch until this ms-epoch (persisted so it survives restarts). */
+function pausedUntil(): number {
+  const t = Date.parse(getSetting("agents_paused_until") ?? "");
+  return Number.isFinite(t) ? t : 0;
+}
+function agentsArePaused(): boolean {
+  return Date.now() < pausedUntil();
+}
+function pauseAgents(untilMs: number): void {
+  setSetting("agents_paused_until", new Date(Math.max(pausedUntil(), untilMs)).toISOString());
+}
+/** Next usage-window reset, honoring a manually-set/just-set anchor. */
+function nextResetMs(): number {
+  const hours = Number(getSetting("window_hours")) || Number(process.env.SESSION_WINDOW_HOURS?.trim()) || 5;
+  return nextWindowReset(Date.now(), hours, getSetting("window_anchor"));
+}
+
+/**
+ * If `msg` is a usage-limit wall, park the issue to auto-resume after the reset and pause new
+ * agent work until then. Returns true if it was handled as a rate-limit (caller skips its
+ * normal failure path). No tokens used.
+ */
+async function maybeParkRateLimited(repo: string, number: number, msg: string, isPr = false): Promise<boolean> {
+  const rl = parseRateLimit(msg);
+  if (!rl.limited) return false;
+  const resetAt = rl.resetAt && rl.resetAt > Date.now() ? rl.resetAt : nextResetMs();
+  pauseAgents(resetAt);
+  const when = new Date(resetAt).toLocaleString();
+  if (isPr) {
+    await commentOnPr(repo, number, `⏳ Hit the Claude usage limit — I'll retry automatically after the window resets (~${when}).`).catch(() => {});
+  } else {
+    setRateLimited(repo, number, new Date(resetAt).toISOString());
+    recordIssueState(repo, number, { state: RATE_LIMITED });
+    await removeLabel(repo, number, IN_PROGRESS).catch(() => {});
+    await addLabel(repo, number, RATE_LIMITED).catch(() => {});
+    await commentOnIssue(repo, number, `⏳ Hit the Claude usage limit. I'll **auto-resume** this after the window resets (~${when}) — no action needed.`).catch(() => {});
+  }
+  console.log(`[agency] rate-limited ${repo} #${number}; auto-resume after ${new Date(resetAt).toISOString()}`);
+  return true;
+}
 /** Don't re-engage closed threads older than this (keeps the scan cheap). */
 const FOLLOWUP_WINDOW_DAYS = Number(process.env.FOLLOWUP_WINDOW_DAYS?.trim()) || 21;
 /** An in-progress issue with no live run, idle this long, is treated as an orphan. */
@@ -139,6 +189,7 @@ async function processIssue(cfg: Config, repo: string, issue: Issue): Promise<vo
   } catch (err) {
     const msg = (err as Error).message ?? String(err);
     console.error(`[agency] pipeline error ${repo} #${issue.number}:`, msg);
+    if (await maybeParkRateLimited(repo, issue.number, msg)) return;
     await removeLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
     await addLabel(repo, issue.number, NEEDS_ATTENTION).catch(() => {});
     await addLabel(repo, issue.number, "🚧 blocked").catch(() => {});
@@ -166,6 +217,7 @@ async function processPrFeedbackOne(
   } catch (err) {
     const msg = (err as Error).message ?? String(err);
     console.error(`[agency] pr-fix error ${repo} PR#${pr.number}:`, msg);
+    if (await maybeParkRateLimited(repo, pr.number, msg, true)) return;
     await commentOnPr(repo, pr.number, `❌ Couldn't apply the fix: ${msg.slice(0, 300)}`).catch(() => {});
   } finally {
     clearActive(repo, pr.number);
@@ -214,6 +266,7 @@ async function processHealOne(
   } catch (err) {
     const msg = (err as Error).message ?? String(err);
     console.error(`[agency] auto-heal error ${repo} PR#${pr.number}:`, msg);
+    if (await maybeParkRateLimited(repo, pr.number, msg, true)) return;
     await commentOnPr(repo, pr.number, `❌ Auto-heal failed: ${msg.slice(0, 300)}`).catch(() => {});
   } finally {
     clearActive(repo, pr.number);
@@ -243,6 +296,7 @@ async function processFollowUp(cfg: Config, repo: string, issue: Issue): Promise
   } catch (err) {
     const msg = (err as Error).message ?? String(err);
     console.error(`[agency] follow-up error ${repo} #${issue.number}:`, msg);
+    if (await maybeParkRateLimited(repo, issue.number, msg)) return;
     await removeLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
     await addLabel(repo, issue.number, NEEDS_ATTENTION).catch(() => {});
     await addLabel(repo, issue.number, "🚧 blocked").catch(() => {});
@@ -299,6 +353,10 @@ async function scanRepo(cfg: Config, repo: string): Promise<void> {
   // Quick management commands first (no agent runs).
   await handleControlCommands(cfg, repo);
   await handleMergeCommands(cfg, repo);
+
+  // While walled off by the usage limit, don't start NEW agent work (it would just fail and
+  // burn attempts). Epics/commands above still run; parked work auto-resumes after the reset.
+  const paused = agentsArePaused();
 
   // Pass 1 — issues (any state). One rule: once the agency has touched a thread, a new comment
   // re-engages it (open or closed, no re-tag); untouched issues need the configured trigger.
@@ -364,6 +422,7 @@ async function scanRepo(cfg: Config, repo: string): Promise<void> {
       triggerMatch,
     });
     if (action === "skip") continue;
+    if (paused) continue; // usage-limit wall — leave it; it resumes after the reset
 
     const issue: Issue = { number: t.number, title: t.title, body: t.body, labels: t.labels };
     // Mark this comment handled now so re-polls during the run don't double-fire.
@@ -383,6 +442,7 @@ async function scanRepo(cfg: Config, repo: string): Promise<void> {
 
   // Pass 2 — open agency PRs: comments on the PR's own thread, then auto-heal.
   for (const pr of await listAgencyPrs(repo)) {
+    if (paused) break; // usage-limit wall — skip PR agent work until reset
     const sig = await threadSignals(repo, pr.number);
     const newComment = sig.lastIsHuman && sig.lastCommentId > getThreadCursor(repo, pr.number);
     if (newComment) {
@@ -469,10 +529,35 @@ async function runWatch(cfg: Config): Promise<void> {
   }
 }
 
+/**
+ * Pure-script auto-resume: every minute, re-run any issue whose usage-limit reset time has
+ * passed, and lift the global pause once it's over. No agent/AI calls — works with zero tokens.
+ */
+function startAutoResume(cfg: Config): void {
+  setInterval(() => {
+    if (shuttingDown) return;
+    try {
+      const due = dueRateLimited(new Date().toISOString());
+      for (const r of due) {
+        clearRateLimited(r.repo, r.number);
+        console.log(`[agency] auto-resume after usage reset: ${r.repo} #${r.number}`);
+        void forceResume(cfg, r.repo, r.number);
+      }
+      if (pausedUntil() && Date.now() >= pausedUntil()) {
+        setSetting("agents_paused_until", ""); // window reset — accept new work again
+        console.log("[agency] usage window reset — resuming normal operation.");
+      }
+    } catch (err) {
+      console.error("[agency] auto-resume tick error:", (err as Error).message);
+    }
+  }, 60_000);
+}
+
 async function main(): Promise<void> {
   const cfg = loadConfig();
   await ensureAllRepoAccess(cfg);
   await recoverOrphans(cfg);
+  startAutoResume(cfg);
   if (cfg.runMode === "webhook") {
     const { runWebhook } = await import("./webhook.js");
     await runWebhook(

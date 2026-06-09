@@ -14,13 +14,13 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { Config } from "./config.js";
-import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, epicsByParent, getSetting, setSetting } from "./store.js";
+import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision } from "./store.js";
 import { mergeEpic, isEpic } from "./epics.js";
 import { renderDashboard, renderHistory } from "./dashboard.js";
 import { subscribe, getActive } from "./activity.js";
 import { effectiveRepos } from "./commands.js";
-import { getThreadFull, commentAsHuman, mergePrForBranch, closeIssue, deleteIssueHard, findPrForBranch, createIssue, putRepoFile } from "./github.js";
-import { listAgentFiles, readAgentFile, isSafeAgentPath, agentFileRepoPath } from "./memory.js";
+import { getThreadFull, commentAsHuman, mergePrForBranch, closeIssue, deleteIssueHard, findPrForBranch, createIssue } from "./github.js";
+import { listAgentFiles, readAgentFile, isSafeAgentPath } from "./memory.js";
 import { previewUrlFor, runChecksNow } from "./preview.js";
 import { dispatch } from "./pool.js";
 
@@ -235,9 +235,19 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         }
         void readAgentFile(p)
           .then((content) =>
-            res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ path: p, content: content ?? "" })),
+            res
+              .writeHead(200, { "content-type": "application/json" })
+              .end(JSON.stringify({ path: p, content: content ?? "", revisions: listAgentRevisions(p, 20) })),
           )
           .catch(() => res.writeHead(200, { "content-type": "application/json" }).end("{}"));
+        return;
+      }
+      if (url === "/agent-revision") {
+        const q = new URLSearchParams((req.url ?? "").split("?")[1] ?? "");
+        const id = Number(q.get("id"));
+        res
+          .writeHead(200, { "content-type": "application/json" })
+          .end(JSON.stringify({ content: getAgentRevision(id) ?? "" }));
         return;
       }
 
@@ -272,10 +282,10 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
 
     // Dashboard actions (password-protected, not GitHub webhooks).
     const path = (req.url ?? "").split("?")[0];
-    if (["/archive", "/comment", "/run-checks", "/merge", "/delete", "/resume", "/new-issue", "/approve", "/settings", "/agent-save"].includes(path)) {
+    if (["/archive", "/comment", "/run-checks", "/merge", "/delete", "/resume", "/new-issue", "/approve", "/settings", "/agent-save", "/agent-revert"].includes(path)) {
       if (!checkAuth(cfg, req, res)) return;
       void readBody(req).then(async (body) => {
-        let p: { repo?: string; number?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean } = {};
+        let p: { repo?: string; number?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string } = {};
         try {
           p = JSON.parse(body.toString("utf8"));
         } catch {
@@ -307,21 +317,24 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           if (p.windowHours && p.windowHours > 0) setSetting("window_hours", String(Math.round(p.windowHours)));
           if (p.budget !== undefined && p.budget >= 0) setSetting("token_budget", String(Math.round(p.budget)));
           if (p.anchorNow) setSetting("window_anchor", new Date().toISOString()); // "my window starts now"
+          if (p.anchor) {
+            const t = Date.parse(p.anchor); // manual: "my session started at <time>"
+            if (Number.isFinite(t)) setSetting("window_anchor", new Date(t).toISOString());
+          }
           return ok();
         }
         if (path === "/agent-save") {
-          // Edit an agent's persona/playbook/constitution: commit to the agency repo (persists
-          // in git + redeploys). Owner token required.
+          // Live edit: store the override in the DB so it applies on the next agent run (no
+          // redeploy). The change is versioned in agent_revisions.
           if (!p.path || !isSafeAgentPath(p.path) || typeof p.content !== "string") return res.writeHead(400).end("{}");
-          if (!cfg.adminToken) return res.writeHead(409).end(JSON.stringify({ error: "needs ADMIN_GITHUB_TOKEN" }));
-          const r = await putRepoFile(
-            cfg.agencyRepo,
-            agentFileRepoPath(p.path),
-            p.content,
-            `agency: edit ${p.path} via dashboard`,
-            cfg.adminToken,
-          );
-          return r.ok ? ok() : res.writeHead(500).end(JSON.stringify({ error: r.msg }));
+          setAgentOverride(p.path, p.content, "dashboard", "");
+          return ok();
+        }
+        if (path === "/agent-revert") {
+          // Drop the override so the file reverts to its on-disk default.
+          if (!p.path || !isSafeAgentPath(p.path)) return res.writeHead(400).end("{}");
+          deleteAgentOverride(p.path);
+          return ok();
         }
         if (path === "/approve") {
           // Direct approve: marks it approved + moves it to Working immediately, then builds.

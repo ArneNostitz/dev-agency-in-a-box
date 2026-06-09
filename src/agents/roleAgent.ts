@@ -5,7 +5,7 @@
  */
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { ROLES, modelFor, type RoleName } from "./roles.js";
-import { loadConstitution, loadPersona, loadPlaybooks } from "../memory.js";
+import { loadConstitution, loadPersona, loadPlaybooks, loadLearned } from "../memory.js";
 import { pushActivity } from "../activity.js";
 import { recentLessons, recordTokens } from "../store.js";
 import { loadBudget } from "../budget.js";
@@ -70,10 +70,11 @@ export interface RoleRunResult {
 
 async function buildSystemPrompt(role: RoleName): Promise<string> {
   const def = ROLES[role];
-  const [persona, constitution, playbooks] = await Promise.all([
+  const [persona, constitution, playbooks, learned] = await Promise.all([
     loadPersona(def.personaFile),
     loadConstitution(),
     loadPlaybooks(def.playbooks),
+    loadLearned(def.personaFile),
   ]);
   const lessons = recentLessons(12);
   return [
@@ -92,8 +93,11 @@ async function buildSystemPrompt(role: RoleName): Promise<string> {
     "",
     "=== PLAYBOOKS (how we build — binding) ===",
     playbooks,
+    ...(learned.trim()
+      ? ["", "=== LEARNED (self-improving notes — the agency's evolving experience; apply them) ===", learned]
+      : []),
     ...(lessons.length
-      ? ["", "=== LESSONS (distilled from our past runs — apply them) ===", ...lessons.map((l) => `- ${l}`)]
+      ? ["", "=== RECENT LESSONS (newest takeaways — apply them) ===", ...lessons.map((l) => `- ${l}`)]
       : []),
   ].join("\n");
 }

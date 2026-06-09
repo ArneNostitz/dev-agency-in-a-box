@@ -13,6 +13,7 @@ import { parseLessons } from "../dist/reflect.js";
 import { decideThreadAction } from "../dist/route.js";
 import { isNoOpComment } from "../dist/github.js";
 import { renderEpicTracker, childStatus } from "../dist/epics.js";
+import { parseRateLimit, nextWindowReset } from "../dist/ratelimit.js";
 
 test("mentionsHandle matches whole handles only", () => {
   const H = ["@dev", "@agency"];
@@ -191,6 +192,24 @@ test("childStatus maps labels/closed to a human status", () => {
   assert.equal(childStatus({ closed: false, labels: ["agency:in-progress"] }), "working");
   assert.equal(childStatus({ closed: false, labels: ["agency:needs-attention"] }), "blocked");
   assert.equal(childStatus({ closed: false, labels: [] }), "open");
+});
+
+test("parseRateLimit detects usage walls and reads a reset time", () => {
+  assert.equal(parseRateLimit("boom: something failed").limited, false);
+  assert.equal(parseRateLimit("Claude usage limit reached").limited, true);
+  assert.equal(parseRateLimit("API Error: 429 too many requests").limited, true);
+  // epoch reset time (seconds)
+  const r = parseRateLimit("rate_limit_error; your limit will reset at 1893456000");
+  assert.equal(r.limited, true);
+  assert.equal(r.resetAt, 1893456000 * 1000);
+});
+
+test("nextWindowReset rolls forward from an anchor", () => {
+  const anchor = "2026-01-01T10:00:00.000Z";
+  const now = Date.parse("2026-01-01T12:30:00.000Z"); // 2.5h after a 5h-window anchor
+  assert.equal(nextWindowReset(now, 5, anchor), Date.parse("2026-01-01T15:00:00.000Z"));
+  // no anchor -> rolling now+window
+  assert.equal(nextWindowReset(now, 5, null), now + 5 * 3600000);
 });
 
 test("parseControlCommand recognizes /add-repo and /list-repos", () => {
