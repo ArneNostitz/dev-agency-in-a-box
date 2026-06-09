@@ -143,6 +143,31 @@ deployments** (not by the agency) — set it up once per app:
 The **Run checks ▶** button needs no setup — it runs the project's tests on the branch and
 reports back in the thread.
 
+## Other model providers (GLM, DeepSeek, Gemini, OpenAI, Ollama)
+
+The agents run on the Claude Agent SDK, which speaks the **Anthropic API**. To use other
+models you point it at an Anthropic-compatible endpoint and pick model names per role:
+
+```
+ANTHROPIC_BASE_URL = https://your-endpoint-or-router
+ANTHROPIC_AUTH_TOKEN = <key for that endpoint>
+PLANNER_MODEL = …   DEVELOPER_MODEL = …   REVIEWER_MODEL = …   TESTER_MODEL = …
+```
+
+Two routes:
+
+- **Providers with a native Anthropic-compatible API** (e.g. DeepSeek, Zhipu **GLM**, Moonshot/
+  Kimi): set `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN` to theirs and use their model names.
+- **OpenAI / Gemini / Ollama / mix-and-match**: run a translating router —
+  [claude-code-router](https://github.com/musistudio/claude-code-router) or
+  [LiteLLM](https://github.com/BerriAI/litellm) — that exposes an Anthropic endpoint and maps
+  model names to any backend. Point `ANTHROPIC_BASE_URL` at the router, then set each role's
+  model to whatever the router serves (e.g. `DEVELOPER_MODEL=deepseek-chat`,
+  `PLANNER_MODEL=gpt-5`, `TESTER_MODEL=ollama/llama3`).
+
+Per-role models route independently through the gateway, so you can keep Opus on the planner
+and run cheaper/local models for the executors. Leave these unset to use Claude directly.
+
 ## Notes
 
 - **Persistence:** the named volume `agency-data` at `/app/data` holds the SQLite memory

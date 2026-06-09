@@ -305,10 +305,10 @@ async function runDeveloperPipeline(
     return;
   }
 
-  // Small/obvious task -> the planner said PLAN AUTO: build immediately, no approval gate.
+  // Default: the planner said PLAN AUTO — build immediately, no approval gate, short note.
   if (decision.auto) {
     recordPlan(repo, issue.number, decision.body);
-    await commentOnIssue(repo, issue.number, say("planner", `**Plan (auto — small task, building now)**\n\n${decision.body}`));
+    await commentOnIssue(repo, issue.number, say("planner", `**Building now.**\n\n${decision.body}`));
     await build(repo, issue, workdir, decision.body, thread);
     return;
   }
@@ -335,7 +335,7 @@ async function runDeveloperPipeline(
   await commentOnIssue(
     repo,
     issue.number,
-    say("planner", `**Proposed approach**\n\n${proposal}\n\n---\n\n👉 **👍 this comment** (or reply \`ok\`) to build it. For changes, just reply with the change — no need to restate the plan.`),
+    say("planner", `**Larger change — quick sign-off?**\n\n${proposal}\n\n---\n\n👉 **👍** (or reply \`ok\`) to build. For changes, just say what to change.`),
   );
   await pause(repo, issue, APPROVAL_LABEL);
   console.log(`[agency] ${repo} #${issue.number} -> awaiting approval.`);

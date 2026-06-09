@@ -175,6 +175,9 @@ export function loadConfig(): Config {
   } else {
     console.log("[agency] auth: Claude Code subscription login (run `claude` and /login if this fails)");
   }
+  if (process.env.ANTHROPIC_BASE_URL?.trim()) {
+    console.log(`[agency] model endpoint: ${process.env.ANTHROPIC_BASE_URL.trim()} (custom provider/router)`);
+  }
   const triggerDesc =
     cfg.triggerMode === "mention"
       ? `mention ${cfg.handles.join(" / ")}`

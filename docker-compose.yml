@@ -45,9 +45,19 @@ services:
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
       # ...or a pay-as-you-go API key:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # ...or point at another provider / router (GLM, DeepSeek, Gemini, OpenAI, Ollama) via an
+      # Anthropic-compatible endpoint or claude-code-router / LiteLLM. Then set per-role models
+      # to whatever that gateway serves. See COOLIFY.md "Other model providers".
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
+      ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN:-}
 
       # Per-role model overrides (defaults: planner=opus 4.8, dev/arch/review=sonnet, tester=haiku)
       PLANNER_MODEL: ${PLANNER_MODEL:-}
+      ARCHITECT_MODEL: ${ARCHITECT_MODEL:-}
+      DEVELOPER_MODEL: ${DEVELOPER_MODEL:-}
+      REVIEWER_MODEL: ${REVIEWER_MODEL:-}
+      TESTER_MODEL: ${TESTER_MODEL:-}
+      LIBRARIAN_MODEL: ${LIBRARIAN_MODEL:-}
       AGENT_MODEL: ${AGENT_MODEL:-}
 
       # Cost guardrails (per issue / per run; 0 disables)
