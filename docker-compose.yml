@@ -63,6 +63,8 @@ services:
       PREVIEW_URL_TEMPLATE: ${PREVIEW_URL_TEMPLATE:-}
       # Append [skip ci] to agency commits to save GitHub Actions minutes (set false to disable)
       SKIP_CI: ${SKIP_CI:-}
+      # Auto-stop a dashboard "Run preview" dev server after this many idle minutes
+      PREVIEW_TTL_MIN: ${PREVIEW_TTL_MIN:-}
       # Session token gauge + graceful deploys
       SESSION_WINDOW_HOURS: ${SESSION_WINDOW_HOURS:-}
       SESSION_TOKEN_BUDGET: ${SESSION_TOKEN_BUDGET:-}

@@ -14,6 +14,7 @@ import { decideThreadAction } from "../dist/route.js";
 import { isNoOpComment } from "../dist/github.js";
 import { renderEpicTracker, childStatus } from "../dist/epics.js";
 import { parseRateLimit, nextWindowReset } from "../dist/ratelimit.js";
+import { pickWebDevScript, isTauriPackage, parseDevPort, parseTunnelUrl, buildLocalCommand } from "../dist/apprun.js";
 
 test("mentionsHandle matches whole handles only", () => {
   const H = ["@dev", "@agency"];
@@ -210,6 +211,35 @@ test("nextWindowReset rolls forward from an anchor", () => {
   assert.equal(nextWindowReset(now, 5, anchor), Date.parse("2026-01-01T15:00:00.000Z"));
   // no anchor -> rolling now+window
   assert.equal(nextWindowReset(now, 5, null), now + 5 * 3600000);
+});
+
+test("pickWebDevScript prefers the web dev server, never the native one", () => {
+  assert.equal(pickWebDevScript({ dev: "vite dev", "tauri:dev": "tauri dev" }), "dev");
+  assert.equal(pickWebDevScript({ start: "next start" }), "start");
+  // a tauri-only dev script is skipped in favour of a real web one
+  assert.equal(pickWebDevScript({ "tauri:dev": "tauri dev", "dev:web": "vite dev" }), "dev:web");
+  assert.equal(pickWebDevScript({ build: "vite build" }), null);
+});
+
+test("isTauriPackage detects Tauri apps", () => {
+  assert.equal(isTauriPackage(JSON.stringify({ dependencies: { "@tauri-apps/api": "^2" } }), false), true);
+  assert.equal(isTauriPackage("{}", true), true); // has src-tauri
+  assert.equal(isTauriPackage(JSON.stringify({ dependencies: { react: "^18" } }), false), false);
+});
+
+test("parseDevPort / parseTunnelUrl read server + tunnel output", () => {
+  assert.equal(parseDevPort("  ➜  Local:   http://localhost:5173/"), 5173);
+  assert.equal(parseDevPort("started server on 0.0.0.0:3000"), 3000);
+  assert.equal(parseDevPort("compiling..."), 0);
+  assert.equal(parseTunnelUrl("your url is https://blue-fox-123.trycloudflare.com"), "https://blue-fox-123.trycloudflare.com");
+});
+
+test("buildLocalCommand produces a runnable mac script for the branch", () => {
+  const s = buildLocalCommand("ArneNostitz", "reimedy-minimal", "agency/issue-94");
+  assert.ok(s.startsWith("#!/bin/bash"));
+  assert.ok(s.includes("agency/issue-94"));
+  assert.ok(s.includes("ArneNostitz/reimedy-minimal"));
+  assert.ok(s.includes("tauri:dev") || s.includes("tauri dev"));
 });
 
 test("parseControlCommand recognizes /add-repo and /list-repos", () => {

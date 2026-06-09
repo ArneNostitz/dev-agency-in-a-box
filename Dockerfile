@@ -15,6 +15,13 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends gh \
     && rm -rf /var/lib/apt/lists/*
 
+# cloudflared: opens a temporary public tunnel so a PR's dev server (run in-container) can be
+# opened from your phone — no DNS/Coolify setup. Arch-aware (amd64/arm64).
+RUN arch="$(dpkg --print-architecture)" \
+    && curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${arch}" \
+        -o /usr/local/bin/cloudflared \
+    && chmod +x /usr/local/bin/cloudflared
+
 WORKDIR /app
 
 # Enable corepack so agents can use pnpm / yarn in target repos (not just npm).

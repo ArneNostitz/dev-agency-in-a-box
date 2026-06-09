@@ -54,6 +54,7 @@ import {
   dueRateLimited,
 } from "./store.js";
 import { parseRateLimit, nextWindowReset } from "./ratelimit.js";
+import { startPreviewSweeper, killAllApps } from "./apprun.js";
 import { setActive, clearActive, getActive } from "./activity.js";
 import { dispatch, drain, stop as stopPool, poolStatus } from "./pool.js";
 import { loadBudget, overBudget, UNLIMITED_LABEL } from "./budget.js";
@@ -558,6 +559,7 @@ async function main(): Promise<void> {
   await ensureAllRepoAccess(cfg);
   await recoverOrphans(cfg);
   startAutoResume(cfg);
+  startPreviewSweeper();
   if (cfg.runMode === "webhook") {
     const { runWebhook } = await import("./webhook.js");
     await runWebhook(
@@ -581,6 +583,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   stopPool(); // no new dispatches
+  killAllApps(); // stop any running preview dev servers + tunnels
   const { running, queued } = poolStatus();
   const graceMs = Number(process.env.GRACEFUL_SHUTDOWN_MS?.trim()) || 570_000; // ~9.5 min
   console.log(`[agency] ${signal}: draining ${running} running + ${queued} queued (grace ${Math.round(graceMs / 1000)}s)…`);

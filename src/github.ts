@@ -364,6 +364,42 @@ export async function approveLastProposal(repo: string, number: number): Promise
   }
 }
 
+/** Read a UTF-8 file from a repo via the contents API, or null if missing. */
+export async function readRepoFile(repo: string, path: string): Promise<string | null> {
+  const out = await gh(["api", `repos/${repo}/contents/${path}`, "--jq", ".content"]).catch(() => "");
+  if (!out) return null;
+  try {
+    return Buffer.from(out.replace(/\s/g, ""), "base64").toString("utf8");
+  } catch {
+    return null;
+  }
+}
+
+/** Commit already-base64 content (e.g. a pasted image) and return its download URL. */
+export async function putRepoBase64(
+  repo: string,
+  path: string,
+  base64: string,
+  message: string,
+  token: string,
+): Promise<{ ok: boolean; url?: string; msg: string }> {
+  try {
+    const sha = (await ghAs(token, ["api", `repos/${repo}/contents/${path}`, "--jq", ".sha"]).catch(() => "")).trim();
+    const args = ["api", "-X", "PUT", `repos/${repo}/contents/${path}`, "-f", `message=${message}`, "-f", `content=${base64}`];
+    if (sha) args.push("-f", `sha=${sha}`);
+    const out = await ghAs(token, args);
+    let url: string | undefined;
+    try {
+      url = (JSON.parse(out) as { content?: { download_url?: string } }).content?.download_url;
+    } catch {
+      /* ignore */
+    }
+    return { ok: true, url, msg: "committed" };
+  } catch (err) {
+    return { ok: false, msg: (err as Error).message };
+  }
+}
+
 /** Commit a file to a repo (create or update) via the contents API, as the given token. */
 export async function putRepoFile(
   repo: string,

@@ -19,6 +19,7 @@ const CLIENT_HELPERS = `
   var ICON={planner:"🧠",architect:"🏛",developer:"💻",reviewer:"🔍",tester:"🧪",librarian:"📚"};
   function mdInline(s){
     return s
+      .replace(/!\\[([^\\]]*)\\]\\((https?:[^)\\s]+)\\)/g,'<img alt="$1" src="$2" style="max-width:100%;border-radius:8px;margin:4px 0">')
       .replace(/\`([^\`]+)\`/g,'<code>$1</code>')
       .replace(/\\*\\*([^*]+)\\*\\*/g,'<strong>$1</strong>')
       .replace(/(^|[^*])\\*([^*\\n]+)\\*(?!\\*)/g,'$1<em>$2</em>')
@@ -133,6 +134,9 @@ const STYLE = `
   .reply{border-top:1px solid var(--line);background:var(--card);padding:10px;display:flex;gap:8px;align-items:flex-end}
   .reply textarea{flex:1;border:1px solid var(--line);border-radius:10px;padding:9px 11px;font:14px inherit;resize:none;max-height:40vh;min-height:42px}
   .reply .btn{height:42px}
+  .atts{display:flex;gap:6px;flex-wrap:wrap;padding:0 10px}.atts:empty{display:none}
+  .att{position:relative}.att img{height:46px;border-radius:6px;border:1px solid var(--line)}
+  .att button{position:absolute;top:-6px;right:-6px;background:#1d2430;color:#fff;border:none;border-radius:50%;width:18px;height:18px;font-size:11px;cursor:pointer}
   .toast{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);background:#1d2430;color:#fff;padding:8px 14px;border-radius:999px;font-size:13px;opacity:0;transition:opacity .2s;z-index:30}
   .toast.on{opacity:1}
   .newbtn{margin-left:auto;border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:9px;padding:5px 11px;font-size:13px;font-weight:540;cursor:pointer}
@@ -184,9 +188,13 @@ export function renderDashboard(): string {
       <div class="stream" id="d_stream"></div>
     </div>
     <div class="dbody" id="d_body"></div>
+    <div id="d_atts" class="atts"></div>
     <div class="reply">
-      <textarea id="d_reply" placeholder="Reply… (posts to GitHub)" rows="1"
-        oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px'"></textarea>
+      <input type="file" id="d_file" accept="image/*" style="display:none" onchange="onPickImage(event)">
+      <button class="btn" title="Attach image" onclick="document.getElementById('d_file').click()">📎</button>
+      <textarea id="d_reply" placeholder="Reply… (paste an image to attach)" rows="1"
+        oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px'"
+        onpaste="onPasteImage(event)"></textarea>
       <button class="btn primary" id="d_send" onclick="sendReply()">Send</button>
     </div>
   </aside>
@@ -479,7 +487,9 @@ ${CLIENT_HELPERS}
         (i.epic.children||[]).map(function(c){return '<a href="'+gh(i.repo,c.child)+'" target="_blank" rel="noopener"><span class="ck'+(c.closed?'':' o')+'">'+(c.closed?'✓':'○')+'</span> #'+c.child+' '+esc(c.title)+'<span class="st">'+esc(c.state||'')+'</span></a>';}).join("")+'</div>';
     }
     document.getElementById("d_stream").innerHTML="";
-    document.getElementById("d_body").innerHTML=ehtml+'<div class="sec">Conversation</div><div id="d_thread"><div class="empty">Loading…</div></div>';
+    open.appKind=undefined; open.devScript=null; PEND=[]; renderAtts();
+    getJSON("/app-info?repo="+encodeURIComponent(repo)+"&number="+n).then(function(d){if(!open||open.number!==n)return;open.appKind=d.kind;open.devScript=d.devScript;renderAppSection();}).catch(function(){if(open)open.appKind="unknown";renderAppSection();});
+    document.getElementById("d_body").innerHTML=ehtml+'<div class="sec">Run the app</div><div id="d_app" class="muted">Checking…</div><div class="sec">Conversation</div><div id="d_thread"><div class="empty">Loading…</div></div>';
     applyStreamCollapse();
     renderStream(); loadThread(true);
     document.getElementById("drawer").classList.add("on");
@@ -506,7 +516,45 @@ ${CLIENT_HELPERS}
     el.innerHTML=evs.length?evs.map(lineHtml).join(""):'<div class="l muted">No live activity. Tap “Run checks” or reply below.</div>';
     el.scrollTop=el.scrollHeight;
   }
-  function refreshDrawerLive(){renderStream(); var i=findIssue(open.repo,open.number); if(i){open.issue=i;}}
+  function refreshDrawerLive(){renderStream(); var i=findIssue(open.repo,open.number); if(i){open.issue=i;} renderAppSection();}
+
+  // ---- run-the-app panel ----
+  function renderAppSection(){
+    if(!open)return; var el=document.getElementById("d_app"); if(!el)return;
+    var i=findIssue(open.repo,open.number)||{}; var app=i.app, kind=open.appKind;
+    if(kind===undefined){el.innerHTML='<span class="muted">Checking…</span>';return;}
+    if(kind==="none"){el.innerHTML='<span class="muted">No package.json — nothing to run.</span>';return;}
+    if(kind==="unknown"){el.innerHTML='<span class="muted">Couldn’t read the repo.</span>';return;}
+    var h="";
+    if(kind==="tauri"){
+      h+='<div class="muted" style="margin-bottom:6px">Tauri (native) app — runs on your Mac, not the browser.</div>'+
+        '<a class="btn primary" href="/app-local?repo='+encodeURIComponent(open.repo)+'&number='+open.number+'" download>💻 Run on my Mac</a>'+
+        (open.devScript?' <button class="btn" onclick="runApp()">▶ UI-only preview</button>':'')+
+        '<div class="muted" style="font-size:12px;margin-top:6px">Double-click the downloaded <code>.command</code>. First time: right-click → Open.</div>';
+    }
+    var web = (kind==="web"||kind==="tauri");
+    if(web){
+      if(app&&app.status==="running") h+='<div style="margin-top:8px"><a class="btn primary" href="'+app.url+'" target="_blank" rel="noopener">Open app ↗</a> <button class="btn" onclick="stopAppPreview()">⏹ Stop</button></div>';
+      else if(app&&(app.status==="installing"||app.status==="starting")) h+='<div class="muted" style="margin-top:8px">⏳ '+esc(app.status)+'… (watch the Live stream above)</div><button class="btn" style="margin-top:4px" onclick="stopAppPreview()">Cancel</button>';
+      else if(app&&app.status==="error") h+='<div style="margin-top:8px;color:var(--red)">⚠ '+esc(app.error||"failed")+'</div><button class="btn" onclick="runApp()">▶ Try again</button>';
+      else if(kind==="web") h+='<button class="btn primary" onclick="runApp()">▶ Run preview</button><div class="muted" style="font-size:12px;margin-top:4px">Runs the dev server in the cloud and gives you a link — no install.</div>';
+    }
+    el.innerHTML=h;
+  }
+  window.runApp=function(){ if(!open)return;
+    fetch("/app-run",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({repo:open.repo,number:open.number})})
+      .then(function(r){if(!r.ok)return r.json().then(function(d){toast(d.error||"can’t run");}); toast("Starting preview…"); setTimeout(load,800);}).catch(function(){toast("Couldn’t start");}); };
+  window.stopAppPreview=function(){ if(!open)return;
+    fetch("/app-stop",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({repo:open.repo,number:open.number})}).then(function(){toast("Stopped");setTimeout(load,500);}); };
+
+  // ---- image attachments (paste into the reply) ----
+  var PEND=[];
+  function renderAtts(){var el=document.getElementById("d_atts");if(!el)return;el.innerHTML=PEND.map(function(d,idx){return '<div class="att"><img src="'+d+'"><button onclick="rmAtt('+idx+')">×</button></div>';}).join("");}
+  window.rmAtt=function(i){PEND.splice(i,1);renderAtts();};
+  function addImageFile(file){if(!file||!/^image\\//.test(file.type))return;var r=new FileReader();r.onload=function(){PEND.push(r.result);renderAtts();};r.readAsDataURL(file);}
+  window.onPasteImage=function(e){var items=(e.clipboardData||{}).items||[];for(var i=0;i<items.length;i++){if(items[i].type&&items[i].type.indexOf("image")===0){addImageFile(items[i].getAsFile());e.preventDefault();}}};
+  window.onPickImage=function(e){var f=e.target.files&&e.target.files[0];if(f)addImageFile(f);e.target.value="";};
+  function uploadAtts(){return Promise.all(PEND.map(function(d){return fetch("/upload-image",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({repo:open.repo,number:open.number,dataUrl:d})}).then(function(r){return r.ok?r.json():null;}).then(function(j){return j&&j.md;}).catch(function(){return null;});})).then(function(a){return a.filter(Boolean);});}
 
   function loadThread(scrollToEnd){
     getJSON("/thread?repo="+encodeURIComponent(open.repo)+"&number="+open.number).then(function(t){
@@ -557,10 +605,14 @@ ${CLIENT_HELPERS}
       .catch(function(){b.disabled=false;});
   };
   window.sendReply=function(){
-    if(!open)return; var ta=document.getElementById("d_reply"); var body=ta.value.trim(); if(!body)return;
+    if(!open)return; var ta=document.getElementById("d_reply"); var body=ta.value.trim();
+    if(!body && !PEND.length)return;
     var btn=document.getElementById("d_send"); btn.disabled=true;
-    fetch("/comment",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({repo:open.repo,number:open.number,body:body})})
-      .then(function(r){if(!r.ok)throw 0; ta.value="";ta.style.height="auto";toast("Sent");setTimeout(function(){loadThread(true);},900);})
+    if(PEND.length)toast("Uploading image…");
+    uploadAtts().then(function(mds){
+      var full=[body].concat(mds).filter(Boolean).join("\\n\\n");
+      return fetch("/comment",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({repo:open.repo,number:open.number,body:full})});
+    }).then(function(r){if(!r.ok)throw 0; ta.value="";ta.style.height="auto";PEND=[];renderAtts();toast("Sent");setTimeout(function(){loadThread(true);},900);})
       .catch(function(){toast("Couldn’t send");})
       .then(function(){btn.disabled=false;});
   };

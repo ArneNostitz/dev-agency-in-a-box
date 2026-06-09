@@ -19,8 +19,9 @@ import { mergeEpic, isEpic } from "./epics.js";
 import { renderDashboard, renderHistory } from "./dashboard.js";
 import { subscribe, getActive } from "./activity.js";
 import { effectiveRepos } from "./commands.js";
-import { getThreadFull, commentAsHuman, mergePrForBranch, closeIssue, deleteIssueHard, findPrForBranch, createIssue } from "./github.js";
+import { getThreadFull, commentAsHuman, mergePrForBranch, closeIssue, deleteIssueHard, findPrForBranch, createIssue, readRepoFile, putRepoBase64 } from "./github.js";
 import { listAgentFiles, readAgentFile, isSafeAgentPath } from "./memory.js";
+import { startApp, stopApp, getApp, pickWebDevScript, isTauriPackage, buildLocalCommand } from "./apprun.js";
 import { previewUrlFor, runChecksNow } from "./preview.js";
 import { dispatch } from "./pool.js";
 
@@ -188,6 +189,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               epic: kids
                 ? { total: kids.length, done: kids.filter((c) => c.closed).length, children: kids }
                 : null,
+              app: getApp(i.repo, i.number),
             };
           });
           const winH = sessionWindowHours();
@@ -251,6 +253,51 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         return;
       }
 
+      // App panel: is this PR a web app (browser preview) or a Tauri/native app (run locally)?
+      if (url === "/app-info") {
+        const q = new URLSearchParams((req.url ?? "").split("?")[1] ?? "");
+        const repo = q.get("repo") ?? "";
+        const number = Number(q.get("number"));
+        void (async () => {
+          let kind = "unknown";
+          let devScript: string | null = null;
+          const pkg = repo ? await readRepoFile(repo, "package.json") : null;
+          if (pkg) {
+            const hasSrcTauri = (await readRepoFile(repo, "src-tauri/Cargo.toml")) != null;
+            kind = isTauriPackage(pkg, hasSrcTauri) ? "tauri" : "web";
+            try {
+              devScript = pickWebDevScript((JSON.parse(pkg) as { scripts?: Record<string, string> }).scripts ?? {});
+            } catch {
+              /* ignore */
+            }
+          } else if (repo) {
+            kind = "none"; // no package.json — nothing to run
+          }
+          res
+            .writeHead(200, { "content-type": "application/json" })
+            .end(JSON.stringify({ kind, devScript, app: getApp(repo, number) }));
+        })();
+        return;
+      }
+      // Tauri/native: download a one-double-click .command that runs the PR on the user's Mac.
+      if (url === "/app-local") {
+        const q = new URLSearchParams((req.url ?? "").split("?")[1] ?? "");
+        const repo = q.get("repo") ?? "";
+        const number = Number(q.get("number"));
+        const [owner, name] = repo.split("/");
+        if (!owner || !name || !number) {
+          res.writeHead(400).end("bad request");
+          return;
+        }
+        const script = buildLocalCommand(owner, name, `agency/issue-${number}`);
+        res.writeHead(200, {
+          "content-type": "text/x-shellscript",
+          "content-disposition": `attachment; filename="${name}-pr-${number}.command"`,
+        });
+        res.end(script);
+        return;
+      }
+
       // Side-panel: the full GitHub conversation for one issue/PR.
       if (url === "/thread") {
         const q = new URLSearchParams((req.url ?? "").split("?")[1] ?? "");
@@ -282,10 +329,10 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
 
     // Dashboard actions (password-protected, not GitHub webhooks).
     const path = (req.url ?? "").split("?")[0];
-    if (["/archive", "/comment", "/run-checks", "/merge", "/delete", "/resume", "/new-issue", "/approve", "/settings", "/agent-save", "/agent-revert"].includes(path)) {
+    if (["/archive", "/comment", "/run-checks", "/merge", "/delete", "/resume", "/new-issue", "/approve", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image"].includes(path)) {
       if (!checkAuth(cfg, req, res)) return;
       void readBody(req).then(async (body) => {
-        let p: { repo?: string; number?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string } = {};
+        let p: { repo?: string; number?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; dataUrl?: string } = {};
         try {
           p = JSON.parse(body.toString("utf8"));
         } catch {
@@ -370,6 +417,37 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           if (!repo || !number || !resume) return res.writeHead(400).end("{}");
           await resume(repo, number).catch(() => {});
           return ok();
+        }
+        if (path === "/app-run") {
+          // Start a web preview (dev server + public tunnel) for the PR.
+          if (!repo || !number) return res.writeHead(400).end("{}");
+          const pkg = await readRepoFile(repo, "package.json");
+          let ds: string | null = null;
+          try {
+            ds = pkg ? pickWebDevScript((JSON.parse(pkg) as { scripts?: Record<string, string> }).scripts ?? {}) : null;
+          } catch {
+            /* ignore */
+          }
+          if (!ds) return res.writeHead(409).end(JSON.stringify({ error: "no web dev script found" }));
+          void startApp(repo, number, ds);
+          return ok();
+        }
+        if (path === "/app-stop") {
+          if (!repo || !number) return res.writeHead(400).end("{}");
+          stopApp(repo, number);
+          return ok();
+        }
+        if (path === "/upload-image") {
+          // Commit a pasted image to the repo and return markdown to embed in the comment.
+          if (!repo || !p.dataUrl) return res.writeHead(400).end("{}");
+          if (!cfg.adminToken) return res.writeHead(409).end(JSON.stringify({ error: "needs ADMIN_GITHUB_TOKEN" }));
+          const m = /^data:(image\/[\w.+-]+);base64,(.+)$/.exec(p.dataUrl);
+          if (!m) return res.writeHead(400).end(JSON.stringify({ error: "not a base64 image" }));
+          const ext = m[1].split("/")[1].replace("jpeg", "jpg").replace(/[^\w]/g, "");
+          const file = `.devagency/attachments/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+          const r = await putRepoBase64(repo, file, m[2], "dev-agency: dashboard image attachment", cfg.adminToken);
+          if (!r.ok || !r.url) return res.writeHead(500).end(JSON.stringify({ error: r.msg }));
+          return ok(JSON.stringify({ url: r.url, md: `![image](${r.url})` }));
         }
         if (path === "/new-issue") {
           // Create a new issue from the dashboard (authored by you) and kick the agency.
