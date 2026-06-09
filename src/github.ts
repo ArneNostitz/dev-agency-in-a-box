@@ -364,6 +364,25 @@ export async function approveLastProposal(repo: string, number: number): Promise
   }
 }
 
+/** List the repos the given token can access (owner + collaborator + org), newest first. */
+export async function listUserRepos(token: string): Promise<Array<{ full_name: string; private: boolean }>> {
+  const out = await ghAs(token, [
+    "api", "--paginate",
+    "user/repos?per_page=100&sort=updated&affiliation=owner,collaborator,organization_member",
+    "--jq", ".[]|{full_name,private}",
+  ]).catch(() => "");
+  const repos: Array<{ full_name: string; private: boolean }> = [];
+  for (const line of out.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      repos.push(JSON.parse(line));
+    } catch {
+      /* skip a bad line */
+    }
+  }
+  return repos;
+}
+
 /** Read a UTF-8 file from a repo via the contents API, or null if missing. */
 export async function readRepoFile(repo: string, path: string): Promise<string | null> {
   const out = await gh(["api", `repos/${repo}/contents/${path}`, "--jq", ".content"]).catch(() => "");

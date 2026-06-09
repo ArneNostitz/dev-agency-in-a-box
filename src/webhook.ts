@@ -14,14 +14,15 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { Config } from "./config.js";
-import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision } from "./store.js";
+import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo } from "./store.js";
 import { mergeEpic, isEpic } from "./epics.js";
 import { renderDashboard, renderHistory } from "./dashboard.js";
 import { subscribe, getActive } from "./activity.js";
 import { effectiveRepos } from "./commands.js";
-import { getThreadFull, commentAsHuman, mergePrForBranch, closeIssue, deleteIssueHard, findPrForBranch, createIssue, readRepoFile, putRepoBase64 } from "./github.js";
+import { getThreadFull, commentAsHuman, mergePrForBranch, closeIssue, deleteIssueHard, findPrForBranch, createIssue, readRepoFile, putRepoBase64, listUserRepos } from "./github.js";
 import { listAgentFiles, readAgentFile, isSafeAgentPath } from "./memory.js";
 import { startApp, stopApp, getApp, pickWebDevScript, isTauriPackage, buildLocalCommand } from "./apprun.js";
+import { ensureRepoAccess } from "./commands.js";
 import { previewUrlFor, runChecksNow } from "./preview.js";
 import { dispatch } from "./pool.js";
 
@@ -221,6 +222,19 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         return;
       }
 
+      // Repo picker: all repos your token can access, minus the ones already watched.
+      if (url === "/repos-available") {
+        const token = cfg.adminToken ?? cfg.githubToken;
+        void listUserRepos(token)
+          .then((all) => {
+            const watched = new Set(effectiveRepos(cfg));
+            const repos = all.filter((r) => !watched.has(r.full_name));
+            res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ repos }));
+          })
+          .catch(() => res.writeHead(200, { "content-type": "application/json" }).end('{"repos":[]}'));
+        return;
+      }
+
       // Agent editor: list the editable memory files, or fetch one's content.
       if (url === "/agents") {
         void listAgentFiles()
@@ -329,7 +343,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
 
     // Dashboard actions (password-protected, not GitHub webhooks).
     const path = (req.url ?? "").split("?")[0];
-    if (["/archive", "/comment", "/run-checks", "/merge", "/delete", "/resume", "/new-issue", "/approve", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image"].includes(path)) {
+    if (["/archive", "/comment", "/run-checks", "/merge", "/delete", "/resume", "/new-issue", "/approve", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/add-repo"].includes(path)) {
       if (!checkAuth(cfg, req, res)) return;
       void readBody(req).then(async (body) => {
         let p: { repo?: string; number?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; dataUrl?: string } = {};
@@ -436,6 +450,19 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           if (!repo || !number) return res.writeHead(400).end("{}");
           stopApp(repo, number);
           return ok();
+        }
+        if (path === "/add-repo") {
+          // Add a repo to the watch list + invite the bot + register the webhook — live, no redeploy.
+          if (!repo) return res.writeHead(400).end("{}");
+          addWatchedRepo(repo);
+          let note = "";
+          try {
+            note = await ensureRepoAccess(cfg, repo);
+          } catch {
+            /* best effort */
+          }
+          void trigger("dashboard-add-repo");
+          return ok(JSON.stringify({ ok: true, note }));
         }
         if (path === "/upload-image") {
           // Commit a pasted image to the repo and return markdown to embed in the comment.

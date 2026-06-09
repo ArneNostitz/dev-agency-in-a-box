@@ -219,6 +219,13 @@ export function renderDashboard(): string {
     </div>
     <div class="row"><button class="btn" onclick="closeComposer()">Cancel</button><button class="btn primary" id="c_create" onclick="submitIssue()">Create</button></div>
   </div>
+  <div class="scrim" id="rscrim" onclick="closeAddRepo()"></div>
+  <div class="composer" id="addrepo">
+    <div class="ch"><div class="t">Add a repo to watch</div><button class="x" style="margin-left:auto" onclick="closeAddRepo()" aria-label="Close">×</button></div>
+    <input id="ar_q" placeholder="Search your repos…" autocomplete="off" oninput="filterRepos(this.value)">
+    <div id="ar_list" class="usage" style="margin-top:8px;max-height:54vh;overflow:auto"><div class="urow"><span class="muted">Loading your repos…</span></div></div>
+    <div class="muted" style="font-size:12px;margin-top:8px">Adding invites the bot + registers the webhook automatically.</div>
+  </div>
   <div class="scrim" id="sscrim" onclick="closeSettings()"></div>
   <div class="composer" id="settings">
     <div class="ch"><div class="t">Token budget</div><button class="x" style="margin-left:auto" onclick="closeSettings()" aria-label="Close">×</button></div>
@@ -298,7 +305,8 @@ ${CLIENT_HELPERS}
   function renderChips(){
     var repos=DATA.repos||[]; var c=document.getElementById("repochips");
     c.innerHTML='<span class="chip '+(repoFilter?'' :'on')+'" onclick="setRepo(null)">All</span>'+
-      repos.map(function(r){return '<span class="chip '+(repoFilter===r?'on':'')+'" onclick="setRepo(\\''+r+'\\')">'+esc(r.split("/").pop())+'</span>';}).join("");
+      repos.map(function(r){return '<span class="chip '+(repoFilter===r?'on':'')+'" onclick="setRepo(\\''+r+'\\')">'+esc(r.split("/").pop())+'</span>';}).join("")+
+      '<span class="chip" style="border-style:dashed" onclick="openAddRepo()">＋ repo</span>';
   }
   window.setRepo=function(r){repoFilter=r;renderChips();renderBoard();};
 
@@ -332,6 +340,31 @@ ${CLIENT_HELPERS}
   }
   window.onSearch=function(v){query=v;renderBoard();};
   window.onSort=function(v){sortKey=v;renderBoard();};
+
+  // ---- add repo picker ----
+  var AREPOS=[];
+  function renderRepoList(q){
+    var list=AREPOS.filter(function(r){return !q||r.full_name.toLowerCase().indexOf(q.toLowerCase())>=0;}).slice(0,200);
+    var el=document.getElementById("ar_list");
+    el.innerHTML=list.length?list.map(function(r){return '<div class="urow" style="cursor:pointer" onclick="addRepoNow(\\''+r.full_name+'\\',this)"><span>'+esc(r.full_name)+(r.private?' <span class="muted">· private</span>':'')+'</span><span class="muted">add +</span></div>';}).join(""):'<div class="urow"><span class="muted">No matching repos</span></div>';
+  }
+  window.openAddRepo=function(){
+    AREPOS=[]; document.getElementById("ar_q").value="";
+    document.getElementById("ar_list").innerHTML='<div class="urow"><span class="muted">Loading your repos…</span></div>';
+    document.getElementById("addrepo").classList.add("on");
+    document.getElementById("rscrim").classList.add("on");
+    document.body.classList.add("noscroll");
+    getJSON("/repos-available").then(function(d){AREPOS=d.repos||[];renderRepoList("");}).catch(function(){document.getElementById("ar_list").innerHTML='<div class="urow"><span class="muted">Couldn’t load repos (needs admin token)</span></div>';});
+  };
+  window.closeAddRepo=function(){document.getElementById("addrepo").classList.remove("on");document.getElementById("rscrim").classList.remove("on");document.body.classList.remove("noscroll");};
+  window.filterRepos=function(q){renderRepoList(q);};
+  window.addRepoNow=function(full,row){
+    if(row)row.innerHTML='<span>'+esc(full)+'</span><span class="muted">adding…</span>';
+    fetch("/add-repo",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({repo:full})})
+      .then(function(r){if(!r.ok)throw 0;return r.json();})
+      .then(function(d){toast("Watching "+full.split("/").pop()+(d.note||"")); AREPOS=AREPOS.filter(function(x){return x.full_name!==full;}); renderRepoList(document.getElementById("ar_q").value); setTimeout(load,800);})
+      .catch(function(){toast("Couldn’t add repo");});
+  };
 
   // ---- token settings ----
   function modelName(m){if(/opus/i.test(m))return "Opus";if(/sonnet/i.test(m))return "Sonnet";if(/haiku/i.test(m))return "Haiku";return m||"?";}
@@ -643,7 +676,7 @@ ${CLIENT_HELPERS}
   }catch(e){}
 
   load(); setInterval(load,5000);
-  document.addEventListener("keydown",function(e){if(e.key==="Escape"){closeDrawer();closeComposer();closeSettings();closeAgents();}});
+  document.addEventListener("keydown",function(e){if(e.key==="Escape"){closeDrawer();closeComposer();closeSettings();closeAgents();closeAddRepo();}});
 })();
 </script></body></html>`;
 }
