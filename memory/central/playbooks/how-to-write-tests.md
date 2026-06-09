@@ -18,4 +18,6 @@ A change is not done until it's verified. Tests prove the change works and keep 
 - Use the project's existing test runner and conventions; don't introduce a new framework
   without reason ([[reuse-first]]).
 - The full check — typecheck + lint + tests + build — must pass before marking work ready.
-  In CI this runs on GitHub Actions; locally run the project's test script.
+  We run it ourselves in-container (the Tester), so it does NOT depend on GitHub Actions —
+  agency commits carry `[skip ci]` to save Actions minutes. Run the project's documented
+  check/test scripts directly.

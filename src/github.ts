@@ -422,6 +422,22 @@ export async function commentThread(repo: string, issue: number): Promise<string
 export async function cloneRepo(repo: string, dest: string): Promise<void> {
   await gh(["auth", "setup-git"]);
   await gh(["repo", "clone", repo, dest, "--", "--depth", "50"]);
+  // Save GitHub Actions minutes: our tester runs the same checks in-container, so the CI on
+  // agency branch commits is redundant. A commit-msg hook appends [skip ci] to every commit
+  // the agents make (push + PR runs are skipped); the squash-merge to main still runs CI via
+  // the PR title. Opt out with SKIP_CI=false.
+  if (process.env.SKIP_CI?.trim().toLowerCase() !== "false") {
+    try {
+      const hook = join(dest, ".git", "hooks", "commit-msg");
+      const script =
+        "#!/bin/sh\n" +
+        "# dev-agency: skip redundant GitHub Actions CI on agency commits (tester runs in-container).\n" +
+        'if ! grep -qiE "\\[(skip ci|ci skip)\\]" "$1"; then printf "\\n[skip ci]\\n" >> "$1"; fi\n';
+      writeFileSync(hook, script, { mode: 0o755 });
+    } catch {
+      /* non-fatal */
+    }
+  }
 }
 
 /** Add a reaction to an issue (allowed: +1,-1,laugh,hooray,confused,heart,rocket,eyes). */
