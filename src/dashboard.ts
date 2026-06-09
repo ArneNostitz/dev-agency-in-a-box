@@ -79,6 +79,7 @@ const STYLE = `
   .gauge i{display:block;height:100%;background:var(--green)}
   .wrap{padding:6px 8px 40px}
   .repo{margin:12px 6px 2px;font-weight:650;font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px}
+  .repoadd{border:1px solid var(--line);background:var(--card);color:var(--accent);border-radius:7px;padding:2px 9px;font-size:12px;cursor:pointer}
   .sections{display:flex;gap:12px;overflow-x:auto;padding:6px;-webkit-overflow-scrolling:touch;align-items:flex-start}
   .section{flex:0 0 auto;border-radius:14px;padding:2px 4px 4px}
   .section .sechead{font-size:11px;text-transform:uppercase;letter-spacing:.05em;font-weight:650;padding:8px 10px 2px}
@@ -357,7 +358,7 @@ ${CLIENT_HELPERS}
         var n=ri.filter(function(i){return sec.cols.indexOf(classify(i))>=0;}).length;
         return '<div class="section '+sec.k+'"><div class="sechead">'+sec.label+' <span>'+(n||"")+'</span></div><div class="lanes">'+lanes+'</div></div>';
       }).join("");
-      return '<div class="repo">'+esc(r)+'</div><div class="sections">'+secs+'</div>';
+      return '<div class="repo">'+esc(r)+'<button class="repoadd" onclick=\\'openComposer('+JSON.stringify(r)+')\\'>+ new</button></div><div class="sections">'+secs+'</div>';
     }).join("");
     document.getElementById("board").innerHTML = html||'<div class="empty">No repos yet. File a /add-repo issue.</div>';
   }
@@ -561,9 +562,10 @@ ${CLIENT_HELPERS}
   window.onPickC=function(e){var fs=e.target.files||[];for(var i=0;i<fs.length;i++)readAttach(fs[i],CPEND,renderCAtts);e.target.value="";};
 
   // ---- new issue composer ----
-  window.openComposer=function(){
+  window.openComposer=function(preRepo){
     var rs=document.getElementById("c_repo");
-    rs.innerHTML=(DATA.repos||[]).map(function(r){return '<option value="'+esc(r)+'"'+(repoFilter===r?' selected':'')+'>'+esc(r)+'</option>';}).join("");
+    var want=(typeof preRepo==="string"&&preRepo)?preRepo:repoFilter;
+    rs.innerHTML=(DATA.repos||[]).map(function(r){return '<option value="'+esc(r)+'"'+(want===r?' selected':'')+'>'+esc(r)+'</option>';}).join("");
     CPEND=[]; renderCAtts();
     document.getElementById("composer").classList.add("on");
     document.getElementById("cscrim").classList.add("on");
