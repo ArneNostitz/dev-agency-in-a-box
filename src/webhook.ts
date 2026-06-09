@@ -327,6 +327,14 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           return;
         }
         const script = buildLocalCommand(owner, name, `agency/issue-${number}`);
+        // raw=1 → serve as plain text so it can be piped straight into bash from Terminal
+        // (`curl … | bash`). This bypasses macOS Gatekeeper, which blocks unsigned downloaded
+        // .command files. Otherwise serve as a downloadable .command (legacy/fallback).
+        if (q.get("raw") === "1") {
+          res.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
+          res.end(script);
+          return;
+        }
         res.writeHead(200, {
           "content-type": "text/x-shellscript",
           "content-disposition": `attachment; filename="${name}-pr-${number}.command"`,

@@ -105,6 +105,8 @@ const STYLE = `
   .tag.pr{background:var(--accent-weak);color:var(--accent)} .tag.prev{background:#e9f8ef;color:var(--green)} .tag.epic{background:#efe9ff;color:#6741d9} .tag.q{background:#f0f1f3;color:#7a828c} .tag.rl{background:#fff1d6;color:#a76a00}
   .cardbtn{border:1px solid #cdebd6;background:#e9f8ef;color:var(--green);border-radius:7px;padding:1px 8px;font-size:11px;cursor:pointer;font-weight:560}
   .cardbtn.rs{border-color:#d3def0;background:#eef3fb;color:#3b6cc9}
+  .cmdrow{display:flex;gap:6px;align-items:center}
+  .cmdrow code{flex:1;overflow:auto;white-space:nowrap;background:#0f1117;color:#d7e0ee;padding:6px 8px;border-radius:7px;font-size:12px}
   .epiclist{margin:2px 0 4px} .epiclist a{display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid var(--line);font-size:13px;color:var(--ink)}
   .epiclist .st{margin-left:auto;font-size:11px;color:var(--muted)} .epiclist .ck{color:var(--green)} .epiclist .ck.o{color:#c9ced6}
   .ebar{height:6px;border-radius:3px;background:var(--line);overflow:hidden;margin:6px 0}.ebar i{display:block;height:100%;background:#6741d9}
@@ -675,10 +677,12 @@ ${CLIENT_HELPERS}
     if(kind==="unknown"){el.innerHTML='<span class="muted">Couldn’t read the repo.</span>';return;}
     var h="";
     if(kind==="tauri"){
-      h+='<div class="muted" style="margin-bottom:6px">Tauri (native) app — runs on your Mac, not the browser.</div>'+
-        '<a class="btn primary" href="/app-local?repo='+encodeURIComponent(open.repo)+'&number='+open.number+'" download>💻 Run on my Mac</a>'+
-        (open.devScript?' <button class="btn" onclick="runApp()">▶ UI-only preview</button>':'')+
-        '<div class="muted" style="font-size:12px;margin-top:6px">Double-click the downloaded <code>.command</code>. First time: right-click → Open.</div>';
+      var one="curl -fsSL "+JSON.stringify(location.origin+"/app-local?repo="+encodeURIComponent(open.repo)+"&number="+open.number+"&raw=1")+" | bash";
+      h+='<div class="muted" style="margin-bottom:6px">Tauri (native) app — runs on your Mac, not the browser. Paste this in <b>Terminal</b>:</div>'+
+        '<div class="cmdrow"><code id="tauricmd">'+esc(one)+'</code><button class="btn" onclick="copyCmd()">Copy</button></div>'+
+        '<div class="muted" style="font-size:12px;margin-top:6px">Pasting into Terminal avoids the macOS “unidentified developer” block. '+
+        '<a href="/app-local?repo='+encodeURIComponent(open.repo)+'&number='+open.number+'" download>download .command</a> instead.</div>'+
+        (open.devScript?'<div style="margin-top:8px"><button class="btn" onclick="runApp()">▶ UI-only preview</button></div>':'');
     }
     var web = (kind==="web"||kind==="tauri");
     if(web){
@@ -689,6 +693,10 @@ ${CLIENT_HELPERS}
     }
     el.innerHTML=h;
   }
+  window.copyCmd=function(){var t=document.getElementById("tauricmd");if(!t)return;var s=t.textContent;
+    (navigator.clipboard?navigator.clipboard.writeText(s):Promise.reject()).then(function(){toast("Copied — paste in Terminal");},function(){
+      var r=document.createRange();r.selectNode(t);var sel=getSelection();sel.removeAllRanges();sel.addRange(r);try{document.execCommand("copy");toast("Copied");}catch(e){toast("Select & copy");}sel.removeAllRanges();});
+  };
   window.runApp=function(){ if(!open)return;
     fetch("/app-run",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({repo:open.repo,number:open.number})})
       .then(function(r){if(!r.ok)return r.json().then(function(d){toast(d.error||"can’t run");}); toast("Starting preview…"); setTimeout(load,800);}).catch(function(){toast("Couldn’t start");}); };
