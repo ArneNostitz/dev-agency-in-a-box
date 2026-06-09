@@ -137,6 +137,8 @@ const STYLE = `
   .atts{display:flex;gap:6px;flex-wrap:wrap;padding:0 10px}.atts:empty{display:none}
   .att{position:relative}.att img{height:46px;border-radius:6px;border:1px solid var(--line)}
   .att button{position:absolute;top:-6px;right:-6px;background:#1d2430;color:#fff;border:none;border-radius:50%;width:18px;height:18px;font-size:11px;cursor:pointer}
+  .att.file{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;background:var(--bg);border:1px solid var(--line);border-radius:8px;font-size:12px;color:var(--ink)}
+  .att.file button{position:static;width:auto;height:auto;background:none;color:var(--muted);border-radius:0;font-size:14px;margin-left:2px}
   .toast{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);background:#1d2430;color:#fff;padding:8px 14px;border-radius:999px;font-size:13px;opacity:0;transition:opacity .2s;z-index:30}
   .toast.on{opacity:1}
   .newbtn{margin-left:auto;border:1px solid var(--accent);background:var(--accent);color:#fff;border-radius:9px;padding:5px 11px;font-size:13px;font-weight:540;cursor:pointer}
@@ -145,8 +147,8 @@ const STYLE = `
   .urow{display:flex;justify-content:space-between;padding:7px 11px;font-size:13px;border-bottom:1px solid var(--line)}
   .urow:last-child{border-bottom:none}.urow.tot{font-weight:650;background:var(--bg)}
   .clk{cursor:pointer;border-bottom:1px dotted var(--muted)}
-  .composer{position:fixed;left:0;right:0;bottom:0;z-index:25;background:var(--card);border-top:1px solid var(--line);border-radius:16px 16px 0 0;padding:14px 14px 18px;max-height:92dvh;overflow:auto;transform:translateY(105%);transition:transform .2s ease;box-shadow:0 -8px 30px rgba(15,22,35,.18)}
-  .composer.on{transform:translateY(0)}
+  .composer{position:fixed;left:0;right:0;bottom:0;z-index:25;background:var(--card);border-top:1px solid var(--line);border-radius:16px 16px 0 0;padding:14px 14px 18px;max-height:92dvh;overflow:auto;transform:translateY(calc(100% + 48px));transition:transform .2s ease;box-shadow:0 -8px 30px rgba(15,22,35,.18);visibility:hidden;pointer-events:none}
+  .composer.on{transform:translateY(0);visibility:visible;pointer-events:auto}
   @media(min-width:760px){.composer{left:auto;right:24px;bottom:24px;width:440px;border:1px solid var(--line);border-radius:16px}}
   .composer .ch{display:flex;align-items:center;margin-bottom:6px}.composer .ch .t{font-weight:650;font-size:15px}
   .composer label{display:block;font-size:12px;color:var(--muted);margin:10px 2px 4px}
@@ -190,8 +192,8 @@ export function renderDashboard(): string {
     <div class="dbody" id="d_body"></div>
     <div id="d_atts" class="atts"></div>
     <div class="reply">
-      <input type="file" id="d_file" accept="image/*" style="display:none" onchange="onPickImage(event)">
-      <button class="btn" title="Attach image" onclick="document.getElementById('d_file').click()">📎</button>
+      <input type="file" id="d_file" multiple style="display:none" onchange="onPickImage(event)">
+      <button class="btn" title="Attach file or image" onclick="document.getElementById('d_file').click()">📎</button>
       <textarea id="d_reply" placeholder="Reply… (paste an image to attach)" rows="1"
         oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px'"
         onpaste="onPasteImage(event)"></textarea>
@@ -213,8 +215,8 @@ export function renderDashboard(): string {
     <label>Title</label><input id="c_title" placeholder="Short title" autocomplete="off">
     <label>Description</label><textarea id="c_body" placeholder="What needs doing? Paste an image to attach." onpaste="onPasteC(event)"></textarea>
     <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
-      <input type="file" id="c_file" accept="image/*" style="display:none" onchange="onPickC(event)">
-      <button class="btn" onclick="document.getElementById('c_file').click()">📎 Add image</button>
+      <input type="file" id="c_file" multiple style="display:none" onchange="onPickC(event)">
+      <button class="btn" onclick="document.getElementById('c_file').click()">📎 Add file / image</button>
       <div id="c_atts" class="atts"></div>
     </div>
     <div class="row"><button class="btn" onclick="closeComposer()">Cancel</button><button class="btn primary" id="c_create" onclick="submitIssue()">Create</button></div>
@@ -476,13 +478,12 @@ ${CLIENT_HELPERS}
       .then(function(){btn.disabled=false;});
   };
 
-  // ---- composer image attachments ----
+  // ---- composer file/image attachments ----
   var CPEND=[];
-  function renderCAtts(){var el=document.getElementById("c_atts");if(el)el.innerHTML=CPEND.map(function(d,i){return '<div class="att"><img src="'+d+'"><button onclick="rmCAtt('+i+')">×</button></div>';}).join("");}
+  function renderCAtts(){var el=document.getElementById("c_atts");if(el)el.innerHTML=CPEND.map(function(a,i){return attChip(a,i,"rmCAtt");}).join("");}
   window.rmCAtt=function(i){CPEND.splice(i,1);renderCAtts();};
-  function addCImage(file){if(!file||!/^image\\//.test(file.type))return;var r=new FileReader();r.onload=function(){CPEND.push(r.result);renderCAtts();};r.readAsDataURL(file);}
-  window.onPasteC=function(e){var got=false,items=(e.clipboardData||{}).items||[];for(var i=0;i<items.length;i++){if(items[i].type&&items[i].type.indexOf("image")===0){addCImage(items[i].getAsFile());got=true;}}var fs=(e.clipboardData||{}).files||[];for(var j=0;j<fs.length;j++){if(/^image\\//.test(fs[j].type)){addCImage(fs[j]);got=true;}}if(got)e.preventDefault();};
-  window.onPickC=function(e){var f=e.target.files&&e.target.files[0];if(f)addCImage(f);e.target.value="";};
+  window.onPasteC=function(e){pasteFiles(e,CPEND,renderCAtts);};
+  window.onPickC=function(e){var fs=e.target.files||[];for(var i=0;i<fs.length;i++)readAttach(fs[i],CPEND,renderCAtts);e.target.value="";};
 
   // ---- new issue composer ----
   window.openComposer=function(){
@@ -504,8 +505,8 @@ ${CLIENT_HELPERS}
     var title=document.getElementById("c_title").value.trim(), body=document.getElementById("c_body").value.trim();
     if(!repo||!title){toast("Repo + title needed");return;}
     var btn=document.getElementById("c_create"); btn.disabled=true;
-    if(CPEND.length)toast("Uploading image…");
-    Promise.all(CPEND.map(function(d){return fetch("/upload-image",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({repo:repo,dataUrl:d})}).then(function(r){return r.ok?r.json():null;}).then(function(j){return j&&j.md;}).catch(function(){return null;});}))
+    if(CPEND.length)toast("Uploading attachment…");
+    uploadList(CPEND,repo,0)
       .then(function(mds){var full=[body].concat(mds.filter(Boolean)).filter(Boolean).join("\\n\\n");
         return fetch("/new-issue",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({repo:repo,role:role,title:title,body:full})});})
       .then(function(r){if(!r.ok)throw 0;return r.json();})
@@ -597,14 +598,18 @@ ${CLIENT_HELPERS}
   window.stopAppPreview=function(){ if(!open)return;
     fetch("/app-stop",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({repo:open.repo,number:open.number})}).then(function(){toast("Stopped");setTimeout(load,500);}); };
 
-  // ---- image attachments (paste into the reply) ----
+  // ---- file/image attachments (paste or pick; any type) ----
+  function attChip(a,idx,rm){ return a.img? '<div class="att"><img src="'+a.d+'"><button onclick="'+rm+'('+idx+')">×</button></div>' : '<div class="att file">📎 '+esc(a.name||"file")+'<button onclick="'+rm+'('+idx+')">×</button></div>'; }
+  function readAttach(file,arr,render){ if(!file)return; if(file.size>25*1024*1024){toast("Too big (max 25MB): "+(file.name||""));return;} var r=new FileReader(); r.onload=function(){arr.push({d:r.result,name:file.name||"file",img:/^image\\//.test(file.type)});render();}; r.readAsDataURL(file); }
+  function pasteFiles(e,arr,render){ var got=false,items=(e.clipboardData||{}).items||[]; for(var i=0;i<items.length;i++){ if(items[i].kind==="file"){ readAttach(items[i].getAsFile(),arr,render); got=true; } } var fs=(e.clipboardData||{}).files||[]; for(var j=0;j<fs.length;j++){ readAttach(fs[j],arr,render); got=true; } if(got)e.preventDefault(); }
+  function uploadList(arr,repo,number){ return Promise.all(arr.map(function(a){return fetch("/upload-file",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({repo:repo,number:number,dataUrl:a.d,name:a.name})}).then(function(r){return r.ok?r.json():null;}).then(function(j){return j&&j.md;}).catch(function(){return null;});})).then(function(x){return x.filter(Boolean);}); }
+
   var PEND=[];
-  function renderAtts(){var el=document.getElementById("d_atts");if(!el)return;el.innerHTML=PEND.map(function(d,idx){return '<div class="att"><img src="'+d+'"><button onclick="rmAtt('+idx+')">×</button></div>';}).join("");}
+  function renderAtts(){var el=document.getElementById("d_atts");if(el)el.innerHTML=PEND.map(function(a,i){return attChip(a,i,"rmAtt");}).join("");}
   window.rmAtt=function(i){PEND.splice(i,1);renderAtts();};
-  function addImageFile(file){if(!file||!/^image\\//.test(file.type))return;var r=new FileReader();r.onload=function(){PEND.push(r.result);renderAtts();};r.readAsDataURL(file);}
-  window.onPasteImage=function(e){var got=false,items=(e.clipboardData||{}).items||[];for(var i=0;i<items.length;i++){if(items[i].type&&items[i].type.indexOf("image")===0){addImageFile(items[i].getAsFile());got=true;}}var fs=(e.clipboardData||{}).files||[];for(var j=0;j<fs.length;j++){if(/^image\\//.test(fs[j].type)){addImageFile(fs[j]);got=true;}}if(got)e.preventDefault();};
-  window.onPickImage=function(e){var f=e.target.files&&e.target.files[0];if(f)addImageFile(f);e.target.value="";};
-  function uploadAtts(){return Promise.all(PEND.map(function(d){return fetch("/upload-image",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({repo:open.repo,number:open.number,dataUrl:d})}).then(function(r){return r.ok?r.json():null;}).then(function(j){return j&&j.md;}).catch(function(){return null;});})).then(function(a){return a.filter(Boolean);});}
+  window.onPasteImage=function(e){pasteFiles(e,PEND,renderAtts);};
+  window.onPickImage=function(e){var fs=e.target.files||[];for(var i=0;i<fs.length;i++)readAttach(fs[i],PEND,renderAtts);e.target.value="";};
+  function uploadAtts(){return uploadList(PEND,open.repo,open.number);}
 
   function loadThread(scrollToEnd){
     getJSON("/thread?repo="+encodeURIComponent(open.repo)+"&number="+open.number).then(function(t){

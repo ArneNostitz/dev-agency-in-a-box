@@ -343,10 +343,10 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
 
     // Dashboard actions (password-protected, not GitHub webhooks).
     const path = (req.url ?? "").split("?")[0];
-    if (["/archive", "/comment", "/run-checks", "/merge", "/delete", "/resume", "/new-issue", "/approve", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/add-repo"].includes(path)) {
+    if (["/archive", "/comment", "/run-checks", "/merge", "/delete", "/resume", "/new-issue", "/approve", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo"].includes(path)) {
       if (!checkAuth(cfg, req, res)) return;
       void readBody(req).then(async (body) => {
-        let p: { repo?: string; number?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; dataUrl?: string } = {};
+        let p: { repo?: string; number?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; dataUrl?: string; name?: string } = {};
         try {
           p = JSON.parse(body.toString("utf8"));
         } catch {
@@ -464,17 +464,24 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           void trigger("dashboard-add-repo");
           return ok(JSON.stringify({ ok: true, note }));
         }
-        if (path === "/upload-image") {
-          // Commit a pasted image to the repo and return markdown to embed in the comment.
+        if (path === "/upload-image" || path === "/upload-file") {
+          // Commit a pasted/picked file (image, pdf, csv, xlsx, json…) to the repo and return
+          // markdown to embed: images inline, everything else as a download link.
           if (!repo || !p.dataUrl) return res.writeHead(400).end("{}");
           if (!cfg.adminToken) return res.writeHead(409).end(JSON.stringify({ error: "needs ADMIN_GITHUB_TOKEN" }));
-          const m = /^data:(image\/[\w.+-]+);base64,(.+)$/.exec(p.dataUrl);
-          if (!m) return res.writeHead(400).end(JSON.stringify({ error: "not a base64 image" }));
-          const ext = m[1].split("/")[1].replace("jpeg", "jpg").replace(/[^\w]/g, "");
-          const file = `.devagency/attachments/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
-          const r = await putRepoBase64(repo, file, m[2], "dev-agency: dashboard image attachment", cfg.adminToken);
+          const m = /^data:([\w.+-]+\/[\w.+-]+)?;base64,(.+)$/.exec(p.dataUrl);
+          if (!m) return res.writeHead(400).end(JSON.stringify({ error: "not a base64 data URL" }));
+          const mime = m[1] || "application/octet-stream";
+          const isImage = mime.startsWith("image/");
+          const safe = (p.name ?? "").replace(/[^\w.\- ]+/g, "_").replace(/\s+/g, "_").slice(-64);
+          const extFromMime = mime.split("/")[1]?.replace("jpeg", "jpg").replace(/[^\w]/g, "") || "bin";
+          const fname = safe && /\.[\w]+$/.test(safe) ? safe : `${safe || "file"}.${extFromMime}`;
+          const file = `.devagency/attachments/${Date.now()}-${Math.random().toString(36).slice(2, 6)}-${fname}`;
+          const r = await putRepoBase64(repo, file, m[2], `dev-agency: dashboard attachment ${fname}`, cfg.adminToken);
           if (!r.ok || !r.url) return res.writeHead(500).end(JSON.stringify({ error: r.msg }));
-          return ok(JSON.stringify({ url: r.url, md: `![image](${r.url})` }));
+          const label = p.name || fname;
+          const md = isImage ? `![${label}](${r.url})` : `[📎 ${label}](${r.url})`;
+          return ok(JSON.stringify({ url: r.url, md, isImage }));
         }
         if (path === "/new-issue") {
           // Create a new issue from the dashboard (authored by you) and kick the agency.

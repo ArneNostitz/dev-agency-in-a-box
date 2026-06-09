@@ -5,7 +5,7 @@
  */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { writeFileSync } from "node:fs";
+import { writeFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -402,11 +402,12 @@ export async function putRepoBase64(
   message: string,
   token: string,
 ): Promise<{ ok: boolean; url?: string; msg: string }> {
+  // Send the body via a temp file (`gh api --input`) so large files don't blow the arg limit.
+  const tmp = join(tmpdir(), `dvagency-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
   try {
     const sha = (await ghAs(token, ["api", `repos/${repo}/contents/${path}`, "--jq", ".sha"]).catch(() => "")).trim();
-    const args = ["api", "-X", "PUT", `repos/${repo}/contents/${path}`, "-f", `message=${message}`, "-f", `content=${base64}`];
-    if (sha) args.push("-f", `sha=${sha}`);
-    const out = await ghAs(token, args);
+    writeFileSync(tmp, JSON.stringify({ message, content: base64, ...(sha ? { sha } : {}) }));
+    const out = await ghAs(token, ["api", "-X", "PUT", `repos/${repo}/contents/${path}`, "--input", tmp]);
     let url: string | undefined;
     try {
       url = (JSON.parse(out) as { content?: { download_url?: string } }).content?.download_url;
@@ -416,6 +417,12 @@ export async function putRepoBase64(
     return { ok: true, url, msg: "committed" };
   } catch (err) {
     return { ok: false, msg: (err as Error).message };
+  } finally {
+    try {
+      unlinkSync(tmp);
+    } catch {
+      /* ignore */
+    }
   }
 }
 
