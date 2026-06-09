@@ -670,8 +670,12 @@ ${CLIENT_HELPERS}
   // Pure-GitHub local run: clones via the user's own gh CLI and checks out the PR — no dashboard
   // fetch (so no auth/401) and no downloaded file (so no macOS Gatekeeper block).
   function ghRunCmd(){
-    var nm=open.repo.split("/").pop();
-    return 'd=~/.devagency/'+nm+'; gh repo clone '+open.repo+' "$d" 2>/dev/null; cd "$d" && git fetch -q && gh pr checkout '+open.number+
+    var nm=open.repo.split("/").pop(); var i=open.issue||{}; var st=i.state||"";
+    var done = st==="merged"||st==="agency:merged"||st==="closed"||st==="done";
+    // Merged → the work is on the default branch; the PR branch is usually deleted. Otherwise
+    // check out the PR head directly via gh.
+    var checkout = done ? '(git checkout main 2>/dev/null || git checkout master) && git pull -q' : 'gh pr checkout '+open.number;
+    return 'd=~/.devagency/'+nm+'; gh repo clone '+open.repo+' "$d" 2>/dev/null; cd "$d" && git fetch -q && '+checkout+
       ' && { corepack enable 2>/dev/null; PM=npm; [ -f pnpm-lock.yaml ]&&PM=pnpm; [ -f yarn.lock ]&&PM=yarn; $PM install && ($PM run tauri:dev || $PM tauri dev || $PM run dev); }';
   }
   window.copyRun=function(){var s=ghRunCmd();
@@ -688,20 +692,22 @@ ${CLIENT_HELPERS}
     var a=ilnk('🔗','Open issue on GitHub',gh(open.repo,open.number));
     if(i.pr_url) a+=ilnk('⑂','Open pull request',i.pr_url);
     if(i.previewUrl) a+=ilnk('🌐','Open preview',i.previewUrl,'primary');
-    // Action buttons only while the issue is still live.
+    // Build/approve actions only while the issue is still live.
     if(!done){
       if(st==="agency:awaiting-approval") a+=ibtn('✓','Approve &amp; build','doApprove(this)','primary');
       a+=ibtn('⟳','Resume','doResume(this)','','d_resume');
       a+=ibtn('🧪','Run checks','runChecks()','','d_checks');
-      // run-the-app, folded into the bar (branch still exists pre-merge)
-      if(kind==="tauri") a+=ibtn('💻','Run on my Mac — copies a Terminal command (uses your gh login)','copyRun()');
-      if(kind==="web"||kind==="tauri"){
-        if(app&&app.status==="running"){ a+=ilnk('🖥','Open running preview',app.url,'primary'); a+=ibtn('⏹','Stop preview','stopAppPreview()'); }
-        else if(app&&(app.status==="installing"||app.status==="starting")){ a+=ibtn('⏳','Starting preview… (watch Live stream)','stopAppPreview()'); }
-        else if(app&&app.status==="error"){ a+=ibtn('⚠','Preview failed — retry','runApp()','danger'); }
-        else if(kind==="web"){ a+=ibtn('🚀','Run preview in the cloud (gives a link)','runApp()'); }
-      }
-      // Merge only when there's something open to merge.
+    }
+    // Run-the-app stays available even when merged/done (runs the default branch instead).
+    if(kind==="tauri") a+=ibtn('💻',(done?'Run latest (main) on my Mac':'Run this PR on my Mac')+' — copies a Terminal command (uses your gh login)','copyRun()');
+    if(kind==="web"||kind==="tauri"){
+      if(app&&app.status==="running"){ a+=ilnk('🖥','Open running preview',app.url,'primary'); a+=ibtn('⏹','Stop preview','stopAppPreview()'); }
+      else if(app&&(app.status==="installing"||app.status==="starting")){ a+=ibtn('⏳','Starting preview… (watch Live stream)','stopAppPreview()'); }
+      else if(app&&app.status==="error"){ a+=ibtn('⚠','Preview failed — retry','runApp()','danger'); }
+      else if(kind==="web"){ a+=ibtn('🚀','Run preview in the cloud (gives a link)','runApp()'); }
+    }
+    // Merge only when there's something open to merge.
+    if(!done){
       if(i.pr_number) a+=ibtn('⤵','Merge PR','confirmAct(this,\\'merge\\')');
       else if(i.epic && epicDone) a+=ibtn('⤵','Merge all sub-issues','confirmAct(this,\\'merge\\')');
     }
