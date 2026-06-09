@@ -19,5 +19,20 @@ The standard branch-to-PR flow every dev agent follows.
    `gh pr create --draft --fill --base main --head agency/issue-<NUMBER> --body "Closes #<NUMBER>\n\n<what changed, how to test>"`.
 7. Comment the result on the issue with the PR URL and the local test command.
 
+## Commit early, commit often (so work is never lost)
+
+The container can be restarted at any time (deploys, etc.). Anything not committed-and-pushed
+is lost on restart, and the run resumes from your last push. So:
+
+- **Commit and push after each logical chunk**, not just once at the very end — after a file or
+  small group of files works, `git add <those files> && git commit -m "…" && git push`. A run
+  that does everything and commits only at the end loses ALL of it if interrupted at that step.
+- Push as soon as the branch has its first commit (create the draft PR early, even before tests
+  pass — it's a draft). Then keep pushing.
+- Keep commit messages short and single-line (avoid long heredoc commits that can be cut off
+  mid-write).
+- If you're **resuming** (the branch already exists), `git fetch` + check it out, see what's
+  already committed, and finish only what's missing — never redo committed work.
+
 Never commit to `main`. Never force-push. Never merge your own PR.
 **A PR should contain only source changes — no build artifacts or dependencies, ever.**

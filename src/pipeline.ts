@@ -25,7 +25,7 @@ import {
 import { EPIC_LABEL, renderEpicTracker } from "./epics.js";
 import { runRole } from "./agents/roleAgent.js";
 import type { RoleName } from "./agents/roles.js";
-import { recordRun, recordPlan, lastPlan, recordIssueState, recordPr, addEpicChild, listEpicChildren } from "./store.js";
+import { recordRun, recordPlan, lastPlan, recordIssueState, recordPr, addEpicChild, listEpicChildren, getSession, issueActivity } from "./store.js";
 import { runReflection } from "./reflect.js";
 
 const IN_PROGRESS = "agency:in-progress";
@@ -75,6 +75,8 @@ async function plan(repo: string, issue: Issue, workdir: string, thread: string)
     workdir,
     repo,
     issueNumber: issue.number,
+    // If a prior planner run was interrupted, resume its session (falls back to fresh on error).
+    resumeSessionId: getSession(repo, issue.number, "planner") ?? undefined,
     task: [
       `Plan the work for this issue. Inspect the repository and project memory first.`,
       ``,
@@ -199,19 +201,30 @@ async function build(
   workdir: string,
   planText: string,
   thread: string,
+  resume?: { digest: string },
 ): Promise<void> {
   const branch = `agency/issue-${issue.number}`;
+
+  // Resuming an interrupted run: continue from the existing branch (don't redo committed work)
+  // and try to resume the developer's exact prior session; fall back to fresh if that fails.
+  const devTask = resume
+    ? `RESUMING an interrupted run on this issue. First \`git fetch origin ${branch}\` and check it out if it ` +
+      `exists; review what's already committed (\`git log --oneline main..HEAD\`, \`git diff\`). Finish ONLY ` +
+      `what's incomplete per the plan — do NOT redo work that's already committed. Commit and push as you go. ` +
+      `Then ensure a DRAFT PR exists whose body contains "Closes #${issue.number}".\n\n` +
+      `### Plan\n${planText}\n\n### What the interrupted run already did\n${resume.digest}\n\n### ${issueHeader(issue)}`
+    : `Implement this issue on a new branch \`${branch}\` off an up-to-date main, following the approved plan ` +
+      `and the harness. Reuse existing code; keep the change small. **Commit and push after each logical chunk** ` +
+      `(not just at the end) so progress is never lost. Add/extend tests. Open a DRAFT pull request whose body ` +
+      `contains "Closes #${issue.number}".\n\n### Approved plan\n${planText}\n\n### ${issueHeader(issue)}` +
+      (thread ? `\n\n### Conversation (latest changes apply)\n${thread}` : "");
 
   const dev = await runRole("developer", {
     workdir,
     repo,
     issueNumber: issue.number,
-    task:
-      `Implement this issue on a new branch \`${branch}\` off an up-to-date main, following the approved plan ` +
-      `and the harness. Reuse existing code; keep the change small. Add/extend tests. Commit, push, and ` +
-      `open a DRAFT pull request whose body contains "Closes #${issue.number}".\n\n` +
-      `### Approved plan\n${planText}\n\n### ${issueHeader(issue)}` +
-      (thread ? `\n\n### Conversation (latest changes apply)\n${thread}` : ""),
+    task: devTask,
+    ...(resume ? { resumeSessionId: getSession(repo, issue.number, "developer") ?? undefined } : {}),
   });
   recordRun(repo, issue.number, "developer", dev.model, dev.turns, "implement", dev.costUsd);
 
@@ -463,6 +476,27 @@ export async function runPipeline(
  * comment IS the instruction. The developer applies it on a fresh branch off the now-current
  * main and opens a new draft PR; tester + reviewer run as usual.
  */
+/** A compact digest of an interrupted run's activity, to hand the resumed agent. */
+export function resumeDigest(repo: string, number: number): string {
+  const rows = issueActivity(repo, number, 50).filter((a) => a.kind === "text" || a.kind === "tool");
+  if (rows.length === 0) return "(no recorded activity)";
+  return rows
+    .map((a) => `- [${a.role}] ${a.text.replace(/\s+/g, " ").slice(0, 160)}`)
+    .join("\n")
+    .slice(0, 4000);
+}
+
+/**
+ * Resume an interrupted build WITHOUT redoing finished work: the plan already exists (skip the
+ * Opus planner), so we go straight to the build — the developer continues from the branch's
+ * committed work (and resumes its exact prior session if possible), then tester/reviewer/PR.
+ */
+export async function runResumeBuild(repo: string, issue: Issue, workdir: string, thread: string): Promise<void> {
+  const planText = lastPlan(repo, issue.number) ?? "(plan unavailable — infer from the issue + branch)";
+  await commentOnIssue(repo, issue.number, say("developer", "**Resuming** from where it stopped — continuing the existing branch, not redoing finished work."));
+  await build(repo, issue, workdir, planText, thread, { digest: resumeDigest(repo, issue.number) });
+}
+
 export async function runFollowUp(
   repo: string,
   issue: Issue,

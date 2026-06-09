@@ -38,7 +38,7 @@ import { reconcileEpics } from "./epics.js";
 import { indexRepo } from "./gitnexus.js";
 import { pushActivity } from "./activity.js";
 import { loadHandleRoleMap, roleForText, type RoleName } from "./agents/roles.js";
-import { runPipeline, runPrFix, runFollowUp } from "./pipeline.js";
+import { runPipeline, runPrFix, runFollowUp, runResumeBuild } from "./pipeline.js";
 import {
   recordIssueState,
   getIssueRole,
@@ -49,6 +49,7 @@ import {
   getThreadCursor,
   setThreadCursor,
   recentIssues,
+  lastPlan,
   getSetting,
   setSetting,
   setRateLimited,
@@ -328,9 +329,44 @@ export async function forceResume(cfg: Config, repo: string, number: number): Pr
   }
   setThreadCursor(repo, number, 0); // let any prior comment count again
   clearActive(repo, number); // drop a zombie "working" entry if a run died
-  console.log(`[agency] manual resume ${repo} #${number}`);
   const fresh: Issue = { ...issue, labels: issue.labels.filter((l) => !l.startsWith("agency:")) };
-  dispatch(`${repo}#${number}`, () => processIssue(cfg, repo, fresh));
+  // If a plan already exists, skip the (Opus) planner and resume the build from the branch —
+  // otherwise run the full pipeline (the planner resumes its own session if it was interrupted).
+  if (lastPlan(repo, number)) {
+    console.log(`[agency] resume (build) ${repo} #${number}`);
+    dispatch(`${repo}#${number}`, () => processResume(cfg, repo, fresh));
+  } else {
+    console.log(`[agency] resume (full) ${repo} #${number}`);
+    dispatch(`${repo}#${number}`, () => processIssue(cfg, repo, fresh));
+  }
+}
+
+/** Worker: resume a build (plan already exists) — continue the branch, don't redo finished work. */
+async function processResume(cfg: Config, repo: string, issue: Issue): Promise<void> {
+  void cfg;
+  await addLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
+  recordIssueState(repo, issue.number, { title: issue.title, role: "developer", state: IN_PROGRESS });
+  await acknowledge(repo, issue.number);
+  const thread = await commentThread(repo, issue.number);
+  const workdir = workdirFor(repo, `${issue.number}`);
+  await rm(workdir, { recursive: true, force: true });
+  await mkdir(join(workdir, ".."), { recursive: true });
+  await cloneRepo(repo, workdir);
+  await indexRepo(workdir, (s) => pushActivity(repo, issue.number, "developer", "tool", s));
+  setActive(repo, issue.number, "issue", "developer", issue.title);
+  try {
+    await runResumeBuild(repo, issue, workdir, thread);
+  } catch (err) {
+    const msg = (err as Error).message ?? String(err);
+    console.error(`[agency] resume error ${repo} #${issue.number}:`, msg);
+    if (await maybeParkRateLimited(repo, issue.number, msg)) return;
+    await removeLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
+    await addLabel(repo, issue.number, NEEDS_ATTENTION).catch(() => {});
+    recordIssueState(repo, issue.number, { state: NEEDS_ATTENTION });
+    await commentOnIssue(repo, issue.number, `❌ Resume failed: ${msg.slice(0, 300)} — press Resume again.`).catch(() => {});
+  } finally {
+    clearActive(repo, issue.number);
+  }
 }
 
 /**

@@ -59,7 +59,10 @@ ENV RUN_MODE=watch \
 # when running as root, which is exactly what the agents need. The `node` user ships with the
 # base image. Owning /app (incl. the data dir an empty named volume inherits ownership from)
 # lets the agent write code, clone repos, and persist the SQLite memory.
-RUN mkdir -p /app/data /app/.work \
+# Put Claude's session store (~/.claude) on the data volume so an interrupted run's session can
+# be resumed after a restart/redeploy (sessions live at ~/.claude/projects/<dir>/<id>.jsonl).
+RUN mkdir -p /app/data /app/.work /app/data/claude \
+    && ln -sfn /app/data/claude /home/node/.claude \
     && chown -R node:node /app /home/node
 USER node
 

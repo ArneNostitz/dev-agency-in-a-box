@@ -80,6 +80,10 @@ function getDb(): DatabaseSync | null {
       );
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
       CREATE TABLE IF NOT EXISTS rate_limited (repo TEXT NOT NULL, number INTEGER NOT NULL, resume_at TEXT, PRIMARY KEY (repo, number));
+      CREATE TABLE IF NOT EXISTS agent_sessions (
+        repo TEXT NOT NULL, number INTEGER NOT NULL, role TEXT NOT NULL,
+        session_id TEXT, updated_at TEXT, PRIMARY KEY (repo, number, role)
+      );
       CREATE TABLE IF NOT EXISTS agent_overrides (path TEXT PRIMARY KEY, content TEXT, updated_at TEXT);
       CREATE TABLE IF NOT EXISTS agent_revisions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -656,6 +660,47 @@ export function resetAutofix(repo: string, pr: number): void {
     d.prepare(`DELETE FROM pr_autofix WHERE repo = ? AND pr = ?`).run(repo, pr);
   } catch {
     /* best effort */
+  }
+}
+
+// ---- agent sessions (for SDK resume) + per-issue activity (for the resume digest) ----
+
+export function setSession(repo: string, number: number, role: string, sessionId: string): void {
+  const d = getDb();
+  if (!d || !sessionId) return;
+  try {
+    d.prepare(
+      `INSERT INTO agent_sessions (repo, number, role, session_id, updated_at) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(repo, number, role) DO UPDATE SET session_id = excluded.session_id, updated_at = excluded.updated_at`,
+    ).run(repo, number, role, sessionId, now());
+  } catch {
+    /* best effort */
+  }
+}
+export function getSession(repo: string, number: number, role: string): string | null {
+  const d = getDb();
+  if (!d) return null;
+  try {
+    const row = d.prepare(`SELECT session_id FROM agent_sessions WHERE repo = ? AND number = ? AND role = ?`).get(repo, number, role) as
+      | { session_id?: string }
+      | undefined;
+    return row?.session_id ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Recent activity for one issue (oldest-first), for building a resume digest. */
+export function issueActivity(repo: string, number: number, limit = 40): ActivityRow[] {
+  const d = getDb();
+  if (!d) return [];
+  try {
+    const rows = d
+      .prepare(`SELECT repo, number, role, kind, text, created_at FROM activity WHERE repo = ? AND number = ? ORDER BY id DESC LIMIT ?`)
+      .all(repo, number, limit) as unknown as ActivityRow[];
+    return rows.reverse();
+  } catch {
+    return [];
   }
 }
 

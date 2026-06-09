@@ -7,7 +7,7 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import { ROLES, modelFor, type RoleName } from "./roles.js";
 import { loadConstitution, loadPersona, loadPlaybooks, loadLearned } from "../memory.js";
 import { pushActivity } from "../activity.js";
-import { recentLessons, recordTokens, getProviders, getRoleModels } from "../store.js";
+import { recentLessons, recordTokens, getProviders, getRoleModels, setSession } from "../store.js";
 import { loadBudget } from "../budget.js";
 import { gitnexusWiring, GITNEXUS_PROMPT } from "../gitnexus.js";
 
@@ -78,6 +78,8 @@ export interface RoleRunInput {
   issueNumber: number;
   /** Optional model override (else role default / env). */
   model?: string;
+  /** Resume a prior interrupted run by its SDK session id (falls back to fresh on error). */
+  resumeSessionId?: string;
 }
 
 export interface RoleRunResult {
@@ -138,66 +140,94 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
   const maxTurns = Math.min(def.maxTurns || budget.maxTurnsPerRun, budget.maxTurnsPerRun);
   const tokenCap = budget.maxTokensPerRun;
 
-  let text = "";
-  let turns = 0;
-  let costUsd = 0;
-  let tokens = 0;
-  let stopped = "";
-  let stderrBuf = "";
+  let sessionId = "";
   const { repo, issueNumber } = input;
   console.log(`[agency] role:${role} ${repo}#${issueNumber} (model ${model}, ≤${maxTurns} turns)`);
-  pushActivity(repo, issueNumber, role, "start", `started (${model})`);
+  pushActivity(repo, issueNumber, role, "start", `started (${model}${input.resumeSessionId ? ", resuming" : ""})`);
 
   const sumUsage = (u: Record<string, unknown>): number => {
     const n = (k: string) => (typeof u[k] === "number" ? (u[k] as number) : 0);
     return n("input_tokens") + n("output_tokens") + n("cache_creation_input_tokens") + n("cache_read_input_tokens");
   };
 
-  try {
-    for await (const message of query({
-      prompt: input.task,
-      options: {
-        cwd: input.workdir,
-        systemPrompt,
-        model,
-        allowedTools: [...def.tools, ...(gn?.tools ?? [])],
-        ...(gn ? { mcpServers: gn.servers } : {}),
-        ...(route ? { env: route.env } : {}),
-        // Fully autonomous. Requires the container to run as a NON-root user (Claude Code
-        // refuses --dangerously-skip-permissions as root) — see Dockerfile `USER node`.
-        permissionMode: "bypassPermissions",
-        maxTurns,
-        stderr: (data: string) => {
-          stderrBuf += data;
+  /** One attempt; pass a session id to resume an interrupted run, else a fresh run. */
+  async function runQuery(resumeId?: string): Promise<{ text: string; turns: number; costUsd: number; tokens: number; stopped: string }> {
+    let text = "";
+    let turns = 0;
+    let costUsd = 0;
+    let tokens = 0;
+    let stopped = "";
+    let stderrBuf = "";
+    try {
+      for await (const message of query({
+        prompt: input.task,
+        options: {
+          cwd: input.workdir,
+          systemPrompt,
+          model,
+          allowedTools: [...def.tools, ...(gn?.tools ?? [])],
+          ...(gn ? { mcpServers: gn.servers } : {}),
+          ...(route ? { env: route.env } : {}),
+          ...(resumeId ? { resume: resumeId } : {}),
+          // Fully autonomous. Requires the container to run as a NON-root user (Claude Code
+          // refuses --dangerously-skip-permissions as root) — see Dockerfile `USER node`.
+          permissionMode: "bypassPermissions",
+          maxTurns,
+          stderr: (data: string) => {
+            stderrBuf += data;
+          },
+          settingSources: [],
         },
-        settingSources: [],
-      },
-    })) {
-      if (message.type === "assistant") {
-        turns += 1;
-        emitAssistant(repo, issueNumber, role, message);
-        // Accumulate billed tokens per turn (each turn re-bills the whole context).
-        const au = (message as unknown as { message?: { usage?: Record<string, unknown> } }).message?.usage;
-        if (au) tokens += sumUsage(au);
+      })) {
+        const sid = (message as { session_id?: string }).session_id;
+        if (sid) sessionId = sid;
+        if (message.type === "assistant") {
+          turns += 1;
+          emitAssistant(repo, issueNumber, role, message);
+          const au = (message as unknown as { message?: { usage?: Record<string, unknown> } }).message?.usage;
+          if (au) tokens += sumUsage(au);
+        }
+        if ("result" in message && typeof (message as { result?: unknown }).result === "string") {
+          text = (message as { result: string }).result;
+        }
+        const cost = (message as { total_cost_usd?: unknown }).total_cost_usd;
+        if (typeof cost === "number" && Number.isFinite(cost)) costUsd = cost;
+        if (tokenCap > 0 && tokens > tokenCap) {
+          stopped = `token cap (${Math.round(tokens / 1000)}k > ${Math.round(tokenCap / 1000)}k)`;
+          break;
+        }
       }
-      if ("result" in message && typeof (message as { result?: unknown }).result === "string") {
-        text = (message as { result: string }).result;
-      }
-      const cost = (message as { total_cost_usd?: unknown }).total_cost_usd;
-      if (typeof cost === "number" && Number.isFinite(cost)) costUsd = cost;
-      // Hard kill-switch: stop a runaway run before it burns the budget.
-      if (tokenCap > 0 && tokens > tokenCap) {
-        stopped = `token cap (${Math.round(tokens / 1000)}k > ${Math.round(tokenCap / 1000)}k)`;
-        break;
-      }
+    } catch (err) {
+      const detail = stderrBuf.trim().split("\n").slice(-3).join(" ").slice(-400);
+      throw new Error(`${(err as Error).message ?? String(err)}${detail ? ` | ${detail}` : ""}`);
     }
-  } catch (err) {
-    const detail = stderrBuf.trim().split("\n").slice(-3).join(" ").slice(-400);
-    const msg = `${(err as Error).message ?? String(err)}${detail ? ` | ${detail}` : ""}`;
-    console.error(`[agency] role:${role} failed:`, msg);
-    pushActivity(repo, issueNumber, role, "done", `❌ ERROR: ${msg.slice(0, 400)}`);
-    throw new Error(msg);
+    return { text, turns, costUsd, tokens, stopped };
   }
+
+  let r: { text: string; turns: number; costUsd: number; tokens: number; stopped: string };
+  try {
+    r = await runQuery(input.resumeSessionId);
+  } catch (err) {
+    // Resume failed? fall back to a fresh run so a bad/missing session never wedges the issue.
+    if (input.resumeSessionId) {
+      console.warn(`[agency] role:${role} ${repo}#${issueNumber} resume failed — fresh: ${(err as Error).message.slice(0, 140)}`);
+      pushActivity(repo, issueNumber, role, "tool", "↻ couldn't resume the prior session — starting fresh");
+      try {
+        r = await runQuery(undefined);
+      } catch (err2) {
+        console.error(`[agency] role:${role} failed:`, (err2 as Error).message);
+        pushActivity(repo, issueNumber, role, "done", `❌ ERROR: ${(err2 as Error).message.slice(0, 400)}`);
+        throw err2;
+      }
+    } else {
+      console.error(`[agency] role:${role} failed:`, (err as Error).message);
+      pushActivity(repo, issueNumber, role, "done", `❌ ERROR: ${(err as Error).message.slice(0, 400)}`);
+      throw err;
+    }
+  }
+
+  const { text, turns, costUsd, tokens, stopped } = r;
+  if (sessionId) setSession(repo, issueNumber, role, sessionId); // for resume after an interruption
   recordTokens(tokens, costUsd, model);
   const tok = tokens ? `, ${Math.round(tokens / 1000)}k tok` : "";
   pushActivity(
