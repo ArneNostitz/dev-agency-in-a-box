@@ -265,6 +265,21 @@ export function clearRateLimited(repo: string, number: number): void {
     /* best effort */
   }
 }
+/** All rate-limited (auto-resume) issues with their reset time, for the dashboard. */
+export function listRateLimited(): Array<{ repo: string; number: number; resumeAt: string }> {
+  const d = getDb();
+  if (!d) return [];
+  try {
+    return d.prepare(`SELECT repo, number, resume_at AS resumeAt FROM rate_limited`).all() as unknown as Array<{
+      repo: string;
+      number: number;
+      resumeAt: string;
+    }>;
+  } catch {
+    return [];
+  }
+}
+
 /** Parked issues whose resume time has passed — ready to re-run, no tokens needed to find them. */
 export function dueRateLimited(nowIso: string): Array<{ repo: string; number: number }> {
   const d = getDb();

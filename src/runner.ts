@@ -391,9 +391,23 @@ export async function forceApprove(cfg: Config, repo: string, number: number): P
   const issue = await getIssue(repo, number);
   if (!issue) return;
   await approveLastProposal(repo, number).catch(() => {});
+  for (const l of AWAITING_LABELS) await removeLabel(repo, number, l).catch(() => {});
+  // Approving during the usage-limit window: queue the build for auto-resume after the reset
+  // (so you can approve anytime, even rate-limited).
+  if (agentsArePaused()) {
+    setRateLimited(repo, number, new Date(pausedUntil()).toISOString());
+    recordIssueState(repo, number, { state: RATE_LIMITED });
+    await addLabel(repo, number, RATE_LIMITED).catch(() => {});
+    await commentOnIssue(
+      repo,
+      number,
+      `👍 Approved — I'll build it automatically after the usage window resets (~${new Date(pausedUntil()).toLocaleString()}).`,
+    ).catch(() => {});
+    console.log(`[agency] approve queued (rate-limited) ${repo} #${number}`);
+    return;
+  }
   // Instant UI: show it as working even if the pool is at capacity (it'll be queued).
   await addLabel(repo, number, IN_PROGRESS).catch(() => {});
-  for (const l of AWAITING_LABELS) await removeLabel(repo, number, l).catch(() => {});
   recordIssueState(repo, number, { state: IN_PROGRESS });
   console.log(`[agency] approve+build ${repo} #${number}`);
   dispatch(`${repo}#${number}`, () => processIssue(cfg, repo, issue));

@@ -19,6 +19,7 @@ import { mergeEpic, isEpic } from "./epics.js";
 import { renderDashboard, renderHistory } from "./dashboard.js";
 import { subscribe, getActive } from "./activity.js";
 import { inFlightKeys } from "./pool.js";
+import { listRateLimited } from "./store.js";
 import { effectiveRepos } from "./commands.js";
 import { getThreadFull, commentAsHuman, mergePrForBranch, closeIssue, deleteIssueHard, findPrForBranch, createIssue, readRepoFile, putRepoBase64, listUserRepos } from "./github.js";
 import { listAgentFiles, readAgentFile, isSafeAgentPath } from "./memory.js";
@@ -204,6 +205,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               repos: effectiveRepos(cfg),
               active: getActive(),
               inflight: inFlightKeys(),
+              rateLimited: listRateLimited(),
               issues: enriched,
               runs: recentRuns(40),
               activity: recentActivity(400),

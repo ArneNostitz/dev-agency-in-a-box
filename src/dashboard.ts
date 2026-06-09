@@ -102,7 +102,8 @@ const STYLE = `
   .card .t{font-weight:560;font-size:14px;margin:1px 0 6px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
   .card .m{display:flex;gap:6px;align-items:center;flex-wrap:wrap;color:var(--muted);font-size:12px}
   .tag{font-size:11px;padding:1px 7px;border-radius:999px;background:#eef1f5;color:var(--muted)}
-  .tag.pr{background:var(--accent-weak);color:var(--accent)} .tag.prev{background:#e9f8ef;color:var(--green)} .tag.epic{background:#efe9ff;color:#6741d9} .tag.q{background:#f0f1f3;color:#7a828c}
+  .tag.pr{background:var(--accent-weak);color:var(--accent)} .tag.prev{background:#e9f8ef;color:var(--green)} .tag.epic{background:#efe9ff;color:#6741d9} .tag.q{background:#f0f1f3;color:#7a828c} .tag.rl{background:#fff1d6;color:#a76a00}
+  .cardbtn{border:1px solid #cdebd6;background:#e9f8ef;color:var(--green);border-radius:7px;padding:1px 8px;font-size:11px;cursor:pointer;font-weight:560}
   .epiclist{margin:2px 0 4px} .epiclist a{display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid var(--line);font-size:13px;color:var(--ink)}
   .epiclist .st{margin-left:auto;font-size:11px;color:var(--muted)} .epiclist .ck{color:var(--green)} .epiclist .ck.o{color:#c9ced6}
   .ebar{height:6px;border-radius:3px;background:var(--line);overflow:hidden;margin:6px 0}.ebar i{display:block;height:100%;background:#6741d9}
@@ -286,9 +287,10 @@ ${CLIENT_HELPERS}
     {k:"done", label:"Done",       cols:["done"]}
   ];
   function classify(i){
-    if(i.active||i.queued||i.state==="agency:in-progress")return "working";
+    // Auto-resume (rate-limited) and queued both stay in Working with their badge.
+    if(i.active||i.queued||i.state==="agency:in-progress"||i.state==="agency:rate-limited")return "working";
     if(i.state==="agency:epic")return (i.epic&&i.epic.done>=i.epic.total)?"review":"working";
-    if(i.state==="agency:awaiting-approval"||i.state==="agency:awaiting-answer"||i.state==="agency:needs-attention"||i.state==="agency:rate-limited")return "waiting";
+    if(i.state==="agency:awaiting-approval"||i.state==="agency:awaiting-answer"||i.state==="agency:needs-attention")return "waiting";
     if(i.state==="agency:ready")return "review";
     if(i.state==="merged"||i.state==="agency:merged"||i.state==="closed"||i.state==="done")return "done";
     return "new";
@@ -304,7 +306,8 @@ ${CLIENT_HELPERS}
   function getJSON(u){return fetch(u).then(function(r){return r.json();});}
   function load(){getJSON("/data").then(function(d){
     DATA=d; INFLIGHT=new Set(d.inflight||[]);
-    DATA.issues=(d.issues||[]).map(function(i){i.active=activeKey(i);i.queued=queuedKey(i);return i;});
+    var RL={}; (d.rateLimited||[]).forEach(function(r){RL[r.repo+"#"+r.number]=r.resumeAt;});
+    DATA.issues=(d.issues||[]).map(function(i){i.active=activeKey(i);i.queued=queuedKey(i);i.resumeAt=RL[i.repo+"#"+i.number];return i;});
     renderSub(); renderChips(); renderBoard(); if(open) refreshDrawerLive();
     if(document.getElementById("settings").classList.contains("on")) refreshSettings();
   }).catch(function(){});}
@@ -335,16 +338,23 @@ ${CLIENT_HELPERS}
 
   function card(i){
     var tags='';
-    if(i.state==="agency:rate-limited") tags+='<span class="tag q">⏳ rate-limited</span>';
+    if(i.state==="agency:rate-limited") tags+='<span class="tag rl">⌛ '+(i.resumeAt?('auto-resume '+hm(new Date(i.resumeAt))):'auto-resume')+'</span>';
     if(i.queued) tags+='<span class="tag q">⏳ queued</span>';
     if(i.epic) tags+='<span class="tag epic">🧩 '+i.epic.done+'/'+i.epic.total+'</span>';
     if(i.pr_number) tags+='<a class="tag pr" href="'+(i.pr_url||gh(i.repo,i.pr_number))+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">PR #'+i.pr_number+' ↗</a>';
     if(i.previewUrl) tags+='<a class="tag prev" href="'+i.previewUrl+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">preview ↗</a>';
     var role=i.role?(ICON[i.role]||"")+" ":"";
+    var quick=i.state==="agency:awaiting-approval"?'<button class="cardbtn" onclick=\\'cardApprove('+JSON.stringify(i.repo)+','+i.number+',event)\\'>✓ approve</button> ':'';
     return '<div class="card" onclick=\\'openDrawer('+JSON.stringify(i.repo)+','+i.number+')\\'>'+
       '<div class="t">'+(i.active?'<span class="dot"></span> ':'')+esc(i.title||("#"+i.number))+'</div>'+
-      '<div class="m">'+role+'#'+i.number+' '+tags+'<span style="margin-left:auto">'+ago(i.updated_at)+'</span></div></div>';
+      '<div class="m">'+role+'#'+i.number+' '+tags+'<span style="margin-left:auto">'+quick+ago(i.updated_at)+'</span></div></div>';
   }
+  window.cardApprove=function(repo,number,ev){
+    if(ev){ev.stopPropagation();}
+    fetch("/approve",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({repo:repo,number:number})})
+      .then(function(r){if(!r.ok)throw 0; toast("Approved — building ✓"); setTimeout(load,1000);})
+      .catch(function(){toast("Couldn’t approve");});
+  };
   function lane(ck,items){
     var inner=items.length?items.map(card).join(""):'<div class="empty">—</div>';
     return '<div class="lane"><h3>'+COL[ck]+'<span>'+(items.length||"")+'</span></h3><div class="lanecards">'+inner+'</div></div>';
