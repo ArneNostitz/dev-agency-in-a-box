@@ -124,6 +124,11 @@ const STYLE = `
   .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
   .btn.danger{color:var(--red);border-color:#f0ccd1}
   .btn.armed{background:var(--amber);border-color:var(--amber);color:#fff}
+  .btn.ic{padding:7px 9px;font-size:15px;line-height:1}
+  .dactions{position:relative;overflow:visible}
+  [data-tip]{position:relative}
+  [data-tip]:hover::after{content:attr(data-tip);position:absolute;left:50%;top:calc(100% + 7px);transform:translateX(-50%);background:#0f1117;color:#fff;padding:4px 8px;border-radius:6px;font-size:11px;font-weight:500;white-space:nowrap;z-index:60;pointer-events:none}
+  [data-tip]:hover::before{content:"";position:absolute;left:50%;top:calc(100% + 2px);transform:translateX(-50%);border:5px solid transparent;border-bottom-color:#0f1117;z-index:60;pointer-events:none}
   .btn:disabled{opacity:.5}
   .dbody{flex:1;overflow:auto;-webkit-overflow-scrolling:touch;padding:12px 14px 18px}
   .sec{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin:14px 2px 6px}
@@ -621,16 +626,7 @@ ${CLIENT_HELPERS}
     open={repo:repo,number:n,issue:i};
     document.getElementById("d_title").textContent=(i.title||("#"+n));
     document.getElementById("d_meta").innerHTML=esc(repo)+' · #'+n+(i.state?' · '+esc(i.state.replace("agency:","")):'');
-    var a='<a class="btn" href="'+gh(repo,n)+'" target="_blank" rel="noopener">Issue ↗</a>';
-    if(i.pr_url) a+='<a class="btn" href="'+i.pr_url+'" target="_blank" rel="noopener">PR ↗</a>';
-    if(i.previewUrl) a+='<a class="btn primary" href="'+i.previewUrl+'" target="_blank" rel="noopener">Open preview ↗</a>';
-    if(i.state==="agency:awaiting-approval") a+='<button class="btn primary" onclick="doApprove(this)">✓ Approve &amp; build</button>';
-    a+='<button class="btn" id="d_resume" onclick="doResume(this)">⟳ Resume</button>';
-    a+='<button class="btn" id="d_checks" onclick="runChecks()">▶ Run checks</button>';
-    if(i.pr_number) a+='<button class="btn" onclick="confirmAct(this,\\'merge\\')">⤵ Merge</button>';
-    else if(i.epic) a+='<button class="btn" onclick="confirmAct(this,\\'merge\\')">⤵ Merge all sub-issues</button>';
-    a+='<button class="btn danger" onclick="confirmAct(this,\\'delete\\')">🗑 Delete</button>';
-    document.getElementById("d_actions").innerHTML=a;
+    renderActions();
     var ehtml="";
     if(i.epic){var pct=Math.round(100*i.epic.done/Math.max(1,i.epic.total));
       ehtml='<div class="sec">Sub-issues — '+i.epic.done+'/'+i.epic.total+' done</div><div class="ebar"><i style="width:'+pct+'%"></i></div><div class="epiclist">'+
@@ -638,8 +634,8 @@ ${CLIENT_HELPERS}
     }
     document.getElementById("d_stream").innerHTML="";
     open.appKind=undefined; open.devScript=null; PEND=[]; renderAtts();
-    getJSON("/app-info?repo="+encodeURIComponent(repo)+"&number="+n).then(function(d){if(!open||open.number!==n)return;open.appKind=d.kind;open.devScript=d.devScript;renderAppSection();}).catch(function(){if(open)open.appKind="unknown";renderAppSection();});
-    document.getElementById("d_body").innerHTML=ehtml+'<div class="sec">Run the app</div><div id="d_app" class="muted">Checking…</div><div class="sec">Conversation</div><div id="d_thread"><div class="empty">Loading…</div></div>';
+    getJSON("/app-info?repo="+encodeURIComponent(repo)+"&number="+n).then(function(d){if(!open||open.number!==n)return;open.appKind=d.kind;open.devScript=d.devScript;renderActions();}).catch(function(){if(open)open.appKind="unknown";renderActions();});
+    document.getElementById("d_body").innerHTML=ehtml+'<div class="sec">Conversation</div><div id="d_thread"><div class="empty">Loading…</div></div>';
     applyStreamCollapse();
     renderStream(); loadThread(true);
     document.getElementById("drawer").classList.add("on");
@@ -666,39 +662,52 @@ ${CLIENT_HELPERS}
     el.innerHTML=evs.length?evs.map(lineHtml).join(""):'<div class="l muted">No live activity. Tap “Run checks” or reply below.</div>';
     el.scrollTop=el.scrollHeight;
   }
-  function refreshDrawerLive(){renderStream(); var i=findIssue(open.repo,open.number); if(i){open.issue=i;} renderAppSection();}
+  function refreshDrawerLive(){renderStream(); var i=findIssue(open.repo,open.number); if(i){open.issue=i;} renderActions();}
 
-  // ---- run-the-app panel ----
-  function renderAppSection(){
-    if(!open)return; var el=document.getElementById("d_app"); if(!el)return;
-    var i=findIssue(open.repo,open.number)||{}; var app=i.app, kind=open.appKind;
-    if(kind===undefined){el.innerHTML='<span class="muted">Checking…</span>';return;}
-    if(kind==="none"){el.innerHTML='<span class="muted">No package.json — nothing to run.</span>';return;}
-    if(kind==="unknown"){el.innerHTML='<span class="muted">Couldn’t read the repo.</span>';return;}
-    var h="";
-    if(kind==="tauri"){
-      var one="curl -fsSL "+JSON.stringify(location.origin+"/app-local?repo="+encodeURIComponent(open.repo)+"&number="+open.number+"&raw=1")+" | bash";
-      h+='<div class="muted" style="margin-bottom:6px">Tauri (native) app — runs on your Mac, not the browser.</div>'+
-        '<button class="btn primary" onclick="copyCmd()">📋 Copy run command</button>'+
-        '<div class="muted" style="font-size:12px;margin:6px 0 4px">Then open <b>Terminal</b>, paste (⌘V) and hit <b>Enter</b>. Pasting avoids the macOS “unidentified developer” block.</div>'+
-        '<div class="cmdrow"><code id="tauricmd" onclick="selCmd(this)" title="click to select">'+esc(one)+'</code></div>'+
-        '<div class="muted" style="font-size:12px;margin-top:4px"><a href="/app-local?repo='+encodeURIComponent(open.repo)+'&number='+open.number+'" download>download .command</a> instead</div>'+
-        (open.devScript?'<div style="margin-top:8px"><button class="btn" onclick="runApp()">▶ UI-only preview</button></div>':'');
-    }
-    var web = (kind==="web"||kind==="tauri");
-    if(web){
-      if(app&&app.status==="running") h+='<div style="margin-top:8px"><a class="btn primary" href="'+app.url+'" target="_blank" rel="noopener">Open app ↗</a> <button class="btn" onclick="stopAppPreview()">⏹ Stop</button></div>';
-      else if(app&&(app.status==="installing"||app.status==="starting")) h+='<div class="muted" style="margin-top:8px">⏳ '+esc(app.status)+'… (watch the Live stream above)</div><button class="btn" style="margin-top:4px" onclick="stopAppPreview()">Cancel</button>';
-      else if(app&&app.status==="error") h+='<div style="margin-top:8px;color:var(--red)">⚠ '+esc(app.error||"failed")+'</div><button class="btn" onclick="runApp()">▶ Try again</button>';
-      else if(kind==="web") h+='<button class="btn primary" onclick="runApp()">▶ Run preview</button><div class="muted" style="font-size:12px;margin-top:4px">Runs the dev server in the cloud and gives you a link — no install.</div>';
-    }
-    el.innerHTML=h;
+  // ---- drawer action bar (icon-only, instant tooltips; app controls folded in) ----
+  function ibtn(icon,tip,onclick,cls,id){return '<button class="btn ic'+(cls?' '+cls:'')+'" data-tip="'+esc(tip)+'"'+(id?' id="'+id+'"':'')+' onclick="'+onclick+'">'+icon+'</button>';}
+  function ilnk(icon,tip,href,cls){return '<a class="btn ic'+(cls?' '+cls:'')+'" data-tip="'+esc(tip)+'" href="'+href+'" target="_blank" rel="noopener">'+icon+'</a>';}
+  // Pure-GitHub local run: clones via the user's own gh CLI and checks out the PR — no dashboard
+  // fetch (so no auth/401) and no downloaded file (so no macOS Gatekeeper block).
+  function ghRunCmd(){
+    var nm=open.repo.split("/").pop();
+    return 'd=~/.devagency/'+nm+'; gh repo clone '+open.repo+' "$d" 2>/dev/null; cd "$d" && git fetch -q && gh pr checkout '+open.number+
+      ' && { corepack enable 2>/dev/null; PM=npm; [ -f pnpm-lock.yaml ]&&PM=pnpm; [ -f yarn.lock ]&&PM=yarn; $PM install && ($PM run tauri:dev || $PM tauri dev || $PM run dev); }';
   }
-  window.selCmd=function(t){var r=document.createRange();r.selectNode(t);var s=getSelection();s.removeAllRanges();s.addRange(r);};
-  window.copyCmd=function(){var t=document.getElementById("tauricmd");if(!t)return;var s=t.textContent;
-    (navigator.clipboard?navigator.clipboard.writeText(s):Promise.reject()).then(function(){toast("Copied — paste in Terminal & hit Enter");},function(){
-      selCmd(t);try{document.execCommand("copy");toast("Copied — paste in Terminal & hit Enter");}catch(e){toast("Select the command & copy");}});
+  window.copyRun=function(){var s=ghRunCmd();
+    function done(){toast("Copied — paste in Terminal & hit Enter");}
+    function fb(){var t=document.createElement("textarea");t.value=s;t.style.position="fixed";t.style.opacity="0";document.body.appendChild(t);t.select();try{document.execCommand("copy");done();}catch(e){toast("Copy failed");}document.body.removeChild(t);}
+    if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(s).then(done,fb);else fb();
   };
+  function renderActions(){
+    if(!open)return; var i=findIssue(open.repo,open.number)||open.issue||{}; open.issue=i;
+    var app=i.app, kind=open.appKind, st=i.state||"";
+    var done = st==="merged"||st==="agency:merged"||st==="closed"||st==="done";
+    var epicDone = i.epic && i.epic.done>=i.epic.total;
+    // Links are always relevant.
+    var a=ilnk('🔗','Open issue on GitHub',gh(open.repo,open.number));
+    if(i.pr_url) a+=ilnk('⑂','Open pull request',i.pr_url);
+    if(i.previewUrl) a+=ilnk('🌐','Open preview',i.previewUrl,'primary');
+    // Action buttons only while the issue is still live.
+    if(!done){
+      if(st==="agency:awaiting-approval") a+=ibtn('✓','Approve &amp; build','doApprove(this)','primary');
+      a+=ibtn('⟳','Resume','doResume(this)','','d_resume');
+      a+=ibtn('🧪','Run checks','runChecks()','','d_checks');
+      // run-the-app, folded into the bar (branch still exists pre-merge)
+      if(kind==="tauri") a+=ibtn('💻','Run on my Mac — copies a Terminal command (uses your gh login)','copyRun()');
+      if(kind==="web"||kind==="tauri"){
+        if(app&&app.status==="running"){ a+=ilnk('🖥','Open running preview',app.url,'primary'); a+=ibtn('⏹','Stop preview','stopAppPreview()'); }
+        else if(app&&(app.status==="installing"||app.status==="starting")){ a+=ibtn('⏳','Starting preview… (watch Live stream)','stopAppPreview()'); }
+        else if(app&&app.status==="error"){ a+=ibtn('⚠','Preview failed — retry','runApp()','danger'); }
+        else if(kind==="web"){ a+=ibtn('🚀','Run preview in the cloud (gives a link)','runApp()'); }
+      }
+      // Merge only when there's something open to merge.
+      if(i.pr_number) a+=ibtn('⤵','Merge PR','confirmAct(this,\\'merge\\')');
+      else if(i.epic && epicDone) a+=ibtn('⤵','Merge all sub-issues','confirmAct(this,\\'merge\\')');
+    }
+    a+=ibtn('🗑','Delete','confirmAct(this,\\'delete\\')','danger');
+    document.getElementById("d_actions").innerHTML=a;
+  }
   window.runApp=function(){ if(!open)return;
     fetch("/app-run",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({repo:open.repo,number:open.number})})
       .then(function(r){if(!r.ok)return r.json().then(function(d){toast(d.error||"can’t run");}); toast("Starting preview…"); setTimeout(load,800);}).catch(function(){toast("Couldn’t start");}); };
