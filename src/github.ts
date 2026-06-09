@@ -5,7 +5,7 @@
  */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { writeFileSync, unlinkSync } from "node:fs";
+import { writeFileSync, unlinkSync, appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -484,6 +484,16 @@ export async function commentThread(repo: string, issue: number): Promise<string
 export async function cloneRepo(repo: string, dest: string): Promise<void> {
   await gh(["auth", "setup-git"]);
   await gh(["repo", "clone", repo, dest, "--", "--depth", "50"]);
+  // Safety net for the deterministic `git add -A` finalize: never sweep generated dirs even if
+  // the repo lacks a .gitignore for them.
+  try {
+    appendFileSync(
+      join(dest, ".git", "info", "exclude"),
+      "\nnode_modules/\ndist/\nbuild/\n.next/\nout/\ncoverage/\n.gnhome/\n.gitnexus/\n",
+    );
+  } catch {
+    /* non-fatal */
+  }
   // Save GitHub Actions minutes: our tester runs the same checks in-container, so the CI on
   // agency branch commits is redundant. A commit-msg hook appends [skip ci] to every commit
   // the agents make (push + PR runs are skipped); the squash-merge to main still runs CI via
@@ -787,6 +797,44 @@ export interface PullRequest {
   number: number;
   url: string;
   isDraft: boolean;
+}
+
+async function runGit(cwd: string, args: string[]): Promise<string> {
+  const { stdout } = await execFileAsync("git", args, { cwd, env: process.env, maxBuffer: 10 * 1024 * 1024 });
+  return stdout.trim();
+}
+
+/**
+ * Deterministically make sure the agency branch holds ALL the work and is pushed — so a run
+ * that did the work but never got to `git push` (looped / was interrupted) still lands its
+ * code. Returns true if the branch has commits beyond main.
+ */
+export async function ensureBranchPushed(workdir: string, branch: string): Promise<boolean> {
+  try {
+    const cur = await runGit(workdir, ["rev-parse", "--abbrev-ref", "HEAD"]).catch(() => "");
+    if (cur !== branch) await runGit(workdir, ["checkout", "-B", branch]).catch(() => {});
+    await runGit(workdir, ["add", "-A"]).catch(() => {});
+    const staged = await runGit(workdir, ["diff", "--cached", "--name-only"]).catch(() => "");
+    if (staged.trim()) {
+      await runGit(workdir, ["commit", "-m", "agency: finalize work"]).catch(() => {});
+    }
+    await runGit(workdir, ["push", "-u", "origin", branch]).catch(() => {});
+    const ahead = await runGit(workdir, ["rev-list", "--count", `origin/main..${branch}`]).catch(() => "0");
+    return Number(ahead) > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** Open a draft PR for the branch if none exists; returns the PR (or null). */
+export async function ensureDraftPr(repo: string, issue: number, branch: string, title: string): Promise<PullRequest | null> {
+  const existing = await findPrForBranch(repo, branch);
+  if (existing) return existing;
+  await gh([
+    "pr", "create", "--repo", repo, "--draft", "--base", "main", "--head", branch,
+    "--title", title || `Work for #${issue}`, "--body", `Closes #${issue}`,
+  ]).catch(() => {});
+  return findPrForBranch(repo, branch);
 }
 
 /** Find an open PR whose head branch matches `branch`, if any. */

@@ -15,6 +15,8 @@ import {
   removeLabel,
   commentOnIssue,
   findPrForBranch,
+  ensureBranchPushed,
+  ensureDraftPr,
   createIssue,
   approvedByReaction,
   commentOnPr,
@@ -91,9 +93,15 @@ async function plan(repo: string, issue: Issue, workdir: string, thread: string)
   return parsePlannerDecision(res.text);
 }
 
-/** Returns true if a PR was found (the build succeeded end-to-end). */
-async function finalizeWithPr(repo: string, issue: Issue, branch: string): Promise<boolean> {
-  const pr = await findPrForBranch(repo, branch);
+/**
+ * Deterministic finish (orchestrator, not the agent): commit any leftover work, push the
+ * branch, and open the PR if missing. So a run that did the work but never reached `git push`
+ * (looped / interrupted) still lands a PR instead of bouncing to needs-attention. Returns true
+ * if a PR now exists.
+ */
+async function finalizeWithPr(repo: string, issue: Issue, workdir: string, branch: string): Promise<boolean> {
+  const hasCommits = await ensureBranchPushed(workdir, branch);
+  const pr = hasCommits ? await ensureDraftPr(repo, issue.number, branch, issue.title) : await findPrForBranch(repo, branch);
   await removeLabel(repo, issue.number, IN_PROGRESS);
   if (pr) {
     await addLabel(repo, issue.number, READY);
@@ -119,9 +127,9 @@ async function finalizeWithPr(repo: string, issue: Issue, branch: string): Promi
     await commentOnIssue(
       repo,
       issue.number,
-      "⚠️ Finished without opening a pull request — it may need clarification or hit a blocker. Re-pin to retry.",
+      "⚠️ No code changes were produced (nothing to commit). It may need clarification or hit a blocker — comment guidance, then re-pin.",
     );
-    console.log(`[agency] ${repo} #${issue.number} -> ${NEEDS_ATTENTION} (no PR).`);
+    console.log(`[agency] ${repo} #${issue.number} -> ${NEEDS_ATTENTION} (no commits).`);
     return false;
   }
 }
@@ -207,16 +215,20 @@ async function build(
 
   // Resuming an interrupted run: continue from the existing branch (don't redo committed work)
   // and try to resume the developer's exact prior session; fall back to fresh if that fails.
+  // Note on finishing: a Tester runs the full checks next, and the ORCHESTRATOR commits/pushes
+  // and opens the PR after you — so don't loop re-running the whole suite or worry about the PR.
+  const finishRule =
+    `IMPORTANT: commit and push after EACH logical chunk (\`git add <files> && git commit -m "…" && git push\`), ` +
+    `not just at the end. A quick sanity check is fine, but do NOT repeatedly re-run the full test suite — the ` +
+    `Tester does that next, and the orchestrator opens/updates the PR. When the change is made and committed, stop.`;
   const devTask = resume
-    ? `RESUMING an interrupted run on this issue. First \`git fetch origin ${branch}\` and check it out if it ` +
-      `exists; review what's already committed (\`git log --oneline main..HEAD\`, \`git diff\`). Finish ONLY ` +
-      `what's incomplete per the plan — do NOT redo work that's already committed. Commit and push as you go. ` +
-      `Then ensure a DRAFT PR exists whose body contains "Closes #${issue.number}".\n\n` +
+    ? `RESUMING an interrupted run. First \`git fetch origin ${branch}\` and check it out if it exists; review ` +
+      `what's already committed (\`git log --oneline main..HEAD\`, \`git diff\`). Finish ONLY what's incomplete ` +
+      `per the plan — do NOT redo committed work. ${finishRule}\n\n` +
       `### Plan\n${planText}\n\n### What the interrupted run already did\n${resume.digest}\n\n### ${issueHeader(issue)}`
-    : `Implement this issue on a new branch \`${branch}\` off an up-to-date main, following the approved plan ` +
-      `and the harness. Reuse existing code; keep the change small. **Commit and push after each logical chunk** ` +
-      `(not just at the end) so progress is never lost. Add/extend tests. Open a DRAFT pull request whose body ` +
-      `contains "Closes #${issue.number}".\n\n### Approved plan\n${planText}\n\n### ${issueHeader(issue)}` +
+    : `Implement this issue on branch \`${branch}\` off an up-to-date main, following the plan and the harness. ` +
+      `Reuse existing code; keep the change small; add/extend tests. ${finishRule}\n\n` +
+      `### Approved plan\n${planText}\n\n### ${issueHeader(issue)}` +
       (thread ? `\n\n### Conversation (latest changes apply)\n${thread}` : "");
 
   const dev = await runRole("developer", {
@@ -269,7 +281,7 @@ async function build(
     recordRun(repo, issue.number, "developer", revise.model, revise.turns, "revise", revise.costUsd);
   }
 
-  const ok = await finalizeWithPr(repo, issue, branch);
+  const ok = await finalizeWithPr(repo, issue, workdir, branch);
   if (ok) {
     // Reflect (cheap, best-effort): what should the agency remember from this build?
     await runReflection(
