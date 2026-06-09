@@ -211,7 +211,12 @@ export function renderDashboard(): string {
       <option value="@test">@test — run checks</option>
     </select>
     <label>Title</label><input id="c_title" placeholder="Short title" autocomplete="off">
-    <label>Description</label><textarea id="c_body" placeholder="What needs doing? Context, acceptance criteria…"></textarea>
+    <label>Description</label><textarea id="c_body" placeholder="What needs doing? Paste an image to attach." onpaste="onPasteC(event)"></textarea>
+    <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
+      <input type="file" id="c_file" accept="image/*" style="display:none" onchange="onPickC(event)">
+      <button class="btn" onclick="document.getElementById('c_file').click()">📎 Add image</button>
+      <div id="c_atts" class="atts"></div>
+    </div>
     <div class="row"><button class="btn" onclick="closeComposer()">Cancel</button><button class="btn primary" id="c_create" onclick="submitIssue()">Create</button></div>
   </div>
   <div class="scrim" id="sscrim" onclick="closeSettings()"></div>
@@ -438,10 +443,19 @@ ${CLIENT_HELPERS}
       .then(function(){btn.disabled=false;});
   };
 
+  // ---- composer image attachments ----
+  var CPEND=[];
+  function renderCAtts(){var el=document.getElementById("c_atts");if(el)el.innerHTML=CPEND.map(function(d,i){return '<div class="att"><img src="'+d+'"><button onclick="rmCAtt('+i+')">×</button></div>';}).join("");}
+  window.rmCAtt=function(i){CPEND.splice(i,1);renderCAtts();};
+  function addCImage(file){if(!file||!/^image\\//.test(file.type))return;var r=new FileReader();r.onload=function(){CPEND.push(r.result);renderCAtts();};r.readAsDataURL(file);}
+  window.onPasteC=function(e){var got=false,items=(e.clipboardData||{}).items||[];for(var i=0;i<items.length;i++){if(items[i].type&&items[i].type.indexOf("image")===0){addCImage(items[i].getAsFile());got=true;}}var fs=(e.clipboardData||{}).files||[];for(var j=0;j<fs.length;j++){if(/^image\\//.test(fs[j].type)){addCImage(fs[j]);got=true;}}if(got)e.preventDefault();};
+  window.onPickC=function(e){var f=e.target.files&&e.target.files[0];if(f)addCImage(f);e.target.value="";};
+
   // ---- new issue composer ----
   window.openComposer=function(){
     var rs=document.getElementById("c_repo");
     rs.innerHTML=(DATA.repos||[]).map(function(r){return '<option value="'+esc(r)+'"'+(repoFilter===r?' selected':'')+'>'+esc(r)+'</option>';}).join("");
+    CPEND=[]; renderCAtts();
     document.getElementById("composer").classList.add("on");
     document.getElementById("cscrim").classList.add("on");
     document.body.classList.add("noscroll");
@@ -457,9 +471,12 @@ ${CLIENT_HELPERS}
     var title=document.getElementById("c_title").value.trim(), body=document.getElementById("c_body").value.trim();
     if(!repo||!title){toast("Repo + title needed");return;}
     var btn=document.getElementById("c_create"); btn.disabled=true;
-    fetch("/new-issue",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({repo:repo,role:role,title:title,body:body})})
+    if(CPEND.length)toast("Uploading image…");
+    Promise.all(CPEND.map(function(d){return fetch("/upload-image",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({repo:repo,dataUrl:d})}).then(function(r){return r.ok?r.json():null;}).then(function(j){return j&&j.md;}).catch(function(){return null;});}))
+      .then(function(mds){var full=[body].concat(mds.filter(Boolean)).filter(Boolean).join("\\n\\n");
+        return fetch("/new-issue",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({repo:repo,role:role,title:title,body:full})});})
       .then(function(r){if(!r.ok)throw 0;return r.json();})
-      .then(function(d){toast("Created #"+(d.number||""));document.getElementById("c_title").value="";document.getElementById("c_body").value="";closeComposer();setTimeout(load,1200);})
+      .then(function(d){toast("Created #"+(d.number||""));document.getElementById("c_title").value="";document.getElementById("c_body").value="";CPEND=[];renderCAtts();closeComposer();setTimeout(load,1200);})
       .catch(function(){toast("Couldn’t create");})
       .then(function(){btn.disabled=false;});
   };
@@ -552,7 +569,7 @@ ${CLIENT_HELPERS}
   function renderAtts(){var el=document.getElementById("d_atts");if(!el)return;el.innerHTML=PEND.map(function(d,idx){return '<div class="att"><img src="'+d+'"><button onclick="rmAtt('+idx+')">×</button></div>';}).join("");}
   window.rmAtt=function(i){PEND.splice(i,1);renderAtts();};
   function addImageFile(file){if(!file||!/^image\\//.test(file.type))return;var r=new FileReader();r.onload=function(){PEND.push(r.result);renderAtts();};r.readAsDataURL(file);}
-  window.onPasteImage=function(e){var items=(e.clipboardData||{}).items||[];for(var i=0;i<items.length;i++){if(items[i].type&&items[i].type.indexOf("image")===0){addImageFile(items[i].getAsFile());e.preventDefault();}}};
+  window.onPasteImage=function(e){var got=false,items=(e.clipboardData||{}).items||[];for(var i=0;i<items.length;i++){if(items[i].type&&items[i].type.indexOf("image")===0){addImageFile(items[i].getAsFile());got=true;}}var fs=(e.clipboardData||{}).files||[];for(var j=0;j<fs.length;j++){if(/^image\\//.test(fs[j].type)){addImageFile(fs[j]);got=true;}}if(got)e.preventDefault();};
   window.onPickImage=function(e){var f=e.target.files&&e.target.files[0];if(f)addImageFile(f);e.target.value="";};
   function uploadAtts(){return Promise.all(PEND.map(function(d){return fetch("/upload-image",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({repo:open.repo,number:open.number,dataUrl:d})}).then(function(r){return r.ok?r.json():null;}).then(function(j){return j&&j.md;}).catch(function(){return null;});})).then(function(a){return a.filter(Boolean);});}
 
