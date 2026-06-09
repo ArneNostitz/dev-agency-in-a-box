@@ -71,6 +71,8 @@ services:
       # MCP instead of reading many files. Big token saver on codebase research.
       GITNEXUS: ${GITNEXUS:-}
       GITNEXUS_INDEX_TIMEOUT_MS: ${GITNEXUS_INDEX_TIMEOUT_MS:-}
+      # Override the analyze command/flags if your gitnexus version differs (default: "analyze")
+      GITNEXUS_ANALYZE_ARGS: ${GITNEXUS_ANALYZE_ARGS:-}
       # Self-evolving loop (librarian lessons -> playbook PRs against AGENCY_REPO)
       SELF_IMPROVE: ${SELF_IMPROVE:-}
       LESSONS_PR_THRESHOLD: ${LESSONS_PR_THRESHOLD:-}

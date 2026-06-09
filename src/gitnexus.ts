@@ -36,9 +36,14 @@ export async function indexRepo(workdir: string, log: (s: string) => void = () =
   if (!gitnexusEnabled()) return false;
   try {
     log("🧭 indexing codebase with GitNexus (no tokens)…");
-    await exec("gitnexus", ["analyze", "--skip-embeddings"], {
+    // Flags vary by gitnexus version (e.g. some lack --skip-embeddings). Plain `analyze` always
+    // works; override the args with GITNEXUS_ANALYZE_ARGS (space-separated) for your version.
+    const args = process.env.GITNEXUS_ANALYZE_ARGS?.trim()
+      ? process.env.GITNEXUS_ANALYZE_ARGS.trim().split(/\s+/)
+      : ["analyze"];
+    await exec("gitnexus", args, {
       cwd: workdir,
-      timeout: Number(process.env.GITNEXUS_INDEX_TIMEOUT_MS?.trim()) || 180_000,
+      timeout: Number(process.env.GITNEXUS_INDEX_TIMEOUT_MS?.trim()) || 300_000,
       maxBuffer: 16 * 1024 * 1024,
       env: { ...process.env, HOME: gnHome(workdir), GITNEXUS_SKIP_OPTIONAL_GRAMMARS: "1" },
     });
