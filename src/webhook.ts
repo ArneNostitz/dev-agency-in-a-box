@@ -14,7 +14,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { Config } from "./config.js";
-import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo } from "./store.js";
+import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, type Provider } from "./store.js";
 import { mergeEpic, isEpic } from "./epics.js";
 import { renderDashboard, renderHistory } from "./dashboard.js";
 import { subscribe, getActive } from "./activity.js";
@@ -224,6 +224,25 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         return;
       }
 
+      // Models panel: providers, per-role assignments, and quick presets.
+      if (url === "/models") {
+        res.writeHead(200, { "content-type": "application/json" }).end(
+          JSON.stringify({
+            providers: getProviders(),
+            roleModels: getRoleModels(),
+            roles: ["planner", "architect", "developer", "reviewer", "tester", "librarian"],
+            // Editable presets — all expose a native Anthropic-compatible endpoint.
+            presets: [
+              { name: "GLM (Zhipu)", baseUrl: "https://open.bigmodel.cn/api/anthropic", models: ["glm-4.6", "glm-4.5"] },
+              { name: "DeepSeek", baseUrl: "https://api.deepseek.com/anthropic", models: ["deepseek-chat", "deepseek-reasoner"] },
+              { name: "Kimi (Moonshot)", baseUrl: "https://api.moonshot.cn/anthropic", models: ["kimi-k2-0905-preview"] },
+              { name: "Custom (Anthropic-compatible)", baseUrl: "", models: [] },
+            ],
+          }),
+        );
+        return;
+      }
+
       // Repo picker: all repos your token can access, minus the ones already watched.
       if (url === "/repos-available") {
         const token = cfg.adminToken ?? cfg.githubToken;
@@ -345,10 +364,10 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
 
     // Dashboard actions (password-protected, not GitHub webhooks).
     const path = (req.url ?? "").split("?")[0];
-    if (["/archive", "/comment", "/run-checks", "/merge", "/delete", "/resume", "/new-issue", "/approve", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo"].includes(path)) {
+    if (["/archive", "/comment", "/run-checks", "/merge", "/delete", "/resume", "/new-issue", "/approve", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/models"].includes(path)) {
       if (!checkAuth(cfg, req, res)) return;
       void readBody(req).then(async (body) => {
-        let p: { repo?: string; number?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; dataUrl?: string; name?: string } = {};
+        let p: { repo?: string; number?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; dataUrl?: string; name?: string; providers?: Provider[]; roleModels?: Record<string, { providerId: string; model: string }> } = {};
         try {
           p = JSON.parse(body.toString("utf8"));
         } catch {
@@ -451,6 +470,12 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         if (path === "/app-stop") {
           if (!repo || !number) return res.writeHead(400).end("{}");
           stopApp(repo, number);
+          return ok();
+        }
+        if (path === "/models") {
+          // Save providers + per-role model assignments (live, next run uses them).
+          if (Array.isArray(p.providers)) setProviders(p.providers);
+          if (p.roleModels && typeof p.roleModels === "object") setRoleModels(p.roleModels);
           return ok();
         }
         if (path === "/add-repo") {

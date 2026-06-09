@@ -7,9 +7,28 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import { ROLES, modelFor, type RoleName } from "./roles.js";
 import { loadConstitution, loadPersona, loadPlaybooks, loadLearned } from "../memory.js";
 import { pushActivity } from "../activity.js";
-import { recentLessons, recordTokens } from "../store.js";
+import { recentLessons, recordTokens, getProviders, getRoleModels } from "../store.js";
 import { loadBudget } from "../budget.js";
 import { gitnexusWiring, GITNEXUS_PROMPT } from "../gitnexus.js";
+
+/**
+ * Per-role model routing. If this role is assigned a provider model in the dashboard, return
+ * the model + an env that points THIS run at that provider's Anthropic-compatible endpoint —
+ * leaving every other role (and the default) on your Claude subscription untouched.
+ */
+function resolveRoute(role: RoleName): { model: string; env: Record<string, string> } | null {
+  const rm = getRoleModels()[role];
+  if (!rm?.providerId || !rm.model) return null;
+  const p = getProviders().find((x) => x.id === rm.providerId);
+  if (!p?.baseUrl || !p.apiKey) return null;
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) if (typeof v === "string") env[k] = v;
+  delete env.CLAUDE_CODE_OAUTH_TOKEN; // don't use the Claude subscription for this provider
+  env.ANTHROPIC_BASE_URL = p.baseUrl;
+  env.ANTHROPIC_AUTH_TOKEN = p.apiKey;
+  env.ANTHROPIC_API_KEY = p.apiKey;
+  return { model: rm.model, env };
+}
 
 /** A short, meaningful one-liner for a tool call (the command/file, not just the tool name). */
 function summarizeTool(name: string, input: Record<string, unknown> = {}): string {
@@ -111,7 +130,9 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
   // tokens spent reading files to research the codebase).
   const gn = gitnexusWiring(input.workdir);
   const systemPrompt = (await buildSystemPrompt(role)) + (gn ? `\n\n${GITNEXUS_PROMPT}` : "");
-  const model = input.model ?? modelFor(def);
+  // Per-role provider routing (keeps Claude roles on your subscription; others go to e.g. GLM).
+  const route = input.model ? null : resolveRoute(role);
+  const model = input.model ?? route?.model ?? modelFor(def);
   const budget = loadBudget();
   // Per-role cap, never exceeding the global ceiling. Keeps Opus plans from ballooning.
   const maxTurns = Math.min(def.maxTurns || budget.maxTurnsPerRun, budget.maxTurnsPerRun);
@@ -141,6 +162,7 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
         model,
         allowedTools: [...def.tools, ...(gn?.tools ?? [])],
         ...(gn ? { mcpServers: gn.servers } : {}),
+        ...(route ? { env: route.env } : {}),
         // Fully autonomous. Requires the container to run as a NON-root user (Claude Code
         // refuses --dangerously-skip-permissions as root) — see Dockerfile `USER node`.
         permissionMode: "bypassPermissions",

@@ -244,7 +244,21 @@ export function renderDashboard(): string {
     <div style="display:flex;gap:8px"><input id="s_pct" type="number" min="1" max="100" placeholder="e.g. 42"><button class="btn" onclick="calcBudget()">Set from %</button></div>
     <label>Budget — tokens per window (0 = show tokens only)</label><input id="s_budget" type="number" min="0" step="1000">
     <div class="row"><button class="btn" onclick="closeSettings()">Cancel</button><button class="btn primary" id="s_save" onclick="saveSettings()">Save</button></div>
-    <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:10px"><button class="btn" onclick="openAgents()">✎ Edit agents &amp; playbooks →</button></div>
+    <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn" onclick="openAgents()">✎ Edit agents &amp; playbooks →</button>
+      <button class="btn" onclick="openModels()">⚡ Models &amp; providers →</button>
+    </div>
+  </div>
+  <div class="scrim" id="mscrim" onclick="closeModels()"></div>
+  <div class="composer" id="models">
+    <div class="ch"><div class="t">Models &amp; providers</div><button class="x" style="margin-left:auto" onclick="closeModels()" aria-label="Close">×</button></div>
+    <div class="muted" style="font-size:12px">Claude roles stay on your subscription. Assign other roles to a provider (GLM, DeepSeek, Kimi…) with a native Anthropic-compatible endpoint.</div>
+    <div class="sec" style="margin:10px 2px 4px">Providers</div>
+    <div id="m_providers"></div>
+    <div style="display:flex;gap:8px;margin-top:6px"><select id="m_preset"></select><button class="btn" onclick="addProvider()">+ Add</button></div>
+    <div class="sec" style="margin:14px 2px 4px">Which model runs each agent</div>
+    <div id="m_roles"></div>
+    <div class="row"><button class="btn" onclick="closeModels()">Cancel</button><button class="btn primary" id="m_save" onclick="saveModels()">Save</button></div>
   </div>
   <div class="scrim" id="ascrim" onclick="closeAgents()"></div>
   <div class="composer" id="agents">
@@ -429,6 +443,59 @@ ${CLIENT_HELPERS}
     var btn=document.getElementById("s_save"); btn.disabled=true;
     fetch("/settings",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({windowHours:win,budget:budget})})
       .then(function(r){if(!r.ok)throw 0; toast("Saved"); closeSettings(); setTimeout(load,400);})
+      .catch(function(){toast("Couldn’t save");})
+      .then(function(){btn.disabled=false;});
+  };
+
+  // ---- models & providers ----
+  var MDL={providers:[],roleModels:{},roles:[],presets:[]};
+  function roleIcon(r){return ICON[r]||"•";}
+  function renderProviders(){
+    var el=document.getElementById("m_providers");
+    el.innerHTML=(MDL.providers||[]).map(function(p,i){
+      return '<div class="cmt"><div style="display:flex;gap:6px;align-items:center"><b>'+esc(p.name||"provider")+'</b><button class="arch" style="margin-left:auto" onclick="rmProvider('+i+')">remove</button></div>'+
+        '<input placeholder="Name" value="'+esc(p.name||"")+'" oninput="MDL.providers['+i+'].name=this.value" style="margin-top:4px">'+
+        '<input placeholder="Anthropic-compatible base URL" value="'+esc(p.baseUrl||"")+'" oninput="MDL.providers['+i+'].baseUrl=this.value" style="margin-top:4px">'+
+        '<input placeholder="API key" value="'+esc(p.apiKey||"")+'" oninput="MDL.providers['+i+'].apiKey=this.value" type="password" style="margin-top:4px">'+
+        '<input placeholder="Models (comma-separated)" value="'+esc((p.models||[]).join(", "))+'" oninput="MDL.providers['+i+'].models=this.value.split(\\',\\').map(function(s){return s.trim();}).filter(Boolean)" style="margin-top:4px">'+
+      '</div>';
+    }).join("")||'<div class="muted" style="font-size:12px">No providers yet.</div>';
+  }
+  function allModelOptions(sel){
+    var opts='<option value="">Default — Claude (subscription)</option>';
+    (MDL.providers||[]).forEach(function(p){(p.models||[]).forEach(function(m){var v=p.id+"|"+m;opts+='<option value="'+esc(v)+'"'+(sel===v?' selected':'')+'>'+esc(p.name)+' · '+esc(m)+'</option>';});});
+    return opts;
+  }
+  function renderRoles(){
+    var el=document.getElementById("m_roles");
+    el.innerHTML=(MDL.roles||[]).map(function(r){
+      var rm=MDL.roleModels[r]; var sel=rm&&rm.providerId?(rm.providerId+"|"+rm.model):"";
+      return '<div class="urow"><span>'+roleIcon(r)+' '+esc(r)+'</span><select onchange="setRoleModel(\\''+r+'\\',this.value)">'+allModelOptions(sel)+'</select></div>';
+    }).join("");
+  }
+  window.setRoleModel=function(role,val){ if(!val){delete MDL.roleModels[role];} else {var parts=val.split("|");MDL.roleModels[role]={providerId:parts[0],model:parts.slice(1).join("|")};} };
+  window.rmProvider=function(i){var id=MDL.providers[i].id;MDL.providers.splice(i,1);Object.keys(MDL.roleModels).forEach(function(r){if(MDL.roleModels[r].providerId===id)delete MDL.roleModels[r];});renderProviders();renderRoles();};
+  window.addProvider=function(){
+    var pi=Number(document.getElementById("m_preset").value); var pre=MDL.presets[pi]||{name:"",baseUrl:"",models:[]};
+    MDL.providers.push({id:"p"+Date.now().toString(36),name:pre.name,baseUrl:pre.baseUrl,apiKey:"",models:(pre.models||[]).slice()});
+    renderProviders();renderRoles();
+  };
+  window.openModels=function(){
+    closeSettings();
+    getJSON("/models").then(function(d){
+      MDL=d; MDL.roleModels=d.roleModels||{}; MDL.providers=d.providers||[];
+      document.getElementById("m_preset").innerHTML=(d.presets||[]).map(function(pr,i){return '<option value="'+i+'">'+esc(pr.name)+'</option>';}).join("");
+      renderProviders(); renderRoles();
+    }).catch(function(){});
+    document.getElementById("models").classList.add("on");
+    document.getElementById("mscrim").classList.add("on");
+    document.body.classList.add("noscroll");
+  };
+  window.closeModels=function(){document.getElementById("models").classList.remove("on");document.getElementById("mscrim").classList.remove("on");document.body.classList.remove("noscroll");};
+  window.saveModels=function(){
+    var btn=document.getElementById("m_save"); btn.disabled=true;
+    fetch("/models",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({providers:MDL.providers,roleModels:MDL.roleModels})})
+      .then(function(r){if(!r.ok)throw 0; toast("Saved — applies on next run"); closeModels();})
       .catch(function(){toast("Couldn’t save");})
       .then(function(){btn.disabled=false;});
   };
@@ -689,7 +756,7 @@ ${CLIENT_HELPERS}
   }catch(e){}
 
   load(); setInterval(load,5000);
-  document.addEventListener("keydown",function(e){if(e.key==="Escape"){closeDrawer();closeComposer();closeSettings();closeAgents();closeAddRepo();}});
+  document.addEventListener("keydown",function(e){if(e.key==="Escape"){closeDrawer();closeComposer();closeSettings();closeAgents();closeAddRepo();closeModels();}});
 })();
 </script></body></html>`;
 }

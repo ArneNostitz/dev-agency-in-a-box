@@ -360,6 +360,39 @@ export function listAgentOverridePaths(): string[] {
   }
 }
 
+// ---- model providers + per-role assignment (dashboard "Models" panel) ----
+
+export interface Provider {
+  id: string;
+  name: string;
+  baseUrl: string; // Anthropic-compatible endpoint (e.g. GLM/DeepSeek/Kimi or a gateway)
+  apiKey: string;
+  models: string[];
+}
+
+export function getProviders(): Provider[] {
+  try {
+    return JSON.parse(getSetting("providers") ?? "[]") as Provider[];
+  } catch {
+    return [];
+  }
+}
+export function setProviders(list: Provider[]): void {
+  setSetting("providers", JSON.stringify(list ?? []));
+}
+
+/** role -> { providerId, model } ; absent/empty = default Claude on your subscription. */
+export function getRoleModels(): Record<string, { providerId: string; model: string }> {
+  try {
+    return JSON.parse(getSetting("role_models") ?? "{}") as Record<string, { providerId: string; model: string }>;
+  } catch {
+    return {};
+  }
+}
+export function setRoleModels(map: Record<string, { providerId: string; model: string }>): void {
+  setSetting("role_models", JSON.stringify(map ?? {}));
+}
+
 // ---- settings (editable from the dashboard, no redeploy) ----
 export function getSetting(key: string): string | null {
   const d = getDb();

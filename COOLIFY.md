@@ -168,6 +168,18 @@ Two routes:
 Per-role models route independently through the gateway, so you can keep Opus on the planner
 and run cheaper/local models for the executors. Leave these unset to use Claude directly.
 
+### Simplest path: the dashboard "Models" panel (keeps Claude on your subscription)
+
+Settings → **Models & providers**. Add a provider (GLM/Zhipu, DeepSeek, Kimi presets, or a
+custom Anthropic-compatible endpoint) with its API key, then assign it to specific agents
+(e.g. **planner = Claude/subscription, developer = GLM**). Each agent runs against its own
+endpoint, so your Claude roles keep using your Max subscription while others go to the chosen
+provider — no global gateway, no env vars, applies on the next run.
+
+> Providers must expose a **native Anthropic-compatible** endpoint (GLM, DeepSeek, Kimi do).
+> For OpenAI/Gemini/Ollama, point a "Custom" provider's base URL at a translating gateway
+> (claude-code-router / LiteLLM) you run, and use the model names it serves.
+
 ## Notes
 
 - **Persistence:** the named volume `agency-data` at `/app/data` holds the SQLite memory
