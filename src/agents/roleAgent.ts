@@ -106,15 +106,25 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
   const def = ROLES[role];
   const systemPrompt = await buildSystemPrompt(role);
   const model = input.model ?? modelFor(def);
+  const budget = loadBudget();
+  // Per-role cap, never exceeding the global ceiling. Keeps Opus plans from ballooning.
+  const maxTurns = Math.min(def.maxTurns || budget.maxTurnsPerRun, budget.maxTurnsPerRun);
+  const tokenCap = budget.maxTokensPerRun;
 
   let text = "";
   let turns = 0;
   let costUsd = 0;
   let tokens = 0;
+  let stopped = "";
   let stderrBuf = "";
   const { repo, issueNumber } = input;
-  console.log(`[agency] role:${role} ${repo}#${issueNumber} (model ${model})`);
+  console.log(`[agency] role:${role} ${repo}#${issueNumber} (model ${model}, ≤${maxTurns} turns)`);
   pushActivity(repo, issueNumber, role, "start", `started (${model})`);
+
+  const sumUsage = (u: Record<string, unknown>): number => {
+    const n = (k: string) => (typeof u[k] === "number" ? (u[k] as number) : 0);
+    return n("input_tokens") + n("output_tokens") + n("cache_creation_input_tokens") + n("cache_read_input_tokens");
+  };
 
   try {
     for await (const message of query({
@@ -127,8 +137,7 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
         // Fully autonomous. Requires the container to run as a NON-root user (Claude Code
         // refuses --dangerously-skip-permissions as root) — see Dockerfile `USER node`.
         permissionMode: "bypassPermissions",
-        // Per-run guardrail: a single agent can't loop forever.
-        maxTurns: loadBudget().maxTurnsPerRun,
+        maxTurns,
         stderr: (data: string) => {
           stderrBuf += data;
         },
@@ -138,20 +147,19 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
       if (message.type === "assistant") {
         turns += 1;
         emitAssistant(repo, issueNumber, role, message);
+        // Accumulate billed tokens per turn (each turn re-bills the whole context).
+        const au = (message as unknown as { message?: { usage?: Record<string, unknown> } }).message?.usage;
+        if (au) tokens += sumUsage(au);
       }
       if ("result" in message && typeof (message as { result?: unknown }).result === "string") {
         text = (message as { result: string }).result;
       }
       const cost = (message as { total_cost_usd?: unknown }).total_cost_usd;
       if (typeof cost === "number" && Number.isFinite(cost)) costUsd = cost;
-      const u = (message as { usage?: Record<string, unknown> }).usage;
-      if (u) {
-        const n = (k: string) => (typeof u[k] === "number" ? (u[k] as number) : 0);
-        tokens =
-          n("input_tokens") +
-          n("output_tokens") +
-          n("cache_creation_input_tokens") +
-          n("cache_read_input_tokens");
+      // Hard kill-switch: stop a runaway run before it burns the budget.
+      if (tokenCap > 0 && tokens > tokenCap) {
+        stopped = `token cap (${Math.round(tokens / 1000)}k > ${Math.round(tokenCap / 1000)}k)`;
+        break;
       }
     }
   } catch (err) {
@@ -162,6 +170,14 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
     throw new Error(msg);
   }
   recordTokens(tokens, costUsd, model);
-  pushActivity(repo, issueNumber, role, "done", `finished (${turns} turns${costUsd ? `, $${costUsd.toFixed(2)}` : ""})`);
+  const tok = tokens ? `, ${Math.round(tokens / 1000)}k tok` : "";
+  pushActivity(
+    repo,
+    issueNumber,
+    role,
+    "done",
+    `finished (${turns} turns${tok}${costUsd ? `, $${costUsd.toFixed(2)}` : ""}${stopped ? ` — ⚠ stopped: ${stopped}` : ""})`,
+  );
+  if (stopped) console.warn(`[agency] role:${role} ${repo}#${issueNumber} stopped — ${stopped}`);
   return { text, turns, model, costUsd };
 }

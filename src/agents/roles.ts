@@ -31,6 +31,8 @@ export interface RoleDef {
   modelEnv: string;
   /** Tools this role may use. */
   tools: string[];
+  /** Hard cap on agent turns for this role (each turn re-sends the whole context — controls cost). */
+  maxTurns: number;
 }
 
 const READ_TOOLS = ["Read", "Glob", "Grep"];
@@ -45,6 +47,8 @@ export const ROLES: Record<RoleName, RoleDef> = {
     defaultModel: MODELS.opus,
     modelEnv: "PLANNER_MODEL",
     tools: READ_TOOLS,
+    // Opus is expensive and context compounds per turn — a plan should not take 100+ turns.
+    maxTurns: 45,
   },
   architect: {
     name: "architect",
@@ -53,6 +57,7 @@ export const ROLES: Record<RoleName, RoleDef> = {
     defaultModel: MODELS.sonnet,
     modelEnv: "ARCHITECT_MODEL",
     tools: READ_TOOLS,
+    maxTurns: 30,
   },
   developer: {
     name: "developer",
@@ -70,6 +75,7 @@ export const ROLES: Record<RoleName, RoleDef> = {
     defaultModel: MODELS.sonnet,
     modelEnv: "DEVELOPER_MODEL",
     tools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
+    maxTurns: 120,
   },
   reviewer: {
     name: "reviewer",
@@ -78,6 +84,7 @@ export const ROLES: Record<RoleName, RoleDef> = {
     defaultModel: MODELS.sonnet,
     modelEnv: "REVIEWER_MODEL",
     tools: [...READ_TOOLS, "Bash"],
+    maxTurns: 40,
   },
   tester: {
     name: "tester",
@@ -86,6 +93,7 @@ export const ROLES: Record<RoleName, RoleDef> = {
     defaultModel: MODELS.haiku,
     modelEnv: "TESTER_MODEL",
     tools: [...READ_TOOLS, "Bash"],
+    maxTurns: 30,
   },
   librarian: {
     name: "librarian",
@@ -95,6 +103,7 @@ export const ROLES: Record<RoleName, RoleDef> = {
     defaultModel: MODELS.haiku,
     modelEnv: "LIBRARIAN_MODEL",
     tools: READ_TOOLS,
+    maxTurns: 12,
   },
 };
 

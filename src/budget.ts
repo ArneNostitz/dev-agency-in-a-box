@@ -14,8 +14,10 @@ export interface BudgetLimits {
   maxIssueCostUsd: number;
   /** Max total agent turns per issue (universal backstop, works without cost data). */
   maxIssueTurns: number;
-  /** Max turns for a single agent run (passed to the SDK). */
+  /** Global ceiling on turns for a single agent run (per-role caps may be lower). */
   maxTurnsPerRun: number;
+  /** Hard token kill-switch for a single run — stop it if it blows past this (0 disables). */
+  maxTokensPerRun: number;
 }
 
 const num = (name: string, fallback: number): number => {
@@ -28,6 +30,7 @@ export function loadBudget(): BudgetLimits {
     maxIssueCostUsd: num("MAX_ISSUE_COST_USD", 15),
     maxIssueTurns: num("MAX_ISSUE_TURNS", 800),
     maxTurnsPerRun: num("MAX_TURNS_PER_RUN", 250),
+    maxTokensPerRun: num("MAX_TOKENS_PER_RUN", 600_000),
   };
 }
 
