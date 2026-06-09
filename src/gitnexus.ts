@@ -9,9 +9,9 @@
  * Enable with GITNEXUS=true (default off). Everything here is best-effort: if the binary is
  * missing or indexing fails, agents just fall back to reading files as before.
  *
- * Isolation: each issue's clone is indexed with HOME pointed at a per-clone dir, so the
- * GitNexus registry never collides across the parallel runs. The index + its artifacts are
- * hidden from git so the developer never accidentally commits them.
+ * The index + its artifacts are hidden from git so the developer never accidentally commits
+ * them. We run GitNexus with the container's normal HOME (its registry/setup live there) — a
+ * per-run HOME breaks its module/setup resolution.
  */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -23,8 +23,6 @@ const exec = promisify(execFile);
 export function gitnexusEnabled(): boolean {
   return process.env.GITNEXUS?.trim().toLowerCase() === "true";
 }
-
-const gnHome = (workdir: string): string => join(workdir, ".gnhome");
 
 /** Has this clone been indexed (the .gitnexus dir exists)? */
 export function isIndexed(workdir: string): boolean {
@@ -45,7 +43,7 @@ export async function indexRepo(workdir: string, log: (s: string) => void = () =
       cwd: workdir,
       timeout: Number(process.env.GITNEXUS_INDEX_TIMEOUT_MS?.trim()) || 300_000,
       maxBuffer: 16 * 1024 * 1024,
-      env: { ...process.env, HOME: gnHome(workdir), GITNEXUS_SKIP_OPTIONAL_GRAMMARS: "1" },
+      env: { ...process.env, GITNEXUS_SKIP_OPTIONAL_GRAMMARS: "1" },
     });
     // Keep GitNexus artifacts out of the developer's diff/commits.
     try {
@@ -72,7 +70,7 @@ export function gitnexusWiring(workdir: string): GitnexusWiring | null {
   if (!gitnexusEnabled() || !isIndexed(workdir)) return null;
   return {
     servers: {
-      gitnexus: { type: "stdio", command: "gitnexus", args: ["mcp"], env: { ...process.env, HOME: gnHome(workdir) } },
+      gitnexus: { type: "stdio", command: "gitnexus", args: ["mcp"], env: { ...process.env } },
     },
     tools: [
       "mcp__gitnexus__list_repos",
@@ -94,5 +92,6 @@ export const GITNEXUS_PROMPT = [
   "- mcp__gitnexus__context — 360° view of a symbol (callers, callees, files).",
   "- mcp__gitnexus__impact — blast radius before a change (what depends on X).",
   "- mcp__gitnexus__detect_changes — which processes your edits affect.",
-  "Read full files only when you must see/modify exact code.",
+  "If a tool complains about multiple repos, call mcp__gitnexus__list_repos and pass this repo's",
+  "name. Read full files only when you must see/modify exact code.",
 ].join("\n");
