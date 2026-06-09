@@ -678,10 +678,11 @@ ${CLIENT_HELPERS}
     var h="";
     if(kind==="tauri"){
       var one="curl -fsSL "+JSON.stringify(location.origin+"/app-local?repo="+encodeURIComponent(open.repo)+"&number="+open.number+"&raw=1")+" | bash";
-      h+='<div class="muted" style="margin-bottom:6px">Tauri (native) app — runs on your Mac, not the browser. Paste this in <b>Terminal</b>:</div>'+
-        '<div class="cmdrow"><code id="tauricmd">'+esc(one)+'</code><button class="btn" onclick="copyCmd()">Copy</button></div>'+
-        '<div class="muted" style="font-size:12px;margin-top:6px">Pasting into Terminal avoids the macOS “unidentified developer” block. '+
-        '<a href="/app-local?repo='+encodeURIComponent(open.repo)+'&number='+open.number+'" download>download .command</a> instead.</div>'+
+      h+='<div class="muted" style="margin-bottom:6px">Tauri (native) app — runs on your Mac, not the browser.</div>'+
+        '<button class="btn primary" onclick="copyCmd()">📋 Copy run command</button>'+
+        '<div class="muted" style="font-size:12px;margin:6px 0 4px">Then open <b>Terminal</b>, paste (⌘V) and hit <b>Enter</b>. Pasting avoids the macOS “unidentified developer” block.</div>'+
+        '<div class="cmdrow"><code id="tauricmd" onclick="selCmd(this)" title="click to select">'+esc(one)+'</code></div>'+
+        '<div class="muted" style="font-size:12px;margin-top:4px"><a href="/app-local?repo='+encodeURIComponent(open.repo)+'&number='+open.number+'" download>download .command</a> instead</div>'+
         (open.devScript?'<div style="margin-top:8px"><button class="btn" onclick="runApp()">▶ UI-only preview</button></div>':'');
     }
     var web = (kind==="web"||kind==="tauri");
@@ -693,9 +694,10 @@ ${CLIENT_HELPERS}
     }
     el.innerHTML=h;
   }
+  window.selCmd=function(t){var r=document.createRange();r.selectNode(t);var s=getSelection();s.removeAllRanges();s.addRange(r);};
   window.copyCmd=function(){var t=document.getElementById("tauricmd");if(!t)return;var s=t.textContent;
-    (navigator.clipboard?navigator.clipboard.writeText(s):Promise.reject()).then(function(){toast("Copied — paste in Terminal");},function(){
-      var r=document.createRange();r.selectNode(t);var sel=getSelection();sel.removeAllRanges();sel.addRange(r);try{document.execCommand("copy");toast("Copied");}catch(e){toast("Select & copy");}sel.removeAllRanges();});
+    (navigator.clipboard?navigator.clipboard.writeText(s):Promise.reject()).then(function(){toast("Copied — paste in Terminal & hit Enter");},function(){
+      selCmd(t);try{document.execCommand("copy");toast("Copied — paste in Terminal & hit Enter");}catch(e){toast("Select the command & copy");}});
   };
   window.runApp=function(){ if(!open)return;
     fetch("/app-run",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({repo:open.repo,number:open.number})})
