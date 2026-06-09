@@ -288,7 +288,7 @@ ${CLIENT_HELPERS}
   function classify(i){
     if(i.active||i.queued||i.state==="agency:in-progress")return "working";
     if(i.state==="agency:epic")return (i.epic&&i.epic.done>=i.epic.total)?"review":"working";
-    if(i.state==="agency:awaiting-approval"||i.state==="agency:awaiting-answer"||i.state==="agency:needs-attention")return "waiting";
+    if(i.state==="agency:awaiting-approval"||i.state==="agency:awaiting-answer"||i.state==="agency:needs-attention"||i.state==="agency:rate-limited")return "waiting";
     if(i.state==="agency:ready")return "review";
     if(i.state==="merged"||i.state==="agency:merged"||i.state==="closed"||i.state==="done")return "done";
     return "new";
@@ -335,6 +335,7 @@ ${CLIENT_HELPERS}
 
   function card(i){
     var tags='';
+    if(i.state==="agency:rate-limited") tags+='<span class="tag q">⏳ rate-limited</span>';
     if(i.queued) tags+='<span class="tag q">⏳ queued</span>';
     if(i.epic) tags+='<span class="tag epic">🧩 '+i.epic.done+'/'+i.epic.total+'</span>';
     if(i.pr_number) tags+='<a class="tag pr" href="'+(i.pr_url||gh(i.repo,i.pr_number))+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">PR #'+i.pr_number+' ↗</a>';

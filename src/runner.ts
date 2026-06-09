@@ -323,6 +323,19 @@ async function processFollowUp(cfg: Config, repo: string, issue: Issue): Promise
 export async function forceResume(cfg: Config, repo: string, number: number): Promise<void> {
   const issue = await getIssue(repo, number);
   if (!issue) return;
+  // Don't let a manual Resume hammer the usage wall — it'll auto-resume after the reset.
+  if (agentsArePaused()) {
+    const until = new Date(pausedUntil()).toLocaleString();
+    setRateLimited(repo, number, new Date(pausedUntil()).toISOString());
+    recordIssueState(repo, number, { state: RATE_LIMITED });
+    await commentOnIssue(
+      repo,
+      number,
+      `⏳ Still rate-limited until ~${until} — I'll auto-resume after the reset, no need to press Resume.`,
+    ).catch(() => {});
+    console.log(`[agency] resume blocked (rate-limited) ${repo} #${number}`);
+    return;
+  }
   await reopenIssue(repo, number).catch(() => {});
   for (const l of [IN_PROGRESS, NEEDS_ATTENTION, "🚧 blocked", ...AWAITING_LABELS]) {
     await removeLabel(repo, number, l).catch(() => {});

@@ -11,7 +11,7 @@
 export function parseRateLimit(msg: string): { limited: boolean; resetAt?: number } {
   const text = msg || "";
   const limited =
-    /(usage limit|rate[ _-]?limit|rate_limit_error|\b429\b|too many requests|quota|overloaded_error|limit reached|limit will reset|resets? at)/i.test(
+    /(usage limit|session limit|rate[ _-]?limit|rate_limit_error|\b429\b|too many requests|quota|overloaded_error|limit reached|hit your [\w ]*limit|limit (will )?reset|resets?\s+(at|\d))/i.test(
       text,
     );
   if (!limited) return { limited: false };
@@ -28,7 +28,26 @@ export function parseRateLimit(msg: string): { limited: boolean; resetAt?: numbe
       if (Number.isFinite(t)) resetAt = t;
     }
   }
+  // Wall-clock form Claude actually uses, e.g. "resets 12:40am (UTC)" / "resets at 3pm".
+  if (!resetAt) resetAt = parseResetClock(text);
   return { limited: true, resetAt };
+}
+
+/** Parse "resets 12:40am (UTC)" / "resets at 3pm" -> next ms epoch of that wall-clock time. */
+export function parseResetClock(text: string, now = Date.now()): number | undefined {
+  const m = /resets?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*\(?\s*(utc|gmt|z)?/i.exec(text || "");
+  if (!m) return undefined;
+  let h = Number(m[1]);
+  const min = m[2] ? Number(m[2]) : 0;
+  const ap = (m[3] || "").toLowerCase();
+  if (ap === "pm" && h < 12) h += 12;
+  if (ap === "am" && h === 12) h = 0;
+  if (h > 23 || min > 59) return undefined;
+  // Claude reports these in UTC; the container runs UTC too, so treat as UTC.
+  const d = new Date(now);
+  let t = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), h, min, 0, 0);
+  if (t <= now) t += 24 * 3600 * 1000; // already passed today -> next occurrence
+  return t;
 }
 
 /** The next reset boundary from an anchored (or rolling) window — pure clock math. */

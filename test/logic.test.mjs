@@ -13,7 +13,7 @@ import { parseLessons } from "../dist/reflect.js";
 import { decideThreadAction } from "../dist/route.js";
 import { isNoOpComment } from "../dist/github.js";
 import { renderEpicTracker, childStatus } from "../dist/epics.js";
-import { parseRateLimit, nextWindowReset } from "../dist/ratelimit.js";
+import { parseRateLimit, nextWindowReset, parseResetClock } from "../dist/ratelimit.js";
 import { pickWebDevScript, isTauriPackage, parseDevPort, parseTunnelUrl, buildLocalCommand } from "../dist/apprun.js";
 
 test("mentionsHandle matches whole handles only", () => {
@@ -203,6 +203,18 @@ test("parseRateLimit detects usage walls and reads a reset time", () => {
   const r = parseRateLimit("rate_limit_error; your limit will reset at 1893456000");
   assert.equal(r.limited, true);
   assert.equal(r.resetAt, 1893456000 * 1000);
+  // the real Claude subscription message format
+  const s = parseRateLimit("Claude Code returned an error result: You've hit your session limit · resets 12:40am (UTC)");
+  assert.equal(s.limited, true);
+  assert.ok(s.resetAt && s.resetAt > 0);
+});
+
+test("parseResetClock reads 'resets 12:40am (UTC)' to the next occurrence", () => {
+  const now = Date.parse("2026-06-09T20:00:00.000Z"); // 8pm UTC
+  const t = parseResetClock("You've hit your session limit · resets 12:40am (UTC)", now);
+  // 00:40 UTC has passed for today's date relative to 20:00 -> next day 00:40
+  assert.equal(t, Date.parse("2026-06-10T00:40:00.000Z"));
+  assert.equal(parseResetClock("no time here", now), undefined);
 });
 
 test("nextWindowReset rolls forward from an anchor", () => {
