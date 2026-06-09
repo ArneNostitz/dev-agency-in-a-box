@@ -68,9 +68,11 @@ export interface GitnexusWiring {
 /** MCP server + allowed tools to hand an agent running in `workdir`, or null if not available. */
 export function gitnexusWiring(workdir: string): GitnexusWiring | null {
   if (!gitnexusEnabled() || !isIndexed(workdir)) return null;
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) if (typeof v === "string") env[k] = v;
   return {
     servers: {
-      gitnexus: { type: "stdio", command: "gitnexus", args: ["mcp"], env: { ...process.env } },
+      gitnexus: { type: "stdio", command: "gitnexus", args: ["mcp"], env },
     },
     tools: [
       "mcp__gitnexus__list_repos",
