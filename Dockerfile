@@ -27,6 +27,12 @@ WORKDIR /app
 # Enable corepack so agents can use pnpm / yarn in target repos (not just npm).
 RUN corepack enable || true
 
+# Optional: GitNexus code-intelligence (token-light codebase research via MCP). Best-effort —
+# the build never fails on it, and the runtime only uses it when GITNEXUS=true. Skipping the
+# vendored Dart/Proto/Swift grammars avoids needing a C++ toolchain.
+RUN GITNEXUS_SKIP_OPTIONAL_GRAMMARS=1 npm install -g gitnexus@latest \
+    || echo "gitnexus not installed (optional) — set GITNEXUS=true only if this succeeds"
+
 # Install dependencies first for better layer caching.
 COPY package.json package-lock.json* ./
 RUN npm install

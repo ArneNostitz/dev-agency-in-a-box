@@ -35,6 +35,8 @@ import {
 } from "./github.js";
 import { decideThreadAction } from "./route.js";
 import { reconcileEpics } from "./epics.js";
+import { indexRepo } from "./gitnexus.js";
+import { pushActivity } from "./activity.js";
 import { loadHandleRoleMap, roleForText, type RoleName } from "./agents/roles.js";
 import { runPipeline, runPrFix, runFollowUp } from "./pipeline.js";
 import {
@@ -183,6 +185,7 @@ async function processIssue(cfg: Config, repo: string, issue: Issue): Promise<vo
   await rm(workdir, { recursive: true, force: true });
   await mkdir(join(workdir, ".."), { recursive: true });
   await cloneRepo(repo, workdir);
+  await indexRepo(workdir, (s) => pushActivity(repo, issue.number, role, "tool", s));
 
   setActive(repo, issue.number, "issue", role, issue.title);
   try {
@@ -212,6 +215,7 @@ async function processPrFeedbackOne(
   await rm(workdir, { recursive: true, force: true });
   await mkdir(join(workdir, ".."), { recursive: true });
   await cloneRepo(repo, workdir);
+  await indexRepo(workdir, (s) => pushActivity(repo, pr.number, "developer", "tool", s));
   setActive(repo, pr.number, "pr", "developer", pr.title);
   try {
     await runPrFix(repo, pr.issueNumber, pr.number, pr.branch, workdir, thread);
@@ -261,6 +265,7 @@ async function processHealOne(
   await rm(workdir, { recursive: true, force: true });
   await mkdir(join(workdir, ".."), { recursive: true });
   await cloneRepo(repo, workdir);
+  await indexRepo(workdir, (s) => pushActivity(repo, pr.number, "developer", "tool", s));
   setActive(repo, pr.number, "pr", "developer", pr.title);
   try {
     await runPrFix(repo, pr.issueNumber, pr.number, pr.branch, workdir, instruction);
@@ -290,6 +295,7 @@ async function processFollowUp(cfg: Config, repo: string, issue: Issue): Promise
   await rm(workdir, { recursive: true, force: true });
   await mkdir(join(workdir, ".."), { recursive: true });
   await cloneRepo(repo, workdir);
+  await indexRepo(workdir, (s) => pushActivity(repo, issue.number, "developer", "tool", s));
 
   setActive(repo, issue.number, "issue", "developer", issue.title);
   try {

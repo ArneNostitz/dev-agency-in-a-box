@@ -303,8 +303,9 @@ ${CLIENT_HELPERS}
       sess=' · <span class="clk" onclick="openSettings()">'+fmtTok(s.tokens)+' tok';
       if(s.budget>0){var pct=Math.min(100,Math.round(100*s.tokens/s.budget));
         var col=pct>=90?'var(--red)':pct>=70?'var(--amber)':'var(--green)';
-        sess+=' <span class="gauge"><i style="width:'+pct+'%;background:'+col+'"></i></span> '+pct+'% of '+(s.windowHours||5)+'h';
-      } else { sess+=' (last '+(s.windowHours||5)+'h)'; }
+        sess+=' <span class="gauge"><i style="width:'+pct+'%;background:'+col+'"></i></span> '+pct+'%';
+      }
+      if(s.resetsAt){ sess+=' · resets '+hm(new Date(s.resetsAt))+' ('+remain(s.resetsAt)+' left)'; }
       sess+='</span>';
     } else { sess=' · <span class="clk" onclick="openSettings()">set token budget</span>'; }
     document.getElementById("sub").innerHTML = (n? n+' working now':'Idle')+sp+sess+' · <a href="/history">history</a>';
@@ -377,6 +378,7 @@ ${CLIENT_HELPERS}
   // ---- token settings ----
   function modelName(m){if(/opus/i.test(m))return "Opus";if(/sonnet/i.test(m))return "Sonnet";if(/haiku/i.test(m))return "Haiku";return m||"?";}
   function hm(d){return d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});}
+  function remain(iso){var ms=new Date(iso).getTime()-Date.now();if(ms<=0)return "0m";var h=Math.floor(ms/3600000),m=Math.floor((ms%3600000)/60000);return (h>0?h+"h":"")+m+"m";}
   function localInput(d){var p=function(n){return (n<10?"0":"")+n;};return d.getFullYear()+"-"+p(d.getMonth()+1)+"-"+p(d.getDate())+"T"+p(d.getHours())+":"+p(d.getMinutes());}
   function refreshSettings(){
     var s=DATA.session||{}, bm=s.byModel||[];

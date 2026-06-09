@@ -9,6 +9,7 @@ import { loadConstitution, loadPersona, loadPlaybooks, loadLearned } from "../me
 import { pushActivity } from "../activity.js";
 import { recentLessons, recordTokens } from "../store.js";
 import { loadBudget } from "../budget.js";
+import { gitnexusWiring, GITNEXUS_PROMPT } from "../gitnexus.js";
 
 /** A short, meaningful one-liner for a tool call (the command/file, not just the tool name). */
 function summarizeTool(name: string, input: Record<string, unknown> = {}): string {
@@ -106,7 +107,10 @@ async function buildSystemPrompt(role: RoleName): Promise<string> {
 
 export async function runRole(role: RoleName, input: RoleRunInput): Promise<RoleRunResult> {
   const def = ROLES[role];
-  const systemPrompt = await buildSystemPrompt(role);
+  // Hand the agent the GitNexus code-intelligence tools if this clone is indexed (cuts the
+  // tokens spent reading files to research the codebase).
+  const gn = gitnexusWiring(input.workdir);
+  const systemPrompt = (await buildSystemPrompt(role)) + (gn ? `\n\n${GITNEXUS_PROMPT}` : "");
   const model = input.model ?? modelFor(def);
   const budget = loadBudget();
   // Per-role cap, never exceeding the global ceiling. Keeps Opus plans from ballooning.
@@ -135,7 +139,8 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
         cwd: input.workdir,
         systemPrompt,
         model,
-        allowedTools: def.tools,
+        allowedTools: [...def.tools, ...(gn?.tools ?? [])],
+        ...(gn ? { mcpServers: gn.servers } : {}),
         // Fully autonomous. Requires the container to run as a NON-root user (Claude Code
         // refuses --dangerously-skip-permissions as root) — see Dockerfile `USER node`.
         permissionMode: "bypassPermissions",

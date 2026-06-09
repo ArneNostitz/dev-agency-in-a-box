@@ -57,6 +57,10 @@ services:
       MAX_TOKENS_PER_RUN: ${MAX_TOKENS_PER_RUN:-}
       # Skip the separate architect pass (planner already plans) — saves a full agent run
       SKIP_ARCHITECT: ${SKIP_ARCHITECT:-}
+      # GitNexus code-intelligence: index each repo (no tokens) so agents query structure via
+      # MCP instead of reading many files. Big token saver on codebase research.
+      GITNEXUS: ${GITNEXUS:-}
+      GITNEXUS_INDEX_TIMEOUT_MS: ${GITNEXUS_INDEX_TIMEOUT_MS:-}
       # Self-evolving loop (librarian lessons -> playbook PRs against AGENCY_REPO)
       SELF_IMPROVE: ${SELF_IMPROVE:-}
       LESSONS_PR_THRESHOLD: ${LESSONS_PR_THRESHOLD:-}
