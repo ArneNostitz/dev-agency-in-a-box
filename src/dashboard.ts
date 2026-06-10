@@ -17,6 +17,27 @@ const CLIENT_HELPERS = `
   function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;"}[c];});}
   function ago(iso){if(!iso)return "";var s=Math.max(0,(Date.now()-new Date(iso).getTime())/1000);if(s<60)return Math.floor(s)+"s";if(s<3600)return Math.floor(s/60)+"m";if(s<86400)return Math.floor(s/3600)+"h";return Math.floor(s/86400)+"d";}
   var ICON={planner:"🧠",architect:"🏛",developer:"💻",reviewer:"🔍",tester:"🧪",librarian:"📚"};
+  var ICONS={
+    link:'<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+    pr:'<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><line x1="6" x2="6" y1="9" y2="21"/>',
+    merge:'<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/>',
+    check:'<path d="M20 6 9 17l-5-5"/>',
+    refresh:'<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>',
+    wrench:'<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>',
+    flask:'<path d="M10 2v7.31"/><path d="M14 9.3V2"/><path d="M8.5 2h7"/><path d="M14 9.3a6.5 6.5 0 1 1-4 0"/><path d="M5.52 16h12.96"/>',
+    globe:'<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>',
+    play:'<polygon points="6 3 20 12 6 21 6 3"/>',
+    stop:'<rect x="5" y="5" width="14" height="14" rx="2"/>',
+    monitor:'<rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/>',
+    laptop:'<path d="M20 16V7a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9m16 0H4m16 0 1.28 2.55a1 1 0 0 1-.9 1.45H3.62a1 1 0 0 1-.9-1.45L4 16"/>',
+    trash:'<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/>',
+    alert:'<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+    hourglass:'<path d="M5 22h14"/><path d="M5 2h14"/><path d="M17 22v-4.17a2 2 0 0 0-.59-1.41L12 12l-4.41 4.42A2 2 0 0 0 7 17.83V22"/><path d="M7 2v4.17a2 2 0 0 0 .59 1.41L12 12l4.41-4.42A2 2 0 0 0 17 6.17V2"/>',
+    clock:'<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+    layers:'<path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/>',
+    plus:'<path d="M5 12h14"/><path d="M12 5v14"/>'
+  };
+  function ic(n,sz){var s=sz||16;return '<svg width="'+s+'" height="'+s+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lic">'+(ICONS[n]||"")+'</svg>';}
   function mdInline(s){
     return s
       .replace(/!\\[([^\\]]*)\\]\\((https?:[^)\\s]+)\\)/g,'<img alt="$1" src="$2" style="max-width:100%;border-radius:8px;margin:4px 0">')
@@ -80,8 +101,10 @@ const STYLE = `
   .wrap{padding:6px 8px 40px}
   .repo{margin:12px 6px 2px;font-weight:650;font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px}
   .repoadd{border:1px solid var(--line);background:var(--card);color:var(--accent);border-radius:7px;padding:2px 9px;font-size:12px;cursor:pointer}
-  .sections{display:flex;gap:12px;overflow-x:auto;padding:6px;-webkit-overflow-scrolling:touch;align-items:flex-start}
-  .section{flex:0 0 auto;border-radius:14px;padding:2px 4px 4px}
+  /* Mobile: sections stacked vertically; columns scroll horizontally WITHIN each section. This
+     avoids the nested horizontal-in-horizontal scroll that made lanes overlap. */
+  .sections{display:flex;flex-direction:column;gap:14px;padding:6px}
+  .section{width:100%;border-radius:14px;padding:2px 4px 6px}
   .section .sechead{font-size:11px;text-transform:uppercase;letter-spacing:.05em;font-weight:650;padding:8px 10px 2px}
   .section .sechead span{color:var(--muted);font-weight:550}
   .section.attn{background:#eaf1ff;border:1px solid #d3e1ff}
@@ -91,9 +114,17 @@ const STYLE = `
   .section.done{background:#eef0f2;border:1px solid var(--line);opacity:.72}
   .section.done .sechead{color:#7a828c}
   .section.done .card{background:#f6f7f9;box-shadow:none}
-  .lanes{display:flex;gap:10px;padding:4px}
-  .lane{flex:0 0 72vw;max-width:300px}
-  @media(min-width:760px){.lane{flex:0 0 248px}}
+  .lanes{display:flex;gap:10px;padding:4px;overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .lane{flex:0 0 78vw;max-width:320px}
+  @media(min-width:760px){
+    .sections{flex-direction:row;overflow-x:auto;align-items:flex-start}
+    .section{width:auto;flex:0 0 auto}
+    .lanes{overflow-x:visible}
+    .lane{flex:0 0 248px}
+  }
+  .lic{display:inline-block;vertical-align:-3px}
+  .btn.ic .lic{vertical-align:0}
+  .tag .lic,.cardbtn .lic{vertical-align:-2px;width:12px;height:12px;margin-right:1px}
   .lane h3{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:2px 4px 8px;display:flex;justify-content:space-between}
   /* Show ~8 cards, then scroll within the lane (cards are ~84px tall). */
   .lanecards{max-height:min(72vh,672px);overflow-y:auto;padding:0 4px 2px;-webkit-overflow-scrolling:touch}
@@ -287,6 +318,7 @@ export function renderDashboard(): string {
 ${CLIENT_HELPERS}
 (function(){
   var DATA={issues:[],active:[],activity:[],repos:[]}, repoFilter=null, open=null, query="", sortKey="updated";
+  var streamStick=true; // stick the Live stream to the bottom only until the user scrolls up
   // Columns grouped into 3 sections. "Needs you" (New, Waiting/Needs attention, Ready for
   // review) is prominent; "Working" is the agency busy; "Done" is greyed out.
   var COL={new:"New", waiting:"Waiting / Needs attention", review:"Ready for review", working:"Working", done:"Done"};
@@ -341,24 +373,24 @@ ${CLIENT_HELPERS}
     var repos=DATA.repos||[]; var c=document.getElementById("repochips");
     c.innerHTML='<span class="chip '+(repoFilter?'' :'on')+'" onclick="setRepo(null)">All</span>'+
       repos.map(function(r){return '<span class="chip '+(repoFilter===r?'on':'')+'" onclick="setRepo(\\''+r+'\\')">'+esc(r.split("/").pop())+'</span>';}).join("")+
-      '<span class="chip" style="border-style:dashed" onclick="openAddRepo()">＋ repo</span>';
+      '<span class="chip" style="border-style:dashed" onclick="openAddRepo()">'+ic('plus',13)+' repo</span>';
   }
   window.setRepo=function(r){repoFilter=r;renderChips();renderBoard();};
 
   function isDone(i){var s=i.state||"";return s==="merged"||s==="agency:merged"||s==="closed"||s==="done";}
   function card(i){
     var tags=''; var needsFix = i.review==="changes" && !isDone(i);
-    if(i.state==="agency:rate-limited") tags+='<span class="tag rl">⌛ '+(i.resumeAt?('auto-resume '+hm(new Date(i.resumeAt))):'auto-resume')+'</span>';
-    if(i.queued) tags+='<span class="tag q">⏳ queued</span>';
-    if(needsFix) tags+='<span class="tag fix">⚠ changes requested</span>';
-    if(i.epic) tags+='<span class="tag epic">🧩 '+i.epic.done+'/'+i.epic.total+'</span>';
-    if(i.pr_number) tags+='<a class="tag pr" href="'+(i.pr_url||gh(i.repo,i.pr_number))+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">PR #'+i.pr_number+' ↗</a>';
-    if(i.previewUrl) tags+='<a class="tag prev" href="'+i.previewUrl+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">preview ↗</a>';
+    if(i.state==="agency:rate-limited") tags+='<span class="tag rl">'+ic('hourglass')+' '+(i.resumeAt?('auto-resume '+hm(new Date(i.resumeAt))):'auto-resume')+'</span>';
+    if(i.queued) tags+='<span class="tag q">'+ic('clock')+' queued</span>';
+    if(needsFix) tags+='<span class="tag fix">'+ic('alert')+' changes requested</span>';
+    if(i.epic) tags+='<span class="tag epic">'+ic('layers')+' '+i.epic.done+'/'+i.epic.total+'</span>';
+    if(i.pr_number) tags+='<a class="tag pr" href="'+(i.pr_url||gh(i.repo,i.pr_number))+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">'+ic('pr')+' #'+i.pr_number+'</a>';
+    if(i.previewUrl) tags+='<a class="tag prev" href="'+i.previewUrl+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">'+ic('globe')+' preview</a>';
     var role=i.role?(ICON[i.role]||"")+" ":"";
     var quick='';
-    if(i.state==="agency:awaiting-approval") quick+='<button class="cardbtn" onclick=\\'cardApprove('+JSON.stringify(i.repo)+','+i.number+',event)\\'>✓ approve</button> ';
-    if(needsFix) quick+='<button class="cardbtn fx" onclick=\\'cardFix('+JSON.stringify(i.repo)+','+i.number+',event)\\'>🔧 fix</button> ';
-    if(i.state==="agency:needs-attention"||i.state==="agency:rate-limited") quick+='<button class="cardbtn rs" onclick=\\'cardResume('+JSON.stringify(i.repo)+','+i.number+',event)\\'>⟳ resume</button> ';
+    if(i.state==="agency:awaiting-approval") quick+='<button class="cardbtn" onclick=\\'cardApprove('+JSON.stringify(i.repo)+','+i.number+',event)\\'>'+ic('check')+' approve</button> ';
+    if(needsFix) quick+='<button class="cardbtn fx" onclick=\\'cardFix('+JSON.stringify(i.repo)+','+i.number+',event)\\'>'+ic('wrench')+' fix</button> ';
+    if(i.state==="agency:needs-attention"||i.state==="agency:rate-limited") quick+='<button class="cardbtn rs" onclick=\\'cardResume('+JSON.stringify(i.repo)+','+i.number+',event)\\'>'+ic('refresh')+' resume</button> ';
     return '<div class="card" onclick=\\'openDrawer('+JSON.stringify(i.repo)+','+i.number+')\\'>'+
       '<div class="t">'+(i.active?'<span class="dot"></span> ':'')+esc(i.title||("#"+i.number))+'</div>'+
       '<div class="m">'+role+'#'+i.number+' '+tags+'<span style="margin-left:auto">'+quick+ago(i.updated_at)+'</span></div></div>';
@@ -381,26 +413,46 @@ ${CLIENT_HELPERS}
       .then(function(r){if(!r.ok)throw 0; toast("Fixing the review 🔧"); setTimeout(load,1000);})
       .catch(function(){toast("Couldn’t start fix");});
   };
-  function lane(ck,items){
+  function lane(ck,items,r){
     var inner=items.length?items.map(card).join(""):'<div class="empty">—</div>';
-    return '<div class="lane"><h3>'+COL[ck]+'<span>'+(items.length||"")+'</span></h3><div class="lanecards">'+inner+'</div></div>';
+    return '<div class="lane"><h3>'+COL[ck]+'<span>'+(items.length||"")+'</span></h3><div class="lanecards" data-scrollk="lc:'+esc(r)+':'+ck+'">'+inner+'</div></div>';
   }
-  function renderBoard(){
+  // Signature of everything the board renders — so the 5s poll only re-renders (and disturbs your
+  // scroll) when something actually changed.
+  function boardSig(){
+    var items=(DATA.issues||[]);
+    return repoFilter+'|'+query+'|'+sortKey+'|'+(DATA.repos||[]).join(',')+'|'+items.map(function(i){
+      return i.repo+'#'+i.number+':'+classify(i)+':'+(i.review||'')+':'+(i.queued?1:0)+':'+(i.active?1:0)+':'+(i.resumeAt||'')+':'+(i.epic?i.epic.done+'/'+i.epic.total:'')+':'+(i.pr_number||'')+':'+(i.previewUrl?1:0);
+    }).join(',');
+  }
+  // Re-render without losing where the user scrolled (page + each lane's horizontal/vertical pos).
+  function preserveScroll(fn){
+    var pos={}, wy=window.scrollY;
+    document.querySelectorAll('#board [data-scrollk]').forEach(function(el){pos[el.getAttribute('data-scrollk')]=[el.scrollLeft,el.scrollTop];});
+    fn();
+    document.querySelectorAll('#board [data-scrollk]').forEach(function(el){var p=pos[el.getAttribute('data-scrollk')];if(p){el.scrollLeft=p[0];el.scrollTop=p[1];}});
+    window.scrollTo(window.scrollX,wy);
+  }
+  var _boardSig='';
+  function renderBoard(force){
+    var sig=boardSig();
+    if(!force && sig===_boardSig) return; // nothing visible changed — leave the user's scroll alone
+    _boardSig=sig;
     var repos=(DATA.repos||[]).filter(function(r){return !repoFilter||r===repoFilter;});
     var items=DATA.issues.filter(matchQ).slice().sort(cmp);
     var html=repos.map(function(r){
       var ri=items.filter(function(i){return i.repo===r;});
       var secs=SECTIONS.map(function(sec){
-        var lanes=sec.cols.map(function(ck){return lane(ck,ri.filter(function(i){return classify(i)===ck;}));}).join("");
+        var lanes=sec.cols.map(function(ck){return lane(ck,ri.filter(function(i){return classify(i)===ck;}),r);}).join("");
         var n=ri.filter(function(i){return sec.cols.indexOf(classify(i))>=0;}).length;
-        return '<div class="section '+sec.k+'"><div class="sechead">'+sec.label+' <span>'+(n||"")+'</span></div><div class="lanes">'+lanes+'</div></div>';
+        return '<div class="section '+sec.k+'" data-scrollk="ln:'+esc(r)+':'+sec.k+'"><div class="sechead">'+sec.label+' <span>'+(n||"")+'</span></div><div class="lanes" data-scrollk="lns:'+esc(r)+':'+sec.k+'">'+lanes+'</div></div>';
       }).join("");
-      return '<div class="repo">'+esc(r)+'<button class="repoadd" onclick=\\'openComposer('+JSON.stringify(r)+')\\'>+ new</button></div><div class="sections">'+secs+'</div>';
+      return '<div class="repo">'+esc(r)+'<button class="repoadd" onclick=\\'openComposer('+JSON.stringify(r)+')\\'>'+ic('plus',13)+' new</button></div><div class="sections">'+secs+'</div>';
     }).join("");
-    document.getElementById("board").innerHTML = html||'<div class="empty">No repos yet. File a /add-repo issue.</div>';
+    preserveScroll(function(){document.getElementById("board").innerHTML = html||'<div class="empty">No repos yet. File a /add-repo issue.</div>';});
   }
-  window.onSearch=function(v){query=v;renderBoard();};
-  window.onSort=function(v){sortKey=v;renderBoard();};
+  window.onSearch=function(v){query=v;renderBoard(true);};
+  window.onSort=function(v){sortKey=v;renderBoard(true);};
 
   // ---- add repo picker ----
   var AREPOS=[];
@@ -642,7 +694,8 @@ ${CLIENT_HELPERS}
       ehtml='<div class="sec">Sub-issues — '+i.epic.done+'/'+i.epic.total+' done</div><div class="ebar"><i style="width:'+pct+'%"></i></div><div class="epiclist">'+
         (i.epic.children||[]).map(function(c){return '<a href="'+gh(i.repo,c.child)+'" target="_blank" rel="noopener"><span class="ck'+(c.closed?'':' o')+'">'+(c.closed?'✓':'○')+'</span> #'+c.child+' '+esc(c.title)+'<span class="st">'+esc(c.state||'')+'</span></a>';}).join("")+'</div>';
     }
-    document.getElementById("d_stream").innerHTML="";
+    var sEl=document.getElementById("d_stream"); sEl.innerHTML=""; streamStick=true;
+    if(!sEl._stickInit){ sEl._stickInit=true; sEl.addEventListener("scroll",function(){ streamStick = (sEl.scrollHeight - sEl.scrollTop - sEl.clientHeight) < 48; }); }
     open.appKind=undefined; open.devScript=null; open.prStatus=null; PEND=[]; renderAtts();
     getJSON("/app-info?repo="+encodeURIComponent(repo)+"&number="+n).then(function(d){if(!open||open.number!==n)return;open.appKind=d.kind;open.devScript=d.devScript;renderActions();}).catch(function(){if(open)open.appKind="unknown";renderActions();});
     // Live PR status (review verdict + conflict check) so the bar can choose Fix vs Merge.
@@ -672,7 +725,7 @@ ${CLIENT_HELPERS}
     if(!open)return; var el=document.getElementById("d_stream"); if(!el)return;
     var evs=(DATA.activity||[]).filter(function(x){return x.repo===open.repo&&x.number===open.number;}).slice(-40);
     el.innerHTML=evs.length?evs.map(lineHtml).join(""):'<div class="l muted">No live activity. Tap “Run checks” or reply below.</div>';
-    el.scrollTop=el.scrollHeight;
+    if(streamStick) el.scrollTop=el.scrollHeight;
   }
   function refreshDrawerLive(){renderStream(); var i=findIssue(open.repo,open.number); if(i){open.issue=i;} renderActions();}
 
@@ -705,32 +758,32 @@ ${CLIENT_HELPERS}
     var merge=ps.merge||null; var conflict = merge && merge.mergeable==="conflict";
     var needsFix = rv==="changes";
     // Links are always relevant.
-    var a=ilnk('🔗','Open issue on GitHub',gh(open.repo,open.number));
-    if(i.pr_url) a+=ilnk('⑂','Open pull request',i.pr_url);
-    if(i.previewUrl) a+=ilnk('🌐','Open preview',i.previewUrl,'primary');
+    var a=ilnk(ic('link'),'Open issue on GitHub',gh(open.repo,open.number));
+    if(i.pr_url) a+=ilnk(ic('pr'),'Open pull request',i.pr_url);
+    if(i.previewUrl) a+=ilnk(ic('globe'),'Open preview',i.previewUrl,'primary');
     // Build/approve actions only while the issue is still live.
     if(!done){
-      if(st==="agency:awaiting-approval") a+=ibtn('✓','Approve &amp; build','doApprove(this)','primary');
+      if(st==="agency:awaiting-approval") a+=ibtn(ic('check'),'Approve &amp; build','doApprove(this)','primary');
       // Fix: address the reviewer's requested changes (and resolve conflicts). Primary when needed.
-      if(i.pr_number && (needsFix||conflict)) a+=ibtn('🔧',conflict?(needsFix?'Fix the review &amp; resolve merge conflicts':'Resolve merge conflicts with main'):'Fix the reviewer’s requested changes','doFix(this)','primary');
-      a+=ibtn('⟳','Resume','doResume(this)','','d_resume');
-      a+=ibtn('🧪','Run checks','runChecks()','','d_checks');
+      if(i.pr_number && (needsFix||conflict)) a+=ibtn(ic('wrench'),conflict?(needsFix?'Fix the review &amp; resolve merge conflicts':'Resolve merge conflicts with main'):'Fix the reviewer’s requested changes','doFix(this)','primary');
+      a+=ibtn(ic('refresh'),'Resume','doResume(this)','','d_resume');
+      a+=ibtn(ic('flask'),'Run checks','runChecks()','','d_checks');
     }
     // Run-the-app stays available even when merged/done (runs the default branch instead).
-    if(kind==="tauri") a+=ibtn('💻',(done?'Run latest (main) on my Mac':'Run this PR on my Mac')+' — copies a Terminal command (uses your gh login)','copyRun()');
+    if(kind==="tauri") a+=ibtn(ic('laptop'),(done?'Run latest (main) on my Mac':'Run this PR on my Mac')+' — copies a Terminal command (uses your gh login)','copyRun()');
     if(kind==="web"||kind==="tauri"){
-      if(app&&app.status==="running"){ a+=ilnk('🖥','Open running preview',app.url,'primary'); a+=ibtn('⏹','Stop preview','stopAppPreview()'); }
-      else if(app&&(app.status==="installing"||app.status==="starting")){ a+=ibtn('⏳','Starting preview… (watch Live stream)','stopAppPreview()'); }
-      else if(app&&app.status==="error"){ a+=ibtn('⚠','Preview failed — retry','runApp()','danger'); }
-      else if(kind==="web"){ a+=ibtn('🚀','Run preview in the cloud (gives a link)','runApp()'); }
+      if(app&&app.status==="running"){ a+=ilnk(ic('monitor'),'Open running preview',app.url,'primary'); a+=ibtn(ic('stop'),'Stop preview','stopAppPreview()'); }
+      else if(app&&(app.status==="installing"||app.status==="starting")){ a+=ibtn(ic('clock'),'Starting preview… (watch Live stream)','stopAppPreview()'); }
+      else if(app&&app.status==="error"){ a+=ibtn(ic('alert'),'Preview failed — retry','runApp()','danger'); }
+      else if(kind==="web"){ a+=ibtn(ic('play'),'Run preview in the cloud (gives a link)','runApp()'); }
     }
     // Merge: hide entirely when there are conflicts (you must Fix first). When fixes are still
     // requested but it merges cleanly, offer "Merge anyway". Otherwise a normal merge.
     if(!done && !conflict){
-      if(i.pr_number) a+=ibtn('⤵',needsFix?'Merge anyway (skip the requested fixes)':'Merge PR','confirmAct(this,\\'merge\\')',needsFix?'':'primary');
-      else if(i.epic && epicDone) a+=ibtn('⤵','Merge all sub-issues','confirmAct(this,\\'merge\\')','primary');
+      if(i.pr_number) a+=ibtn(ic('merge'),needsFix?'Merge anyway (skip the requested fixes)':'Merge PR','confirmAct(this,\\'merge\\')',needsFix?'':'primary');
+      else if(i.epic && epicDone) a+=ibtn(ic('merge'),'Merge all sub-issues','confirmAct(this,\\'merge\\')','primary');
     }
-    a+=ibtn('🗑','Delete','confirmAct(this,\\'delete\\')','danger');
+    a+=ibtn(ic('trash'),'Delete','confirmAct(this,\\'delete\\')','danger');
     document.getElementById("d_actions").innerHTML=a;
   }
   window.doFix=function(btn){ if(!open)return; if(btn)btn.disabled=true;
@@ -775,9 +828,9 @@ ${CLIENT_HELPERS}
   // Two-tap confirm for destructive actions (no modal — phone-friendly).
   window.confirmAct=function(btn,kind){
     if(btn.dataset.armed){ btn.dataset.armed=""; doAct(kind,btn); return; }
-    var orig=btn.textContent; btn.dataset.armed="1"; btn.classList.add("armed");
-    btn.textContent=kind==="merge"?"Confirm merge?":"Confirm delete?";
-    setTimeout(function(){if(btn.dataset.armed){btn.dataset.armed="";btn.classList.remove("armed");btn.textContent=orig;}},3000);
+    var orig=btn.innerHTML; btn.dataset.armed="1"; btn.classList.add("armed");
+    btn.innerHTML=kind==="merge"?"Confirm merge?":"Confirm delete?";
+    setTimeout(function(){if(btn.dataset.armed){btn.dataset.armed="";btn.classList.remove("armed");btn.innerHTML=orig;}},3000);
   };
   function doAct(kind,btn){
     if(!open)return; btn.disabled=true;
@@ -821,7 +874,7 @@ ${CLIENT_HELPERS}
   try{var es=new EventSource("/events");
     es.onmessage=function(ev){try{var a=JSON.parse(ev.data);
       DATA.activity.push(a); if(DATA.activity.length>500)DATA.activity.shift();
-      if(open&&a.repo===open.repo&&a.number===open.number){var el=document.getElementById("d_stream");if(el){el.insertAdjacentHTML("beforeend",lineHtml(a));el.scrollTop=el.scrollHeight;}}
+      if(open&&a.repo===open.repo&&a.number===open.number){var el=document.getElementById("d_stream");if(el){el.insertAdjacentHTML("beforeend",lineHtml(a));if(streamStick)el.scrollTop=el.scrollHeight;}}
     }catch(e){}};
   }catch(e){}
 
