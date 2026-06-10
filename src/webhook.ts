@@ -14,14 +14,14 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { Config } from "./config.js";
-import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, type Provider } from "./store.js";
+import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getReview, listReviews, type Provider } from "./store.js";
 import { mergeEpic, isEpic } from "./epics.js";
 import { renderDashboard, renderHistory } from "./dashboard.js";
 import { subscribe, getActive } from "./activity.js";
 import { inFlightKeys } from "./pool.js";
 import { listRateLimited } from "./store.js";
 import { effectiveRepos } from "./commands.js";
-import { getThreadFull, commentAsHuman, mergePrForBranch, closeIssue, deleteIssueHard, findPrForBranch, createIssue, readRepoFile, putRepoBase64, listUserRepos } from "./github.js";
+import { getThreadFull, commentAsHuman, mergePrForBranch, closeIssue, deleteIssueHard, findPrForBranch, prMergeStatus, createIssue, readRepoFile, putRepoBase64, listUserRepos } from "./github.js";
 import { listAgentFiles, readAgentFile, isSafeAgentPath } from "./memory.js";
 import { startApp, stopApp, getApp, pickWebDevScript, isTauriPackage, buildLocalCommand } from "./apprun.js";
 import { ensureRepoAccess } from "./commands.js";
@@ -95,7 +95,7 @@ function readBody(req: IncomingMessage): Promise<Buffer> {
 const RELEVANT_ACTIONS = new Set(["opened", "reopened", "labeled", "unlabeled", "edited"]);
 const PR_ACTIONS = new Set(["opened", "reopened", "synchronize", "ready_for_review", "edited"]);
 
-export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: Resume, approve?: Resume): Promise<void> {
+export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: Resume, approve?: Resume, fix?: Resume): Promise<void> {
   const port = Number(process.env.PORT?.trim() || "3000");
   const secret = process.env.GITHUB_WEBHOOK_SECRET?.trim() || "";
   // Catches 👍 reactions (GitHub doesn't webhook those) and anything a delivery missed.
@@ -183,6 +183,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
             }
           }
           const epicCache: Record<string, ReturnType<typeof epicsByParent>> = {};
+          const reviews = listReviews(); // verdict per "repo#number" — cheap, for the card badge
           const enriched = issues.map((i) => {
             const byParent = (epicCache[i.repo] ??= epicsByParent(i.repo));
             const kids = byParent[i.number];
@@ -193,6 +194,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
                 ? { total: kids.length, done: kids.filter((c) => c.closed).length, children: kids }
                 : null,
               app: getApp(i.repo, i.number),
+              review: reviews[`${i.repo}#${i.number}`] ?? null,
             };
           });
           const winH = sessionWindowHours();
@@ -290,6 +292,22 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         return;
       }
 
+      // PR status for the drawer: review verdict (DB) + live conflict check (one gh read). Lets
+      // the action bar choose Fix vs Merge-anyway vs conflict-only without the user reading.
+      if (url === "/pr-status") {
+        const q = new URLSearchParams((req.url ?? "").split("?")[1] ?? "");
+        const repo = q.get("repo") ?? "";
+        const number = Number(q.get("number"));
+        void (async () => {
+          const review = repo && number ? getReview(repo, number) : null;
+          const merge = repo && number ? await prMergeStatus(repo, `agency/issue-${number}`).catch(() => null) : null;
+          res
+            .writeHead(200, { "content-type": "application/json" })
+            .end(JSON.stringify({ review, merge }));
+        })();
+        return;
+      }
+
       // App panel: is this PR a web app (browser preview) or a Tauri/native app (run locally)?
       if (url === "/app-info") {
         const q = new URLSearchParams((req.url ?? "").split("?")[1] ?? "");
@@ -374,7 +392,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
 
     // Dashboard actions (password-protected, not GitHub webhooks).
     const path = (req.url ?? "").split("?")[0];
-    if (["/archive", "/comment", "/run-checks", "/merge", "/delete", "/resume", "/new-issue", "/approve", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/models"].includes(path)) {
+    if (["/archive", "/comment", "/run-checks", "/merge", "/delete", "/resume", "/fix", "/new-issue", "/approve", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/models"].includes(path)) {
       if (!checkAuth(cfg, req, res)) return;
       void readBody(req).then(async (body) => {
         let p: { repo?: string; number?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; dataUrl?: string; name?: string; providers?: Provider[]; roleModels?: Record<string, { providerId: string; model: string }> } = {};
@@ -461,6 +479,12 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           // Unstick an issue and re-run it, whatever state it's in.
           if (!repo || !number || !resume) return res.writeHead(400).end("{}");
           await resume(repo, number).catch(() => {});
+          return ok();
+        }
+        if (path === "/fix") {
+          // Address the PR's outstanding review (and resolve conflicts) on its branch.
+          if (!repo || !number || !fix) return res.writeHead(400).end("{}");
+          await fix(repo, number).catch(() => {});
           return ok();
         }
         if (path === "/app-run") {

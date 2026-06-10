@@ -826,6 +826,13 @@ export async function ensureBranchPushed(workdir: string, branch: string): Promi
   }
 }
 
+/** Deterministically put the workdir on an existing remote branch (for Fix/resume on a PR). */
+export async function fetchCheckout(workdir: string, branch: string): Promise<void> {
+  await runGit(workdir, ["fetch", "origin", branch]).catch(() => {});
+  const ok = await runGit(workdir, ["checkout", branch]).then(() => true).catch(() => false);
+  if (!ok) await runGit(workdir, ["checkout", "-B", branch, `origin/${branch}`]).catch(() => {});
+}
+
 /** Open a draft PR for the branch if none exists; returns the PR (or null). */
 export async function ensureDraftPr(repo: string, issue: number, branch: string, title: string): Promise<PullRequest | null> {
   const existing = await findPrForBranch(repo, branch);
@@ -849,4 +856,28 @@ export async function findPrForBranch(repo: string, branch: string): Promise<Pul
   ]).catch(() => "[]");
   const raw = JSON.parse(out) as Array<{ number: number; url: string; isDraft: boolean }>;
   return raw.length > 0 ? raw[0] : null;
+}
+
+export interface MergeStatus {
+  prNumber: number;
+  state: string; // OPEN | MERGED | CLOSED
+  /** "clean" = no conflicts & can merge; "conflict" = needs a merge/rebase; "unknown" otherwise. */
+  mergeable: "clean" | "conflict" | "unknown";
+}
+
+/**
+ * Ask GitHub whether a branch's PR can merge cleanly (conflict detection). Used by the dashboard
+ * to decide between "merge" vs "fix" — no agent/tokens, just one `gh` API read.
+ */
+export async function prMergeStatus(repo: string, branch: string): Promise<MergeStatus | null> {
+  const out = await gh([
+    "pr", "list", "--repo", repo, "--head", branch, "--state", "open",
+    "--json", "number,state,mergeable", "--limit", "1",
+  ]).catch(() => "[]");
+  const raw = JSON.parse(out) as Array<{ number: number; state: string; mergeable: string }>;
+  if (raw.length === 0) return null;
+  const p = raw[0];
+  const m = (p.mergeable || "").toUpperCase();
+  const mergeable = m === "MERGEABLE" ? "clean" : m === "CONFLICTING" ? "conflict" : "unknown";
+  return { prNumber: p.number, state: p.state, mergeable };
 }

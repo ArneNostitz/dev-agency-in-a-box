@@ -32,6 +32,8 @@ import {
   approveLastProposal,
   commentOnPr,
   prHealth,
+  prMergeStatus,
+  fetchCheckout,
   mentionsHandle,
   AWAITING_LABELS,
   type Issue,
@@ -41,7 +43,7 @@ import { reconcileEpics } from "./epics.js";
 import { indexRepo } from "./gitnexus.js";
 import { pushActivity } from "./activity.js";
 import { loadHandleRoleMap, roleForText, type RoleName } from "./agents/roles.js";
-import { runPipeline, runPrFix, runFollowUp, runResumeBuild } from "./pipeline.js";
+import { runPipeline, runPrFix, runFollowUp, runResumeBuild, runReviewFix } from "./pipeline.js";
 import {
   recordIssueState,
   getIssueRole,
@@ -386,6 +388,59 @@ async function processResume(cfg: Config, repo: string, issue: Issue): Promise<v
 }
 
 /**
+ * Dashboard "Fix" button: address an open PR's outstanding review (and resolve conflicts with
+ * main if any) on its existing branch, then re-test/re-review and update the same PR. Detects
+ * conflicts up front (no tokens) so the fix run also rebases when needed.
+ */
+export async function forceFix(cfg: Config, repo: string, number: number): Promise<void> {
+  const issue = await getIssue(repo, number);
+  if (!issue) return;
+  if (agentsArePaused()) {
+    setRateLimited(repo, number, new Date(pausedUntil()).toISOString());
+    recordIssueState(repo, number, { state: RATE_LIMITED });
+    await addLabel(repo, number, RATE_LIMITED).catch(() => {});
+    await commentOnIssue(repo, number, `⏳ Rate-limited — I'll run the fix automatically after the usage window resets (~${new Date(pausedUntil()).toLocaleString()}).`).catch(() => {});
+    return;
+  }
+  const branch = `agency/issue-${number}`;
+  const ms = await prMergeStatus(repo, branch).catch(() => null);
+  const conflict = ms?.mergeable === "conflict";
+  for (const l of [READY, NEEDS_ATTENTION, "🚧 blocked", ...AWAITING_LABELS]) await removeLabel(repo, number, l).catch(() => {});
+  await addLabel(repo, number, IN_PROGRESS).catch(() => {});
+  recordIssueState(repo, number, { state: IN_PROGRESS });
+  console.log(`[agency] fix ${repo} #${number} (conflict=${conflict})`);
+  dispatch(`${repo}#${number}`, () => processFix(cfg, repo, issue, conflict));
+}
+
+/** Worker: run the review-fix pipeline on the PR's existing branch. */
+async function processFix(cfg: Config, repo: string, issue: Issue, conflict: boolean): Promise<void> {
+  void cfg;
+  await addLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
+  recordIssueState(repo, issue.number, { title: issue.title, role: "developer", state: IN_PROGRESS });
+  await acknowledge(repo, issue.number).catch(() => {});
+  const workdir = workdirFor(repo, `${issue.number}`);
+  await rm(workdir, { recursive: true, force: true });
+  await mkdir(join(workdir, ".."), { recursive: true });
+  await cloneRepo(repo, workdir);
+  await fetchCheckout(workdir, `agency/issue-${issue.number}`); // put the work back, then fix on top
+  await indexRepo(workdir, (s) => pushActivity(repo, issue.number, "developer", "tool", s));
+  setActive(repo, issue.number, "issue", "developer", issue.title);
+  try {
+    await runReviewFix(repo, issue, workdir, { conflict });
+  } catch (err) {
+    const msg = (err as Error).message ?? String(err);
+    console.error(`[agency] fix error ${repo} #${issue.number}:`, msg);
+    if (await maybeParkRateLimited(repo, issue.number, msg)) return;
+    await removeLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
+    await addLabel(repo, issue.number, NEEDS_ATTENTION).catch(() => {});
+    recordIssueState(repo, issue.number, { state: NEEDS_ATTENTION });
+    await commentOnIssue(repo, issue.number, `❌ Fix run failed: ${msg.slice(0, 300)} — press Fix again.`).catch(() => {});
+  } finally {
+    clearActive(repo, issue.number);
+  }
+}
+
+/**
  * One-click approve from the dashboard: mark the proposal approved (👍 the agency comment so
  * the pipeline's approval check passes), move the issue to Working *immediately* (so it never
  * sits in "waiting" while it queues), and dispatch the build.
@@ -687,6 +742,7 @@ async function main(): Promise<void> {
       processAllRepos,
       (repo, number) => forceResume(cfg, repo, number),
       (repo, number) => forceApprove(cfg, repo, number),
+      (repo, number) => forceFix(cfg, repo, number),
     );
   } else if (cfg.runMode === "watch") {
     await runWatch(cfg);

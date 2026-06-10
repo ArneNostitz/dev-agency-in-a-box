@@ -27,7 +27,7 @@ import {
 import { EPIC_LABEL, renderEpicTracker } from "./epics.js";
 import { runRole } from "./agents/roleAgent.js";
 import type { RoleName } from "./agents/roles.js";
-import { recordRun, recordPlan, lastPlan, recordIssueState, recordPr, addEpicChild, listEpicChildren, getSession, issueActivity } from "./store.js";
+import { recordRun, recordPlan, lastPlan, recordIssueState, recordPr, addEpicChild, listEpicChildren, getSession, issueActivity, recordReview, getReview } from "./store.js";
 import { runReflection } from "./reflect.js";
 
 const IN_PROGRESS = "agency:in-progress";
@@ -99,7 +99,7 @@ async function plan(repo: string, issue: Issue, workdir: string, thread: string)
  * (looped / interrupted) still lands a PR instead of bouncing to needs-attention. Returns true
  * if a PR now exists.
  */
-async function finalizeWithPr(repo: string, issue: Issue, workdir: string, branch: string): Promise<boolean> {
+async function finalizeWithPr(repo: string, issue: Issue, workdir: string, branch: string, changesRequested = false): Promise<boolean> {
   const hasCommits = await ensureBranchPushed(workdir, branch);
   const pr = hasCommits ? await ensureDraftPr(repo, issue.number, branch, issue.title) : await findPrForBranch(repo, branch);
   await removeLabel(repo, issue.number, IN_PROGRESS);
@@ -107,11 +107,14 @@ async function finalizeWithPr(repo: string, issue: Issue, workdir: string, branc
     await addLabel(repo, issue.number, READY);
     recordIssueState(repo, issue.number, { state: READY });
     recordPr(repo, issue.number, pr.number, pr.url);
+    const head = changesRequested
+      ? `**⚠️ PR opened, but the reviewer still wants changes.** ${pr.url}\n\nPress **Fix** on the card to address them, or **Merge anyway** to ship as-is.`
+      : `**✅ Work complete.** Opened ${pr.isDraft ? "draft " : ""}PR ${pr.url}`;
     await commentOnIssue(
       repo,
       issue.number,
       say("developer", [
-        `**✅ Work complete.** Opened ${pr.isDraft ? "draft " : ""}PR ${pr.url}`,
+        head,
         "",
         "Test it locally:",
         "```bash",
@@ -281,7 +284,12 @@ async function build(
     recordRun(repo, issue.number, "developer", revise.model, revise.turns, "revise", revise.costUsd);
   }
 
-  const ok = await finalizeWithPr(repo, issue, workdir, branch);
+  // Record the FINAL verdict so the dashboard knows whether this PR still has requested changes
+  // (after the one allowed auto-revise round). If so, the card flags it and offers a Fix button.
+  const stillChanges = changesRequested(lastReview);
+  recordReview(repo, issue.number, stillChanges ? "changes" : "approved", lastReview);
+
+  const ok = await finalizeWithPr(repo, issue, workdir, branch, stillChanges);
   if (ok) {
     // Reflect (cheap, best-effort): what should the agency remember from this build?
     await runReflection(
@@ -507,6 +515,59 @@ export async function runResumeBuild(repo: string, issue: Issue, workdir: string
   const planText = lastPlan(repo, issue.number) ?? "(plan unavailable — infer from the issue + branch)";
   await commentOnIssue(repo, issue.number, say("developer", "**Resuming** from where it stopped — continuing the existing branch, not redoing finished work."));
   await build(repo, issue, workdir, planText, thread, { digest: resumeDigest(repo, issue.number) });
+}
+
+/**
+ * Address an open PR's outstanding review (and/or merge conflicts) on its existing branch, then
+ * re-test, re-review and update the PR. This is the dashboard "Fix" button: the developer fixes
+ * exactly what the reviewer flagged (no fresh plan, no redoing finished work), resolving conflicts
+ * with main when asked. Re-records the verdict so the card clears its ⚠ flag once clean.
+ */
+export async function runReviewFix(repo: string, issue: Issue, workdir: string, opts?: { conflict?: boolean }): Promise<void> {
+  const branch = `agency/issue-${issue.number}`;
+  const review = getReview(repo, issue.number)?.summary || "(see the reviewer's latest comment on the issue)";
+  const conflictRule = opts?.conflict
+    ? `This branch CONFLICTS with main. First merge the latest main in and resolve all conflicts: ` +
+      `\`git fetch origin main && git merge origin/main\` (or rebase), fix every conflict, build, then continue. `
+    : "";
+  await commentOnIssue(repo, issue.number, say("developer", `**On it — addressing the review${opts?.conflict ? " + resolving conflicts" : ""}.**`));
+
+  const dev = await runRole("developer", {
+    workdir,
+    repo,
+    issueNumber: issue.number,
+    task:
+      `Make sure you're on the PR branch: \`git checkout ${branch}\` (it's already checked out). ` +
+      `Address the reviewer's requested changes. ${conflictRule}` +
+      `Make the fixes, add/extend tests as needed, then commit and push to the SAME branch (do NOT open a new PR). ` +
+      `Keep the diff focused on what was asked.\n\n### Reviewer's requested changes\n${review}\n\n### ${issueHeader(issue)}`,
+    ...(getSession(repo, issue.number, "developer") ? { resumeSessionId: getSession(repo, issue.number, "developer") ?? undefined } : {}),
+  });
+  recordRun(repo, issue.number, "developer", dev.model, dev.turns, "revise", dev.costUsd);
+
+  const test = await runRole("tester", {
+    workdir,
+    repo,
+    issueNumber: issue.number,
+    task: `On branch \`${branch}\`, run the project's checks (typecheck, lint, test, build) and report pass/fail + first error only.`,
+  });
+  recordRun(repo, issue.number, "tester", test.model, test.turns, "test", test.costUsd);
+  await commentOnIssue(repo, issue.number, say("tester", `**Re-test after fixes**\n\n${test.text}`));
+
+  const review2 = await runRole("reviewer", {
+    workdir,
+    repo,
+    issueNumber: issue.number,
+    task:
+      `Re-review branch \`${branch}\` for issue #${issue.number} after the fixes. Inspect \`git diff main...HEAD\`. ` +
+      `Start your reply with exactly "APPROVE" or "REQUEST CHANGES" on the first line, then notes.\n\nLatest tests:\n${test.text}`,
+  });
+  recordRun(repo, issue.number, "reviewer", review2.model, review2.turns, "review", review2.costUsd);
+  await commentOnIssue(repo, issue.number, say("reviewer", `**Review (after fix)**\n\n${review2.text}`));
+
+  const stillChanges = changesRequested(review2.text);
+  recordReview(repo, issue.number, stillChanges ? "changes" : "approved", review2.text);
+  await finalizeWithPr(repo, issue, workdir, branch, stillChanges);
 }
 
 export async function runFollowUp(

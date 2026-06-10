@@ -102,9 +102,10 @@ const STYLE = `
   .card .t{font-weight:560;font-size:14px;margin:1px 0 6px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
   .card .m{display:flex;gap:6px;align-items:center;flex-wrap:wrap;color:var(--muted);font-size:12px}
   .tag{font-size:11px;padding:1px 7px;border-radius:999px;background:#eef1f5;color:var(--muted)}
-  .tag.pr{background:var(--accent-weak);color:var(--accent)} .tag.prev{background:#e9f8ef;color:var(--green)} .tag.epic{background:#efe9ff;color:#6741d9} .tag.q{background:#f0f1f3;color:#7a828c} .tag.rl{background:#fff1d6;color:#a76a00}
+  .tag.pr{background:var(--accent-weak);color:var(--accent)} .tag.prev{background:#e9f8ef;color:var(--green)} .tag.epic{background:#efe9ff;color:#6741d9} .tag.q{background:#f0f1f3;color:#7a828c} .tag.rl{background:#fff1d6;color:#a76a00} .tag.fix{background:#fde8e8;color:#c0392b}
   .cardbtn{border:1px solid #cdebd6;background:#e9f8ef;color:var(--green);border-radius:7px;padding:1px 8px;font-size:11px;cursor:pointer;font-weight:560}
   .cardbtn.rs{border-color:#d3def0;background:#eef3fb;color:#3b6cc9}
+  .cardbtn.fx{border-color:#f3d2cf;background:#fdeceb;color:#c0392b}
   .cmdrow{display:flex;gap:6px;align-items:center}
   .cmdrow code{flex:1;overflow:auto;white-space:nowrap;background:#0f1117;color:#d7e0ee;padding:6px 8px;border-radius:7px;font-size:12px}
   .epiclist{margin:2px 0 4px} .epiclist a{display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid var(--line);font-size:13px;color:var(--ink)}
@@ -344,16 +345,19 @@ ${CLIENT_HELPERS}
   }
   window.setRepo=function(r){repoFilter=r;renderChips();renderBoard();};
 
+  function isDone(i){var s=i.state||"";return s==="merged"||s==="agency:merged"||s==="closed"||s==="done";}
   function card(i){
-    var tags='';
+    var tags=''; var needsFix = i.review==="changes" && !isDone(i);
     if(i.state==="agency:rate-limited") tags+='<span class="tag rl">⌛ '+(i.resumeAt?('auto-resume '+hm(new Date(i.resumeAt))):'auto-resume')+'</span>';
     if(i.queued) tags+='<span class="tag q">⏳ queued</span>';
+    if(needsFix) tags+='<span class="tag fix">⚠ changes requested</span>';
     if(i.epic) tags+='<span class="tag epic">🧩 '+i.epic.done+'/'+i.epic.total+'</span>';
     if(i.pr_number) tags+='<a class="tag pr" href="'+(i.pr_url||gh(i.repo,i.pr_number))+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">PR #'+i.pr_number+' ↗</a>';
     if(i.previewUrl) tags+='<a class="tag prev" href="'+i.previewUrl+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">preview ↗</a>';
     var role=i.role?(ICON[i.role]||"")+" ":"";
     var quick='';
     if(i.state==="agency:awaiting-approval") quick+='<button class="cardbtn" onclick=\\'cardApprove('+JSON.stringify(i.repo)+','+i.number+',event)\\'>✓ approve</button> ';
+    if(needsFix) quick+='<button class="cardbtn fx" onclick=\\'cardFix('+JSON.stringify(i.repo)+','+i.number+',event)\\'>🔧 fix</button> ';
     if(i.state==="agency:needs-attention"||i.state==="agency:rate-limited") quick+='<button class="cardbtn rs" onclick=\\'cardResume('+JSON.stringify(i.repo)+','+i.number+',event)\\'>⟳ resume</button> ';
     return '<div class="card" onclick=\\'openDrawer('+JSON.stringify(i.repo)+','+i.number+')\\'>'+
       '<div class="t">'+(i.active?'<span class="dot"></span> ':'')+esc(i.title||("#"+i.number))+'</div>'+
@@ -370,6 +374,12 @@ ${CLIENT_HELPERS}
     fetch("/resume",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({repo:repo,number:number})})
       .then(function(r){if(!r.ok)throw 0; toast("Resuming ↻"); setTimeout(load,1000);})
       .catch(function(){toast("Couldn’t resume");});
+  };
+  window.cardFix=function(repo,number,ev){
+    if(ev){ev.stopPropagation();}
+    fetch("/fix",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({repo:repo,number:number})})
+      .then(function(r){if(!r.ok)throw 0; toast("Fixing the review 🔧"); setTimeout(load,1000);})
+      .catch(function(){toast("Couldn’t start fix");});
   };
   function lane(ck,items){
     var inner=items.length?items.map(card).join(""):'<div class="empty">—</div>';
@@ -633,8 +643,10 @@ ${CLIENT_HELPERS}
         (i.epic.children||[]).map(function(c){return '<a href="'+gh(i.repo,c.child)+'" target="_blank" rel="noopener"><span class="ck'+(c.closed?'':' o')+'">'+(c.closed?'✓':'○')+'</span> #'+c.child+' '+esc(c.title)+'<span class="st">'+esc(c.state||'')+'</span></a>';}).join("")+'</div>';
     }
     document.getElementById("d_stream").innerHTML="";
-    open.appKind=undefined; open.devScript=null; PEND=[]; renderAtts();
+    open.appKind=undefined; open.devScript=null; open.prStatus=null; PEND=[]; renderAtts();
     getJSON("/app-info?repo="+encodeURIComponent(repo)+"&number="+n).then(function(d){if(!open||open.number!==n)return;open.appKind=d.kind;open.devScript=d.devScript;renderActions();}).catch(function(){if(open)open.appKind="unknown";renderActions();});
+    // Live PR status (review verdict + conflict check) so the bar can choose Fix vs Merge.
+    if(i.pr_number) getJSON("/pr-status?repo="+encodeURIComponent(repo)+"&number="+n).then(function(d){if(!open||open.number!==n)return;open.prStatus=d;renderActions();}).catch(function(){});
     document.getElementById("d_body").innerHTML=ehtml+'<div class="sec">Conversation</div><div id="d_thread"><div class="empty">Loading…</div></div>';
     applyStreamCollapse();
     renderStream(); loadThread(true);
@@ -688,6 +700,10 @@ ${CLIENT_HELPERS}
     var app=i.app, kind=open.appKind, st=i.state||"";
     var done = st==="merged"||st==="agency:merged"||st==="closed"||st==="done";
     var epicDone = i.epic && i.epic.done>=i.epic.total;
+    // Review/merge state for this PR (from /pr-status when loaded; verdict falls back to /data).
+    var ps=open.prStatus||{}; var rv=(ps.review&&ps.review.verdict)||i.review||null;
+    var merge=ps.merge||null; var conflict = merge && merge.mergeable==="conflict";
+    var needsFix = rv==="changes";
     // Links are always relevant.
     var a=ilnk('🔗','Open issue on GitHub',gh(open.repo,open.number));
     if(i.pr_url) a+=ilnk('⑂','Open pull request',i.pr_url);
@@ -695,6 +711,8 @@ ${CLIENT_HELPERS}
     // Build/approve actions only while the issue is still live.
     if(!done){
       if(st==="agency:awaiting-approval") a+=ibtn('✓','Approve &amp; build','doApprove(this)','primary');
+      // Fix: address the reviewer's requested changes (and resolve conflicts). Primary when needed.
+      if(i.pr_number && (needsFix||conflict)) a+=ibtn('🔧',conflict?(needsFix?'Fix the review &amp; resolve merge conflicts':'Resolve merge conflicts with main'):'Fix the reviewer’s requested changes','doFix(this)','primary');
       a+=ibtn('⟳','Resume','doResume(this)','','d_resume');
       a+=ibtn('🧪','Run checks','runChecks()','','d_checks');
     }
@@ -706,14 +724,19 @@ ${CLIENT_HELPERS}
       else if(app&&app.status==="error"){ a+=ibtn('⚠','Preview failed — retry','runApp()','danger'); }
       else if(kind==="web"){ a+=ibtn('🚀','Run preview in the cloud (gives a link)','runApp()'); }
     }
-    // Merge only when there's something open to merge.
-    if(!done){
-      if(i.pr_number) a+=ibtn('⤵','Merge PR','confirmAct(this,\\'merge\\')');
-      else if(i.epic && epicDone) a+=ibtn('⤵','Merge all sub-issues','confirmAct(this,\\'merge\\')');
+    // Merge: hide entirely when there are conflicts (you must Fix first). When fixes are still
+    // requested but it merges cleanly, offer "Merge anyway". Otherwise a normal merge.
+    if(!done && !conflict){
+      if(i.pr_number) a+=ibtn('⤵',needsFix?'Merge anyway (skip the requested fixes)':'Merge PR','confirmAct(this,\\'merge\\')',needsFix?'':'primary');
+      else if(i.epic && epicDone) a+=ibtn('⤵','Merge all sub-issues','confirmAct(this,\\'merge\\')','primary');
     }
     a+=ibtn('🗑','Delete','confirmAct(this,\\'delete\\')','danger');
     document.getElementById("d_actions").innerHTML=a;
   }
+  window.doFix=function(btn){ if(!open)return; if(btn)btn.disabled=true;
+    fetch("/fix",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({repo:open.repo,number:open.number})})
+      .then(function(r){if(!r.ok)throw 0; toast("Fixing the review 🔧"); closeDrawer(); setTimeout(load,1200);})
+      .catch(function(){if(btn)btn.disabled=false;toast("Couldn’t start fix");}); };
   window.runApp=function(){ if(!open)return;
     fetch("/app-run",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({repo:open.repo,number:open.number})})
       .then(function(r){if(!r.ok)return r.json().then(function(d){toast(d.error||"can’t run");}); toast("Starting preview…"); setTimeout(load,800);}).catch(function(){toast("Couldn’t start");}); };
