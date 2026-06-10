@@ -452,6 +452,13 @@ export async function runPrFix(
   workdir: string,
   thread: string,
 ): Promise<void> {
+  // If the reviewer recorded concrete change requests, hand them to the developer explicitly —
+  // a vague "fix the requested things" comment alone makes weaker models bail with "nothing to do".
+  const rev = getReview(repo, issueNumber);
+  const reviewBlock =
+    rev && rev.verdict === "changes"
+      ? `\n\n### Reviewer's requested changes (you MUST address each one)\n${rev.summary}`
+      : "";
   // Stream activity under the PR number — it must match setActive's key, otherwise the
   // dashboard's live card for this PR stays empty.
   const dev = await runRole("developer", {
@@ -460,8 +467,12 @@ export async function runPrFix(
     issueNumber: pr,
     task:
       `Update the existing pull request. First run \`git fetch origin ${branch} && git checkout ${branch}\`. ` +
-      `Then address the review feedback below, commit, and push (this updates PR #${pr}). Keep the diff focused; ` +
-      `only change what the feedback asks for.\n\n### PR conversation (latest comment is the request)\n${thread}`,
+      `Then make the changes the human is asking for in the latest comment (and any reviewer-requested changes ` +
+      `below), commit, and push (this updates PR #${pr}). Keep the diff focused. ` +
+      `Actually implement the changes and commit — do NOT reply that there is nothing to do unless you have ` +
+      `verified in the code that every requested point is already satisfied, and then explain why for each point.` +
+      reviewBlock +
+      `\n\n### PR conversation (latest comment is the request)\n${thread}`,
   });
   recordRun(repo, issueNumber, "developer", dev.model, dev.turns, "pr-fix", dev.costUsd);
 
@@ -473,6 +484,19 @@ export async function runPrFix(
   });
   recordRun(repo, issueNumber, "tester", test.model, test.turns, "test", test.costUsd);
   await commentOnPr(repo, pr, say("developer", `**Pushed fixes.**\n\n${test.text}`));
+
+  // Re-review so the verdict (and the card's ⚠ badge) reflects the new state of the PR.
+  const review = await runRole("reviewer", {
+    workdir,
+    repo,
+    issueNumber: pr,
+    task:
+      `Re-review branch \`${branch}\` after the latest changes. Inspect \`git diff main...HEAD\`. ` +
+      `Start your reply with exactly "APPROVE" or "REQUEST CHANGES" on the first line, then notes.\n\nLatest tests:\n${test.text}`,
+  });
+  recordRun(repo, issueNumber, "reviewer", review.model, review.turns, "review", review.costUsd);
+  await commentOnIssue(repo, issueNumber, say("reviewer", `**Review (after fix)**\n\n${review.text}`));
+  recordReview(repo, issueNumber, changesRequested(review.text) ? "changes" : "approved", review.text);
 }
 
 export async function runPipeline(

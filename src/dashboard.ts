@@ -764,9 +764,9 @@ ${CLIENT_HELPERS}
     // Build/approve actions only while the issue is still live.
     if(!done){
       if(st==="agency:awaiting-approval") a+=ibtn(ic('check'),'Approve &amp; build','doApprove(this)','primary');
-      // Fix: always available on an open PR. Primary (red-hot) when the reviewer wants changes or
-      // there are conflicts; secondary otherwise (e.g. you want another pass).
-      if(i.pr_number) a+=ibtn(ic('wrench'),conflict?(needsFix?'Fix the review &amp; resolve merge conflicts':'Resolve merge conflicts with main'):(needsFix?'Fix the reviewer’s requested changes':'Re-run the developer on this PR (address the latest comments)'),'doFix(this)',(needsFix||conflict)?'primary':'');
+      // Fix: only when the reviewer requested changes or there are merge conflicts. (Otherwise just
+      // leave a comment — the orchestrator picks it up and routes it to the right agent.)
+      if(i.pr_number && (needsFix||conflict)) a+=ibtn(ic('wrench'),conflict?(needsFix?'Fix the review &amp; resolve merge conflicts':'Resolve merge conflicts with main'):'Fix the reviewer’s requested changes','doFix(this)','primary');
       a+=ibtn(ic('refresh'),'Resume','doResume(this)','','d_resume');
       a+=ibtn(ic('flask'),'Run checks','runChecks()','','d_checks');
     }
