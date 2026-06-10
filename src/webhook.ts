@@ -14,14 +14,14 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { Config } from "./config.js";
-import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getReview, listReviews, type Provider } from "./store.js";
+import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getReview, recordReview, listReviews, type Provider } from "./store.js";
 import { mergeEpic, isEpic } from "./epics.js";
 import { renderDashboard, renderHistory } from "./dashboard.js";
 import { subscribe, getActive } from "./activity.js";
 import { inFlightKeys } from "./pool.js";
 import { listRateLimited } from "./store.js";
 import { effectiveRepos } from "./commands.js";
-import { getThreadFull, commentAsHuman, mergePrForBranch, closeIssue, deleteIssueHard, findPrForBranch, prMergeStatus, createIssue, readRepoFile, putRepoBase64, listUserRepos } from "./github.js";
+import { getThreadFull, commentAsHuman, mergePrForBranch, closeIssue, deleteIssueHard, findPrForBranch, prMergeStatus, detectReviewVerdict, createIssue, readRepoFile, putRepoBase64, listUserRepos } from "./github.js";
 import { listAgentFiles, readAgentFile, isSafeAgentPath } from "./memory.js";
 import { startApp, stopApp, getApp, pickWebDevScript, isTauriPackage, buildLocalCommand } from "./apprun.js";
 import { ensureRepoAccess } from "./commands.js";
@@ -299,7 +299,16 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         const repo = q.get("repo") ?? "";
         const number = Number(q.get("number"));
         void (async () => {
-          const review = repo && number ? getReview(repo, number) : null;
+          let review = repo && number ? getReview(repo, number) : null;
+          // Retroactive: PRs reviewed before verdict-capture have no DB row — read the verdict
+          // from the thread once and persist it, so the Fix button + card badge light up.
+          if (!review && repo && number) {
+            const d = await detectReviewVerdict(repo, number).catch(() => null);
+            if (d) {
+              recordReview(repo, number, d.verdict, d.summary);
+              review = { verdict: d.verdict, summary: d.summary };
+            }
+          }
           const merge = repo && number ? await prMergeStatus(repo, `agency/issue-${number}`).catch(() => null) : null;
           res
             .writeHead(200, { "content-type": "application/json" })

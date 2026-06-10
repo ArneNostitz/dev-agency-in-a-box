@@ -162,6 +162,26 @@ export async function listComments(repo: string, issue: number): Promise<Array<{
   return data.comments ?? [];
 }
 
+/**
+ * Read the latest reviewer verdict straight from the thread — so PRs created before the verdict
+ * was recorded in the DB still light up the Fix button. Returns the verdict + the review notes.
+ */
+export async function detectReviewVerdict(
+  repo: string,
+  issue: number,
+): Promise<{ verdict: "approved" | "changes"; summary: string } | null> {
+  const comments = await listComments(repo, issue).catch(() => [] as Array<{ body: string }>);
+  // Walk newest→oldest for the most recent agency "Review" comment.
+  for (let i = comments.length - 1; i >= 0; i--) {
+    const b = comments[i].body || "";
+    if (!b.includes(AGENCY_MARKER) || !/\*\*Review/i.test(b)) continue;
+    const verdict = /request\s+changes/i.test(b) ? "changes" : "approved";
+    const summary = b.replace(AGENCY_MARKER, "").trim().slice(0, 4000);
+    return { verdict, summary };
+  }
+  return null;
+}
+
 /** True if the most recent comment was written by a human (not the agency). */
 export async function humanRepliedLast(repo: string, issue: number): Promise<boolean> {
   const comments = await listComments(repo, issue);
