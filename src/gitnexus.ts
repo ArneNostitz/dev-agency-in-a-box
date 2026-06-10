@@ -17,10 +17,14 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
+import { getSetting } from "./store.js";
 
 const exec = promisify(execFile);
 
 export function gitnexusEnabled(): boolean {
+  const s = getSetting("gitnexus"); // dashboard toggle wins over env
+  if (s === "on") return true;
+  if (s === "off") return false;
   return process.env.GITNEXUS?.trim().toLowerCase() === "true";
 }
 

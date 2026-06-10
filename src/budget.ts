@@ -7,6 +7,8 @@
  * Escape hatch: label an issue `agency:unlimited` to exempt it.
  */
 
+import { getSetting } from "./store.js";
+
 export const UNLIMITED_LABEL = "agency:unlimited";
 
 export interface BudgetLimits {
@@ -20,7 +22,12 @@ export interface BudgetLimits {
   maxTokensPerRun: number;
 }
 
-const num = (name: string, fallback: number): number => {
+// Dashboard setting wins over env var wins over the built-in default (so it's tunable live).
+const num = (name: string, fallback: number, settingKey?: string): number => {
+  if (settingKey) {
+    const s = Number(getSetting(settingKey));
+    if (Number.isFinite(s) && s >= 0) return s;
+  }
   const v = Number(process.env[name]?.trim());
   return Number.isFinite(v) && v >= 0 ? v : fallback;
 };
@@ -30,7 +37,7 @@ export function loadBudget(): BudgetLimits {
     maxIssueCostUsd: num("MAX_ISSUE_COST_USD", 15),
     maxIssueTurns: num("MAX_ISSUE_TURNS", 800),
     maxTurnsPerRun: num("MAX_TURNS_PER_RUN", 250),
-    maxTokensPerRun: num("MAX_TOKENS_PER_RUN", 600_000),
+    maxTokensPerRun: num("MAX_TOKENS_PER_RUN", 600_000, "max_tokens_per_run"),
   };
 }
 

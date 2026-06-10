@@ -27,13 +27,25 @@ import {
 import { EPIC_LABEL, renderEpicTracker } from "./epics.js";
 import { runRole } from "./agents/roleAgent.js";
 import type { RoleName } from "./agents/roles.js";
-import { recordRun, recordPlan, lastPlan, recordIssueState, recordPr, addEpicChild, listEpicChildren, getSession, issueActivity, recordReview, getReview } from "./store.js";
+import { recordRun, recordPlan, lastPlan, recordIssueState, recordPr, addEpicChild, listEpicChildren, getSession, issueActivity, recordReview, getReview, getSetting } from "./store.js";
 import { runReflection } from "./reflect.js";
 
 const IN_PROGRESS = "agency:in-progress";
 const READY = "agency:ready";
 const NEEDS_ATTENTION = "agency:needs-attention";
-const MAX_REVISE_ROUNDS = 1;
+// Dashboard-tunable (setting wins over env wins over default), so no redeploy to change behaviour.
+function maxReviseRounds(): number {
+  const s = Number(getSetting("max_revise_rounds"));
+  if (Number.isFinite(s) && s >= 0) return s;
+  const e = Number(process.env.MAX_REVISE_ROUNDS?.trim());
+  return Number.isFinite(e) && e >= 0 ? e : 1;
+}
+function skipArchitect(): boolean {
+  const s = getSetting("skip_architect");
+  if (s === "on") return true;
+  if (s === "off") return false;
+  return process.env.SKIP_ARCHITECT?.trim().toLowerCase() !== "false"; // default: skip
+}
 
 function issueHeader(issue: Issue): string {
   return `Issue #${issue.number}: ${issue.title}\n\n${issue.body || "(no description)"}`;
@@ -271,7 +283,7 @@ async function build(
     lastReview = review.text;
     await commentOnIssue(repo, issue.number, say("reviewer", `**Review (round ${round + 1})**\n\n${review.text}`));
 
-    if (!changesRequested(review.text) || round >= MAX_REVISE_ROUNDS) break;
+    if (!changesRequested(review.text) || round >= maxReviseRounds()) break;
 
     const revise = await runRole("developer", {
       workdir,
@@ -350,7 +362,7 @@ async function runDeveloperPipeline(
   // so we skip a second agent that re-reads the whole repo (big token saving). Set
   // SKIP_ARCHITECT=false to bring back a separate Sonnet architect refinement.
   let proposal = decision.body;
-  if (process.env.SKIP_ARCHITECT?.trim().toLowerCase() === "false") {
+  if (!skipArchitect()) {
     const arch = await runRole("architect", {
       workdir,
       repo,

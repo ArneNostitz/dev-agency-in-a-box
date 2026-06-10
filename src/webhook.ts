@@ -14,7 +14,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { Config } from "./config.js";
-import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getReview, recordReview, listReviews, type Provider } from "./store.js";
+import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, type AutoKind, type Provider } from "./store.js";
 import { mergeEpic, isEpic } from "./epics.js";
 import { renderDashboard, renderHistory } from "./dashboard.js";
 import { subscribe, getActive } from "./activity.js";
@@ -195,6 +195,12 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
                 : null,
               app: getApp(i.repo, i.number),
               review: reviews[`${i.repo}#${i.number}`] ?? null,
+              auto: {
+                resume: autoEnabled("resume", i.repo, i.number),
+                merge: autoEnabled("merge", i.repo, i.number),
+                resumeRaw: getAutoRaw("resume", i.repo, i.number),
+                mergeRaw: getAutoRaw("merge", i.repo, i.number),
+              },
             };
           });
           const winH = sessionWindowHours();
@@ -205,6 +211,10 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           res.end(
             JSON.stringify({
               repos: effectiveRepos(cfg),
+              auto: { resume: getAutoRaw("resume"), merge: getAutoRaw("merge") },
+              autoRepos: Object.fromEntries(
+                effectiveRepos(cfg).map((r) => [r, { resume: getAutoRaw("resume", r), merge: getAutoRaw("merge", r) }]),
+              ),
               active: getActive(),
               inflight: inFlightKeys(),
               rateLimited: listRateLimited(),
@@ -221,6 +231,12 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
                 resetsAt: win.resetsIso,
                 anchored: Boolean(Date.parse(getSetting("window_anchor") ?? "")),
                 byModel: tokensByModelSince(win.startIso),
+              },
+              config: {
+                skipArchitect: (getSetting("skip_architect") ?? "") || (process.env.SKIP_ARCHITECT?.trim().toLowerCase() === "false" ? "off" : "on"),
+                gitnexus: (getSetting("gitnexus") ?? "") || (process.env.GITNEXUS?.trim().toLowerCase() === "true" ? "on" : "off"),
+                maxTokensPerRun: Number(getSetting("max_tokens_per_run")) || Number(process.env.MAX_TOKENS_PER_RUN?.trim()) || 600000,
+                maxReviseRounds: getSetting("max_revise_rounds") !== null ? Number(getSetting("max_revise_rounds")) : (Number(process.env.MAX_REVISE_ROUNDS?.trim()) || 1),
               },
             }),
           );
@@ -401,10 +417,10 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
 
     // Dashboard actions (password-protected, not GitHub webhooks).
     const path = (req.url ?? "").split("?")[0];
-    if (["/archive", "/comment", "/run-checks", "/merge", "/delete", "/resume", "/fix", "/new-issue", "/approve", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/models"].includes(path)) {
+    if (["/archive", "/comment", "/run-checks", "/merge", "/delete", "/resume", "/fix", "/auto", "/new-issue", "/approve", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/models"].includes(path)) {
       if (!checkAuth(cfg, req, res)) return;
       void readBody(req).then(async (body) => {
-        let p: { repo?: string; number?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; dataUrl?: string; name?: string; providers?: Provider[]; roleModels?: Record<string, { providerId: string; model: string }> } = {};
+        let p: { repo?: string; number?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; dataUrl?: string; name?: string; providers?: Provider[]; roleModels?: Record<string, { providerId: string; model: string }>; kind?: string; value?: string; skipArchitect?: string; gitnexus?: string; maxTokensPerRun?: number; maxReviseRounds?: number } = {};
         try {
           p = JSON.parse(body.toString("utf8"));
         } catch {
@@ -440,6 +456,11 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
             const t = Date.parse(p.anchor); // manual: "my session started at <time>"
             if (Number.isFinite(t)) setSetting("window_anchor", new Date(t).toISOString());
           }
+          // Pipeline knobs moved out of env — apply live, no redeploy.
+          if (p.skipArchitect === "on" || p.skipArchitect === "off") setSetting("skip_architect", p.skipArchitect);
+          if (p.gitnexus === "on" || p.gitnexus === "off") setSetting("gitnexus", p.gitnexus);
+          if (p.maxTokensPerRun !== undefined && p.maxTokensPerRun >= 0) setSetting("max_tokens_per_run", String(Math.round(p.maxTokensPerRun)));
+          if (p.maxReviseRounds !== undefined && p.maxReviseRounds >= 0) setSetting("max_revise_rounds", String(Math.round(p.maxReviseRounds)));
           return ok();
         }
         if (path === "/agent-save") {
@@ -494,6 +515,15 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           // Address the PR's outstanding review (and resolve conflicts) on its branch.
           if (!repo || !number || !fix) return res.writeHead(400).end("{}");
           await fix(repo, number).catch(() => {});
+          return ok();
+        }
+        if (path === "/auto") {
+          // Toggle auto-resume / auto-merge at the global, per-repo, or per-issue scope.
+          const kind = p.kind === "merge" ? "merge" : p.kind === "resume" ? "resume" : null;
+          const value = p.value === "on" || p.value === "off" || p.value === "inherit" ? p.value : null;
+          if (!kind || !value) return res.writeHead(400).end("{}");
+          setAuto(kind as AutoKind, value === "inherit" ? "" : value, repo || undefined, number || undefined);
+          void trigger("auto-toggle"); // let it act immediately if something is now eligible
           return ok();
         }
         if (path === "/app-run") {

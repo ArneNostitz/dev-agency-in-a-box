@@ -133,7 +133,15 @@ const STYLE = `
   .card .t{font-weight:560;font-size:14px;margin:1px 0 6px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
   .card .m{display:flex;gap:6px;align-items:center;flex-wrap:wrap;color:var(--muted);font-size:12px}
   .tag{font-size:11px;padding:1px 7px;border-radius:999px;background:#eef1f5;color:var(--muted)}
-  .tag.pr{background:var(--accent-weak);color:var(--accent)} .tag.prev{background:#e9f8ef;color:var(--green)} .tag.epic{background:#efe9ff;color:#6741d9} .tag.q{background:#f0f1f3;color:#7a828c} .tag.rl{background:#fff1d6;color:#a76a00} .tag.fix{background:#fde8e8;color:#c0392b}
+  .tag.pr{background:var(--accent-weak);color:var(--accent)} .tag.prev{background:#e9f8ef;color:var(--green)} .tag.epic{background:#efe9ff;color:#6741d9} .tag.q{background:#f0f1f3;color:#7a828c} .tag.rl{background:#fff1d6;color:#a76a00} .tag.fix{background:#fde8e8;color:#c0392b} .tag.auto{background:#e6f7ef;color:#0b8a52}
+  .autoset{display:inline-flex;gap:5px;margin-left:6px}
+  .autorow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:2px}
+  .apill{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--line);background:var(--card);color:var(--muted);border-radius:999px;padding:3px 9px;font-size:12px;font-weight:540;cursor:pointer}
+  .apill span{font-size:11px}
+  .apill.on{background:#e6f7ef;border-color:#bfe6d2;color:#0b8a52}
+  .apill.off{background:#f4f5f7;border-color:var(--line);color:#aab1bb;text-decoration:line-through}
+  .ckline{display:flex;align-items:center;gap:8px;font-size:13px;margin:6px 2px;color:var(--ink)}
+  .ckline input{width:auto}
   .cardbtn{border:1px solid #cdebd6;background:#e9f8ef;color:var(--green);border-radius:7px;padding:1px 8px;font-size:11px;cursor:pointer;font-weight:560}
   .cardbtn.rs{border-color:#d3def0;background:#eef3fb;color:#3b6cc9}
   .cardbtn.fx{border-color:#f3d2cf;background:#fdeceb;color:#c0392b}
@@ -285,6 +293,14 @@ export function renderDashboard(): string {
     <label>Calibrate: enter the % the Claude app shows now</label>
     <div style="display:flex;gap:8px"><input id="s_pct" type="number" min="1" max="100" placeholder="e.g. 42"><button class="btn" onclick="calcBudget()">Set from %</button></div>
     <label>Budget — tokens per window (0 = show tokens only)</label><input id="s_budget" type="number" min="0" step="1000">
+    <div class="sec" style="margin:14px 2px 4px">Automation (global default)</div>
+    <div id="s_auto" class="autorow"></div>
+    <div class="muted" style="font-size:12px;margin:4px 2px">Override per-repo in its header, or per-issue in the card. Auto-merge only fires when the review is approved, there are no conflicts, and checks pass.</div>
+    <div class="sec" style="margin:14px 2px 4px">Pipeline</div>
+    <label class="ckline"><input type="checkbox" id="s_skiparch"> Skip the architect step (faster, fewer tokens)</label>
+    <label class="ckline"><input type="checkbox" id="s_gitnexus"> Use GitNexus code index (fewer research tokens)</label>
+    <label>Max tokens per run (kill-switch, 0 = off)</label><input id="s_maxtok" type="number" min="0" step="50000">
+    <label>Reviewer revise rounds before it asks you</label><input id="s_revrounds" type="number" min="0" max="3" step="1">
     <div class="row"><button class="btn" onclick="closeSettings()">Cancel</button><button class="btn primary" id="s_save" onclick="saveSettings()">Save</button></div>
     <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:10px;display:flex;gap:8px;flex-wrap:wrap">
       <button class="btn" onclick="openAgents()">✎ Edit agents &amp; playbooks →</button>
@@ -383,6 +399,7 @@ ${CLIENT_HELPERS}
     if(i.state==="agency:rate-limited") tags+='<span class="tag rl">'+ic('hourglass')+' '+(i.resumeAt?('auto-resume '+hm(new Date(i.resumeAt))):'auto-resume')+'</span>';
     if(i.queued) tags+='<span class="tag q">'+ic('clock')+' queued</span>';
     if(needsFix) tags+='<span class="tag fix">'+ic('alert')+' changes requested</span>';
+    if(i.auto&&(i.auto.resume||i.auto.merge)&&!isDone(i)) tags+='<span class="tag auto" data-tip="'+(i.auto.merge?"auto-merge":"auto-resume")+' on">'+ic(i.auto.merge?'merge':'refresh')+' auto</span>';
     if(i.epic) tags+='<span class="tag epic">'+ic('layers')+' '+i.epic.done+'/'+i.epic.total+'</span>';
     if(i.pr_number) tags+='<a class="tag pr" href="'+(i.pr_url||gh(i.repo,i.pr_number))+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">'+ic('pr')+' #'+i.pr_number+'</a>';
     if(i.previewUrl) tags+='<a class="tag prev" href="'+i.previewUrl+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">'+ic('globe')+' preview</a>';
@@ -412,6 +429,26 @@ ${CLIENT_HELPERS}
     fetch("/fix",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({repo:repo,number:number})})
       .then(function(r){if(!r.ok)throw 0; toast("Fixing the review 🔧"); setTimeout(load,1000);})
       .catch(function(){toast("Couldn’t start fix");});
+  };
+  // Auto-mode pills: 3-state (inherit → on → off). repo+number = per-issue; repo only = per-repo;
+  // neither = global default.
+  var AUTO_LBL={resume:"auto-resume",merge:"auto-merge"};
+  function autoPill(kind,repo,number,raw){
+    var on=raw==="on", off=raw==="off";
+    var tip=AUTO_LBL[kind]+': '+(on?"ON":off?"OFF":(number||repo?"inherit":"off"))+' — click to change';
+    return '<button class="apill '+(on?"on":off?"off":"")+'" data-tip="'+tip+'" onclick=\\'cycleAuto('+JSON.stringify(kind)+','+JSON.stringify(repo||"")+','+(number||0)+',event)\\'>'+ic(kind==="resume"?"refresh":"merge",13)+'<span>'+(kind==="resume"?"resume":"merge")+'</span></button>';
+  }
+  function rawAuto(kind,repo,number){
+    if(number){var i=findIssue(repo,number);return i&&i.auto?(kind==="resume"?i.auto.resumeRaw:i.auto.mergeRaw)||"":"";}
+    if(repo){var ar=(DATA.autoRepos||{})[repo]||{};return ar[kind]||"";}
+    return (DATA.auto||{})[kind]||"";
+  }
+  window.cycleAuto=function(kind,repo,number,ev){ if(ev)ev.stopPropagation();
+    var cur=rawAuto(kind,repo||null,number||0); var order=["","on","off"]; var nx=order[(order.indexOf(cur)+1)%3];
+    var payload={kind:kind,value:nx===""?"inherit":nx}; if(repo)payload.repo=repo; if(number)payload.number=number;
+    fetch("/auto",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload)})
+      .then(function(){toast(AUTO_LBL[kind]+": "+(nx==="on"?"on":nx==="off"?"off":"inherit"));setTimeout(function(){load();if(open&&document.getElementById("d_auto"))renderDrawerAuto();if(document.getElementById("settings").classList.contains("on"))refreshSettings();},400);})
+      .catch(function(){toast("Couldn’t set");});
   };
   function lane(ck,items,r){
     var inner=items.length?items.map(card).join(""):'<div class="empty">—</div>';
@@ -447,7 +484,10 @@ ${CLIENT_HELPERS}
         var n=ri.filter(function(i){return sec.cols.indexOf(classify(i))>=0;}).length;
         return '<div class="section '+sec.k+'" data-scrollk="ln:'+esc(r)+':'+sec.k+'"><div class="sechead">'+sec.label+' <span>'+(n||"")+'</span></div><div class="lanes" data-scrollk="lns:'+esc(r)+':'+sec.k+'">'+lanes+'</div></div>';
       }).join("");
-      return '<div class="repo">'+esc(r)+'<button class="repoadd" onclick=\\'openComposer('+JSON.stringify(r)+')\\'>'+ic('plus',13)+' new</button></div><div class="sections">'+secs+'</div>';
+      var ar=(DATA.autoRepos||{})[r]||{};
+      return '<div class="repo">'+esc(r)+
+        '<span class="autoset">'+autoPill('resume',r,0,ar.resume||"")+autoPill('merge',r,0,ar.merge||"")+'</span>'+
+        '<button class="repoadd" onclick=\\'openComposer('+JSON.stringify(r)+')\\'>'+ic('plus',13)+' new</button></div><div class="sections">'+secs+'</div>';
     }).join("");
     preserveScroll(function(){document.getElementById("board").innerHTML = html||'<div class="empty">No repos yet. File a /add-repo issue.</div>';});
   }
@@ -492,6 +532,12 @@ ${CLIENT_HELPERS}
     var w=document.getElementById("s_window");
     if(w)w.innerHTML = s.windowStart? ((s.anchored?'Anchored':'Rolling')+' · started '+hm(new Date(s.windowStart))+', resets '+hm(new Date(s.resetsAt))) : '';
     var a=document.getElementById("s_anchor"); if(a&&!a.value&&s.windowStart)a.value=localInput(new Date(s.windowStart));
+    var sa=document.getElementById("s_auto"); if(sa)sa.innerHTML=autoPill('resume',"",0,(DATA.auto||{}).resume||"")+autoPill('merge',"",0,(DATA.auto||{}).merge||"");
+    var cfg=DATA.config||{};
+    var sk=document.getElementById("s_skiparch"); if(sk)sk.checked=cfg.skipArchitect!=="off";
+    var gn=document.getElementById("s_gitnexus"); if(gn)gn.checked=cfg.gitnexus==="on";
+    var mt=document.getElementById("s_maxtok"); if(mt&&!mt.value)mt.value=cfg.maxTokensPerRun||"";
+    var rr=document.getElementById("s_revrounds"); if(rr&&rr.value==="")rr.value=(cfg.maxReviseRounds!=null?cfg.maxReviseRounds:1);
   }
   window.setAnchor=function(){
     var v=document.getElementById("s_anchor").value; if(!v){toast("Pick a date & time");return;}
@@ -505,6 +551,8 @@ ${CLIENT_HELPERS}
     document.getElementById("s_budget").value=s.budget||"";
     document.getElementById("s_pct").value="";
     document.getElementById("s_anchor").value="";
+    document.getElementById("s_maxtok").value="";
+    document.getElementById("s_revrounds").value="";
     refreshSettings();
     document.getElementById("settings").classList.add("on");
     document.getElementById("sscrim").classList.add("on");
@@ -530,8 +578,13 @@ ${CLIENT_HELPERS}
   window.saveSettings=function(){
     var win=Number(document.getElementById("s_win").value)||5;
     var budget=Number(document.getElementById("s_budget").value)||0;
+    var body={windowHours:win,budget:budget,
+      skipArchitect:document.getElementById("s_skiparch").checked?"on":"off",
+      gitnexus:document.getElementById("s_gitnexus").checked?"on":"off",
+      maxTokensPerRun:Number(document.getElementById("s_maxtok").value)||0,
+      maxReviseRounds:Number(document.getElementById("s_revrounds").value)||0};
     var btn=document.getElementById("s_save"); btn.disabled=true;
-    fetch("/settings",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({windowHours:win,budget:budget})})
+    fetch("/settings",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)})
       .then(function(r){if(!r.ok)throw 0; toast("Saved"); closeSettings(); setTimeout(load,400);})
       .catch(function(){toast("Couldn’t save");})
       .then(function(){btn.disabled=false;});
@@ -700,7 +753,8 @@ ${CLIENT_HELPERS}
     getJSON("/app-info?repo="+encodeURIComponent(repo)+"&number="+n).then(function(d){if(!open||open.number!==n)return;open.appKind=d.kind;open.devScript=d.devScript;renderActions();}).catch(function(){if(open)open.appKind="unknown";renderActions();});
     // Live PR status (review verdict + conflict check) so the bar can choose Fix vs Merge.
     if(i.pr_number) getJSON("/pr-status?repo="+encodeURIComponent(repo)+"&number="+n).then(function(d){if(!open||open.number!==n)return;open.prStatus=d;renderActions();}).catch(function(){});
-    document.getElementById("d_body").innerHTML=ehtml+'<div class="sec">Conversation</div><div id="d_thread"><div class="empty">Loading…</div></div>';
+    document.getElementById("d_body").innerHTML=ehtml+'<div class="sec">Auto</div><div id="d_auto" class="autorow"></div><div class="sec">Conversation</div><div id="d_thread"><div class="empty">Loading…</div></div>';
+    renderDrawerAuto();
     applyStreamCollapse();
     renderStream(); loadThread(true);
     document.getElementById("drawer").classList.add("on");
@@ -727,7 +781,13 @@ ${CLIENT_HELPERS}
     el.innerHTML=evs.length?evs.map(lineHtml).join(""):'<div class="l muted">No live activity. Tap “Run checks” or reply below.</div>';
     if(streamStick) el.scrollTop=el.scrollHeight;
   }
-  function refreshDrawerLive(){renderStream(); var i=findIssue(open.repo,open.number); if(i){open.issue=i;} renderActions();}
+  function renderDrawerAuto(){
+    if(!open)return; var el=document.getElementById("d_auto"); if(!el)return;
+    var i=findIssue(open.repo,open.number)||{}; var a=i.auto||{};
+    el.innerHTML=autoPill('resume',open.repo,open.number,a.resumeRaw||"")+autoPill('merge',open.repo,open.number,a.mergeRaw||"")+
+      '<span class="muted" style="font-size:12px;margin-left:8px">now: resume '+(a.resume?"on":"off")+' · merge '+(a.merge?"on":"off")+'</span>';
+  }
+  function refreshDrawerLive(){renderStream(); var i=findIssue(open.repo,open.number); if(i){open.issue=i;} renderActions(); renderDrawerAuto();}
 
   // ---- drawer action bar (icon-only, instant tooltips; app controls folded in) ----
   function ibtn(icon,tip,onclick,cls,id){return '<button class="btn ic'+(cls?' '+cls:'')+'" data-tip="'+esc(tip)+'"'+(id?' id="'+id+'"':'')+' onclick="'+onclick+'">'+icon+'</button>';}

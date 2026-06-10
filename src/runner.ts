@@ -34,6 +34,8 @@ import {
   prHealth,
   prMergeStatus,
   fetchCheckout,
+  mergePrForBranch,
+  closeIssue,
   mentionsHandle,
   AWAITING_LABELS,
   type Issue,
@@ -60,11 +62,17 @@ import {
   setRateLimited,
   clearRateLimited,
   dueRateLimited,
+  getReview,
+  clearReview,
+  autoEnabled,
+  autoAttempts,
+  bumpAutoAttempts,
+  resetAutoAttempts,
 } from "./store.js";
 import { parseRateLimit, nextWindowReset } from "./ratelimit.js";
 import { startPreviewSweeper, killAllApps } from "./apprun.js";
 import { setActive, clearActive, getActive } from "./activity.js";
-import { dispatch, drain, stop as stopPool, poolStatus } from "./pool.js";
+import { dispatch, drain, stop as stopPool, poolStatus, inFlightKeys } from "./pool.js";
 import { loadBudget, overBudget, UNLIMITED_LABEL } from "./budget.js";
 import { maybeSelfImprove } from "./reflect.js";
 import {
@@ -728,12 +736,89 @@ function startAutoResume(cfg: Config): void {
   }, 60_000);
 }
 
+/** Hard cap on automatic retries per issue so a broken one can't loop forever burning tokens. */
+const AUTO_MAX_ATTEMPTS = Number(process.env.AUTO_MAX_ATTEMPTS?.trim()) || 8;
+const AUTO_INTERVAL_MS = (Number(process.env.AUTO_INTERVAL_SEC?.trim()) || 150) * 1000;
+
+/**
+ * Auto-mode loop: for issues you've opted into auto, drive a PR all the way to merged without you
+ * pressing buttons — auto-merge when the review approved + no conflicts + checks green, otherwise
+ * auto-resume/fix (address review, resolve conflicts, fix failing checks) until it gets there.
+ * Bounded by AUTO_MAX_ATTEMPTS. Pure orchestration; it reuses the same Fix/merge paths as the UI.
+ */
+function startAutoMode(cfg: Config): void {
+  const inFlight = (repo: string, n: number): boolean => inFlightKeys().includes(`${repo}#${n}`);
+  const tick = async (): Promise<void> => {
+    if (shuttingDown || agentsArePaused()) return;
+    for (const repo of effectiveRepos(cfg)) {
+      // PRs in flight: merge when ready, otherwise nudge them toward mergeable.
+      let prs: Awaited<ReturnType<typeof listAgencyPrs>> = [];
+      try {
+        prs = await listAgencyPrs(repo);
+      } catch {
+        /* skip repo this tick */
+      }
+      for (const pr of prs) {
+        const n = pr.issueNumber;
+        try {
+          const wantMerge = autoEnabled("merge", repo, n);
+          const wantResume = autoEnabled("resume", repo, n);
+          if (!wantMerge && !wantResume) continue;
+          if (inFlight(repo, n)) continue;
+          const verdict = getReview(repo, n)?.verdict;
+          const health = await prHealth(repo, pr.number); // ok | pending | failing | conflict
+          if (verdict === "approved" && health.status === "ok") resetAutoAttempts(repo, n); // reached a good state
+          // Ready to ship: reviewer approved, no conflicts, checks not failing/pending.
+          if (wantMerge && verdict === "approved" && health.status === "ok") {
+            const r = await mergePrForBranch(repo, pr.branch);
+            if (r.ok) {
+              await closeIssue(repo, n, `🤖 **Auto-merged** ${r.msg} — review approved, no conflicts, checks green.`).catch(() => {});
+              recordIssueState(repo, n, { state: "merged" });
+              clearReview(repo, n);
+              resetAutoAttempts(repo, n);
+              console.log(`[agency] auto-merged ${repo} #${n}`);
+            }
+            continue;
+          }
+          // Not there yet: if it needs work and auto-resume is on, take another bounded pass.
+          if (wantResume) {
+            const needsWork = verdict === "changes" || health.status === "conflict" || health.status === "failing";
+            if (!needsWork) continue; // approved+clean but merge off, or checks pending — just wait
+            if (autoAttempts(repo, n) >= AUTO_MAX_ATTEMPTS) continue; // give up quietly; leave for human
+            bumpAutoAttempts(repo, n);
+            console.log(`[agency] auto-fix ${repo} #${n} (attempt ${autoAttempts(repo, n)}, verdict=${verdict ?? "?"}, health=${health.status})`);
+            await forceFix(cfg, repo, n);
+          }
+        } catch (err) {
+          console.error(`[agency] auto-mode PR error ${repo} #${n}:`, (err as Error).message);
+        }
+      }
+      // Parked issues (needs-attention, no live PR) with auto-resume on → re-run, bounded.
+      try {
+        for (const i of await listAllOpenIssues(repo)) {
+          if (!i.labels.includes(NEEDS_ATTENTION) || i.labels.includes(RATE_LIMITED)) continue;
+          if (!autoEnabled("resume", repo, i.number)) continue;
+          if (inFlight(repo, i.number)) continue;
+          if (autoAttempts(repo, i.number) >= AUTO_MAX_ATTEMPTS) continue;
+          bumpAutoAttempts(repo, i.number);
+          console.log(`[agency] auto-resume ${repo} #${i.number} (attempt ${autoAttempts(repo, i.number)})`);
+          await forceResume(cfg, repo, i.number);
+        }
+      } catch {
+        /* skip */
+      }
+    }
+  };
+  setInterval(() => void tick().catch((e) => console.error("[agency] auto-mode tick error:", (e as Error).message)), AUTO_INTERVAL_MS);
+}
+
 async function main(): Promise<void> {
   const cfg = loadConfig();
   await ensureAllRepoAccess(cfg);
   await recoverOrphans(cfg);
   await reconcileRateLimited(cfg).catch((e) => console.error("[agency] reconcile failed:", (e as Error).message));
   startAutoResume(cfg);
+  startAutoMode(cfg);
   startPreviewSweeper();
   if (cfg.runMode === "webhook") {
     const { runWebhook } = await import("./webhook.js");
