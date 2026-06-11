@@ -41,6 +41,7 @@ COPY tsconfig.json ./
 COPY src ./src
 COPY memory ./memory
 COPY config ./config
+COPY web ./web
 
 RUN npm run build
 

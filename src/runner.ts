@@ -449,6 +449,27 @@ async function processFix(cfg: Config, repo: string, issue: Issue, conflict: boo
 }
 
 /**
+ * Play button: start a Planned issue now. Drops the planned hold, then runs the full pipeline
+ * (planner → … ). If we're inside the usage-limit window, queue it to auto-resume after the reset.
+ */
+export async function forceStart(cfg: Config, repo: string, number: number): Promise<void> {
+  const issue = await getIssue(repo, number);
+  if (!issue) return;
+  await removeLabel(repo, number, "agency:planned").catch(() => {});
+  if (agentsArePaused()) {
+    setRateLimited(repo, number, new Date(pausedUntil()).toISOString());
+    recordIssueState(repo, number, { state: RATE_LIMITED });
+    await addLabel(repo, number, RATE_LIMITED).catch(() => {});
+    await commentOnIssue(repo, number, `⏳ Rate-limited — I'll start this automatically after the usage window resets (~${new Date(pausedUntil()).toLocaleString()}).`).catch(() => {});
+    return;
+  }
+  await addLabel(repo, number, IN_PROGRESS).catch(() => {});
+  recordIssueState(repo, number, { title: issue.title, state: IN_PROGRESS });
+  console.log(`[agency] start (play) ${repo} #${number}`);
+  dispatch(`${repo}#${number}`, () => processIssue(cfg, repo, issue));
+}
+
+/**
  * One-click approve from the dashboard: mark the proposal approved (👍 the agency comment so
  * the pipeline's approval check passes), move the issue to Working *immediately* (so it never
  * sits in "waiting" while it queues), and dispatch the build.
@@ -501,6 +522,7 @@ async function scanRepo(cfg: Config, repo: string): Promise<void> {
   const threadMap = new Map(threads.map((t) => [t.number, t]));
   for (const t of threads) {
     if (t.labels.includes(cfg.ignoreLabel)) continue;
+    if (t.labels.includes("agency:planned")) continue; // parked in Planned — waits for the play button
 
     // Backstop for PRs merged/closed on GitHub directly: a closed thread that still carries a
     // live agency label is finished — record it terminal and strip the labels (once).
@@ -557,7 +579,14 @@ async function scanRepo(cfg: Config, repo: string): Promise<void> {
       hasOpenPr: Boolean(openPr),
       triggerMatch,
     });
-    if (action === "skip") continue;
+    if (action === "skip") {
+      // Surface untouched, still-open issues on the board as "Planned" (a play button starts them);
+      // never auto-start them. Touched/owned threads keep their real state.
+      if (!owned && !t.closed && recentEnough(t.updatedAt)) {
+        recordIssueState(repo, t.number, { title: t.title, state: "planned" });
+      }
+      continue;
+    }
     if (paused) continue; // usage-limit wall — leave it; it resumes after the reset
 
     const issue: Issue = { number: t.number, title: t.title, body: t.body, labels: t.labels };
@@ -828,6 +857,7 @@ async function main(): Promise<void> {
       (repo, number) => forceResume(cfg, repo, number),
       (repo, number) => forceApprove(cfg, repo, number),
       (repo, number) => forceFix(cfg, repo, number),
+      (repo, number) => forceStart(cfg, repo, number),
     );
   } else if (cfg.runMode === "watch") {
     await runWatch(cfg);

@@ -13,10 +13,14 @@
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { readFileSync, existsSync, statSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import type { Config } from "./config.js";
 import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, type AutoKind, type Provider } from "./store.js";
 import { mergeEpic, isEpic } from "./epics.js";
 import { renderDashboard, renderHistory } from "./dashboard.js";
+import { renderShell } from "./shell.js";
+import { addLabel, removeLabel } from "./github.js";
 import { subscribe, getActive } from "./activity.js";
 import { inFlightKeys } from "./pool.js";
 import { listRateLimited } from "./store.js";
@@ -95,7 +99,28 @@ function readBody(req: IncomingMessage): Promise<Buffer> {
 const RELEVANT_ACTIONS = new Set(["opened", "reopened", "labeled", "unlabeled", "edited"]);
 const PR_ACTIONS = new Set(["opened", "reopened", "synchronize", "ready_for_review", "edited"]);
 
-export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: Resume, approve?: Resume, fix?: Resume): Promise<void> {
+// Static assets (PWA shell extras) live in web/ at the repo root; from the compiled dist/ that's ../web.
+const WEB_DIR = fileURLToPath(new URL("../web/", import.meta.url));
+const MIME: Record<string, string> = { ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8", ".css": "text/css", ".json": "application/json", ".webmanifest": "application/manifest+json", ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon", ".html": "text/html; charset=utf-8" };
+/** Serve a static file from web/ for the PWA (no auth — these carry no secrets). Returns true if handled. */
+function serveStatic(pathname: string, res: ServerResponse): boolean {
+  let rel: string | null = null;
+  if (pathname === "/sw.js") rel = "sw.js";
+  else if (pathname === "/manifest.webmanifest") rel = "manifest.webmanifest";
+  else if (pathname.startsWith("/web/")) rel = pathname.slice(5);
+  if (rel == null) return false;
+  if (rel.includes("..")) { res.writeHead(403).end(); return true; }
+  const file = fileURLToPath(new URL(rel, "file://" + WEB_DIR));
+  if (!file.startsWith(WEB_DIR) || !existsSync(file) || !statSync(file).isFile()) { res.writeHead(404).end("not found"); return true; }
+  const ext = file.slice(file.lastIndexOf("."));
+  // sw.js must not be long-cached; other assets are network-first in the SW anyway.
+  const cache = pathname === "/sw.js" || pathname === "/web/app.js" ? "no-cache" : "public, max-age=3600";
+  res.writeHead(200, { "content-type": MIME[ext] || "application/octet-stream", "cache-control": cache });
+  res.end(readFileSync(file));
+  return true;
+}
+
+export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: Resume, approve?: Resume, fix?: Resume, start?: Resume): Promise<void> {
   const port = Number(process.env.PORT?.trim() || "3000");
   const secret = process.env.GITHUB_WEBHOOK_SECRET?.trim() || "";
   // Catches 👍 reactions (GitHub doesn't webhook those) and anything a delivery missed.
@@ -130,6 +155,9 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         res.end("dev-agency: ok");
         return;
       }
+      // PWA static assets (service worker, manifest, app bundle, icons) — no auth so the
+      // installed app can boot and the SW can cache them. They contain no secrets.
+      if (serveStatic(url, res)) return;
       if (!checkAuth(cfg, req, res)) return;
 
       if (url === "/events") {
@@ -407,7 +435,8 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         "content-type": "text/html; charset=utf-8",
         "cache-control": "no-store, must-revalidate",
       });
-      res.end(url === "/history" ? renderHistory() : renderDashboard());
+      // New Preact UI at /; old dashboard kept at /classic as a fallback; /history unchanged.
+      res.end(url === "/history" ? renderHistory() : url === "/classic" ? renderDashboard() : renderShell());
       return;
     }
     if (req.method !== "POST") {
@@ -417,10 +446,10 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
 
     // Dashboard actions (password-protected, not GitHub webhooks).
     const path = (req.url ?? "").split("?")[0];
-    if (["/archive", "/comment", "/run-checks", "/merge", "/delete", "/resume", "/fix", "/auto", "/new-issue", "/approve", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/models"].includes(path)) {
+    if (["/archive", "/comment", "/run-checks", "/merge", "/delete", "/resume", "/fix", "/auto", "/start", "/new-issue", "/approve", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/models"].includes(path)) {
       if (!checkAuth(cfg, req, res)) return;
       void readBody(req).then(async (body) => {
-        let p: { repo?: string; number?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; dataUrl?: string; name?: string; providers?: Provider[]; roleModels?: Record<string, { providerId: string; model: string }>; kind?: string; value?: string; skipArchitect?: string; gitnexus?: string; maxTokensPerRun?: number; maxReviseRounds?: number } = {};
+        let p: { repo?: string; number?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; dataUrl?: string; name?: string; providers?: Provider[]; roleModels?: Record<string, { providerId: string; model: string }>; kind?: string; value?: string; skipArchitect?: string; gitnexus?: string; maxTokensPerRun?: number; maxReviseRounds?: number; start?: boolean } = {};
         try {
           p = JSON.parse(body.toString("utf8"));
         } catch {
@@ -584,17 +613,31 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           return ok(JSON.stringify({ url: r.url, md, isImage }));
         }
         if (path === "/new-issue") {
-          // Create a new issue from the dashboard (authored by you) and kick the agency.
+          // Create a new issue (authored by you). start=true → begin immediately; otherwise it
+          // lands in the Planned column with a play button and does NOT auto-start.
           if (!repo || !p.title?.trim()) return res.writeHead(400).end("{}");
           const handle = (p.role ?? "@dev").trim();
           const issueBody = `${handle} ${p.body ?? ""}`.trim();
           try {
             const created = await createIssue(repo, p.title.trim(), issueBody, cfg.adminToken);
-            void trigger("dashboard-new-issue");
+            if (p.start) {
+              recordIssueState(repo, created.number, { title: p.title.trim(), state: "agency:in-progress" });
+              void trigger("dashboard-new-issue");
+            } else {
+              await addLabel(repo, created.number, "agency:planned").catch(() => {});
+              recordIssueState(repo, created.number, { title: p.title.trim(), state: "planned" });
+            }
             return ok(JSON.stringify({ ok: true, number: created.number, url: created.url }));
           } catch (err) {
             return res.writeHead(500).end(JSON.stringify({ error: (err as Error).message }));
           }
+        }
+        if (path === "/start") {
+          // Play button: start a Planned issue now.
+          if (!repo || !number || !start) return res.writeHead(400).end("{}");
+          await removeLabel(repo, number, "agency:planned").catch(() => {});
+          await start(repo, number).catch(() => {});
+          return ok();
         }
         // /run-checks -> run the tester on the issue's branch now (no merge).
         if (!repo || !number) return res.writeHead(400).end("{}");
