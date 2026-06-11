@@ -16,7 +16,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { Config } from "./config.js";
-import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, type AutoKind, type Provider } from "./store.js";
+import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, type AutoKind, type Provider } from "./store.js";
 import { mergeEpic, isEpic } from "./epics.js";
 import { renderDashboard, renderHistory } from "./dashboard.js";
 import { renderShell } from "./shell.js";
@@ -535,7 +535,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
     }
 
     // Dashboard actions (auth required), not GitHub webhooks.
-    if (["/archive", "/comment", "/run-checks", "/merge", "/delete", "/resume", "/fix", "/auto", "/start", "/new-issue", "/approve", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/models", "/invite-create", "/user-secret"].includes(path)) {
+    if (["/archive", "/comment", "/run-checks", "/merge", "/delete", "/resume", "/fix", "/auto", "/start", "/new-issue", "/approve", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret"].includes(path)) {
       const actor = authEnabled() ? userFromReq(req) : null;
       if (authEnabled()) {
         if (!actor) return void res.writeHead(401, { "content-type": "application/json" }).end('{"error":"auth required"}');
@@ -553,6 +553,8 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         const number = Number(p.number);
         const ok = (payload = '{"ok":true}') =>
           res.writeHead(200, { "content-type": "application/json" }).end(payload);
+        // Owner-identity token for "acts as you" actions — dashboard-stored creds, then env.
+        const ownerToken = ghUserToken() || ghBotToken() || cfg.adminToken || "";
 
         // --- multi-user: invites + per-user encrypted secrets ---
         if (path === "/invite-create") {
@@ -578,7 +580,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           if (!repo || !number || !p.body?.trim()) return res.writeHead(400).end("{}");
           try {
             // Post under the owner's account (admin token) so it shows your name, not the bot's.
-            await commentAsHuman(repo, number, p.body.trim(), cfg.adminToken);
+            await commentAsHuman(repo, number, p.body.trim(), ownerToken);
             void trigger("dashboard-comment");
             return ok();
           } catch (err) {
@@ -648,7 +650,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         if (path === "/delete") {
           // Try a real delete (owner-only); otherwise close + hide from the board.
           if (!repo || !number) return res.writeHead(400).end("{}");
-          const r = await deleteIssueHard(repo, number, cfg.adminToken);
+          const r = await deleteIssueHard(repo, number, ownerToken);
           if (!r.ok) await closeIssue(repo, number).catch(() => {});
           archiveIssue(repo, number);
           return ok(JSON.stringify({ ok: true, deleted: r.ok }));
@@ -701,22 +703,29 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         }
         if (path === "/add-repo") {
           // Add a repo to the watch list + invite the bot + register the webhook — live, no redeploy.
-          if (!repo) return res.writeHead(400).end("{}");
-          addWatchedRepo(repo);
+          // Require a full owner/name so malformed entries (just an owner) can't be added.
+          const full = repo.trim();
+          if (!/^[\w.-]+\/[\w.-]+$/.test(full)) return res.writeHead(400).end(JSON.stringify({ error: "Use owner/name, e.g. acme/app" }));
+          addWatchedRepo(full);
           let note = "";
           try {
-            note = await ensureRepoAccess(cfg, repo);
+            note = await ensureRepoAccess(cfg, full);
           } catch {
             /* best effort */
           }
           void trigger("dashboard-add-repo");
           return ok(JSON.stringify({ ok: true, note }));
         }
+        if (path === "/remove-repo") {
+          if (!repo) return res.writeHead(400).end("{}");
+          removeWatchedRepo(repo.trim());
+          return ok();
+        }
         if (path === "/upload-image" || path === "/upload-file") {
           // Commit a pasted/picked file (image, pdf, csv, xlsx, json…) to the repo and return
           // markdown to embed: images inline, everything else as a download link.
           if (!repo || !p.dataUrl) return res.writeHead(400).end("{}");
-          if (!cfg.adminToken) return res.writeHead(409).end(JSON.stringify({ error: "needs ADMIN_GITHUB_TOKEN" }));
+          if (!ownerToken) return res.writeHead(409).end(JSON.stringify({ error: "set a GitHub token (Settings → credentials) to upload attachments" }));
           const m = /^data:([\w.+-]+\/[\w.+-]+)?;base64,(.+)$/.exec(p.dataUrl);
           if (!m) return res.writeHead(400).end(JSON.stringify({ error: "not a base64 data URL" }));
           const mime = m[1] || "application/octet-stream";
@@ -725,7 +734,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           const extFromMime = mime.split("/")[1]?.replace("jpeg", "jpg").replace(/[^\w]/g, "") || "bin";
           const fname = safe && /\.[\w]+$/.test(safe) ? safe : `${safe || "file"}.${extFromMime}`;
           const file = `.devagency/attachments/${Date.now()}-${Math.random().toString(36).slice(2, 6)}-${fname}`;
-          const r = await putRepoBase64(repo, file, m[2], `dev-agency: dashboard attachment ${fname}`, cfg.adminToken);
+          const r = await putRepoBase64(repo, file, m[2], `dev-agency: dashboard attachment ${fname}`, ownerToken);
           if (!r.ok || !r.url) return res.writeHead(500).end(JSON.stringify({ error: r.msg }));
           const label = p.name || fname;
           const md = isImage ? `![${label}](${r.url})` : `[📎 ${label}](${r.url})`;
@@ -738,7 +747,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           const handle = (p.role ?? "@dev").trim();
           const issueBody = `${handle} ${p.body ?? ""}`.trim();
           try {
-            const created = await createIssue(repo, p.title.trim(), issueBody, cfg.adminToken);
+            const created = await createIssue(repo, p.title.trim(), issueBody, ownerToken);
             if (p.start) {
               recordIssueState(repo, created.number, { title: p.title.trim(), state: "agency:in-progress" });
               void trigger("dashboard-new-issue");

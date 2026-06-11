@@ -142,6 +142,16 @@ export function addWatchedRepo(repo: string): void {
   }
 }
 
+export function removeWatchedRepo(repo: string): void {
+  const d = getDb();
+  if (!d) return;
+  try {
+    d.prepare(`DELETE FROM watched_repos WHERE repo = ?`).run(repo);
+  } catch {
+    /* best effort */
+  }
+}
+
 /** Repos added at runtime via issue commands (unioned with config/repos.txt). */
 export function listWatchedRepos(): string[] {
   const d = getDb();

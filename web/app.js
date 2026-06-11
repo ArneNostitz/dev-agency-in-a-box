@@ -205,7 +205,7 @@ function App() {
       ${open && html`<${Detail} key=${openKey} issue=${open} activity=${activity} act=${act} isDesktop=${isDesktop} onClose=${() => setOpenKey(null)}/>`}
       ${sheet === "composer" && html`<${Composer} repos=${repos} repo=${composerRepo} setRepo=${setComposerRepo} onClose=${() => setSheet(null)} onCreate=${createIssue}/>`}
       ${sheet === "settings" && html`<${Settings} data=${data} theme=${theme} setTheme=${setThemeP} onClose=${() => setSheet(null)} setAuto=${act.setAuto} reload=${load}/>`}
-      ${sheet === "addrepo" && html`<${AddRepo} onClose=${() => setSheet(null)} reload=${load}/>`}
+      ${sheet === "addrepo" && html`<${AddRepo} repos=${repos} onClose=${() => setSheet(null)} reload=${load}/>`}
       <div class=${"toast " + (toastMsg ? "on" : "")}>${toastMsg}</div>
     </div>`;
 }
@@ -498,26 +498,31 @@ function Operations({ meta, values, reload }) {
 }
 
 // ---------- add a repo ----------
-function AddRepo({ onClose, reload }) {
+function AddRepo({ repos, onClose, reload }) {
   const [avail, setAvail] = useState(null);
   const [manual, setManual] = useState("");
   const [busy, setBusy] = useState(false);
   useEffect(() => { getJSON("/repos-available").then((d) => setAvail(d.repos || [])).catch(() => setAvail([])); }, []);
   function add(full) {
-    if (!full || busy) return; setBusy(true);
-    api("/add-repo", { repo: full }).then(() => { toast("Added " + full); reload(); onClose(); }).catch(() => toast("Couldn’t add")).then(() => setBusy(false));
+    if (!full || busy) return;
+    if (!/^[\w.-]+\/[\w.-]+$/.test(full)) { toast("Use owner/name, e.g. acme/app"); return; }
+    setBusy(true);
+    api("/add-repo", { repo: full }).then(() => { toast("Added " + full); setManual(""); reload(); }).catch(() => toast("Couldn’t add — use owner/name")).then(() => setBusy(false));
   }
-  return html`<${Sheet} title="Add a repo" onClose=${onClose} footer=${html`<button class="btn" onClick=${onClose}>Close</button>`}>
-    <label>Repo (owner/name)</label>
+  function remove(full) { if (busy) return; setBusy(true); api("/remove-repo", { repo: full }).then(() => { toast("Removed " + full); reload(); }).catch(() => toast("Couldn’t remove")).then(() => setBusy(false)); }
+  return html`<${Sheet} title="Repos" onClose=${onClose} footer=${html`<button class="btn" onClick=${onClose}>Close</button>`}>
+    <label>Add a repo (owner/name)</label>
     <div style="display:flex;gap:8px">
       <input placeholder="owner/name" value=${manual} onInput=${(e) => setManual(e.target.value)} onKeyDown=${(e) => { if (e.key === "Enter") add(manual.trim()); }}/>
       <button class="btn primary" disabled=${busy} onClick=${() => add(manual.trim())}>Add</button>
     </div>
+    ${(repos || []).length ? html`<div class="sec">Watching</div>${repos.map((r) => html`<div key=${r} style="display:flex;align-items:center;gap:8px;margin:5px 2px">
+      <span style="flex:1">${r}</span><button class="btn danger" disabled=${busy} onClick=${() => remove(r)} aria-label="Remove"><${Icon} name="trash" size=${15}/></button></div>`)}` : null}
     <div class="sec">Your GitHub repos</div>
     ${avail === null ? html`<div class="muted">Loading…</div>`
       : avail.length ? avail.map((r) => html`<div key=${r.full_name} style="display:flex;align-items:center;gap:8px;margin:5px 2px">
           <span style="flex:1">${r.full_name}</span><button class="btn" disabled=${busy} onClick=${() => add(r.full_name)}>Add</button></div>`)
-      : html`<div class="muted" style="font-size:12px">None to list yet — set a GitHub token (Settings → credentials) or just type a repo above.</div>`}
+      : html`<div class="muted" style="font-size:12px">None to list yet — set a GitHub token (Settings → credentials) or type a repo above.</div>`}
   <//>`;
 }
 
