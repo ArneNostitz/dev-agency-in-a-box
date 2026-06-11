@@ -238,6 +238,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           res.writeHead(200, { "content-type": "application/json" });
           res.end(
             JSON.stringify({
+              env: process.env.APP_ENV?.trim() || "production",
               repos: effectiveRepos(cfg),
               auto: { resume: getAutoRaw("resume"), merge: getAutoRaw("merge") },
               autoRepos: Object.fromEntries(

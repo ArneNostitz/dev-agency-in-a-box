@@ -43,6 +43,7 @@ input,select,textarea{font-size:16px}
 .brand{font-size:16px;font-weight:600;display:flex;align-items:center;gap:7px}
 .brand .lic{color:var(--accent)}
 .sub{color:var(--ink-2);font-size:12px}
+.envbadge{font-size:10px;font-weight:600;letter-spacing:.05em;background:var(--amber-weak);color:var(--amber);border:1px solid var(--amber);border-radius:6px;padding:1px 6px;vertical-align:2px}
 .spacer{flex:1}
 .iconbtn{border:1px solid var(--line);background:var(--surface);color:var(--ink-2);border-radius:10px;width:36px;height:36px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
 .iconbtn:active{transform:scale(.96)}

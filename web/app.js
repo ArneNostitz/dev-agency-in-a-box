@@ -195,7 +195,7 @@ function App() {
 
   return html`
     <div class="app">
-      <${TopBar} working=${working} theme=${theme} setTheme=${setThemeP} onSettings=${() => setSheet("settings")} onNew=${() => openComposer()}/>
+      <${TopBar} working=${working} env=${data.env} theme=${theme} setTheme=${setThemeP} onSettings=${() => setSheet("settings")} onNew=${() => openComposer()}/>
       <${RepoSelector} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} onAdd=${() => openComposer()}/>
       <${StatusLine} working=${working} session=${data.session} spend=${data.spendToday}/>
       <div class="content">
@@ -209,9 +209,9 @@ function App() {
     </div>`;
 }
 
-function TopBar({ working, theme, setTheme, onSettings, onNew }) {
+function TopBar({ working, env, theme, setTheme, onSettings, onNew }) {
   return html`<div class="topbar">
-    <div class="brand"><${Icon} name="crown" size=${18}/> Dev Agency ${working ? html`<span class="dot"></span>` : null}</div>
+    <div class="brand"><${Icon} name="crown" size=${18}/> Dev Agency ${env === "development" ? html`<span class="envbadge">DEV</span>` : null} ${working ? html`<span class="dot"></span>` : null}</div>
     <div class="spacer"></div>
     <button class="iconbtn" aria-label="New issue" onClick=${onNew}><${Icon} name="plus"/></button>
     <button class="iconbtn" aria-label="Toggle theme" onClick=${() => setTheme(theme === "dark" ? "light" : "dark")}><${Icon} name=${theme === "dark" ? "sun" : "moon"}/></button>
