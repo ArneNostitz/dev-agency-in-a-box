@@ -661,6 +661,7 @@ async function sweepStuck(): Promise<void> {
 
 /** Scan every watched repo and dispatch work. Returns immediately; the pool runs it. */
 export async function processAllRepos(cfg: Config): Promise<number> {
+  if (!githubConfigured(cfg)) return 0; // no credentials → no GitHub scanning (login still works)
   for (const repo of effectiveRepos(cfg)) {
     try {
       await scanRepo(cfg, repo);
@@ -780,7 +781,7 @@ const AUTO_INTERVAL_MS = (Number(process.env.AUTO_INTERVAL_SEC?.trim()) || 150) 
 function startAutoMode(cfg: Config): void {
   const inFlight = (repo: string, n: number): boolean => inFlightKeys().includes(`${repo}#${n}`);
   const tick = async (): Promise<void> => {
-    if (shuttingDown || agentsArePaused()) return;
+    if (shuttingDown || agentsArePaused() || !githubConfigured(cfg)) return;
     for (const repo of effectiveRepos(cfg)) {
       // PRs in flight: merge when ready, otherwise nudge them toward mergeable.
       let prs: Awaited<ReturnType<typeof listAgencyPrs>> = [];
@@ -843,12 +844,30 @@ function startAutoMode(cfg: Config): void {
   setInterval(() => void tick().catch((e) => console.error("[agency] auto-mode tick error:", (e as Error).message)), AUTO_INTERVAL_MS);
 }
 
+/** True once the agency has GitHub credentials to act with. Until then we do NO GitHub work —
+ * the dashboard + login/admin-setup run fine without it. (Becomes per-user with task 28.) */
+function githubConfigured(cfg: Config): boolean {
+  return Boolean(cfg.githubToken && cfg.owner);
+}
+
+/** GitHub-dependent startup work (repo access, orphan recovery, rate-limit reconcile). */
+async function backgroundInit(cfg: Config): Promise<void> {
+  if (!githubConfigured(cfg)) {
+    console.log("[agency] GitHub not configured yet — login/setup only; repo work starts once a token is set.");
+    return;
+  }
+  try {
+    await ensureAllRepoAccess(cfg);
+    await recoverOrphans(cfg);
+    await reconcileRateLimited(cfg);
+  } catch (e) {
+    console.error("[agency] background init error:", (e as Error).message);
+  }
+}
+
 async function main(): Promise<void> {
   const cfg = loadConfig();
-  await ensureAllRepoAccess(cfg);
   seedAdmin(); // multi-user: create the admin from env on first boot (no-op if MASTER_KEY unset)
-  await recoverOrphans(cfg);
-  await reconcileRateLimited(cfg).catch((e) => console.error("[agency] reconcile failed:", (e as Error).message));
   startAutoResume(cfg);
   startAutoMode(cfg);
   startPreviewSweeper();
@@ -857,6 +876,9 @@ async function main(): Promise<void> {
   // pollIntervalSeconds, so watch-style polling still happens; webhook deliveries (if configured)
   // just trigger it sooner. Only "once" stays headless.
   if (cfg.runMode === "webhook" || cfg.runMode === "watch") {
+    // Start listening IMMEDIATELY; do the GitHub-dependent init in the background so a slow or
+    // failing `gh` call (e.g. no token yet) can never stop the server binding → no 502 loop.
+    void backgroundInit(cfg);
     const { runWebhook } = await import("./webhook.js");
     await runWebhook(
       cfg,
@@ -867,6 +889,7 @@ async function main(): Promise<void> {
       (repo, number) => forceStart(cfg, repo, number),
     );
   } else {
+    await backgroundInit(cfg);
     await runOnce(cfg);
   }
 }
