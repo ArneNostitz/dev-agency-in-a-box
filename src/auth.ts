@@ -4,8 +4,18 @@
  * Auth so existing single-user deployments keep working until they opt in.
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { timingSafeEqual } from "node:crypto";
 import { countUsers, createUser, getSessionUser, getUserByName, listUsers, setUserPassword, type User } from "./store.js";
 import { masterKeyConfigured } from "./crypto.js";
+
+/** Constant-time check that a submitted recovery key equals the server's MASTER_KEY. */
+export function verifyRecoveryKey(key: string): boolean {
+  const mk = process.env.MASTER_KEY?.trim();
+  if (!mk || !key) return false;
+  const a = Buffer.from(key);
+  const b = Buffer.from(mk);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
 
 export const SESSION_COOKIE = "da_session";
 
