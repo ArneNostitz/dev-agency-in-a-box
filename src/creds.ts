@@ -32,6 +32,10 @@ export function ghUserToken(): string {
 export function claudeToken(): string {
   return adminSecret("claude_token") || process.env.CLAUDE_CODE_OAUTH_TOKEN?.trim() || "";
 }
+/** Anthropic pay-as-you-go API key (alternative to the subscription token). */
+export function anthropicApiKey(): string {
+  return adminSecret("anthropic_api_key") || process.env.ANTHROPIC_API_KEY?.trim() || "";
+}
 export function ghOwner(): string {
   return sStr("github_owner", "GITHUB_OWNER", "");
 }

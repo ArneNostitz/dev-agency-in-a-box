@@ -34,7 +34,7 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
   setG("EventSource", class { constructor() {} close() {} });
 
   const SAMPLE = {
-    user: { id: 1, username: "arne", role: "admin", email: "a@x.com" }, authEnabled: true,
+    user: { id: 1, username: "arne", role: "admin", email: "a@x.com" }, authEnabled: true, onboarded: false,
     secretKeys: ["claude_token"], users: [{ id: 1, username: "arne", role: "admin" }], invites: [],
     opsMeta: [
       { key: "trigger_mode", env: "TRIGGER_MODE", type: "select", options: ["mention", "label", "any"], def: "mention", label: "How issues start" },
@@ -81,6 +81,9 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
   await new Promise((r) => setTimeout(r, 150));
   const root = window.document.getElementById("root");
   assert.match(root.innerHTML, /A planned task/, "planned issue card renders from /data");
+  // onboarding wizard renders (onboarded:false) — exercises its hook components
+  assert.match(root.innerHTML, /Welcome to your Dev Agency/, "onboarding wizard renders");
+  assert.match(root.innerHTML, /Which models|Get started/, "onboarding has the model/get-started step");
 
   const tick = (ms) => new Promise((r) => setTimeout(r, ms));
   const q = (s) => window.document.querySelector(s);

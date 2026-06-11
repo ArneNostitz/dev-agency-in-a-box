@@ -35,6 +35,7 @@ const ICONS = {
   crown: '<path d="M11.562 3.266a.5.5 0 0 1 .876 0L15.39 8.87a1 1 0 0 0 1.516.294L21.183 5.5a.5.5 0 0 1 .798.519l-2.834 10.246a1 1 0 0 1-.956.734H5.81a1 1 0 0 1-.957-.734L2.02 6.02a.5.5 0 0 1 .798-.519l4.276 3.664a1 1 0 0 0 1.516-.294z"/>',
   rocket: '<path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91 0z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/>',
   history: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>',
+  search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
 };
 const Icon = ({ name, size = 18, cls }) => html`<svg class=${"lic " + (cls || "")} width=${size} height=${size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{ __html: ICONS[name] || "" }}></svg>`;
 
@@ -199,13 +200,14 @@ function App() {
       <${RepoSelector} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} onAdd=${() => setSheet("addrepo")}/>
       <${StatusLine} working=${working} session=${data.session} spend=${data.spendToday}/>
       <div class="content">
-        <${Board} issues=${shown} repos=${repos} repoFilter=${repoFilter} tab=${tab} isDesktop=${isDesktop} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} act=${act}/>
+        <${Board} issues=${shown} repos=${repos} repoFilter=${repoFilter} tab=${tab} isDesktop=${isDesktop} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onAddRepo=${() => setSheet("addrepo")} act=${act}/>
       </div>
       ${!isDesktop && html`<${TabBar} issues=${shown} tab=${tab} setTab=${setTab}/>`}
       ${open && html`<${Detail} key=${openKey} issue=${open} activity=${activity} act=${act} isDesktop=${isDesktop} onClose=${() => setOpenKey(null)}/>`}
       ${sheet === "composer" && html`<${Composer} repos=${repos} repo=${composerRepo} setRepo=${setComposerRepo} onClose=${() => setSheet(null)} onCreate=${createIssue}/>`}
       ${sheet === "settings" && html`<${Settings} data=${data} theme=${theme} setTheme=${setThemeP} onClose=${() => setSheet(null)} setAuto=${act.setAuto} reload=${load}/>`}
       ${sheet === "addrepo" && html`<${AddRepo} repos=${repos} onClose=${() => setSheet(null)} reload=${load}/>`}
+      ${data.user && data.onboarded === false && html`<${Onboarding} repos=${repos} reload=${load}/>`}
       <div class=${"toast " + (toastMsg ? "on" : "")}>${toastMsg}</div>
     </div>`;
 }
@@ -240,7 +242,15 @@ function StatusLine({ working, session, spend }) {
   </div>`;
 }
 
-function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, act }) {
+function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, onAddRepo, act }) {
+  if (!(repos || []).length) {
+    return html`<div class="norepo">
+      <div class="obki" style="margin:0 auto 14px"><${Icon} name="pr" size=${28}/></div>
+      <div class="obh" style="text-align:center">No repos yet</div>
+      <div class="obsub" style="text-align:center;max-width:380px;margin:6px auto 16px">Add a repository for your agency to work in. Use <code>owner/name</code>.</div>
+      <button class="btn primary" style="margin:0 auto;min-width:200px" onClick=${onAddRepo}><${Icon} name="plus" size=${16}/> Add your first repo</button>
+    </div>`;
+  }
   const byCol = {}; COLS.forEach((c) => (byCol[c.k] = []));
   issues.slice().sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0)).forEach((i) => byCol[classify(i)].push(i));
   const cols = isDesktop ? COLS : COLS.filter((c) => c.k === tab);
@@ -454,7 +464,10 @@ function Settings({ data, theme, setTheme, onClose, setAuto, reload }) {
   return html`<${Sheet} title="Settings" onClose=${onClose} footer=${html`<button class="btn" onClick=${onClose}>Cancel</button><button class="btn primary" onClick=${save}>Save</button>`}>
     ${data.user ? html`<div class="sec">Account</div>
       <div class="muted">Signed in as <b>${data.user.username}</b> · ${data.user.role}</div>
-      <a class="btn ghost" href="/logout" style="justify-content:flex-start;margin-top:8px"><${Icon} name="arrowleft" size=${15}/> Sign out</a>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn ghost" onClick=${() => api("/onboarded", { value: "0" }).then(() => { onClose(); reload(); })}><${Icon} name="play" size=${15}/> Run setup again</button>
+        <a class="btn ghost" href="/logout" style="flex:1;justify-content:center"><${Icon} name="arrowleft" size=${15}/> Sign out</a>
+      </div>
       <${Credentials} secretKeys=${data.secretKeys || []} reload=${reload}/>
       ${data.user.role === "admin" ? html`<${Admin} users=${data.users || []} invites=${data.invites || []} webhookSecretSet=${data.webhookSecretSet} reload=${reload}/>` : null}` : null}
     <div class="sec">Appearance</div>
@@ -497,10 +510,134 @@ function Operations({ meta, values, reload }) {
     <button class="btn primary" style="margin-top:12px" onClick=${save}>Save operations</button>`;
 }
 
+// ---------- onboarding wizard ----------
+const OB_PROVIDERS = [
+  { id: "claude_sub", label: "Claude — subscription", note: "Recommended · runs agents on your plan", icon: "crown", kind: "secret", secretKey: "claude_token",
+    title: "Claude subscription token", placeholder: "paste the setup-token output",
+    how: "Runs the agents on your existing Claude plan — no per-token billing.\n\n1. Install the CLI:\n   npm i -g @anthropic-ai/claude-code\n2. Generate a token:\n   claude setup-token\n3. Log in with your Claude plan when the browser opens.\n4. Paste the token it prints below.",
+    link: "https://docs.claude.com/en/docs/claude-code", linkLabel: "Claude Code docs" },
+  { id: "claude_api", label: "Claude — API key", note: "Pay-as-you-go", icon: "flask", kind: "secret", secretKey: "anthropic_api_key",
+    title: "Claude API key", placeholder: "sk-ant-...",
+    how: "Pay-as-you-go billing instead of a subscription.\n\n1. Open platform.claude.com → API keys.\n2. Create a key.\n3. Paste it below.",
+    link: "https://platform.claude.com/settings/keys", linkLabel: "Create an API key" },
+  { id: "glm", label: "GLM (Zhipu)", note: "Cheap coding model", icon: "globe", kind: "provider",
+    preset: { name: "GLM (Zhipu)", baseUrl: "https://open.bigmodel.cn/api/anthropic", models: ["glm-4.6", "glm-4.5"] },
+    title: "GLM API key", placeholder: "GLM API key",
+    how: "An Anthropic-compatible endpoint, good for the cheaper roles.\n\n1. Get an API key from open.bigmodel.cn (Zhipu).\n2. Paste it below.\n\nAfter setup, assign GLM to specific agents in Settings → Models.",
+    link: "https://open.bigmodel.cn", linkLabel: "Get a GLM key" },
+  { id: "deepseek", label: "DeepSeek", note: "", icon: "globe", kind: "provider",
+    preset: { name: "DeepSeek", baseUrl: "https://api.deepseek.com/anthropic", models: ["deepseek-chat", "deepseek-reasoner"] },
+    title: "DeepSeek API key", placeholder: "DeepSeek API key",
+    how: "1. Get an API key from platform.deepseek.com.\n2. Paste it below.\n\nAssign it to agents later in Settings → Models.",
+    link: "https://platform.deepseek.com", linkLabel: "Get a DeepSeek key" },
+  { id: "kimi", label: "Kimi (Moonshot)", note: "", icon: "globe", kind: "provider",
+    preset: { name: "Kimi (Moonshot)", baseUrl: "https://api.moonshot.cn/anthropic", models: ["kimi-k2-0905-preview"] },
+    title: "Kimi API key", placeholder: "Kimi API key",
+    how: "1. Get an API key from platform.moonshot.cn.\n2. Paste it below.\n\nAssign it to agents later in Settings → Models.",
+    link: "https://platform.moonshot.cn", linkLabel: "Get a Kimi key" },
+  { id: "other", label: "Other (OpenAI, Gemini, Ollama)", note: "Needs a router", icon: "settings", kind: "provider", custom: true,
+    title: "Custom provider", placeholder: "API key",
+    how: "OpenAI / Gemini / Ollama need an Anthropic-compatible gateway (claude-code-router or LiteLLM). Run one, then enter its base URL + key here.",
+    link: "https://github.com/musistudio/claude-code-router", linkLabel: "claude-code-router" },
+];
+const OB_GH_BOT = { id: "github_bot", title: "GitHub bot token", icon: "pr", kind: "secret", secretKey: "github_bot_token", placeholder: "github_pat_...",
+  how: "The account the agency ACTS as — its commits and pull requests. Best practice: a dedicated bot GitHub account.\n\n1. On the bot account: github.com → Settings → Developer settings → Fine-grained tokens → Generate new token.\n2. Repository access: the repos you'll use.\n3. Permissions: Contents, Issues, Pull requests, Workflows = Read & write; Metadata = Read.\n4. Paste the token (github_pat_…) below.",
+  link: "https://github.com/settings/tokens?type=beta", linkLabel: "Create a fine-grained token" };
+const OB_GH_OWNER = { id: "github_owner", title: "Your GitHub token", optional: true, icon: "link", kind: "secret", secretKey: "github_user_token", placeholder: "github_pat_... (optional)",
+  how: "Lets the agency comment and open issues under YOUR name, and auto-invite the bot to repos. Same steps as the bot token, on your own account (add Administration: Read & write for auto-invite).\n\nOptional — skip if you'll invite the bot manually.",
+  link: "https://github.com/settings/tokens?type=beta", linkLabel: "Create a fine-grained token" };
+
+function ObTokenStep({ def, existing, onDone, onBack }) {
+  const [val, setVal] = useState("");
+  const [baseUrl, setBaseUrl] = useState(def.preset?.baseUrl || "");
+  const [busy, setBusy] = useState(false);
+  function save() {
+    if (!val.trim()) { toast(def.optional ? "Paste a token or Skip" : "Paste the token"); return; }
+    setBusy(true);
+    let pr;
+    if (def.kind === "secret") pr = api("/user-secret", { key: def.secretKey, value: val.trim() });
+    else {
+      const prov = { id: def.id + "-" + Date.now().toString(36), name: def.preset?.name || "Custom", baseUrl: def.custom ? baseUrl.trim() : def.preset.baseUrl, apiKey: val.trim(), models: def.preset?.models || [] };
+      pr = api("/models", { providers: (existing || []).concat(prov) });
+    }
+    pr.then(() => { toast("Saved"); onDone(); }).catch(() => toast("Couldn’t save")).then(() => setBusy(false));
+  }
+  return html`
+    <div class="obki"><${Icon} name=${def.icon || "lock"} size=${26}/></div>
+    <div class="obh">${def.title}</div>
+    <div class="obsteps">${def.how}</div>
+    ${def.link ? html`<a class="oblink" href=${def.link} target="_blank" rel="noopener">${def.linkLabel} <${Icon} name="link" size=${14}/></a>` : null}
+    ${def.custom ? html`<label>Base URL (Anthropic-compatible)</label><input placeholder="https://…/anthropic" value=${baseUrl} onInput=${(e) => setBaseUrl(e.target.value)}/>` : null}
+    <label>${def.custom ? "API key" : "Token"}</label>
+    <input type="password" autocomplete="off" placeholder=${def.placeholder} value=${val} onInput=${(e) => setVal(e.target.value)}/>
+    <div class="obnav">
+      <button class="btn" onClick=${onBack}>Back</button>
+      ${def.optional ? html`<button class="btn ghost" onClick=${onDone}>Skip</button>` : null}
+      <button class="btn primary" disabled=${busy} onClick=${save}>Save &amp; continue</button>
+    </div>`;
+}
+
+function Onboarding({ repos, reload }) {
+  const [picked, setPicked] = useState(["claude_sub"]);
+  const [i, setI] = useState(0);
+  const [existing, setExisting] = useState([]);
+  const [repo, setRepo] = useState("");
+  useEffect(() => { getJSON("/models").then((d) => setExisting(d.providers || [])).catch(() => {}); }, []);
+  const steps = ["welcome", "providers", ...picked.map((id) => "p:" + id), "bot", "owner", "repo", "done"];
+  const step = steps[Math.min(i, steps.length - 1)];
+  const next = () => setI((x) => Math.min(steps.length - 1, x + 1));
+  const back = () => setI((x) => Math.max(0, x - 1));
+  const finish = () => api("/onboarded", { value: "1" }).then(() => { toast("You're all set!"); reload(); });
+  function toggle(id) { setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : p.concat(id))); }
+  function addRepo() {
+    if (!/^[\w.-]+\/[\w.-]+$/.test(repo.trim())) { toast("Use owner/name"); return; }
+    api("/add-repo", { repo: repo.trim() }).then(() => { toast("Repo added"); setRepo(""); reload(); next(); }).catch(() => toast("Couldn’t add"));
+  }
+  const dots = steps.map((_, idx) => html`<div class=${"obdot " + (idx === i ? "on" : idx < i ? "done" : "")}></div>`);
+
+  let body;
+  if (step === "welcome") body = html`
+    <div class="obki"><${Icon} name="crown" size=${26}/></div>
+    <div class="obh">Welcome to your Dev Agency</div>
+    <div class="obsub">Three quick things and your AI team is ready: pick your models, give it GitHub access, and add a repo. Takes about 2 minutes — you can change anything later in Settings.</div>
+    <div class="obnav"><button class="btn primary" onClick=${next}>Get started</button></div>`;
+  else if (step === "providers") body = html`
+    <div class="obki"><${Icon} name="flask" size=${26}/></div>
+    <div class="obh">Which models do you want to use?</div>
+    <div class="obsub">Claude (subscription) is the recommended default. Add others to run cheaper models for some agents — you can assign them per-agent later.</div>
+    <div class="obpick">${OB_PROVIDERS.map((p) => html`<div key=${p.id} class=${"obchip " + (picked.includes(p.id) ? "on" : "")} onClick=${() => toggle(p.id)}>
+      <${Icon} name=${p.icon} size=${18}/><div>${p.label}${p.note ? html`<small>${p.note}</small>` : null}</div>${picked.includes(p.id) ? html`<span class="ck"><${Icon} name="check" size=${16}/></span>` : null}</div>`)}</div>
+    <div class="obnav"><button class="btn" onClick=${back}>Back</button><button class="btn primary" onClick=${next}>Continue</button></div>`;
+  else if (step.startsWith("p:")) {
+    const def = OB_PROVIDERS.find((p) => p.id === step.slice(2));
+    body = html`<${ObTokenStep} key=${step} def=${def} existing=${existing} onDone=${next} onBack=${back}/>`;
+  } else if (step === "bot") body = html`<${ObTokenStep} key="bot" def=${OB_GH_BOT} onDone=${next} onBack=${back}/>`;
+  else if (step === "owner") body = html`<${ObTokenStep} key="owner" def=${OB_GH_OWNER} onDone=${next} onBack=${back}/>`;
+  else if (step === "repo") body = html`
+    <div class="obki"><${Icon} name="pr" size=${26}/></div>
+    <div class="obh">Add your first repo</div>
+    <div class="obsub">The repository the agency will work in. Use <code>owner/name</code>. You can add more anytime from the repo bar.</div>
+    <label>Repository</label>
+    <div style="display:flex;gap:8px"><input placeholder="owner/name" value=${repo} onInput=${(e) => setRepo(e.target.value)} onKeyDown=${(e) => { if (e.key === "Enter") addRepo(); }}/><button class="btn primary" onClick=${addRepo}>Add</button></div>
+    <div class="obnav"><button class="btn" onClick=${back}>Back</button><button class="btn ghost" onClick=${next}>Skip for now</button></div>`;
+  else body = html`
+    <div class="obki" style="background:var(--green-weak);color:var(--green)"><${Icon} name="check" size=${28}/></div>
+    <div class="obh">You're all set${(repos || []).length ? "" : " — almost"}</div>
+    <div class="obsub">Your agency is ready. Open an issue (or use “+ New”) and the agents will plan, build, review, and open a PR. ${(repos || []).length ? "" : "Add a repo from the repo bar to get going."} Manage tokens, models, and automation anytime in Settings.</div>
+    <div class="obnav"><button class="btn" onClick=${back}>Back</button><button class="btn primary" onClick=${finish}>Go to my board</button></div>`;
+
+  return html`<div class="onboard"><div class="ob">
+    <div class="obdots">${dots}</div>
+    ${body}
+    ${step !== "done" && step !== "welcome" ? html`<div style="text-align:center;margin-top:16px"><button class="btn ghost" style="font-size:13px" onClick=${finish}>Skip setup</button></div>` : null}
+  </div></div>`;
+}
+
 // ---------- add a repo ----------
 function AddRepo({ repos, onClose, reload }) {
   const [avail, setAvail] = useState(null);
   const [manual, setManual] = useState("");
+  const [filter, setFilter] = useState("");
   const [busy, setBusy] = useState(false);
   useEffect(() => { getJSON("/repos-available").then((d) => setAvail(d.repos || [])).catch(() => setAvail([])); }, []);
   function add(full) {
@@ -510,6 +647,8 @@ function AddRepo({ repos, onClose, reload }) {
     api("/add-repo", { repo: full }).then(() => { toast("Added " + full); setManual(""); reload(); }).catch(() => toast("Couldn’t add — use owner/name")).then(() => setBusy(false));
   }
   function remove(full) { if (busy) return; setBusy(true); api("/remove-repo", { repo: full }).then(() => { toast("Removed " + full); reload(); }).catch(() => toast("Couldn’t remove")).then(() => setBusy(false)); }
+  const q = filter.trim().toLowerCase();
+  const matches = (avail || []).filter((r) => !q || r.full_name.toLowerCase().includes(q));
   return html`<${Sheet} title="Repos" onClose=${onClose} footer=${html`<button class="btn" onClick=${onClose}>Close</button>`}>
     <label>Add a repo (owner/name)</label>
     <div style="display:flex;gap:8px">
@@ -518,11 +657,13 @@ function AddRepo({ repos, onClose, reload }) {
     </div>
     ${(repos || []).length ? html`<div class="sec">Watching</div>${repos.map((r) => html`<div key=${r} style="display:flex;align-items:center;gap:8px;margin:5px 2px">
       <span style="flex:1">${r}</span><button class="btn danger" disabled=${busy} onClick=${() => remove(r)} aria-label="Remove"><${Icon} name="trash" size=${15}/></button></div>`)}` : null}
-    <div class="sec">Your GitHub repos</div>
+    <div class="sec">Your GitHub repos ${avail && avail.length ? html`<span class="muted" style="font-weight:400">${matches.length}/${avail.length}</span>` : null}</div>
+    ${avail && avail.length > 6 ? html`<div class="searchrow"><${Icon} name="search" size=${15} cls="searchic"/><input placeholder="Filter repos…" value=${filter} onInput=${(e) => setFilter(e.target.value)} autocomplete="off"/>${filter ? html`<button class="iconbtn" style="width:30px;height:30px;border:none" onClick=${() => setFilter("")} aria-label="Clear"><${Icon} name="x" size=${15}/></button>` : null}</div>` : null}
     ${avail === null ? html`<div class="muted">Loading…</div>`
-      : avail.length ? avail.map((r) => html`<div key=${r.full_name} style="display:flex;align-items:center;gap:8px;margin:5px 2px">
-          <span style="flex:1">${r.full_name}</span><button class="btn" disabled=${busy} onClick=${() => add(r.full_name)}>Add</button></div>`)
-      : html`<div class="muted" style="font-size:12px">None to list yet — set a GitHub token (Settings → credentials) or type a repo above.</div>`}
+      : !avail.length ? html`<div class="muted" style="font-size:12px">None to list yet — set a GitHub token (Settings → credentials) or type a repo above.</div>`
+      : !matches.length ? html`<div class="muted" style="font-size:12px">No repos match “${filter}”.</div>`
+      : html`<div class="repolist">${matches.map((r) => html`<div key=${r.full_name} style="display:flex;align-items:center;gap:8px;margin:5px 2px">
+          <span style="flex:1;overflow:hidden;text-overflow:ellipsis">${r.full_name}</span><button class="btn" disabled=${busy} onClick=${() => add(r.full_name)}>Add</button></div>`)}</div>`}
   <//>`;
 }
 
