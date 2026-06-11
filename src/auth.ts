@@ -4,7 +4,7 @@
  * Auth so existing single-user deployments keep working until they opt in.
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { countUsers, createUser, getSessionUser, type User } from "./store.js";
+import { countUsers, createUser, getSessionUser, getUserByName, listUsers, setUserPassword, type User } from "./store.js";
 import { masterKeyConfigured } from "./crypto.js";
 
 export const SESSION_COOKIE = "da_session";
@@ -28,6 +28,25 @@ export function seedAdmin(): void {
   const username = process.env.ADMIN_USERNAME?.trim() || "admin";
   const u = createUser(username, password, "admin", process.env.ADMIN_EMAIL?.trim() || null);
   if (u) console.log(`[agency] seeded admin account "${username}" (change the password after first login)`);
+}
+
+/**
+ * Forgot-password recovery for a self-hosted instance: set RESET_ADMIN_PASSWORD in env and
+ * redeploy — on boot it resets the admin account's password to that value. Remove the env var
+ * afterwards (otherwise every redeploy re-resets it). Targets ADMIN_USERNAME if set, else the
+ * first admin user.
+ */
+export function resetAdminPassword(): void {
+  const np = process.env.RESET_ADMIN_PASSWORD?.trim();
+  if (!authEnabled() || !np) return;
+  const username = process.env.ADMIN_USERNAME?.trim();
+  const user = (username ? getUserByName(username) : null) || listUsers().find((u) => u.role === "admin");
+  if (!user) {
+    console.warn("[agency] RESET_ADMIN_PASSWORD set but no admin user found.");
+    return;
+  }
+  setUserPassword(user.id, np);
+  console.warn(`[agency] RESET_ADMIN_PASSWORD applied — password reset for "${user.username}". REMOVE this env var now.`);
 }
 
 export function parseCookies(req: IncomingMessage): Record<string, string> {

@@ -26,7 +26,7 @@ import { OPS_SETTINGS, opsSettingsValues } from "./settings.js";
 import { getSecretSetting, setSecretSetting } from "./store.js";
 import { ghBotToken, ghUserToken } from "./creds.js";
 import { renderLogin, renderInvite, renderSetup } from "./authpages.js";
-import { authenticate, createSession, revokeSession, getInvite, acceptInvite, createInvite, createUser, listUsers, listInvites, setUserSecret, listUserSecretKeys, countUsers, type User } from "./store.js";
+import { authenticate, createSession, revokeSession, getInvite, acceptInvite, createInvite, createUser, listUsers, listInvites, setUserSecret, listUserSecretKeys, countUsers, setUserPassword, type User } from "./store.js";
 import { subscribe, getActive } from "./activity.js";
 import { inFlightKeys } from "./pool.js";
 import { listRateLimited } from "./store.js";
@@ -536,7 +536,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
     }
 
     // Dashboard actions (auth required), not GitHub webhooks.
-    if (["/archive", "/comment", "/run-checks", "/merge", "/delete", "/resume", "/fix", "/auto", "/start", "/new-issue", "/approve", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret", "/onboarded"].includes(path)) {
+    if (["/archive", "/comment", "/run-checks", "/merge", "/delete", "/resume", "/fix", "/auto", "/start", "/new-issue", "/approve", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret", "/onboarded", "/set-password"].includes(path)) {
       const actor = authEnabled() ? userFromReq(req) : null;
       if (authEnabled()) {
         if (!actor) return void res.writeHead(401, { "content-type": "application/json" }).end('{"error":"auth required"}');
@@ -569,6 +569,16 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           if (!actor) return res.writeHead(409).end('{"error":"multi-user not enabled"}');
           if (!p.key) return res.writeHead(400).end("{}");
           setUserSecret(actor.id, String(p.key), String(p.value ?? ""));
+          return ok();
+        }
+        if (path === "/set-password") {
+          // Set a new password — your own, or (admin) another user's via `number`=userId. No
+          // current-password check, by request. Min 8 chars.
+          if (!actor) return res.writeHead(409).end("{}");
+          const np = String(p.value ?? "");
+          if (np.length < 8) return res.writeHead(400).end(JSON.stringify({ error: "Password must be at least 8 characters" }));
+          const targetId = number && actor.role === "admin" ? number : actor.id;
+          setUserPassword(targetId, np);
           return ok();
         }
         if (path === "/onboarded") {
