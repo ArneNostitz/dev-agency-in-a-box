@@ -464,10 +464,12 @@ function Settings({ data, theme, setTheme, onClose, setAuto, reload }) {
   return html`<${Sheet} title="Settings" onClose=${onClose} footer=${html`<button class="btn" onClick=${onClose}>Cancel</button><button class="btn primary" onClick=${save}>Save</button>`}>
     ${data.user ? html`<div class="sec">Account</div>
       <div class="muted">Signed in as <b>${data.user.username}</b> · ${data.user.role}</div>
-      <div style="display:flex;gap:8px;margin-top:8px">
-        <button class="btn ghost" onClick=${() => api("/onboarded", { value: "0" }).then(() => { onClose(); reload(); })}><${Icon} name="play" size=${15}/> Run setup again</button>
-        <a class="btn ghost" href="/logout" style="flex:1;justify-content:center"><${Icon} name="arrowleft" size=${15}/> Sign out</a>
-      </div>
+      <a class="btn ghost" href="/logout" style="justify-content:flex-start;margin-top:8px"><${Icon} name="arrowleft" size=${15}/> Sign out</a>
+
+      <div class="sec">Setup wizard</div>
+      <div class="muted" style="font-size:12px;margin-bottom:7px">Re-run the guided walkthrough to add or update your tokens, models, and first repo.</div>
+      <button class="btn primary" style="width:100%" onClick=${() => api("/onboarded", { value: "0" }).then(() => { onClose(); reload(); })}><${Icon} name="play" size=${15}/> Run the setup wizard</button>
+
       <${Credentials} secretKeys=${data.secretKeys || []} reload=${reload}/>
       ${data.user.role === "admin" ? html`<${Admin} users=${data.users || []} invites=${data.invites || []} webhookSecretSet=${data.webhookSecretSet} reload=${reload}/>` : null}` : null}
     <div class="sec">Appearance</div>
