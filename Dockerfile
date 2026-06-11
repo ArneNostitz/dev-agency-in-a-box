@@ -62,14 +62,15 @@ ENV RUN_MODE=watch \
 # lets the agent write code, clone repos, and persist the SQLite memory.
 # Put Claude's session store (~/.claude) on the data volume so an interrupted run's session can
 # be resumed after a restart/redeploy (sessions live at ~/.claude/projects/<dir>/<id>.jsonl).
-# Note: chown /app recursively, but NOT /home/node recursively — the base image already owns
-# the node user's home, and a recursive chown that walks the ~/.claude *symlink* can abort the
-# build (exit 1) on a freshly-pulled base. We chown the symlink itself with -h instead.
-RUN mkdir -p /app/data /app/.work /app/data/claude \
-    && rm -rf /home/node/.claude \
-    && ln -sfn /app/data/claude /home/node/.claude \
-    && chown -R node:node /app \
-    && chown -h node:node /home/node/.claude
+# Split into ATOMIC steps so a build failure points at the exact command: BuildKit only reports
+# the Dockerfile line of the *whole* RUN, and Coolify doesn't surface the step's stderr — so a
+# chained `a && b && c` RUN hides which link broke. `set -eux` traces each command too.
+# chown uses -Rh (lchown, recursive): it never dereferences a symlink, so a dangling link inside
+# node_modules can't abort the walk — the most likely silent exit-1 of a plain `chown -R`.
+RUN set -eux; mkdir -p /app/data /app/.work /app/data/claude
+RUN set -eux; rm -rf /home/node/.claude; ln -sfn /app/data/claude /home/node/.claude
+RUN set -eux; chown -Rh node:node /app
+RUN set -eux; chown -h node:node /home/node/.claude
 USER node
 
 # Stable git identity for the agency's commits (written to the node user's home).
