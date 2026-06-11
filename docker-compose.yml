@@ -10,86 +10,36 @@ services:
     # container (pairs with the app's graceful drain). Raise if your builds run longer.
     stop_grace_period: 600s
     environment:
-      # Trigger style: "watch" polls; "webhook" reacts instantly (set up a GitHub webhook).
-      RUN_MODE: ${RUN_MODE:-watch}
-      POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-60}
-      # How many issues/PRs to work on in parallel.
-      AGENCY_CONCURRENCY: ${AGENCY_CONCURRENCY:-3}
-      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
-      # Public URL of this service (Coolify domain). Set it + the secret and webhook mode
-      # auto-registers the GitHub webhooks for you.
-      PUBLIC_URL: ${PUBLIC_URL:-}
-      # Password for the status dashboard (Basic Auth). Unset = open.
-      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:-}
+      # ── Bootstrap / infra ────────────────────────────────────────────────
+      RUN_MODE: ${RUN_MODE:-watch}            # watch (poll) | webhook | once
       PORT: 3000
-
-      # --- GitHub (required) ---
-      # GITHUB_TOKEN = the BOT account's token (so comments/PRs are attributed to the bot).
-      GITHUB_TOKEN: ${GITHUB_TOKEN}
-      # ADMIN_GITHUB_TOKEN = your OWNER token; used only to auto-invite the bot as a
-      # collaborator on watched repos (the bot can't invite itself). Optional.
-      ADMIN_GITHUB_TOKEN: ${ADMIN_GITHUB_TOKEN:-}
-      GITHUB_OWNER: ${GITHUB_OWNER}
-      # Repos come from config/repos.txt; or override with a comma-separated list:
-      TARGET_REPOS: ${TARGET_REPOS:-}
-      TARGET_REPO: ${TARGET_REPO:-}
-
-      # Trigger: mention (default, e.g. "@dev ...") | label | any
-      TRIGGER_MODE: ${TRIGGER_MODE:-mention}
-      HANDLES: ${HANDLES:-}
-      QUEUE_LABEL: ${QUEUE_LABEL:-agency:queue}
-      IGNORE_LABEL: ${IGNORE_LABEL:-agency:ignore}
-
-      # --- Agent brains: set ONE of these ---
-      # Subscription token from `claude setup-token`:
-      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
-      # ...or a pay-as-you-go API key:
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      # ...or point at another provider / router (GLM, DeepSeek, Gemini, OpenAI, Ollama) via an
-      # Anthropic-compatible endpoint or claude-code-router / LiteLLM. Then set per-role models
-      # to whatever that gateway serves. See COOLIFY.md "Other model providers".
-      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
-      ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN:-}
-
-      # Per-role model overrides (defaults: planner=opus 4.8, dev/arch/review=sonnet, tester=haiku)
-      PLANNER_MODEL: ${PLANNER_MODEL:-}
-      ARCHITECT_MODEL: ${ARCHITECT_MODEL:-}
-      DEVELOPER_MODEL: ${DEVELOPER_MODEL:-}
-      REVIEWER_MODEL: ${REVIEWER_MODEL:-}
-      TESTER_MODEL: ${TESTER_MODEL:-}
-      LIBRARIAN_MODEL: ${LIBRARIAN_MODEL:-}
-      AGENT_MODEL: ${AGENT_MODEL:-}
-
-      # Cost guardrails (per issue / per run; 0 disables)
-      MAX_ISSUE_COST_USD: ${MAX_ISSUE_COST_USD:-}
-      MAX_ISSUE_TURNS: ${MAX_ISSUE_TURNS:-}
-      MAX_TURNS_PER_RUN: ${MAX_TURNS_PER_RUN:-}
-      MAX_TOKENS_PER_RUN: ${MAX_TOKENS_PER_RUN:-}
-      # Skip the separate architect pass (planner already plans) — saves a full agent run
-      SKIP_ARCHITECT: ${SKIP_ARCHITECT:-}
-      # GitNexus code-intelligence: index each repo (no tokens) so agents query structure via
-      # MCP instead of reading many files. Big token saver on codebase research.
-      GITNEXUS: ${GITNEXUS:-}
-      GITNEXUS_INDEX_TIMEOUT_MS: ${GITNEXUS_INDEX_TIMEOUT_MS:-}
-      # Override the analyze command/flags if your gitnexus version differs (default: "analyze")
-      GITNEXUS_ANALYZE_ARGS: ${GITNEXUS_ANALYZE_ARGS:-}
-      # Self-evolving loop (librarian lessons -> playbook PRs against AGENCY_REPO)
-      SELF_IMPROVE: ${SELF_IMPROVE:-}
-      LESSONS_PR_THRESHOLD: ${LESSONS_PR_THRESHOLD:-}
-      AGENCY_REPO: ${AGENCY_REPO:-}
-      # Re-engagement window + dashboard "Open preview" link template
-      FOLLOWUP_WINDOW_DAYS: ${FOLLOWUP_WINDOW_DAYS:-}
-      PREVIEW_URL_TEMPLATE: ${PREVIEW_URL_TEMPLATE:-}
-      # Append [skip ci] to agency commits to save GitHub Actions minutes (set false to disable)
-      SKIP_CI: ${SKIP_CI:-}
-      # Auto-stop a dashboard "Run preview" dev server after this many idle minutes
-      PREVIEW_TTL_MIN: ${PREVIEW_TTL_MIN:-}
-      # Session token gauge + graceful deploys
-      SESSION_WINDOW_HOURS: ${SESSION_WINDOW_HOURS:-}
-      SESSION_TOKEN_BUDGET: ${SESSION_TOKEN_BUDGET:-}
+      DB_PATH: /app/data/agency.db            # SQLite, on the mounted volume
+      APP_ENV: ${APP_ENV:-production}         # set "development" on staging → DEV badge
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}   # only for webhook mode
       GRACEFUL_SHUTDOWN_MS: ${GRACEFUL_SHUTDOWN_MS:-}
-      # SQLite memory lives on the mounted volume so it survives redeploys.
-      DB_PATH: /app/data/agency.db
+
+      # ── Auth ─────────────────────────────────────────────────────────────
+      # MASTER_KEY (openssl rand -hex 32) enables MULTI-USER mode + encrypts all
+      # stored secrets. Unset = legacy single-user Basic Auth via DASHBOARD_PASSWORD.
+      MASTER_KEY: ${MASTER_KEY:-}
+      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:-}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}   # seeds the first admin (multi-user)
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}        # falls back to DASHBOARD_PASSWORD
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+
+      # ── Execution identity (global for now; becomes per-user, see roadmap) ─
+      GITHUB_OWNER: ${GITHUB_OWNER}
+      GITHUB_TOKEN: ${GITHUB_TOKEN}                # bot account token (commits/PRs as the bot)
+      ADMIN_GITHUB_TOKEN: ${ADMIN_GITHUB_TOKEN:-}  # owner token (auto-invite the bot) — optional
+      TARGET_REPOS: ${TARGET_REPOS:-}              # comma-separated, or use config/repos.txt
+      # Agent brains — set ONE:
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}   # subscription (claude setup-token)
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}              # or pay-as-you-go API key
+
+      # ── Everything else lives in the dashboard ───────────────────────────
+      # Trigger mode, handles, labels, concurrency, poll interval, cost/turn/token
+      # guardrails, GitNexus, self-improve, follow-up window, preview, models, session
+      # budget, etc. are all managed in Settings → Operations (stored in the DB).
     volumes:
       - agency-data:/app/data
 
