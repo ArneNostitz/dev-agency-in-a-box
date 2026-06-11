@@ -202,7 +202,7 @@ async function processIssue(cfg: Config, repo: string, issue: Issue): Promise<vo
   await rm(workdir, { recursive: true, force: true });
   await mkdir(join(workdir, ".."), { recursive: true });
   await cloneRepo(repo, workdir);
-  await indexRepo(workdir, (s) => pushActivity(repo, issue.number, role, "tool", s));
+  await indexRepo(workdir, repo, (s) => pushActivity(repo, issue.number, role, "tool", s));
 
   setActive(repo, issue.number, "issue", role, issue.title);
   try {
@@ -232,7 +232,7 @@ async function processPrFeedbackOne(
   await rm(workdir, { recursive: true, force: true });
   await mkdir(join(workdir, ".."), { recursive: true });
   await cloneRepo(repo, workdir);
-  await indexRepo(workdir, (s) => pushActivity(repo, pr.number, "developer", "tool", s));
+  await indexRepo(workdir, repo, (s) => pushActivity(repo, pr.number, "developer", "tool", s));
   setActive(repo, pr.number, "pr", "developer", pr.title);
   try {
     await runPrFix(repo, pr.issueNumber, pr.number, pr.branch, workdir, thread);
@@ -282,7 +282,7 @@ async function processHealOne(
   await rm(workdir, { recursive: true, force: true });
   await mkdir(join(workdir, ".."), { recursive: true });
   await cloneRepo(repo, workdir);
-  await indexRepo(workdir, (s) => pushActivity(repo, pr.number, "developer", "tool", s));
+  await indexRepo(workdir, repo, (s) => pushActivity(repo, pr.number, "developer", "tool", s));
   setActive(repo, pr.number, "pr", "developer", pr.title);
   try {
     await runPrFix(repo, pr.issueNumber, pr.number, pr.branch, workdir, instruction);
@@ -312,7 +312,7 @@ async function processFollowUp(cfg: Config, repo: string, issue: Issue): Promise
   await rm(workdir, { recursive: true, force: true });
   await mkdir(join(workdir, ".."), { recursive: true });
   await cloneRepo(repo, workdir);
-  await indexRepo(workdir, (s) => pushActivity(repo, issue.number, "developer", "tool", s));
+  await indexRepo(workdir, repo, (s) => pushActivity(repo, issue.number, "developer", "tool", s));
 
   setActive(repo, issue.number, "issue", "developer", issue.title);
   try {
@@ -381,7 +381,7 @@ async function processResume(cfg: Config, repo: string, issue: Issue): Promise<v
   await rm(workdir, { recursive: true, force: true });
   await mkdir(join(workdir, ".."), { recursive: true });
   await cloneRepo(repo, workdir);
-  await indexRepo(workdir, (s) => pushActivity(repo, issue.number, "developer", "tool", s));
+  await indexRepo(workdir, repo, (s) => pushActivity(repo, issue.number, "developer", "tool", s));
   setActive(repo, issue.number, "issue", "developer", issue.title);
   try {
     await runResumeBuild(repo, issue, workdir, thread);
@@ -434,7 +434,7 @@ async function processFix(cfg: Config, repo: string, issue: Issue, conflict: boo
   await mkdir(join(workdir, ".."), { recursive: true });
   await cloneRepo(repo, workdir);
   await fetchCheckout(workdir, `agency/issue-${issue.number}`); // put the work back, then fix on top
-  await indexRepo(workdir, (s) => pushActivity(repo, issue.number, "developer", "tool", s));
+  await indexRepo(workdir, repo, (s) => pushActivity(repo, issue.number, "developer", "tool", s));
   setActive(repo, issue.number, "issue", "developer", issue.title);
   try {
     await runReviewFix(repo, issue, workdir, { conflict });
