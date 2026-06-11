@@ -40,7 +40,7 @@ import {
   AWAITING_LABELS,
   type Issue,
 } from "./github.js";
-import { seedAdmin } from "./auth.js";
+import { seedAdmin, resetAdminPassword } from "./auth.js";
 import { sNum } from "./settings.js";
 import { githubReady } from "./creds.js";
 import { decideThreadAction } from "./route.js";
@@ -870,6 +870,7 @@ async function backgroundInit(cfg: Config): Promise<void> {
 async function main(): Promise<void> {
   const cfg = loadConfig();
   seedAdmin(); // multi-user: create the admin from env on first boot (no-op if MASTER_KEY unset)
+  resetAdminPassword(); // forgot-password recovery via RESET_ADMIN_PASSWORD env (no-op if unset)
   startAutoResume(cfg);
   startAutoMode(cfg);
   startPreviewSweeper();
