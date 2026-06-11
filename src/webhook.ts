@@ -21,6 +21,9 @@ import { mergeEpic, isEpic } from "./epics.js";
 import { renderDashboard, renderHistory } from "./dashboard.js";
 import { renderShell } from "./shell.js";
 import { addLabel, removeLabel } from "./github.js";
+import { authEnabled, userFromReq, setSessionCookie, clearSessionCookie, parseCookies, SESSION_COOKIE } from "./auth.js";
+import { renderLogin, renderInvite } from "./authpages.js";
+import { authenticate, createSession, revokeSession, getInvite, acceptInvite, createInvite, createUser, listUsers, listInvites, setUserSecret, listUserSecretKeys, type User } from "./store.js";
 import { subscribe, getActive } from "./activity.js";
 import { inFlightKeys } from "./pool.js";
 import { listRateLimited } from "./store.js";
@@ -158,7 +161,33 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
       // PWA static assets (service worker, manifest, app bundle, icons) — no auth so the
       // installed app can boot and the SW can cache them. They contain no secrets.
       if (serveStatic(url, res)) return;
-      if (!checkAuth(cfg, req, res)) return;
+
+      // Auth gate. Multi-user (session cookies) when MASTER_KEY is set; else legacy Basic Auth.
+      let sessionUser: User | null = null;
+      if (authEnabled()) {
+        const htmlHead = { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" };
+        if (url === "/login") return void res.writeHead(200, htmlHead).end(renderLogin());
+        if (url === "/logout") {
+          const tok = parseCookies(req)[SESSION_COOKIE];
+          if (tok) revokeSession(tok);
+          clearSessionCookie(res);
+          return void res.writeHead(302, { location: "/login" }).end();
+        }
+        if (url === "/invite") {
+          const t = new URLSearchParams((req.url ?? "").split("?")[1] ?? "").get("token") ?? "";
+          const inv = getInvite(t);
+          if (!inv) return void res.writeHead(302, { location: "/login" }).end();
+          return void res.writeHead(200, htmlHead).end(renderInvite(inv.token, inv.email));
+        }
+        sessionUser = userFromReq(req);
+        if (!sessionUser) {
+          const isNav = url === "/" || url === "/classic" || url === "/history";
+          if (isNav) return void res.writeHead(302, { location: "/login" }).end();
+          return void res.writeHead(401, { "content-type": "text/plain" }).end("authentication required");
+        }
+      } else if (!checkAuth(cfg, req, res)) {
+        return;
+      }
 
       if (url === "/events") {
         // Server-sent events: live thought-stream from the agents.
@@ -239,6 +268,11 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           res.end(
             JSON.stringify({
               env: process.env.APP_ENV?.trim() || "production",
+              authEnabled: authEnabled(),
+              user: sessionUser ? { id: sessionUser.id, username: sessionUser.username, role: sessionUser.role, email: sessionUser.email } : null,
+              secretKeys: sessionUser ? listUserSecretKeys(sessionUser.id) : [],
+              users: sessionUser && sessionUser.role === "admin" ? listUsers() : [],
+              invites: sessionUser && sessionUser.role === "admin" ? listInvites() : [],
               repos: effectiveRepos(cfg),
               auto: { resume: getAutoRaw("resume"), merge: getAutoRaw("merge") },
               autoRepos: Object.fromEntries(
@@ -445,12 +479,51 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
       return;
     }
 
-    // Dashboard actions (password-protected, not GitHub webhooks).
     const path = (req.url ?? "").split("?")[0];
-    if (["/archive", "/comment", "/run-checks", "/merge", "/delete", "/resume", "/fix", "/auto", "/start", "/new-issue", "/approve", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/models"].includes(path)) {
-      if (!checkAuth(cfg, req, res)) return;
+
+    // Auth forms (urlencoded, no auth required) — login, accept-invite, logout.
+    if (authEnabled() && (path === "/login" || path === "/invite" || path === "/logout")) {
+      const htmlHead = { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" };
+      void readBody(req).then((body) => {
+        const form = new URLSearchParams(body.toString("utf8"));
+        if (path === "/logout") {
+          const tok = parseCookies(req)[SESSION_COOKIE];
+          if (tok) revokeSession(tok);
+          clearSessionCookie(res);
+          return void res.writeHead(303, { location: "/login" }).end();
+        }
+        if (path === "/login") {
+          const u = authenticate((form.get("username") ?? "").trim(), form.get("password") ?? "");
+          if (!u) return void res.writeHead(200, htmlHead).end(renderLogin("Wrong username or password."));
+          setSessionCookie(req, res, createSession(u.id));
+          return void res.writeHead(303, { location: "/" }).end();
+        }
+        // /invite
+        const token = form.get("token") ?? "";
+        const inv = getInvite(token);
+        if (!inv) return void res.writeHead(200, htmlHead).end(renderInvite(token, null, "This invite is invalid or already used."));
+        const username = (form.get("username") ?? "").trim();
+        const pw = form.get("password") ?? "";
+        if (username.length < 2 || pw.length < 8) return void res.writeHead(200, htmlHead).end(renderInvite(token, inv.email, "Username and an 8+ character password are required."));
+        const created = createUser(username, pw, inv.role, form.get("email") || inv.email);
+        if (!created) return void res.writeHead(200, htmlHead).end(renderInvite(token, inv.email, "That username is taken."));
+        acceptInvite(token);
+        setSessionCookie(req, res, createSession(created.id));
+        return void res.writeHead(303, { location: "/" }).end();
+      });
+      return;
+    }
+
+    // Dashboard actions (auth required), not GitHub webhooks.
+    if (["/archive", "/comment", "/run-checks", "/merge", "/delete", "/resume", "/fix", "/auto", "/start", "/new-issue", "/approve", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/models", "/invite-create", "/user-secret"].includes(path)) {
+      const actor = authEnabled() ? userFromReq(req) : null;
+      if (authEnabled()) {
+        if (!actor) return void res.writeHead(401, { "content-type": "application/json" }).end('{"error":"auth required"}');
+      } else if (!checkAuth(cfg, req, res)) {
+        return;
+      }
       void readBody(req).then(async (body) => {
-        let p: { repo?: string; number?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; dataUrl?: string; name?: string; providers?: Provider[]; roleModels?: Record<string, { providerId: string; model: string }>; kind?: string; value?: string; skipArchitect?: string; gitnexus?: string; maxTokensPerRun?: number; maxReviseRounds?: number; start?: boolean } = {};
+        let p: { repo?: string; number?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; dataUrl?: string; name?: string; providers?: Provider[]; roleModels?: Record<string, { providerId: string; model: string }>; kind?: string; value?: string; skipArchitect?: string; gitnexus?: string; maxTokensPerRun?: number; maxReviseRounds?: number; start?: boolean; email?: string; key?: string } = {};
         try {
           p = JSON.parse(body.toString("utf8"));
         } catch {
@@ -460,6 +533,21 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         const number = Number(p.number);
         const ok = (payload = '{"ok":true}') =>
           res.writeHead(200, { "content-type": "application/json" }).end(payload);
+
+        // --- multi-user: invites + per-user encrypted secrets ---
+        if (path === "/invite-create") {
+          if (!actor || actor.role !== "admin") return res.writeHead(403).end('{"error":"admin only"}');
+          const token = createInvite(p.email ?? null, p.role === "admin" ? "admin" : "member", actor.id);
+          const base = (req.headers["x-forwarded-proto"] ? `${(req.headers["x-forwarded-proto"] as string).split(",")[0]}://` : "https://") + (req.headers["host"] ?? "");
+          return ok(JSON.stringify({ ok: true, token, url: `${base}/invite?token=${token}` }));
+        }
+        if (path === "/user-secret") {
+          // Write-only: store an encrypted credential for the signed-in user. Never returned.
+          if (!actor) return res.writeHead(409).end('{"error":"multi-user not enabled"}');
+          if (!p.key) return res.writeHead(400).end("{}");
+          setUserSecret(actor.id, String(p.key), String(p.value ?? ""));
+          return ok();
+        }
 
         if (path === "/archive") {
           if (repo && number) archiveIssue(repo, number);

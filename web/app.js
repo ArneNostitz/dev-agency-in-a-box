@@ -451,6 +451,11 @@ function Settings({ data, theme, setTheme, onClose, setAuto, reload }) {
   const gpill = (kind) => { const raw = auto[kind] || ""; const on = raw === "on", off = raw === "off"; const order = ["", "on", "off"]; const nx = order[(order.indexOf(raw) + 1) % 3]; return html`<button class=${"apill " + (on ? "on" : off ? "off" : "")} onClick=${() => setAuto(kind, nx === "" ? "inherit" : nx)}><${Icon} name=${kind === "resume" ? "refresh" : "merge"} size=${14}/> ${kind}</button>`; };
   const rpill = (repo, kind) => { const raw = (autoRepos[repo] || {})[kind] || ""; const on = raw === "on", off = raw === "off"; const order = ["", "on", "off"]; const nx = order[(order.indexOf(raw) + 1) % 3]; return html`<button class=${"apill " + (on ? "on" : off ? "off" : "")} onClick=${() => setAuto(kind, nx === "" ? "inherit" : nx, repo)}><${Icon} name=${kind === "resume" ? "refresh" : "merge"} size=${13}/> ${kind}</button>`; };
   return html`<${Sheet} title="Settings" onClose=${onClose} footer=${html`<button class="btn" onClick=${onClose}>Cancel</button><button class="btn primary" onClick=${save}>Save</button>`}>
+    ${data.user ? html`<div class="sec">Account</div>
+      <div class="muted">Signed in as <b>${data.user.username}</b> · ${data.user.role}</div>
+      <a class="btn ghost" href="/logout" style="justify-content:flex-start;margin-top:8px"><${Icon} name="arrowleft" size=${15}/> Sign out</a>
+      <${Credentials} secretKeys=${data.secretKeys || []} reload=${reload}/>
+      ${data.user.role === "admin" ? html`<${Admin} users=${data.users || []} invites=${data.invites || []} reload=${reload}/>` : null}` : null}
     <div class="sec">Appearance</div>
     <div class="autorow">
       <button class=${"apill " + (theme === "light" ? "on" : "")} onClick=${() => setTheme("light")}><${Icon} name="sun" size=${14}/> Light</button>
@@ -471,6 +476,46 @@ function Settings({ data, theme, setTheme, onClose, setAuto, reload }) {
     <div class="sec">Advanced</div>
     <a class="btn ghost" href="/classic" style="justify-content:flex-start"><${Icon} name="settings" size=${15}/> Models &amp; agents (classic editor)</a>
   <//>`;
+}
+
+// ---------- per-user credentials (write-only, encrypted server-side) ----------
+const CRED_FIELDS = [
+  { key: "claude_token", label: "Claude subscription token", hint: "CLAUDE_CODE_OAUTH_TOKEN — runs the Claude roles on your plan" },
+  { key: "github_user_token", label: "GitHub token (acts as you)", hint: "comments/issues authored under your account" },
+  { key: "github_bot_token", label: "GitHub bot token", hint: "the agency's commits + pull requests" },
+];
+function Credentials({ secretKeys, reload }) {
+  return html`<div class="sec">Your credentials</div>
+    <div class="muted" style="font-size:12px;margin-bottom:4px">Stored encrypted (AES-256-GCM). The agency uses them to run on your behalf. Write-only — never shown back.</div>
+    ${CRED_FIELDS.map((f) => html`<${SecretField} key=${f.key} field=${f} isSet=${secretKeys.includes(f.key)} reload=${reload}/>`)}
+    <div class="muted" style="font-size:12px;margin-top:6px">Other LLM providers (GLM, DeepSeek…) are managed in <a href="/classic">models</a> for now.</div>`;
+}
+function SecretField({ field, isSet, reload }) {
+  const [v, setV] = useState("");
+  function save() { if (!v) { toast("Enter a value"); return; } api("/user-secret", { key: field.key, value: v }).then(() => { toast("Saved"); setV(""); reload(); }).catch(() => toast("Couldn’t save")); }
+  function clear() { api("/user-secret", { key: field.key, value: "" }).then(() => { toast("Cleared"); reload(); }); }
+  return html`<label>${field.label} ${isSet ? html`<span class="statuschip s-ready"><${Icon} name="check" size=${12}/> set</span>` : null}</label>
+    <div class="muted" style="font-size:11px;margin:0 2px 4px">${field.hint}</div>
+    <div style="display:flex;gap:8px">
+      <input type="password" autocomplete="off" placeholder=${isSet ? "•••••• saved — type to replace" : "paste token"} value=${v} onInput=${(e) => setV(e.target.value)}/>
+      <button class="btn" onClick=${save}>Save</button>
+      ${isSet ? html`<button class="btn danger" onClick=${clear} aria-label="Clear"><${Icon} name="trash" size=${15}/></button>` : null}
+    </div>`;
+}
+function Admin({ users, reload }) {
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState("member");
+  const [link, setLink] = useState("");
+  function invite() { api("/invite-create", { email: email || null, role }).then((d) => { setLink(d.url || ""); setEmail(""); toast("Invite link created"); reload(); }).catch(() => toast("Couldn’t create invite")); }
+  return html`<div class="sec">Team (admin)</div>
+    ${users.map((u) => html`<div key=${u.id} style="display:flex;gap:8px;align-items:center;margin:4px 2px"><span style="flex:1">${u.username}</span><span class="muted" style="font-size:12px">${u.role}</span></div>`)}
+    <label>Invite a teammate</label>
+    <div style="display:flex;gap:8px">
+      <input placeholder="email (optional)" value=${email} onInput=${(e) => setEmail(e.target.value)}/>
+      <select value=${role} onChange=${(e) => setRole(e.target.value)} style="width:auto"><option value="member">member</option><option value="admin">admin</option></select>
+      <button class="btn" onClick=${invite}>Create</button>
+    </div>
+    ${link ? html`<div class="cmdbox"><code>${link}</code><button class="btn" onClick=${() => { if (navigator.clipboard) navigator.clipboard.writeText(link); toast("Copied"); }}>Copy</button></div>` : null}`;
 }
 
 // ---------- Sheet wrapper ----------

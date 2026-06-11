@@ -34,6 +34,8 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
   setG("EventSource", class { constructor() {} close() {} });
 
   const SAMPLE = {
+    user: { id: 1, username: "arne", role: "admin", email: "a@x.com" }, authEnabled: true,
+    secretKeys: ["claude_token"], users: [{ id: 1, username: "arne", role: "admin" }], invites: [],
     repos: ["acme/app"], auto: { resume: "", merge: "" }, autoRepos: { "acme/app": {} },
     active: [], inflight: [], rateLimited: [], runs: [], activity: [], spendToday: { costUsd: 0 },
     session: { tokens: 0, budget: 0 }, config: {},
@@ -91,6 +93,9 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
   await tick(40);
   assert.match(root.innerHTML, /Automation/, "settings opens");
   assert.match(root.innerHTML, /Pipeline/, "settings shows pipeline knobs");
+  assert.match(root.innerHTML, /Your credentials/, "credentials section renders for a signed-in user");
+  assert.match(root.innerHTML, /Team \(admin\)/, "admin team section renders");
+  assert.match(root.innerHTML, /arne/, "signed-in user shown");
   click(q(".sheet .sh .iconbtn"));
   await tick(40);
 

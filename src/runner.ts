@@ -40,6 +40,7 @@ import {
   AWAITING_LABELS,
   type Issue,
 } from "./github.js";
+import { seedAdmin } from "./auth.js";
 import { decideThreadAction } from "./route.js";
 import { reconcileEpics } from "./epics.js";
 import { indexRepo } from "./gitnexus.js";
@@ -844,6 +845,7 @@ function startAutoMode(cfg: Config): void {
 async function main(): Promise<void> {
   const cfg = loadConfig();
   await ensureAllRepoAccess(cfg);
+  seedAdmin(); // multi-user: create the admin from env on first boot (no-op if MASTER_KEY unset)
   await recoverOrphans(cfg);
   await reconcileRateLimited(cfg).catch((e) => console.error("[agency] reconcile failed:", (e as Error).message));
   startAutoResume(cfg);
