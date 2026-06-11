@@ -455,7 +455,7 @@ function Settings({ data, theme, setTheme, onClose, setAuto, reload }) {
       <div class="muted">Signed in as <b>${data.user.username}</b> · ${data.user.role}</div>
       <a class="btn ghost" href="/logout" style="justify-content:flex-start;margin-top:8px"><${Icon} name="arrowleft" size=${15}/> Sign out</a>
       <${Credentials} secretKeys=${data.secretKeys || []} reload=${reload}/>
-      ${data.user.role === "admin" ? html`<${Admin} users=${data.users || []} invites=${data.invites || []} reload=${reload}/>` : null}` : null}
+      ${data.user.role === "admin" ? html`<${Admin} users=${data.users || []} invites=${data.invites || []} webhookSecretSet=${data.webhookSecretSet} reload=${reload}/>` : null}` : null}
     <div class="sec">Appearance</div>
     <div class="autorow">
       <button class=${"apill " + (theme === "light" ? "on" : "")} onClick=${() => setTheme("light")}><${Icon} name="sun" size=${14}/> Light</button>
@@ -520,11 +520,13 @@ function SecretField({ field, isSet, reload }) {
       ${isSet ? html`<button class="btn danger" onClick=${clear} aria-label="Clear"><${Icon} name="trash" size=${15}/></button>` : null}
     </div>`;
 }
-function Admin({ users, reload }) {
+function Admin({ users, webhookSecretSet, reload }) {
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("member");
   const [link, setLink] = useState("");
+  const [wh, setWh] = useState("");
   function invite() { api("/invite-create", { email: email || null, role }).then((d) => { setLink(d.url || ""); setEmail(""); toast("Invite link created"); reload(); }).catch(() => toast("Couldn’t create invite")); }
+  function saveWh() { api("/settings", { webhookSecret: wh }).then(() => { toast("Webhook secret saved"); setWh(""); reload(); }).catch(() => toast("Couldn’t save")); }
   return html`<div class="sec">Team (admin)</div>
     ${users.map((u) => html`<div key=${u.id} style="display:flex;gap:8px;align-items:center;margin:4px 2px"><span style="flex:1">${u.username}</span><span class="muted" style="font-size:12px">${u.role}</span></div>`)}
     <label>Invite a teammate</label>
@@ -533,7 +535,13 @@ function Admin({ users, reload }) {
       <select value=${role} onChange=${(e) => setRole(e.target.value)} style="width:auto"><option value="member">member</option><option value="admin">admin</option></select>
       <button class="btn" onClick=${invite}>Create</button>
     </div>
-    ${link ? html`<div class="cmdbox"><code>${link}</code><button class="btn" onClick=${() => { if (navigator.clipboard) navigator.clipboard.writeText(link); toast("Copied"); }}>Copy</button></div>` : null}`;
+    ${link ? html`<div class="cmdbox"><code>${link}</code><button class="btn" onClick=${() => { if (navigator.clipboard) navigator.clipboard.writeText(link); toast("Copied"); }}>Copy</button></div>` : null}
+    <label>GitHub webhook secret ${webhookSecretSet ? html`<span class="statuschip s-ready"><${Icon} name="check" size=${12}/> set</span>` : null}</label>
+    <div class="muted" style="font-size:11px;margin:0 2px 4px">Only if you use GitHub push webhooks. Stored encrypted; use the same value in the repo's webhook settings.</div>
+    <div style="display:flex;gap:8px">
+      <input type="password" autocomplete="off" placeholder=${webhookSecretSet ? "•••••• saved — type to replace" : "secret"} value=${wh} onInput=${(e) => setWh(e.target.value)}/>
+      <button class="btn" onClick=${saveWh}>Save</button>
+    </div>`;
 }
 
 // ---------- Sheet wrapper ----------

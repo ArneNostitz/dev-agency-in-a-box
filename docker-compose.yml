@@ -17,7 +17,6 @@ services:
       DB_PATH: /app/data/agency.db            # SQLite on the mounted volume
       RUN_MODE: ${RUN_MODE:-watch}            # watch (poll) | webhook | once
       APP_ENV: ${APP_ENV:-production}         # "development" on staging → DEV badge
-      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}   # only if you wire GitHub push webhooks
 
       # ── Execution credentials — TEMPORARY ────────────────────────────────
       # These are the last env vars. They move to per-user encrypted credentials

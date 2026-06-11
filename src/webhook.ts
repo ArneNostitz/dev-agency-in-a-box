@@ -23,6 +23,7 @@ import { renderShell } from "./shell.js";
 import { addLabel, removeLabel } from "./github.js";
 import { authEnabled, userFromReq, setSessionCookie, clearSessionCookie, parseCookies, SESSION_COOKIE } from "./auth.js";
 import { OPS_SETTINGS, opsSettingsValues } from "./settings.js";
+import { getSecretSetting, setSecretSetting } from "./store.js";
 import { renderLogin, renderInvite, renderSetup } from "./authpages.js";
 import { authenticate, createSession, revokeSession, getInvite, acceptInvite, createInvite, createUser, listUsers, listInvites, setUserSecret, listUserSecretKeys, countUsers, type User } from "./store.js";
 import { subscribe, getActive } from "./activity.js";
@@ -126,7 +127,8 @@ function serveStatic(pathname: string, res: ServerResponse): boolean {
 
 export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: Resume, approve?: Resume, fix?: Resume, start?: Resume): Promise<void> {
   const port = Number(process.env.PORT?.trim() || "3000");
-  const secret = process.env.GITHUB_WEBHOOK_SECRET?.trim() || "";
+  // Webhook secret is read live (dashboard → env) so it can be set/rotated without a redeploy.
+  const webhookSecret = (): string => getSecretSetting("github_webhook_secret") || process.env.GITHUB_WEBHOOK_SECRET?.trim() || "";
   // Catches 👍 reactions (GitHub doesn't webhook those) and anything a delivery missed.
   const safetyPollMs = Math.max(30, cfg.pollIntervalSeconds) * 1000;
 
@@ -276,6 +278,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               secretKeys: sessionUser ? listUserSecretKeys(sessionUser.id) : [],
               users: sessionUser && sessionUser.role === "admin" ? listUsers() : [],
               invites: sessionUser && sessionUser.role === "admin" ? listInvites() : [],
+              webhookSecretSet: sessionUser && sessionUser.role === "admin" ? Boolean(getSecretSetting("github_webhook_secret") || process.env.GITHUB_WEBHOOK_SECRET) : false,
               repos: effectiveRepos(cfg),
               auto: { resume: getAutoRaw("resume"), merge: getAutoRaw("merge") },
               autoRepos: Object.fromEntries(
@@ -539,7 +542,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         return;
       }
       void readBody(req).then(async (body) => {
-        let p: { repo?: string; number?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; dataUrl?: string; name?: string; providers?: Provider[]; roleModels?: Record<string, { providerId: string; model: string }>; kind?: string; value?: string; skipArchitect?: string; gitnexus?: string; maxTokensPerRun?: number; maxReviseRounds?: number; start?: boolean; email?: string; key?: string; ops?: Record<string, string | number | boolean> } = {};
+        let p: { repo?: string; number?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; dataUrl?: string; name?: string; providers?: Provider[]; roleModels?: Record<string, { providerId: string; model: string }>; kind?: string; value?: string; skipArchitect?: string; gitnexus?: string; maxTokensPerRun?: number; maxReviseRounds?: number; start?: boolean; email?: string; key?: string; ops?: Record<string, string | number | boolean>; webhookSecret?: string } = {};
         try {
           p = JSON.parse(body.toString("utf8"));
         } catch {
@@ -600,6 +603,10 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
             for (const [k, v] of Object.entries(p.ops)) {
               if (OPS_SETTINGS.some((s) => s.key === k)) setSetting(k, typeof v === "boolean" ? (v ? "on" : "off") : String(v));
             }
+          }
+          // Encrypted GitHub webhook secret (admin, write-only).
+          if (p.webhookSecret !== undefined && (!authEnabled() || actor?.role === "admin")) {
+            setSecretSetting("github_webhook_secret", p.webhookSecret);
           }
           return ok();
         }
@@ -759,7 +766,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
     }
 
     void readBody(req).then((body) => {
-      if (!verifySignature(secret, body, req.headers["x-hub-signature-256"] as string)) {
+      if (!verifySignature(webhookSecret(), body, req.headers["x-hub-signature-256"] as string)) {
         console.warn("[agency] rejected webhook: bad signature");
         res.writeHead(401).end("bad signature");
         return;

@@ -507,6 +507,25 @@ export function setSetting(key: string, value: string): void {
   }
 }
 
+// ---- global encrypted secrets (admin-managed, e.g. the GitHub webhook secret) ----
+/** Store a global secret encrypted at rest (needs MASTER_KEY). Empty clears it. */
+export function setSecretSetting(key: string, plaintext: string): void {
+  if (!plaintext) {
+    setSetting(`secret.${key}`, "");
+    return;
+  }
+  try {
+    setSetting(`secret.${key}`, encryptSecret(plaintext));
+  } catch {
+    /* no MASTER_KEY — can't store securely; ignore */
+  }
+}
+/** Decrypt a global secret, or null if unset/undecryptable. */
+export function getSecretSetting(key: string): string | null {
+  const v = getSetting(`secret.${key}`);
+  return v ? tryDecrypt(v) : null;
+}
+
 // ---- auto-mode (auto-resume / auto-merge), resolved issue → repo → global ----
 export type AutoKind = "resume" | "merge";
 export type AutoValue = "on" | "off" | ""; // "" = inherit (or, at global level, default off)

@@ -6,6 +6,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { sStr, sNum, sBool } from "./settings.js";
+import { getSecretSetting } from "./store.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(here, ".."); // src/ -> project root
@@ -166,7 +167,7 @@ export function loadConfig(): Config {
     runMode: parseRunMode(process.env.RUN_MODE),
     pollIntervalSeconds: Math.max(10, sNum("poll_interval_seconds", "POLL_INTERVAL_SECONDS", 60)),
     publicUrl: sStr("public_url", "PUBLIC_URL", "") || undefined,
-    webhookSecret: process.env.GITHUB_WEBHOOK_SECRET?.trim() || undefined,
+    webhookSecret: getSecretSetting("github_webhook_secret") || process.env.GITHUB_WEBHOOK_SECRET?.trim() || undefined,
     adminToken: process.env.ADMIN_GITHUB_TOKEN?.trim() || undefined,
     dashboardPassword: process.env.DASHBOARD_PASSWORD?.trim() || undefined,
     agencyRepo: resolveRepo(sStr("agency_repo", "AGENCY_REPO", "dev-agency"), owner),
