@@ -34,6 +34,7 @@ export function sBool(key: string, env: string, def: boolean): boolean {
  * key to its env fallback + type, so the UI and the /settings endpoint stay in sync with one list.
  */
 export const OPS_SETTINGS = [
+  { key: "github_owner", env: "GITHUB_OWNER", type: "str", def: "", label: "GitHub owner / org" },
   { key: "trigger_mode", env: "TRIGGER_MODE", type: "select", options: ["mention", "label", "any"], def: "mention", label: "How issues start the agency" },
   { key: "handles", env: "HANDLES", type: "str", def: "@dev", label: "Trigger handles (comma-separated)" },
   { key: "queue_label", env: "QUEUE_LABEL", type: "str", def: "agency:queue", label: "Queue label (label mode)" },
@@ -53,6 +54,7 @@ export const OPS_SETTINGS = [
   { key: "preview_url_template", env: "PREVIEW_URL_TEMPLATE", type: "str", def: "", label: "Preview URL template" },
   { key: "skip_ci", env: "SKIP_CI", type: "bool", def: true, label: "Append [skip ci] to agency commits" },
   { key: "public_url", env: "PUBLIC_URL", type: "str", def: "", label: "Public base URL (webhook auto-register)" },
+  { key: "graceful_shutdown_ms", env: "GRACEFUL_SHUTDOWN_MS", type: "num", def: 570000, label: "Graceful shutdown drain (ms)" },
 ] as const;
 
 /** Read every ops setting's effective value (for the dashboard to render the form). */

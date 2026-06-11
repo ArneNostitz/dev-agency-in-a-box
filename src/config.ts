@@ -143,7 +143,7 @@ export function loadConfig(): Config {
   // Not required at boot anymore: in multi-user mode these come from the dashboard (per-user),
   // and even single-user should start the dashboard so you can configure it rather than
   // crash-loop. We warn instead, and the scan loop simply no-ops until credentials + repos exist.
-  const owner = optional("GITHUB_OWNER", "");
+  const owner = sStr("github_owner", "GITHUB_OWNER", ""); // dashboard Operations → env → empty
   const targetRepos = loadRepos(owner);
   if (targetRepos.length === 0) {
     // Not fatal: repos added at runtime via /add-repo live in the SQLite watch list.

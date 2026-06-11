@@ -10,37 +10,28 @@ services:
     # container (pairs with the app's graceful drain). Raise if your builds run longer.
     stop_grace_period: 600s
     environment:
-      # ── Bootstrap / infra ────────────────────────────────────────────────
-      RUN_MODE: ${RUN_MODE:-watch}            # watch (poll) | webhook | once
+      # ── Backend bootstrap (must be here — read before the DB/auth exist) ──
+      MASTER_KEY: ${MASTER_KEY:-}              # openssl rand -hex 32 — encrypts all stored secrets
+                                              # + enables multi-user. (Unset = legacy Basic Auth.)
       PORT: 3000
-      DB_PATH: /app/data/agency.db            # SQLite, on the mounted volume
-      APP_ENV: ${APP_ENV:-production}         # set "development" on staging → DEV badge
-      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}   # only for webhook mode
-      GRACEFUL_SHUTDOWN_MS: ${GRACEFUL_SHUTDOWN_MS:-}
+      DB_PATH: /app/data/agency.db            # SQLite on the mounted volume
+      RUN_MODE: ${RUN_MODE:-watch}            # watch (poll) | webhook | once
+      APP_ENV: ${APP_ENV:-production}         # "development" on staging → DEV badge
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}   # only if you wire GitHub push webhooks
 
-      # ── Auth ─────────────────────────────────────────────────────────────
-      # MASTER_KEY (openssl rand -hex 32) enables MULTI-USER mode + encrypts all
-      # stored secrets. Unset = legacy single-user Basic Auth via DASHBOARD_PASSWORD.
-      MASTER_KEY: ${MASTER_KEY:-}
-      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:-}
-      # Admin account is OPTIONAL here — if unset, the first visitor creates it in-browser.
-      ADMIN_USERNAME: ${ADMIN_USERNAME:-}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
-      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      # ── Execution credentials — TEMPORARY ────────────────────────────────
+      # These are the last env vars. They move to per-user encrypted credentials
+      # (managed in the dashboard) once per-user execution lands; then this whole
+      # block disappears. Until then the agency runs under these global tokens.
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}                # bot account token
+      ADMIN_GITHUB_TOKEN: ${ADMIN_GITHUB_TOKEN:-}    # owner token (auto-invite the bot)
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}   # Claude subscription
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}              # or pay-as-you-go
 
-      # ── Execution identity (global for now; becomes per-user, see roadmap) ─
-      GITHUB_OWNER: ${GITHUB_OWNER}
-      GITHUB_TOKEN: ${GITHUB_TOKEN}                # bot account token (commits/PRs as the bot)
-      ADMIN_GITHUB_TOKEN: ${ADMIN_GITHUB_TOKEN:-}  # owner token (auto-invite the bot) — optional
-      TARGET_REPOS: ${TARGET_REPOS:-}              # comma-separated, or use config/repos.txt
-      # Agent brains — set ONE:
-      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}   # subscription (claude setup-token)
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}              # or pay-as-you-go API key
-
-      # ── Everything else lives in the dashboard ───────────────────────────
-      # Trigger mode, handles, labels, concurrency, poll interval, cost/turn/token
-      # guardrails, GitNexus, self-improve, follow-up window, preview, models, session
-      # budget, etc. are all managed in Settings → Operations (stored in the DB).
+      # ── Everything else is in the dashboard (Settings → Operations) ──────
+      # Admin account → first-run setup screen. GitHub owner, repos, trigger/labels,
+      # concurrency, poll interval, budgets, GitNexus, self-improve, follow-up window,
+      # preview, models, session budget, graceful-shutdown — all stored in the DB.
     volumes:
       - agency-data:/app/data
 

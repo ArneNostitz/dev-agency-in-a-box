@@ -881,7 +881,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
   stopPool(); // no new dispatches
   killAllApps(); // stop any running preview dev servers + tunnels
   const { running, queued } = poolStatus();
-  const graceMs = Number(process.env.GRACEFUL_SHUTDOWN_MS?.trim()) || 570_000; // ~9.5 min
+  const graceMs = sNum("graceful_shutdown_ms", "GRACEFUL_SHUTDOWN_MS", 570_000); // ~9.5 min
   console.log(`[agency] ${signal}: draining ${running} running + ${queued} queued (grace ${Math.round(graceMs / 1000)}s)…`);
   await Promise.race([drain(), new Promise((r) => setTimeout(r, graceMs))]);
   console.log("[agency] drained — exiting cleanly.");
