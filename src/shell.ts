@@ -172,6 +172,26 @@ textarea{resize:vertical;min-height:64px}
   .sheet.bottom{left:auto;right:24px;bottom:24px;width:440px;max-height:84dvh;border-radius:16px;border:1px solid var(--line);transform:translateY(calc(100% + 40px))}
   .sheet.bottom.on{transform:translateY(0)}
 }
+.norepo{padding:48px 20px;display:flex;flex-direction:column;align-items:center;text-align:center}
+/* onboarding wizard */
+.onboard{position:fixed;inset:0;z-index:60;background:var(--bg);overflow-y:auto;-webkit-overflow-scrolling:touch}
+.ob{max-width:580px;margin:0 auto;width:100%;padding:calc(28px + var(--safe-t)) 20px calc(28px + var(--safe-b))}
+.obdots{display:flex;gap:6px;justify-content:center;margin-bottom:22px}
+.obdot{width:7px;height:7px;border-radius:50%;background:var(--line)}
+.obdot.on{background:var(--accent)} .obdot.done{background:var(--green)}
+.obki{width:52px;height:52px;border-radius:14px;background:var(--accent-weak);color:var(--accent);display:flex;align-items:center;justify-content:center;margin-bottom:14px}
+.obh{font-size:22px;font-weight:600;margin:2px 0 6px}
+.obsub{color:var(--ink-2);margin-bottom:8px;line-height:1.6}
+.obsteps{background:var(--surface-2);border-radius:12px;padding:13px 15px;font-size:14px;line-height:1.7;white-space:pre-wrap;margin:14px 0;color:var(--ink)}
+.oblink{display:inline-flex;align-items:center;gap:6px;margin:2px 0 8px;font-weight:540}
+.obnav{display:flex;gap:8px;margin-top:20px}
+.obnav .btn{flex:1}
+.obpick{display:flex;flex-direction:column;gap:8px;margin:14px 0}
+.obchip{border:1px solid var(--line);background:var(--surface);border-radius:12px;padding:12px 14px;cursor:pointer;font-size:15px;display:flex;align-items:center;gap:10px;font-weight:540}
+.obchip .lic{color:var(--ink-3)}
+.obchip.on{border-color:var(--accent);background:var(--accent-weak);color:var(--accent)} .obchip.on .lic{color:var(--accent)}
+.obchip small{display:block;font-weight:400;color:var(--ink-2);font-size:12px;margin-top:1px}
+.obchip .ck{margin-left:auto;color:var(--accent)}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
 </style>
 </head>

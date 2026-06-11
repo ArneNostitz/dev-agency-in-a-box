@@ -10,7 +10,7 @@ import { pushActivity } from "../activity.js";
 import { recentLessons, recordTokens, getProviders, getRoleModels, setSession } from "../store.js";
 import { loadBudget } from "../budget.js";
 import { gitnexusWiring, GITNEXUS_PROMPT } from "../gitnexus.js";
-import { claudeToken, ghBotToken } from "../creds.js";
+import { claudeToken, anthropicApiKey, ghBotToken } from "../creds.js";
 
 /**
  * Per-role model routing. If this role is assigned a provider model in the dashboard, return
@@ -140,14 +140,18 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
   // authenticates without CLAUDE_CODE_OAUTH_TOKEN in the container env) and the GitHub bot token
   // (so the agent's own `git commit && git push` authenticate via gh's credential helper).
   const ct = claudeToken();
+  const ak = route ? "" : anthropicApiKey();
   const bot = ghBotToken();
   let runEnv: Record<string, string> | undefined = route?.env;
-  if (!route && (ct || bot)) {
+  if (!route && (ct || ak || bot)) {
     runEnv = {};
     for (const [k, v] of Object.entries(process.env)) if (typeof v === "string") runEnv[k] = v;
   }
   if (runEnv) {
-    if (ct && !route) runEnv.CLAUDE_CODE_OAUTH_TOKEN = ct;
+    if (!route) {
+      if (ct) runEnv.CLAUDE_CODE_OAUTH_TOKEN = ct;
+      else if (ak) runEnv.ANTHROPIC_API_KEY = ak;
+    }
     if (bot) {
       runEnv.GH_TOKEN = bot;
       runEnv.GITHUB_TOKEN = bot;

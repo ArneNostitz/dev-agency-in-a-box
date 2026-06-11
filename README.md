@@ -6,9 +6,25 @@ builds on a branch, tests, reviews, and hands you a draft PR. You test locally a
 "ship it". It runs 24/7 on Coolify (Docker), reacts instantly to webhooks, heals its own
 PRs, learns from every run, and proposes improvements to its own playbooks as PRs.
 
-**Status: all phases live** — roster + orchestrator, SQLite memory, parallel workers,
-self-healing PRs, cost guardrails, and the self-evolving loop (librarian → playbook PRs).
-Full design: [`../dev-agency-architecture.md`](../dev-agency-architecture.md).
+**Status (v1.2.0):** mobile-first dashboard (installable PWA, light/dark), multi-user login with
+encrypted per-user credentials, a guided onboarding wizard, kanban with auto-resume/auto-merge,
+and the self-evolving loop. Full design: [`../dev-agency-architecture.md`](../dev-agency-architecture.md).
+
+---
+
+## Quick start
+
+1. **Deploy on Coolify** (Docker Compose from this repo). The only env var you must set is
+   `MASTER_KEY` (`openssl rand -hex 32`), and the domain must route to **container port 3000**.
+   Full steps + troubleshooting: [`COOLIFY.md`](COOLIFY.md).
+2. **Open the dashboard** → create the admin account (first-run screen).
+3. **Onboarding wizard** walks you through the rest: pick your models (Claude subscription/API,
+   GLM, DeepSeek…), paste each token with step-by-step "where to get it" instructions, and add
+   your first repo. No tokens in env — it's all in the dashboard, stored encrypted.
+4. **Use it**: open an issue (or **+ New**) and the agency plans → builds → reviews → opens a PR.
+
+Dev/prod split and staging: [`DEPLOY.md`](DEPLOY.md). The old single-page dashboard stays at
+`/classic` (advanced models/agents editors live there).
 
 ---
 

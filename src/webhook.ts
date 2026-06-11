@@ -276,6 +276,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               env: process.env.AGENCY_ENV?.trim() || process.env.APP_ENV?.trim() || "production",
               authEnabled: authEnabled(),
               user: sessionUser ? { id: sessionUser.id, username: sessionUser.username, role: sessionUser.role, email: sessionUser.email } : null,
+              onboarded: sessionUser ? getSetting(`onboarded:${sessionUser.id}`) === "1" : true,
               secretKeys: sessionUser ? listUserSecretKeys(sessionUser.id) : [],
               users: sessionUser && sessionUser.role === "admin" ? listUsers() : [],
               invites: sessionUser && sessionUser.role === "admin" ? listInvites() : [],
@@ -535,7 +536,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
     }
 
     // Dashboard actions (auth required), not GitHub webhooks.
-    if (["/archive", "/comment", "/run-checks", "/merge", "/delete", "/resume", "/fix", "/auto", "/start", "/new-issue", "/approve", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret"].includes(path)) {
+    if (["/archive", "/comment", "/run-checks", "/merge", "/delete", "/resume", "/fix", "/auto", "/start", "/new-issue", "/approve", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret", "/onboarded"].includes(path)) {
       const actor = authEnabled() ? userFromReq(req) : null;
       if (authEnabled()) {
         if (!actor) return void res.writeHead(401, { "content-type": "application/json" }).end('{"error":"auth required"}');
@@ -568,6 +569,12 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           if (!actor) return res.writeHead(409).end('{"error":"multi-user not enabled"}');
           if (!p.key) return res.writeHead(400).end("{}");
           setUserSecret(actor.id, String(p.key), String(p.value ?? ""));
+          return ok();
+        }
+        if (path === "/onboarded") {
+          // Mark (or reset, with value:"0") the onboarding wizard done for the signed-in user.
+          if (!actor) return res.writeHead(409).end("{}");
+          setSetting(`onboarded:${actor.id}`, p.value === "0" ? "0" : "1");
           return ok();
         }
 
