@@ -173,6 +173,11 @@ textarea{resize:vertical;min-height:64px}
   .sheet.bottom.on{transform:translateY(0)}
 }
 .norepo{padding:48px 20px;display:flex;flex-direction:column;align-items:center;text-align:center}
+.searchrow{display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:10px;padding:0 8px;margin:6px 0}
+.searchrow .searchic{color:var(--ink-3);flex:0 0 auto}
+.searchrow input{border:none;background:none;padding:9px 4px;flex:1}
+.searchrow input:focus{border:none}
+.repolist{max-height:42vh;overflow-y:auto;-webkit-overflow-scrolling:touch}
 /* onboarding wizard */
 .onboard{position:fixed;inset:0;z-index:60;background:var(--bg);overflow-y:auto;-webkit-overflow-scrolling:touch}
 .ob{max-width:580px;margin:0 auto;width:100%;padding:calc(28px + var(--safe-t)) 20px calc(28px + var(--safe-b))}
