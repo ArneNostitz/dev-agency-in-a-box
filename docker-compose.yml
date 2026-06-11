@@ -23,8 +23,9 @@ services:
       # stored secrets. Unset = legacy single-user Basic Auth via DASHBOARD_PASSWORD.
       MASTER_KEY: ${MASTER_KEY:-}
       DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:-}
-      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}   # seeds the first admin (multi-user)
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}        # falls back to DASHBOARD_PASSWORD
+      # Admin account is OPTIONAL here — if unset, the first visitor creates it in-browser.
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-}
 
       # ── Execution identity (global for now; becomes per-user, see roadmap) ─

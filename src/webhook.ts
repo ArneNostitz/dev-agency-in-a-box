@@ -23,8 +23,8 @@ import { renderShell } from "./shell.js";
 import { addLabel, removeLabel } from "./github.js";
 import { authEnabled, userFromReq, setSessionCookie, clearSessionCookie, parseCookies, SESSION_COOKIE } from "./auth.js";
 import { OPS_SETTINGS, opsSettingsValues } from "./settings.js";
-import { renderLogin, renderInvite } from "./authpages.js";
-import { authenticate, createSession, revokeSession, getInvite, acceptInvite, createInvite, createUser, listUsers, listInvites, setUserSecret, listUserSecretKeys, type User } from "./store.js";
+import { renderLogin, renderInvite, renderSetup } from "./authpages.js";
+import { authenticate, createSession, revokeSession, getInvite, acceptInvite, createInvite, createUser, listUsers, listInvites, setUserSecret, listUserSecretKeys, countUsers, type User } from "./store.js";
 import { subscribe, getActive } from "./activity.js";
 import { inFlightKeys } from "./pool.js";
 import { listRateLimited } from "./store.js";
@@ -167,6 +167,8 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
       let sessionUser: User | null = null;
       if (authEnabled()) {
         const htmlHead = { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" };
+        // First run: no accounts yet → force the in-browser admin setup screen.
+        if (countUsers() === 0) return void res.writeHead(200, htmlHead).end(renderSetup());
         if (url === "/login") return void res.writeHead(200, htmlHead).end(renderLogin());
         if (url === "/logout") {
           const tok = parseCookies(req)[SESSION_COOKIE];
@@ -484,11 +486,22 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
 
     const path = (req.url ?? "").split("?")[0];
 
-    // Auth forms (urlencoded, no auth required) — login, accept-invite, logout.
-    if (authEnabled() && (path === "/login" || path === "/invite" || path === "/logout")) {
+    // Auth forms (urlencoded, no auth required) — setup, login, accept-invite, logout.
+    if (authEnabled() && (path === "/setup" || path === "/login" || path === "/invite" || path === "/logout")) {
       const htmlHead = { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" };
       void readBody(req).then((body) => {
         const form = new URLSearchParams(body.toString("utf8"));
+        if (path === "/setup") {
+          // First-run admin creation. Only valid while there are no users (prevents takeover).
+          if (countUsers() > 0) return void res.writeHead(303, { location: "/login" }).end();
+          const username = (form.get("username") ?? "").trim();
+          const pw = form.get("password") ?? "";
+          if (username.length < 2 || pw.length < 8) return void res.writeHead(200, htmlHead).end(renderSetup("Username and an 8+ character password are required."));
+          const admin = createUser(username, pw, "admin", form.get("email") || null);
+          if (!admin) return void res.writeHead(200, htmlHead).end(renderSetup("Couldn’t create the account — try a different username."));
+          setSessionCookie(req, res, createSession(admin.id));
+          return void res.writeHead(303, { location: "/" }).end();
+        }
         if (path === "/logout") {
           const tok = parseCookies(req)[SESSION_COOKIE];
           if (tok) revokeSession(tok);

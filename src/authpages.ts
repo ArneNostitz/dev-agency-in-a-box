@@ -1,5 +1,5 @@
-/** Minimal server-rendered auth pages (login + invite acceptance). Token-light, no client JS. */
-function page(title: string, inner: string): string {
+/** Minimal server-rendered auth pages (setup + login + invite). Token-light, no client JS. */
+function page(title: string, inner: string, action = ""): string {
   return `<!doctype html><html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0e1014"><title>${title}</title>
@@ -17,7 +17,7 @@ button{width:100%;margin-top:18px;font-size:15px;font-weight:560;border:none;bac
 .err{margin-top:14px;color:#f1746a;font-size:13.5px}
 .muted{color:#6b727c;font-size:12.5px;margin-top:14px;text-align:center}
 </style></head><body>
-<form class="card" method="post">
+<form class="card" method="post" action="${action}">
   <div class="brand"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M11.56 3.27a.5.5 0 0 1 .88 0l2.95 5.6a1 1 0 0 0 1.52.3L21.18 5.5a.5.5 0 0 1 .8.52l-2.83 10.25a1 1 0 0 1-.96.73H5.81a1 1 0 0 1-.95-.73L2.02 6.02a.5.5 0 0 1 .8-.52l4.27 3.66a1 1 0 0 0 1.52-.29z"/></svg> Dev Agency</div>
   ${inner}
 </form></body></html>`;
@@ -26,11 +26,25 @@ button{width:100%;margin-top:18px;font-size:15px;font-weight:560;border:none;bac
 export function renderLogin(error?: string): string {
   return page(
     "Sign in · Dev Agency",
-    `<input type="hidden" name="_form" value="login">
-     <label>Username</label><input name="username" autocomplete="username" autofocus required>
+    `<label>Username</label><input name="username" autocomplete="username" autofocus required>
      <label>Password</label><input name="password" type="password" autocomplete="current-password" required>
      <button type="submit">Sign in</button>
      ${error ? `<div class="err">${error}</div>` : ""}`,
+    "/login",
+  );
+}
+
+/** First-run: no users exist yet → create the admin account in-browser (no env password needed). */
+export function renderSetup(error?: string): string {
+  return page(
+    "Set up · Dev Agency",
+    `<div class="muted" style="text-align:left;margin:0 2px 2px">Welcome. Create the admin account for this Dev Agency.</div>
+     <label>Username</label><input name="username" autocomplete="username" autofocus required>
+     <label>Email (optional)</label><input name="email" type="email" autocomplete="email">
+     <label>Password</label><input name="password" type="password" autocomplete="new-password" minlength="8" required>
+     <button type="submit">Create admin &amp; sign in</button>
+     ${error ? `<div class="err">${error}</div>` : ""}`,
+    "/setup",
   );
 }
 
@@ -45,5 +59,6 @@ export function renderInvite(token: string, email: string | null, error?: string
      <label>Password</label><input name="password" type="password" autocomplete="new-password" minlength="8" required>
      <button type="submit">Create account</button>
      ${error ? `<div class="err">${error}</div>` : ""}`,
+    "/invite",
   );
 }

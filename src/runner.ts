@@ -852,7 +852,11 @@ async function main(): Promise<void> {
   startAutoResume(cfg);
   startAutoMode(cfg);
   startPreviewSweeper();
-  if (cfg.runMode === "webhook") {
+  // Both "watch" and "webhook" run the HTTP server (so the dashboard is always reachable — a
+  // watch-mode deploy with no server is what made Coolify 502). The server's safety poll uses
+  // pollIntervalSeconds, so watch-style polling still happens; webhook deliveries (if configured)
+  // just trigger it sooner. Only "once" stays headless.
+  if (cfg.runMode === "webhook" || cfg.runMode === "watch") {
     const { runWebhook } = await import("./webhook.js");
     await runWebhook(
       cfg,
@@ -862,8 +866,6 @@ async function main(): Promise<void> {
       (repo, number) => forceFix(cfg, repo, number),
       (repo, number) => forceStart(cfg, repo, number),
     );
-  } else if (cfg.runMode === "watch") {
-    await runWatch(cfg);
   } else {
     await runOnce(cfg);
   }

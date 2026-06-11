@@ -14,15 +14,18 @@ export function authEnabled(): boolean {
   return masterKeyConfigured();
 }
 
-/** On first boot (no users yet), create the admin from env so the operator can log in. */
+/**
+ * Optional: seed the admin from env on first boot. If ADMIN_PASSWORD is unset, that's fine —
+ * the first visitor creates the admin in-browser via the /setup screen instead.
+ */
 export function seedAdmin(): void {
   if (!authEnabled() || countUsers() > 0) return;
-  const username = process.env.ADMIN_USERNAME?.trim() || "admin";
   const password = process.env.ADMIN_PASSWORD?.trim() || process.env.DASHBOARD_PASSWORD?.trim();
   if (!password) {
-    console.warn("[agency] multi-user is on but ADMIN_PASSWORD (or DASHBOARD_PASSWORD) is unset — cannot seed the admin account");
+    console.log("[agency] multi-user on, no admin yet — create the admin in-browser on first visit.");
     return;
   }
+  const username = process.env.ADMIN_USERNAME?.trim() || "admin";
   const u = createUser(username, password, "admin", process.env.ADMIN_EMAIL?.trim() || null);
   if (u) console.log(`[agency] seeded admin account "${username}" (change the password after first login)`);
 }
