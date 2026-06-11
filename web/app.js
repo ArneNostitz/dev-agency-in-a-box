@@ -180,16 +180,16 @@ function App() {
 
   return html`
     <div class="app">
-      ${TopBar({ working, session: data.session, theme, setTheme: setThemeP, onSettings: () => setSheet("settings"), onNew: () => openComposer() })}
-      ${RepoSelector({ repos, repoFilter, setRepoFilter, onAdd: () => openComposer() })}
-      ${StatusLine({ working, session: data.session, spend: data.spendToday })}
+      <${TopBar} working=${working} theme=${theme} setTheme=${setThemeP} onSettings=${() => setSheet("settings")} onNew=${() => openComposer()}/>
+      <${RepoSelector} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} onAdd=${() => openComposer()}/>
+      <${StatusLine} working=${working} session=${data.session} spend=${data.spendToday}/>
       <div class="content">
-        ${Board({ issues: shown, repos, repoFilter, tab, onOpen: (i) => setOpenKey(i.repo + "#" + i.number), act })}
+        <${Board} issues=${shown} repos=${repos} repoFilter=${repoFilter} tab=${tab} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} act=${act}/>
       </div>
-      ${TabBar({ issues: shown, tab, setTab })}
-      ${open && Detail({ key: openKey, issue: open, activity, act, onClose: () => setOpenKey(null), createComment: load })}
-      ${sheet === "composer" && Composer({ repos, repo: composerRepo, setRepo: setComposerRepo, onClose: () => setSheet(null), onCreate: createIssue })}
-      ${sheet === "settings" && Settings({ data, theme, setTheme: setThemeP, onClose: () => setSheet(null), setAuto: act.setAuto, reload: load })}
+      <${TabBar} issues=${shown} tab=${tab} setTab=${setTab}/>
+      ${open && html`<${Detail} key=${openKey} issue=${open} activity=${activity} act=${act} onClose=${() => setOpenKey(null)}/>`}
+      ${sheet === "composer" && html`<${Composer} repos=${repos} repo=${composerRepo} setRepo=${setComposerRepo} onClose=${() => setSheet(null)} onCreate=${createIssue}/>`}
+      ${sheet === "settings" && html`<${Settings} data=${data} theme=${theme} setTheme=${setThemeP} onClose=${() => setSheet(null)} setAuto=${act.setAuto} reload=${load}/>`}
       <div class=${"toast " + (toastMsg ? "on" : "")}>${toastMsg}</div>
     </div>`;
 }
@@ -233,7 +233,7 @@ function Board({ issues, repos, repoFilter, tab, onOpen, act }) {
     ${cols.map((c) => html`<div class="col" key=${c.k}>
       <div class="colhead"><${Icon} name=${c.icon} size=${15}/> ${c.label} <span class="n">${byCol[c.k].length || ""}</span></div>
       <div class="cards">
-        ${byCol[c.k].length ? byCol[c.k].map((i) => Card({ key: i.repo + "#" + i.number, i, multi: !repoFilter && repos.length > 1, onOpen, act })) : html`<div class="empty">—</div>`}
+        ${byCol[c.k].length ? byCol[c.k].map((i) => html`<${Card} key=${i.repo + "#" + i.number} i=${i} multi=${!repoFilter && repos.length > 1} onOpen=${onOpen} act=${act}/>`) : html`<div class="empty">—</div>`}
       </div>
     </div>`)}
   </div>`;
@@ -333,16 +333,16 @@ function Detail({ issue, activity, act, onClose }) {
     <div class="dstream" ref=${streamRef} onScroll=${(e) => { const el = e.target; stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 50; }}>
       ${stream.length ? stream.map((a, idx) => html`<div key=${idx} class=${"l " + (a.kind === "tool" ? "tool" : a.kind === "start" || a.kind === "done" ? "muted" : "")}>${a.text}</div>`) : html`<div class="l muted">No live activity yet.</div>`}
     </div>
-    ${RunApp({ repo, number, appInfo, issue, done })}
-    ${AutoRow({ issue, act })}
+    <${RunApp} repo=${repo} number=${number} appInfo=${appInfo} issue=${issue} done=${done}/>
+    <${AutoRow} issue=${issue} act=${act}/>
   </div>`;
 
   const chatPane = html`<div class="dpane chat">
     ${issue.epic ? html`<div class="sec">Sub-issues ${issue.epic.done}/${issue.epic.total}</div>` : null}
     <div class="sec">Conversation</div>
     ${thread ? html`<div>
-      ${thread.body ? Comment({ author: thread.author, createdAt: thread.createdAt, body: thread.body, isAgency: false }) : null}
-      ${(thread.comments || []).map((c, idx) => Comment({ key: idx, ...c }))}
+      ${thread.body ? html`<${Comment} author=${thread.author} createdAt=${thread.createdAt} body=${thread.body} isAgency=${false}/>` : null}
+      ${(thread.comments || []).map((c, idx) => html`<${Comment} key=${idx} author=${c.author} createdAt=${c.createdAt} body=${c.body} isAgency=${c.isAgency}/>`)}
     </div>` : html`<div class="muted">Loading…</div>`}
   </div>`;
 

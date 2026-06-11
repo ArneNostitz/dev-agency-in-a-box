@@ -42,7 +42,15 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
       { repo: "acme/app", number: 2, title: "Ready PR", state: "agency:ready", pr_number: 5, review: "approved", updated_at: new Date().toISOString(), auto: {} },
     ],
   };
-  global.fetch = async (u) => ({ ok: true, json: async () => (String(u).includes("/data") ? SAMPLE : {}), text: async () => "" });
+  const route = (u) => {
+    u = String(u);
+    if (u.includes("/data")) return SAMPLE;
+    if (u.includes("/thread")) return { author: "arne", createdAt: new Date().toISOString(), body: "hello", comments: [] };
+    if (u.includes("/app-info")) return { kind: "none" };
+    if (u.includes("/pr-status")) return { review: { verdict: "approved" }, merge: { mergeable: "clean" } };
+    return {};
+  };
+  global.fetch = async (u) => ({ ok: true, json: async () => route(u), text: async () => "" });
 
   // Rewrite the absolute vendor import (browser path) to a file URL so Node can resolve it.
   const src = readFileSync(join(HERE, "..", "web", "app.js"), "utf8");
@@ -63,7 +71,33 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
 
   // Let the data fetch + effects flush, then the cards should appear.
   await new Promise((r) => setTimeout(r, 150));
-  htmlNow = window.document.getElementById("root").innerHTML;
-  assert.match(htmlNow, /A planned task/, "planned issue card renders from /data");
+  const root = window.document.getElementById("root");
+  assert.match(root.innerHTML, /A planned task/, "planned issue card renders from /data");
+
+  const tick = (ms) => new Promise((r) => setTimeout(r, ms));
+  const q = (s) => window.document.querySelector(s);
+  const click = (el) => { if (!el) throw new Error("element not found"); el.dispatchEvent(new window.MouseEvent("click", { bubbles: true })); };
+
+  // Composer (uses hooks) — opening it would crash if invoked as a function not an element.
+  click(q('[aria-label="New issue"]'));
+  await tick(40);
+  assert.match(root.innerHTML, /Add to Planned/, "composer opens with two-button submit");
+  assert.match(root.innerHTML, /Start now/, "composer has Start now");
+  click(q(".sheet .sh .iconbtn")); // close
+  await tick(40);
+
+  // Settings (uses hooks).
+  click(q('[aria-label="Settings"]'));
+  await tick(40);
+  assert.match(root.innerHTML, /Automation/, "settings opens");
+  assert.match(root.innerHTML, /Pipeline/, "settings shows pipeline knobs");
+  click(q(".sheet .sh .iconbtn"));
+  await tick(40);
+
+  // Detail (uses hooks) — open the first card.
+  click(q(".card"));
+  await tick(80);
+  assert.match(root.innerHTML, /Conversation/, "detail opens with conversation pane");
+
   dom.window.close();
 });
