@@ -16,7 +16,9 @@ services:
       PORT: 3000
       DB_PATH: /app/data/agency.db            # SQLite on the mounted volume
       RUN_MODE: ${RUN_MODE:-watch}            # watch (poll) | webhook | once
-      APP_ENV: ${APP_ENV:-production}         # "development" on staging → DEV badge
+      AGENCY_ENV: ${AGENCY_ENV:-production}   # "development" on staging → DEV badge
+                                              # (named AGENCY_ENV, not APP_ENV, to avoid Coolify's
+                                              # Laravel/Symfony build heuristic warning)
 
       # ── Execution credentials — TEMPORARY ────────────────────────────────
       # These are the last env vars. They move to per-user encrypted credentials

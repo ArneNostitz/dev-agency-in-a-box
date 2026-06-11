@@ -15,13 +15,13 @@ Day-to-day: build on `develop`, deploy + test the staging app, then `git merge d
 1. New Resource → same Git repo → **branch: `develop`**.
 2. Give it its **own domain** (a subdomain) and its **own named volume** for `/app/data`
    (e.g. `agency-data-dev`) so staging never shares the production database.
-3. Set env var **`APP_ENV=development`** — the dashboard then shows a yellow **DEV** badge so the
+3. Set env var **`AGENCY_ENV=development`** — the dashboard then shows a yellow **DEV** badge so the
    two installs are never confused.
 4. Use **separate secrets** for staging (its own bot token / webhook secret / data) so an
    experiment can't touch production repos. Point its GitHub webhook (if any) at the staging URL.
 
 ## Environment indicator
-`APP_ENV` (default `production`) is surfaced in `/data` and rendered as a badge in the top bar.
+`AGENCY_ENV` (default `production`) is surfaced in `/data` and rendered as a badge in the top bar.
 It has no other behavioural effect, so it's safe to leave unset in production.
 
 ## Multi-user mode (staging / `develop`)

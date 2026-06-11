@@ -272,7 +272,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           res.writeHead(200, { "content-type": "application/json" });
           res.end(
             JSON.stringify({
-              env: process.env.APP_ENV?.trim() || "production",
+              env: process.env.AGENCY_ENV?.trim() || process.env.APP_ENV?.trim() || "production",
               authEnabled: authEnabled(),
               user: sessionUser ? { id: sessionUser.id, username: sessionUser.username, role: sessionUser.role, email: sessionUser.email } : null,
               secretKeys: sessionUser ? listUserSecretKeys(sessionUser.id) : [],
