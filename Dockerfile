@@ -22,6 +22,15 @@ RUN arch="$(dpkg --print-architecture)" \
         -o /usr/local/bin/cloudflared \
     && chmod +x /usr/local/bin/cloudflared
 
+# Python toolchain so the agency can lint/test Python projects (Django, ruff, pytest, coverage).
+# The agent creates a venv per repo and pip-installs the repo's requirements at run time (writes
+# into the node-owned clone — no system installs, no sudo needed). build-essential + libpq-dev +
+# python3-dev cover C-extension deps like psycopg2.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        python3 python3-pip python3-venv python3-dev build-essential libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # Enable corepack so agents can use pnpm / yarn in target repos (not just npm).
