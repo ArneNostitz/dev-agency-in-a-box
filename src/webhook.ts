@@ -580,7 +580,8 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           // Write-only: store an encrypted credential for the signed-in user. Never returned.
           if (!actor) return res.writeHead(409).end('{"error":"multi-user not enabled"}');
           if (!p.key) return res.writeHead(400).end("{}");
-          setUserSecret(actor.id, String(p.key), String(p.value ?? ""));
+          // Trim surrounding whitespace — a pasted token with a stray space/newline 401s.
+          setUserSecret(actor.id, String(p.key), String(p.value ?? "").trim());
           return ok();
         }
         if (path === "/set-password") {
@@ -638,7 +639,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           }
           // Encrypted GitHub webhook secret (admin, write-only).
           if (p.webhookSecret !== undefined && (!authEnabled() || actor?.role === "admin")) {
-            setSecretSetting("github_webhook_secret", p.webhookSecret);
+            setSecretSetting("github_webhook_secret", p.webhookSecret.trim());
           }
           return ok();
         }

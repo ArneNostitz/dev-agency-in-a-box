@@ -149,8 +149,19 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
   }
   if (runEnv) {
     if (!route) {
-      if (ct) runEnv.CLAUDE_CODE_OAUTH_TOKEN = ct;
-      else if (ak) runEnv.ANTHROPIC_API_KEY = ak;
+      // Clear conflicting auth env so the chosen credential is the only one the SDK sees — a
+      // stale/empty ANTHROPIC_API_KEY (or AUTH_TOKEN) in the container otherwise wins and 401s.
+      if (ct) {
+        runEnv.CLAUDE_CODE_OAUTH_TOKEN = ct;
+        delete runEnv.ANTHROPIC_API_KEY;
+        delete runEnv.ANTHROPIC_AUTH_TOKEN;
+        delete runEnv.ANTHROPIC_BASE_URL;
+      } else if (ak) {
+        runEnv.ANTHROPIC_API_KEY = ak;
+        delete runEnv.CLAUDE_CODE_OAUTH_TOKEN;
+        delete runEnv.ANTHROPIC_AUTH_TOKEN;
+        delete runEnv.ANTHROPIC_BASE_URL;
+      }
     }
     if (bot) {
       runEnv.GH_TOKEN = bot;

@@ -77,7 +77,7 @@ export function parsePlannerDecision(text: string): PlannerDecision {
   const m = /^\s*(QUESTIONS|PLAN)(\s+AUTO)?\b[:\-\s]*/i.exec(trimmed);
   if (m) {
     const kind = m[1].toLowerCase() === "questions" ? "questions" : "plan";
-    return { kind, auto: Boolean(m[2]), body: trimmed.slice(m[0].length).trim() || trimmed };
+    return { kind, auto: Boolean(m[2]), body: trimmed.slice(m[0].length).trim() };
   }
   return { kind: "plan", auto: false, body: trimmed };
 }
@@ -343,10 +343,19 @@ async function runDeveloperPipeline(
 
   // 1. Planner — research + recommend (only asks questions if genuinely blocked).
   const decision = await plan(repo, issue, workdir, thread);
-  if (decision.kind === "questions") {
+  if (decision.kind === "questions" && decision.body.replace(/\s+/g, " ").trim().length >= 12) {
     await commentOnIssue(repo, issue.number, say("planner", `**A few questions before I plan**\n\n${decision.body}`));
     await pause(repo, issue, AWAITING_LABEL);
     console.log(`[agency] ${repo} #${issue.number} -> awaiting answer.`);
+    return;
+  }
+
+  // Degenerate proposal: the planner gated (PLAN) but gave no real content — don't make you
+  // approve nothing. Just build it from the issue (the developer has the issue + playbooks).
+  if (decision.kind === "plan" && !decision.auto && decision.body.replace(/\s+/g, " ").trim().length < 24) {
+    recordPlan(repo, issue.number, issueHeader(issue));
+    await commentOnIssue(repo, issue.number, say("planner", "**Building now.**"));
+    await build(repo, issue, workdir, decision.body || issueHeader(issue), thread);
     return;
   }
 

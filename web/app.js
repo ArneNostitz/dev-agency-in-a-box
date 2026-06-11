@@ -576,6 +576,7 @@ function ObTokenStep({ def, existing, onDone, onBack }) {
     ${def.custom ? html`<label>Base URL (Anthropic-compatible)</label><input placeholder="https://…/anthropic" value=${baseUrl} onInput=${(e) => setBaseUrl(e.target.value)}/>` : null}
     <label>${def.custom ? "API key" : "Token"}</label>
     <input type="password" autocomplete="off" placeholder=${def.placeholder} value=${val} onInput=${(e) => setVal(e.target.value)}/>
+    <div class="muted" style="font-size:11px;margin:3px 2px 0">Paste it exactly — no spaces or line breaks (a stray space causes a 401).</div>
     <div class="obnav">
       <button class="btn" onClick=${onBack}>Back</button>
       ${def.optional ? html`<button class="btn ghost" onClick=${onDone}>Skip</button>` : null}
