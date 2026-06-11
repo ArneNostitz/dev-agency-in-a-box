@@ -62,9 +62,14 @@ ENV RUN_MODE=watch \
 # lets the agent write code, clone repos, and persist the SQLite memory.
 # Put Claude's session store (~/.claude) on the data volume so an interrupted run's session can
 # be resumed after a restart/redeploy (sessions live at ~/.claude/projects/<dir>/<id>.jsonl).
+# Note: chown /app recursively, but NOT /home/node recursively — the base image already owns
+# the node user's home, and a recursive chown that walks the ~/.claude *symlink* can abort the
+# build (exit 1) on a freshly-pulled base. We chown the symlink itself with -h instead.
 RUN mkdir -p /app/data /app/.work /app/data/claude \
+    && rm -rf /home/node/.claude \
     && ln -sfn /app/data/claude /home/node/.claude \
-    && chown -R node:node /app /home/node
+    && chown -R node:node /app \
+    && chown -h node:node /home/node/.claude
 USER node
 
 # Stable git identity for the agency's commits (written to the node user's home).
