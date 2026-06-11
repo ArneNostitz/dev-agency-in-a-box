@@ -62,14 +62,17 @@ ENV RUN_MODE=watch \
 # lets the agent write code, clone repos, and persist the SQLite memory.
 # Put Claude's session store (~/.claude) on the data volume so an interrupted run's session can
 # be resumed after a restart/redeploy (sessions live at ~/.claude/projects/<dir>/<id>.jsonl).
-# Split into ATOMIC steps so a build failure points at the exact command: BuildKit only reports
-# the Dockerfile line of the *whole* RUN, and Coolify doesn't surface the step's stderr — so a
-# chained `a && b && c` RUN hides which link broke. `set -eux` traces each command too.
-# chown uses -Rh (lchown, recursive): it never dereferences a symlink, so a dangling link inside
-# node_modules can't abort the walk — the most likely silent exit-1 of a plain `chown -R`.
+# Only the dirs the node user must WRITE at runtime are chowned: /app/data (SQLite DB + a named
+# volume inherits its ownership) and /app/.work (repo clones). We deliberately do NOT `chown -R
+# /app`: that walks all of node_modules, and since node_modules comes from a cached lower overlay
+# layer, chowning it forces a full copy-up of the tree into the writable layer every time this
+# layer rebuilds — which (after many deploys fill the builder's disk) is what made the build exit
+# 1 with no surfaced stderr. node_modules only needs to be readable/executable (root-owned, world-
+# readable by default), so leaving it untouched is correct and far cheaper. The /app dir entry
+# itself is chowned (non-recursively) so the node user can create paths directly under it.
 RUN set -eux; mkdir -p /app/data /app/.work /app/data/claude
 RUN set -eux; rm -rf /home/node/.claude; ln -sfn /app/data/claude /home/node/.claude
-RUN set -eux; chown -Rh node:node /app
+RUN set -eux; chown node:node /app; chown -R node:node /app/data /app/.work
 RUN set -eux; chown -h node:node /home/node/.claude
 USER node
 
