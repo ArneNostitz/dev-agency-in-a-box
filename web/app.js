@@ -107,8 +107,23 @@ const COLS = [
 let toastFn = () => {};
 function toast(t) { toastFn(t); }
 
+// Reactive desktop/mobile breakpoint (matches the CSS @media min-width:880px). Computing this
+// inline during render is unreliable — matchMedia can report the wrong value on first paint and
+// then flip on a later re-render, which made the board's extra columns vanish after a few seconds.
+function useIsDesktop() {
+  const mq = () => (typeof window !== "undefined" && window.matchMedia ? window.matchMedia("(min-width:880px)") : null);
+  const [d, setD] = useState(() => { const m = mq(); return m ? m.matches : false; });
+  useEffect(() => {
+    const m = mq(); if (!m) return; const fn = () => setD(m.matches); fn();
+    if (m.addEventListener) m.addEventListener("change", fn); else m.addListener(fn);
+    return () => { if (m.removeEventListener) m.removeEventListener("change", fn); else m.removeListener(fn); };
+  }, []);
+  return d;
+}
+
 // ---------- App ----------
 function App() {
+  const isDesktop = useIsDesktop();
   const [data, setData] = useState({ issues: [], repos: [], active: [], activity: [], session: {}, config: {}, auto: {}, autoRepos: {} });
   const [repoFilter, setRepoFilter] = useState(null);
   const [tab, setTab] = useState("planned");
@@ -184,10 +199,10 @@ function App() {
       <${RepoSelector} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} onAdd=${() => openComposer()}/>
       <${StatusLine} working=${working} session=${data.session} spend=${data.spendToday}/>
       <div class="content">
-        <${Board} issues=${shown} repos=${repos} repoFilter=${repoFilter} tab=${tab} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} act=${act}/>
+        <${Board} issues=${shown} repos=${repos} repoFilter=${repoFilter} tab=${tab} isDesktop=${isDesktop} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} act=${act}/>
       </div>
-      <${TabBar} issues=${shown} tab=${tab} setTab=${setTab}/>
-      ${open && html`<${Detail} key=${openKey} issue=${open} activity=${activity} act=${act} onClose=${() => setOpenKey(null)}/>`}
+      ${!isDesktop && html`<${TabBar} issues=${shown} tab=${tab} setTab=${setTab}/>`}
+      ${open && html`<${Detail} key=${openKey} issue=${open} activity=${activity} act=${act} isDesktop=${isDesktop} onClose=${() => setOpenKey(null)}/>`}
       ${sheet === "composer" && html`<${Composer} repos=${repos} repo=${composerRepo} setRepo=${setComposerRepo} onClose=${() => setSheet(null)} onCreate=${createIssue}/>`}
       ${sheet === "settings" && html`<${Settings} data=${data} theme=${theme} setTheme=${setThemeP} onClose=${() => setSheet(null)} setAuto=${act.setAuto} reload=${load}/>`}
       <div class=${"toast " + (toastMsg ? "on" : "")}>${toastMsg}</div>
@@ -224,10 +239,9 @@ function StatusLine({ working, session, spend }) {
   </div>`;
 }
 
-function Board({ issues, repos, repoFilter, tab, onOpen, act }) {
+function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, act }) {
   const byCol = {}; COLS.forEach((c) => (byCol[c.k] = []));
   issues.slice().sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0)).forEach((i) => byCol[classify(i)].push(i));
-  const isDesktop = window.matchMedia("(min-width:880px)").matches;
   const cols = isDesktop ? COLS : COLS.filter((c) => c.k === tab);
   return html`<div class="board">
     ${cols.map((c) => html`<div class="col" key=${c.k}>
@@ -273,7 +287,7 @@ function TabBar({ issues, tab, setTab }) {
 }
 
 // ---------- Detail ----------
-function Detail({ issue, activity, act, onClose }) {
+function Detail({ issue, activity, act, isDesktop, onClose }) {
   const [tab, setTab] = useState("chat"); // mobile sub-tab: chat | stream
   const [thread, setThread] = useState(null);
   const [pr, setPr] = useState(null);
@@ -346,7 +360,6 @@ function Detail({ issue, activity, act, onClose }) {
     </div>` : html`<div class="muted">Loading…</div>`}
   </div>`;
 
-  const isDesktop = window.matchMedia("(min-width:880px)").matches;
   return html`<div class="detail on">
     <div class="dhead">
       <button class="iconbtn" aria-label="Close" onClick=${onClose}><${Icon} name="arrowleft"/></button>
