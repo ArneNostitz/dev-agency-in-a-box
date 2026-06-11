@@ -751,10 +751,15 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           // Create a new issue (authored by you). start=true → begin immediately; otherwise it
           // lands in the Planned column with a play button and does NOT auto-start.
           if (!repo || !p.title?.trim()) return res.writeHead(400).end("{}");
+          if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) return res.writeHead(400).end(JSON.stringify({ error: `Bad repo "${repo}" — expected owner/name` }));
+          // Authored as YOU — needs your own GitHub token (not the bot's).
+          const userTok = ghUserToken();
+          if (!userTok) return res.writeHead(409).end(JSON.stringify({ error: "Add your GitHub token in Settings → credentials to create issues under your name." }));
           const handle = (p.role ?? "@dev").trim();
           const issueBody = `${handle} ${p.body ?? ""}`.trim();
           try {
-            const created = await createIssue(repo, p.title.trim(), issueBody, ownerToken);
+            const created = await createIssue(repo, p.title.trim(), issueBody, userTok);
+            if (!created.number) throw new Error("couldn't read the new issue number");
             if (p.start) {
               recordIssueState(repo, created.number, { title: p.title.trim(), state: "agency:in-progress" });
               void trigger("dashboard-new-issue");
@@ -764,7 +769,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
             }
             return ok(JSON.stringify({ ok: true, number: created.number, url: created.url }));
           } catch (err) {
-            return res.writeHead(500).end(JSON.stringify({ error: (err as Error).message }));
+            return res.writeHead(500).end(JSON.stringify({ error: `Couldn't create the issue — does your GitHub token have Issues: Read & write on ${repo}? (${(err as Error).message})` }));
           }
         }
         if (path === "/start") {

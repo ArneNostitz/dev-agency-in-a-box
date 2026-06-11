@@ -71,7 +71,7 @@ function md(src) {
   closeList();
   return out.join("");
 }
-function api(url, body) { return fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}) }).then((r) => { if (!r.ok) throw new Error("http " + r.status); return r.json().catch(() => ({})); }); }
+function api(url, body) { return fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}) }).then(async (r) => { if (!r.ok) { let msg = "http " + r.status; try { const j = await r.json(); if (j && j.error) msg = j.error; } catch (e) {} throw new Error(msg); } return r.json().catch(() => ({})); }); }
 function getJSON(u) { return fetch(u).then((r) => r.json()); }
 
 function isDone(i) { const s = i.state || ""; return s === "merged" || s === "agency:merged" || s === "closed" || s === "done"; }
@@ -188,7 +188,7 @@ function App() {
     Promise.all((atts || []).map((a) => api("/upload-file", { repo, number: 0, dataUrl: a.dataUrl, name: a.name }).then((j) => j && j.md).catch(() => null)))
       .then((mds) => { const full = [body].concat(mds.filter(Boolean)).filter(Boolean).join("\n\n"); return api("/new-issue", { repo, role, title, body: full, start: !!start }); })
       .then((d) => { setPending((ps) => ps.map((p) => (p === tmp ? Object.assign({}, p, { number: d.number || p.number }) : p))); setTimeout(load, 700); })
-      .catch(() => { toast("Couldn’t create"); setPending((ps) => ps.filter((p) => p !== tmp)); });
+      .catch((e) => { toast((e && e.message) || "Couldn’t create"); setPending((ps) => ps.filter((p) => p !== tmp)); });
   }
 
   const open = openKey ? issues.find((i) => i.repo + "#" + i.number === openKey) : null;
