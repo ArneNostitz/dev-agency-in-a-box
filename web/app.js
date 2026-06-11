@@ -196,7 +196,7 @@ function App() {
   return html`
     <div class="app">
       <${TopBar} working=${working} env=${data.env} theme=${theme} setTheme=${setThemeP} onSettings=${() => setSheet("settings")} onNew=${() => openComposer()}/>
-      <${RepoSelector} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} onAdd=${() => openComposer()}/>
+      <${RepoSelector} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} onAdd=${() => setSheet("addrepo")}/>
       <${StatusLine} working=${working} session=${data.session} spend=${data.spendToday}/>
       <div class="content">
         <${Board} issues=${shown} repos=${repos} repoFilter=${repoFilter} tab=${tab} isDesktop=${isDesktop} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} act=${act}/>
@@ -205,6 +205,7 @@ function App() {
       ${open && html`<${Detail} key=${openKey} issue=${open} activity=${activity} act=${act} isDesktop=${isDesktop} onClose=${() => setOpenKey(null)}/>`}
       ${sheet === "composer" && html`<${Composer} repos=${repos} repo=${composerRepo} setRepo=${setComposerRepo} onClose=${() => setSheet(null)} onCreate=${createIssue}/>`}
       ${sheet === "settings" && html`<${Settings} data=${data} theme=${theme} setTheme=${setThemeP} onClose=${() => setSheet(null)} setAuto=${act.setAuto} reload=${load}/>`}
+      ${sheet === "addrepo" && html`<${AddRepo} onClose=${() => setSheet(null)} reload=${load}/>`}
       <div class=${"toast " + (toastMsg ? "on" : "")}>${toastMsg}</div>
     </div>`;
 }
@@ -494,6 +495,30 @@ function Operations({ meta, values, reload }) {
           : html`<input value=${vals[m.key]} onInput=${(e) => set(m.key, e.target.value)}/>`}`}
     </div>`)}
     <button class="btn primary" style="margin-top:12px" onClick=${save}>Save operations</button>`;
+}
+
+// ---------- add a repo ----------
+function AddRepo({ onClose, reload }) {
+  const [avail, setAvail] = useState(null);
+  const [manual, setManual] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { getJSON("/repos-available").then((d) => setAvail(d.repos || [])).catch(() => setAvail([])); }, []);
+  function add(full) {
+    if (!full || busy) return; setBusy(true);
+    api("/add-repo", { repo: full }).then(() => { toast("Added " + full); reload(); onClose(); }).catch(() => toast("Couldn’t add")).then(() => setBusy(false));
+  }
+  return html`<${Sheet} title="Add a repo" onClose=${onClose} footer=${html`<button class="btn" onClick=${onClose}>Close</button>`}>
+    <label>Repo (owner/name)</label>
+    <div style="display:flex;gap:8px">
+      <input placeholder="owner/name" value=${manual} onInput=${(e) => setManual(e.target.value)} onKeyDown=${(e) => { if (e.key === "Enter") add(manual.trim()); }}/>
+      <button class="btn primary" disabled=${busy} onClick=${() => add(manual.trim())}>Add</button>
+    </div>
+    <div class="sec">Your GitHub repos</div>
+    ${avail === null ? html`<div class="muted">Loading…</div>`
+      : avail.length ? avail.map((r) => html`<div key=${r.full_name} style="display:flex;align-items:center;gap:8px;margin:5px 2px">
+          <span style="flex:1">${r.full_name}</span><button class="btn" disabled=${busy} onClick=${() => add(r.full_name)}>Add</button></div>`)
+      : html`<div class="muted" style="font-size:12px">None to list yet — set a GitHub token (Settings → credentials) or just type a repo above.</div>`}
+  <//>`;
 }
 
 // ---------- per-user credentials (write-only, encrypted server-side) ----------
