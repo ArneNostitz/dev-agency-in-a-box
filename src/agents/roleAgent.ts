@@ -178,10 +178,16 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
   console.log(`[agency] role:${role} ${repo}#${issueNumber} (model ${model}, ≤${maxTurns} turns)`);
   pushActivity(repo, issueNumber, role, "start", `started (${model}${input.resumeSessionId ? ", resuming" : ""})`);
 
-  const sumUsage = (u: Record<string, unknown>): number => {
-    const n = (k: string) => (typeof u[k] === "number" ? (u[k] as number) : 0);
-    return n("input_tokens") + n("output_tokens") + n("cache_creation_input_tokens") + n("cache_read_input_tokens");
-  };
+  const n = (u: Record<string, unknown>, k: string) => (typeof u[k] === "number" ? (u[k] as number) : 0);
+  // Full usage incl. cache reads — for accurate cost/recordTokens.
+  const sumUsage = (u: Record<string, unknown>): number =>
+    n(u, "input_tokens") + n(u, "output_tokens") + n(u, "cache_creation_input_tokens") + n(u, "cache_read_input_tokens");
+  // Forward-progress only — drives the runaway kill-switch. EXCLUDES cache_read_input_tokens,
+  // which the SDK re-reports every turn (the whole cached prefix is re-read each call) and would
+  // otherwise inflate the running total to the cap in ~20 turns and force-kill mid-work, leaving
+  // no diff. Cache reads are the cheap 0.1x tier; real spend is input+output+cache_creation.
+  const sumBillable = (u: Record<string, unknown>): number =>
+    n(u, "input_tokens") + n(u, "output_tokens") + n(u, "cache_creation_input_tokens");
 
   /** One attempt; pass a session id to resume an interrupted run, else a fresh run. */
   async function runQuery(resumeId?: string): Promise<{ text: string; turns: number; costUsd: number; tokens: number; stopped: string }> {
@@ -189,6 +195,7 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
     let turns = 0;
     let costUsd = 0;
     let tokens = 0;
+    let capTokens = 0; // forward-progress tokens (excl. cache reads) — what the kill-switch checks
     let stopped = "";
     let stderrBuf = "";
     try {
@@ -218,15 +225,18 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
           turns += 1;
           emitAssistant(repo, issueNumber, role, message);
           const au = (message as unknown as { message?: { usage?: Record<string, unknown> } }).message?.usage;
-          if (au) tokens += sumUsage(au);
+          if (au) {
+            tokens += sumUsage(au);
+            capTokens += sumBillable(au);
+          }
         }
         if ("result" in message && typeof (message as { result?: unknown }).result === "string") {
           text = (message as { result: string }).result;
         }
         const cost = (message as { total_cost_usd?: unknown }).total_cost_usd;
         if (typeof cost === "number" && Number.isFinite(cost)) costUsd = cost;
-        if (tokenCap > 0 && tokens > tokenCap) {
-          stopped = `token cap (${Math.round(tokens / 1000)}k > ${Math.round(tokenCap / 1000)}k)`;
+        if (tokenCap > 0 && capTokens > tokenCap) {
+          stopped = `token cap (${Math.round(capTokens / 1000)}k > ${Math.round(tokenCap / 1000)}k)`;
           break;
         }
       }
