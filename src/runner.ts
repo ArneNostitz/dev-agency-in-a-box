@@ -42,6 +42,7 @@ import {
 } from "./github.js";
 import { seedAdmin } from "./auth.js";
 import { sNum } from "./settings.js";
+import { githubReady } from "./creds.js";
 import { decideThreadAction } from "./route.js";
 import { reconcileEpics } from "./epics.js";
 import { indexRepo } from "./gitnexus.js";
@@ -844,10 +845,11 @@ function startAutoMode(cfg: Config): void {
   setInterval(() => void tick().catch((e) => console.error("[agency] auto-mode tick error:", (e as Error).message)), AUTO_INTERVAL_MS);
 }
 
-/** True once the agency has GitHub credentials to act with. Until then we do NO GitHub work —
- * the dashboard + login/admin-setup run fine without it. (Becomes per-user with task 28.) */
-function githubConfigured(cfg: Config): boolean {
-  return Boolean(cfg.githubToken && cfg.owner);
+/** True once the agency has GitHub credentials to act with (env OR dashboard-stored). Until then
+ * we do NO GitHub work — the dashboard + login/admin-setup run fine without it. Read live so saving
+ * a token in the dashboard starts the agency without a redeploy. */
+function githubConfigured(_cfg: Config): boolean {
+  return githubReady();
 }
 
 /** GitHub-dependent startup work (repo access, orphan recovery, rate-limit reconcile). */

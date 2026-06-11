@@ -24,6 +24,7 @@ import { addLabel, removeLabel } from "./github.js";
 import { authEnabled, userFromReq, setSessionCookie, clearSessionCookie, parseCookies, SESSION_COOKIE } from "./auth.js";
 import { OPS_SETTINGS, opsSettingsValues } from "./settings.js";
 import { getSecretSetting, setSecretSetting } from "./store.js";
+import { ghBotToken, ghUserToken } from "./creds.js";
 import { renderLogin, renderInvite, renderSetup } from "./authpages.js";
 import { authenticate, createSession, revokeSession, getInvite, acceptInvite, createInvite, createUser, listUsers, listInvites, setUserSecret, listUserSecretKeys, countUsers, type User } from "./store.js";
 import { subscribe, getActive } from "./activity.js";
@@ -336,7 +337,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
 
       // Repo picker: all repos your token can access, minus the ones already watched.
       if (url === "/repos-available") {
-        const token = cfg.adminToken ?? cfg.githubToken;
+        const token = ghUserToken() || ghBotToken() || cfg.adminToken || cfg.githubToken || "";
         void listUserRepos(token)
           .then((all) => {
             const watched = new Set(effectiveRepos(cfg));
