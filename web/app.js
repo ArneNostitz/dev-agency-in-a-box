@@ -307,9 +307,15 @@ function Detail({ issue, activity, act, isDesktop, onClose }) {
   const [reply, setReply] = useState("");
   const [atts, setAtts] = useState([]);
   const [busy, setBusy] = useState(false);
+  const [armed, setArmed] = useState(""); // two-tap confirm: which destructive action is armed
+  const armRef = useRef(null);
   const streamRef = useRef(null);
   const stickRef = useRef(true);
   const repo = issue.repo, number = issue.number;
+  function confirmAct(key, fn) {
+    if (armed === key) { clearTimeout(armRef.current); setArmed(""); fn(); return; }
+    setArmed(key); clearTimeout(armRef.current); armRef.current = setTimeout(() => setArmed(""), 3000);
+  }
 
   function loadThread() { getJSON("/thread?repo=" + encodeURIComponent(repo) + "&number=" + number).then(setThread).catch(() => {}); }
   useEffect(() => {
@@ -339,20 +345,33 @@ function Detail({ issue, activity, act, isDesktop, onClose }) {
   function pickFiles(e) { const fs = e.target.files || []; for (let i = 0; i < fs.length; i++) readAttach(fs[i], (a) => setAtts((x) => x.concat(a))); e.target.value = ""; }
   function onPaste(e) { const items = (e.clipboardData || {}).items || []; for (let i = 0; i < items.length; i++) if (items[i].kind === "file") readAttach(items[i].getAsFile(), (a) => setAtts((x) => x.concat(a))); }
 
-  // toolbar actions
+  // toolbar actions. Text labels show on desktop (and on a confirm-armed destructive button).
+  const lbl = (t) => isDesktop ? html`<span class="tlabel">${t}</span>` : null;
+  const au = issue.auto || {};
+  function cycleAuto(kind) { const cur = kind === "resume" ? au.resumeRaw : au.mergeRaw; const order = ["", "on", "off"]; const nx = order[(order.indexOf(cur || "") + 1) % 3]; act.setAuto(kind, nx === "" ? "inherit" : nx, repo, number); }
+  const autoPill = (kind) => {
+    const raw = kind === "resume" ? au.resumeRaw : au.mergeRaw, on = raw === "on", off = raw === "off";
+    const now = (kind === "resume" ? au.resume : au.merge) ? "on" : "off";
+    return html`<button class=${"tbtn auto " + (on ? "on" : off ? "off" : "")} data-tip=${"Auto-" + kind + " — set: " + (on ? "on" : off ? "off" : "inherit") + ", now: " + now} onClick=${() => cycleAuto(kind)}><${Icon} name=${kind === "resume" ? "refresh" : "merge"} size=${14}/>${lbl("auto " + kind)}</button>`;
+  };
   const tb = [];
-  tb.push(html`<a class="tbtn" data-tip="Open on GitHub" href=${ghUrl(repo, number)} target="_blank" rel="noopener"><${Icon} name="link"/></a>`);
-  if (issue.pr_url) tb.push(html`<a class="tbtn" data-tip="Open PR" href=${issue.pr_url} target="_blank" rel="noopener"><${Icon} name="pr"/></a>`);
-  if (issue.previewUrl) tb.push(html`<a class="tbtn primary" data-tip="Open preview" href=${issue.previewUrl} target="_blank" rel="noopener"><${Icon} name="globe"/></a>`);
+  tb.push(html`<a class="tbtn" data-tip="Open on GitHub" href=${ghUrl(repo, number)} target="_blank" rel="noopener"><${Icon} name="link"/>${lbl("GitHub")}</a>`);
+  if (issue.pr_url) tb.push(html`<a class="tbtn" data-tip="Open PR" href=${issue.pr_url} target="_blank" rel="noopener"><${Icon} name="pr"/>${lbl("PR")}</a>`);
+  if (issue.previewUrl) tb.push(html`<a class="tbtn primary" data-tip="Open preview" href=${issue.previewUrl} target="_blank" rel="noopener"><${Icon} name="globe"/>${lbl("Preview")}</a>`);
   if (!done) {
-    if (st === "planned" || !st) tb.push(html`<button class="tbtn green" data-tip="Start" onClick=${() => { act.start(repo, number); onClose(); }}><${Icon} name="play"/></button>`);
-    if (st === "agency:awaiting-approval") tb.push(html`<button class="tbtn primary" data-tip="Approve & build" onClick=${() => { act.approve(repo, number); onClose(); }}><${Icon} name="check"/></button>`);
-    if (issue.pr_number && (needsFix || conflict)) tb.push(html`<button class="tbtn primary" data-tip=${conflict ? "Resolve conflicts" : "Fix the review"} onClick=${() => { act.fix(repo, number); onClose(); }}><${Icon} name="wrench"/></button>`);
-    tb.push(html`<button class="tbtn" data-tip="Resume" onClick=${() => act.resume(repo, number)}><${Icon} name="refresh"/></button>`);
-    tb.push(html`<button class="tbtn" data-tip="Run checks" onClick=${() => act.runChecks(repo, number, issue.title)}><${Icon} name="flask"/></button>`);
-    if (issue.pr_number && !conflict) tb.push(html`<button class="tbtn green" data-tip=${needsFix ? "Merge anyway" : "Merge"} onClick=${() => act.merge(repo, number).then(onClose)}><${Icon} name="merge"/></button>`);
+    if (st === "planned" || !st) tb.push(html`<button class="tbtn green" data-tip="Start" onClick=${() => { act.start(repo, number); onClose(); }}><${Icon} name="play"/>${lbl("Start")}</button>`);
+    if (st === "agency:awaiting-approval") tb.push(html`<button class="tbtn primary" data-tip="Approve & build" onClick=${() => { act.approve(repo, number); onClose(); }}><${Icon} name="check"/>${lbl("Approve")}</button>`);
+    if (issue.pr_number && (needsFix || conflict)) tb.push(html`<button class="tbtn primary" data-tip=${conflict ? "Resolve conflicts" : "Fix the review"} onClick=${() => { act.fix(repo, number); onClose(); }}><${Icon} name="wrench"/>${lbl(conflict ? "Resolve" : "Fix")}</button>`);
+    tb.push(html`<button class="tbtn" data-tip="Resume" onClick=${() => act.resume(repo, number)}><${Icon} name="refresh"/>${lbl("Resume")}</button>`);
+    tb.push(html`<button class="tbtn" data-tip="Run checks" onClick=${() => act.runChecks(repo, number, issue.title)}><${Icon} name="flask"/>${lbl("Checks")}</button>`);
+    if (issue.pr_number && !conflict) { const ma = armed === "merge"; tb.push(html`<button class=${"tbtn green" + (ma ? " armed" : "")} data-tip=${ma ? "Tap again to merge" : needsFix ? "Merge anyway" : "Merge"} onClick=${() => confirmAct("merge", () => act.merge(repo, number).then(onClose))}><${Icon} name="merge"/>${(isDesktop || ma) ? html`<span class="tlabel">${ma ? "Confirm merge" : needsFix ? "Merge anyway" : "Merge"}</span>` : null}</button>`); }
+    tb.push(html`<span class="tbsep"></span>`);
+    tb.push(autoPill("resume"));
+    tb.push(autoPill("merge"));
   }
-  tb.push(html`<button class="tbtn danger" data-tip="Delete" onClick=${() => act.del(repo, number)}><${Icon} name="trash"/></button>`);
+  const da = armed === "del";
+  tb.push(html`<span class="tbsep"></span>`);
+  tb.push(html`<button class=${"tbtn danger" + (da ? " armed" : "")} data-tip=${da ? "Tap again to delete" : "Delete"} onClick=${() => confirmAct("del", () => act.del(repo, number))}><${Icon} name="trash"/>${(isDesktop || da) ? html`<span class="tlabel">${da ? "Confirm delete" : "Delete"}</span>` : null}</button>`);
 
   const streamPane = html`<div class="dpane side">
     <div class="sec">Live stream</div>
@@ -360,7 +379,6 @@ function Detail({ issue, activity, act, isDesktop, onClose }) {
       ${stream.length ? stream.map((a, idx) => html`<div key=${idx} class=${"l " + (a.kind === "tool" ? "tool" : a.kind === "start" || a.kind === "done" ? "muted" : "")}>${a.text}</div>`) : html`<div class="l muted">No live activity yet.</div>`}
     </div>
     <${RunApp} repo=${repo} number=${number} appInfo=${appInfo} issue=${issue} done=${done}/>
-    <${AutoRow} issue=${issue} act=${act}/>
   </div>`;
 
   const chatPane = html`<div class="dpane chat">
@@ -394,13 +412,6 @@ function Detail({ issue, activity, act, isDesktop, onClose }) {
   </div>`;
 }
 function Comment(c) { return html`<div class=${"cmt " + (c.isAgency ? "ag" : "")}><div class="h">${c.isAgency ? "🤖 " : ""}${c.author || ""} · ${ago(c.createdAt)}</div><div class="b" dangerouslySetInnerHTML=${{ __html: md(c.body) }}></div></div>`; }
-
-function AutoRow({ issue, act }) {
-  const a = issue.auto || {};
-  function cycle(kind) { const cur = kind === "resume" ? a.resumeRaw : a.mergeRaw; const order = ["", "on", "off"]; const nx = order[(order.indexOf(cur || "") + 1) % 3]; act.setAuto(kind, nx === "" ? "inherit" : nx, issue.repo, issue.number); }
-  const pill = (kind) => { const raw = kind === "resume" ? a.resumeRaw : a.mergeRaw; const on = raw === "on", off = raw === "off"; return html`<button class=${"apill " + (on ? "on" : off ? "off" : "")} onClick=${() => cycle(kind)}><${Icon} name=${kind === "resume" ? "refresh" : "merge"} size=${14}/> ${kind}</button>`; };
-  return html`<div class="sec">Auto</div><div class="autorow">${pill("resume")}${pill("merge")}<span class="muted" style="font-size:12px">now: resume ${a.resume ? "on" : "off"} · merge ${a.merge ? "on" : "off"}</span></div>`;
-}
 
 function RunApp({ repo, number, appInfo, issue, done }) {
   if (!appInfo || appInfo.kind === "unknown" || appInfo.kind === "none") return null;
