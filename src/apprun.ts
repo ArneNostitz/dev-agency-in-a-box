@@ -16,6 +16,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { cloneRepo } from "./github.js";
 import { pushActivity, setActive, clearActive } from "./activity.js";
+import { sNum } from "./settings.js";
 
 // ---- pure helpers ---------------------------------------------------------
 
@@ -107,7 +108,7 @@ interface Live extends AppState {
   procs: ChildProcess[];
 }
 const apps = new Map<string, Live>();
-const ttlMs = (Number(process.env.PREVIEW_TTL_MIN?.trim()) || 30) * 60_000;
+const ttlMs = (): number => sNum("preview_ttl_min", "PREVIEW_TTL_MIN", 30) * 60_000;
 const key = (repo: string, n: number) => `${repo}#${n}`;
 const workdir = (repo: string, n: number) => join(process.cwd(), ".work", repo.replace("/", "__"), `preview-${n}`);
 
@@ -263,7 +264,7 @@ export function startPreviewSweeper(): void {
   setInterval(() => {
     const now = Date.now();
     for (const a of [...apps.values()]) {
-      if (now - a.lastSeen > ttlMs) {
+      if (now - a.lastSeen > ttlMs()) {
         logLine(a.repo, a.number, "⏹ preview idle — stopped");
         stopApp(a.repo, a.number);
       }

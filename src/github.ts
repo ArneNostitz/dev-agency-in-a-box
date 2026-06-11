@@ -8,22 +8,27 @@ import { promisify } from "node:util";
 import { writeFileSync, unlinkSync, appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { sBool } from "./settings.js";
+import { ghBotToken, ghUserToken } from "./creds.js";
 
 const execFileAsync = promisify(execFile);
 
-/** Run gh with a specific token (for actions that need a different identity than the default). */
+/** Run gh as the human owner ("acts as you"); empty token falls back to the stored owner/bot token. */
 async function ghAs(token: string, args: string[]): Promise<string> {
+  const t = token || ghUserToken() || ghBotToken();
   const { stdout } = await execFileAsync("gh", args, {
     maxBuffer: 10 * 1024 * 1024,
-    env: { ...process.env, GH_TOKEN: token, GITHUB_TOKEN: token },
+    env: t ? { ...process.env, GH_TOKEN: t, GITHUB_TOKEN: t } : process.env,
   });
   return stdout.trim();
 }
 
+/** Run gh as the agency bot, using the dashboard-stored bot token (or GITHUB_TOKEN env). */
 async function gh(args: string[]): Promise<string> {
+  const token = ghBotToken();
   const { stdout } = await execFileAsync("gh", args, {
     maxBuffer: 10 * 1024 * 1024,
-    env: process.env,
+    env: token ? { ...process.env, GH_TOKEN: token, GITHUB_TOKEN: token } : process.env,
   });
   return stdout.trim();
 }
@@ -518,7 +523,7 @@ export async function cloneRepo(repo: string, dest: string): Promise<void> {
   // agency branch commits is redundant. A commit-msg hook appends [skip ci] to every commit
   // the agents make (push + PR runs are skipped); the squash-merge to main still runs CI via
   // the PR title. Opt out with SKIP_CI=false.
-  if (process.env.SKIP_CI?.trim().toLowerCase() !== "false") {
+  if (sBool("skip_ci", "SKIP_CI", true)) {
     try {
       const hook = join(dest, ".git", "hooks", "commit-msg");
       const script =
@@ -820,7 +825,11 @@ export interface PullRequest {
 }
 
 async function runGit(cwd: string, args: string[]): Promise<string> {
-  const { stdout } = await execFileAsync("git", args, { cwd, env: process.env, maxBuffer: 10 * 1024 * 1024 });
+  // git push/fetch authenticate via gh's credential helper, which reads GH_TOKEN — inject the
+  // resolved bot token so pushes work even when it isn't in the container env (dashboard creds).
+  const token = ghBotToken();
+  const env = token ? { ...process.env, GH_TOKEN: token, GITHUB_TOKEN: token } : process.env;
+  const { stdout } = await execFileAsync("git", args, { cwd, env, maxBuffer: 10 * 1024 * 1024 });
   return stdout.trim();
 }
 

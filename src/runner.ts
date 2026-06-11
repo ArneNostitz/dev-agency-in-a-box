@@ -40,6 +40,9 @@ import {
   AWAITING_LABELS,
   type Issue,
 } from "./github.js";
+import { seedAdmin } from "./auth.js";
+import { sNum } from "./settings.js";
+import { githubReady } from "./creds.js";
 import { decideThreadAction } from "./route.js";
 import { reconcileEpics } from "./epics.js";
 import { indexRepo } from "./gitnexus.js";
@@ -131,8 +134,8 @@ async function maybeParkRateLimited(repo: string, number: number, msg: string, i
   console.log(`[agency] rate-limited ${repo} #${number}; auto-resume after ${new Date(resetAt).toISOString()}`);
   return true;
 }
-/** Don't re-engage closed threads older than this (keeps the scan cheap). */
-const FOLLOWUP_WINDOW_DAYS = Number(process.env.FOLLOWUP_WINDOW_DAYS?.trim()) || 21;
+/** Don't re-engage closed threads older than this (keeps the scan cheap). DB-first → env → 21. */
+const followupWindowDays = (): number => sNum("followup_window_days", "FOLLOWUP_WINDOW_DAYS", 21);
 /** An in-progress issue with no live run, idle this long, is treated as an orphan. */
 const ORPHAN_GRACE_MS = (Number(process.env.ORPHAN_GRACE_MIN?.trim()) || 12) * 60_000;
 const LOCK_PATH = join(process.cwd(), ".agency.lock");
@@ -503,7 +506,7 @@ export async function forceApprove(cfg: Config, repo: string, number: number): P
 // ---- scan + dispatch ----
 
 const recentEnough = (iso: string): boolean =>
-  !iso || Date.now() - new Date(iso).getTime() <= FOLLOWUP_WINDOW_DAYS * 86400_000;
+  !iso || Date.now() - new Date(iso).getTime() <= followupWindowDays() * 86400_000;
 
 /** Scan one repo and dispatch all eligible work to the pool (deduped by key). */
 async function scanRepo(cfg: Config, repo: string): Promise<void> {
@@ -659,6 +662,7 @@ async function sweepStuck(): Promise<void> {
 
 /** Scan every watched repo and dispatch work. Returns immediately; the pool runs it. */
 export async function processAllRepos(cfg: Config): Promise<number> {
+  if (!githubConfigured(cfg)) return 0; // no credentials → no GitHub scanning (login still works)
   for (const repo of effectiveRepos(cfg)) {
     try {
       await scanRepo(cfg, repo);
@@ -778,7 +782,7 @@ const AUTO_INTERVAL_MS = (Number(process.env.AUTO_INTERVAL_SEC?.trim()) || 150) 
 function startAutoMode(cfg: Config): void {
   const inFlight = (repo: string, n: number): boolean => inFlightKeys().includes(`${repo}#${n}`);
   const tick = async (): Promise<void> => {
-    if (shuttingDown || agentsArePaused()) return;
+    if (shuttingDown || agentsArePaused() || !githubConfigured(cfg)) return;
     for (const repo of effectiveRepos(cfg)) {
       // PRs in flight: merge when ready, otherwise nudge them toward mergeable.
       let prs: Awaited<ReturnType<typeof listAgencyPrs>> = [];
@@ -841,15 +845,42 @@ function startAutoMode(cfg: Config): void {
   setInterval(() => void tick().catch((e) => console.error("[agency] auto-mode tick error:", (e as Error).message)), AUTO_INTERVAL_MS);
 }
 
+/** True once the agency has GitHub credentials to act with (env OR dashboard-stored). Until then
+ * we do NO GitHub work — the dashboard + login/admin-setup run fine without it. Read live so saving
+ * a token in the dashboard starts the agency without a redeploy. */
+function githubConfigured(_cfg: Config): boolean {
+  return githubReady();
+}
+
+/** GitHub-dependent startup work (repo access, orphan recovery, rate-limit reconcile). */
+async function backgroundInit(cfg: Config): Promise<void> {
+  if (!githubConfigured(cfg)) {
+    console.log("[agency] GitHub not configured yet — login/setup only; repo work starts once a token is set.");
+    return;
+  }
+  try {
+    await ensureAllRepoAccess(cfg);
+    await recoverOrphans(cfg);
+    await reconcileRateLimited(cfg);
+  } catch (e) {
+    console.error("[agency] background init error:", (e as Error).message);
+  }
+}
+
 async function main(): Promise<void> {
   const cfg = loadConfig();
-  await ensureAllRepoAccess(cfg);
-  await recoverOrphans(cfg);
-  await reconcileRateLimited(cfg).catch((e) => console.error("[agency] reconcile failed:", (e as Error).message));
+  seedAdmin(); // multi-user: create the admin from env on first boot (no-op if MASTER_KEY unset)
   startAutoResume(cfg);
   startAutoMode(cfg);
   startPreviewSweeper();
-  if (cfg.runMode === "webhook") {
+  // Both "watch" and "webhook" run the HTTP server (so the dashboard is always reachable — a
+  // watch-mode deploy with no server is what made Coolify 502). The server's safety poll uses
+  // pollIntervalSeconds, so watch-style polling still happens; webhook deliveries (if configured)
+  // just trigger it sooner. Only "once" stays headless.
+  if (cfg.runMode === "webhook" || cfg.runMode === "watch") {
+    // Start listening IMMEDIATELY; do the GitHub-dependent init in the background so a slow or
+    // failing `gh` call (e.g. no token yet) can never stop the server binding → no 502 loop.
+    void backgroundInit(cfg);
     const { runWebhook } = await import("./webhook.js");
     await runWebhook(
       cfg,
@@ -859,9 +890,8 @@ async function main(): Promise<void> {
       (repo, number) => forceFix(cfg, repo, number),
       (repo, number) => forceStart(cfg, repo, number),
     );
-  } else if (cfg.runMode === "watch") {
-    await runWatch(cfg);
   } else {
+    await backgroundInit(cfg);
     await runOnce(cfg);
   }
 }
@@ -876,7 +906,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
   stopPool(); // no new dispatches
   killAllApps(); // stop any running preview dev servers + tunnels
   const { running, queued } = poolStatus();
-  const graceMs = Number(process.env.GRACEFUL_SHUTDOWN_MS?.trim()) || 570_000; // ~9.5 min
+  const graceMs = sNum("graceful_shutdown_ms", "GRACEFUL_SHUTDOWN_MS", 570_000); // ~9.5 min
   console.log(`[agency] ${signal}: draining ${running} running + ${queued} queued (grace ${Math.round(graceMs / 1000)}s)…`);
   await Promise.race([drain(), new Promise((r) => setTimeout(r, graceMs))]);
   console.log("[agency] drained — exiting cleanly.");

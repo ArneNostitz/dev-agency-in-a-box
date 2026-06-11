@@ -34,6 +34,14 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
   setG("EventSource", class { constructor() {} close() {} });
 
   const SAMPLE = {
+    user: { id: 1, username: "arne", role: "admin", email: "a@x.com" }, authEnabled: true,
+    secretKeys: ["claude_token"], users: [{ id: 1, username: "arne", role: "admin" }], invites: [],
+    opsMeta: [
+      { key: "trigger_mode", env: "TRIGGER_MODE", type: "select", options: ["mention", "label", "any"], def: "mention", label: "How issues start" },
+      { key: "concurrency", env: "AGENCY_CONCURRENCY", type: "num", def: 3, label: "Max concurrent runs" },
+      { key: "self_improve", env: "SELF_IMPROVE", type: "bool", def: true, label: "Self-improve PRs" },
+    ],
+    ops: { trigger_mode: "mention", concurrency: 3, self_improve: true },
     repos: ["acme/app"], auto: { resume: "", merge: "" }, autoRepos: { "acme/app": {} },
     active: [], inflight: [], rateLimited: [], runs: [], activity: [], spendToday: { costUsd: 0 },
     session: { tokens: 0, budget: 0 }, config: {},
@@ -91,6 +99,10 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
   await tick(40);
   assert.match(root.innerHTML, /Automation/, "settings opens");
   assert.match(root.innerHTML, /Pipeline/, "settings shows pipeline knobs");
+  assert.match(root.innerHTML, /Your credentials/, "credentials section renders for a signed-in user");
+  assert.match(root.innerHTML, /Team \(admin\)/, "admin team section renders");
+  assert.match(root.innerHTML, /Operations/, "operations panel renders");
+  assert.match(root.innerHTML, /arne/, "signed-in user shown");
   click(q(".sheet .sh .iconbtn"));
   await tick(40);
 

@@ -16,11 +16,17 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { Config } from "./config.js";
-import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, type AutoKind, type Provider } from "./store.js";
+import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, type AutoKind, type Provider } from "./store.js";
 import { mergeEpic, isEpic } from "./epics.js";
 import { renderDashboard, renderHistory } from "./dashboard.js";
 import { renderShell } from "./shell.js";
 import { addLabel, removeLabel } from "./github.js";
+import { authEnabled, userFromReq, setSessionCookie, clearSessionCookie, parseCookies, SESSION_COOKIE } from "./auth.js";
+import { OPS_SETTINGS, opsSettingsValues } from "./settings.js";
+import { getSecretSetting, setSecretSetting } from "./store.js";
+import { ghBotToken, ghUserToken } from "./creds.js";
+import { renderLogin, renderInvite, renderSetup } from "./authpages.js";
+import { authenticate, createSession, revokeSession, getInvite, acceptInvite, createInvite, createUser, listUsers, listInvites, setUserSecret, listUserSecretKeys, countUsers, type User } from "./store.js";
 import { subscribe, getActive } from "./activity.js";
 import { inFlightKeys } from "./pool.js";
 import { listRateLimited } from "./store.js";
@@ -122,7 +128,8 @@ function serveStatic(pathname: string, res: ServerResponse): boolean {
 
 export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: Resume, approve?: Resume, fix?: Resume, start?: Resume): Promise<void> {
   const port = Number(process.env.PORT?.trim() || "3000");
-  const secret = process.env.GITHUB_WEBHOOK_SECRET?.trim() || "";
+  // Webhook secret is read live (dashboard → env) so it can be set/rotated without a redeploy.
+  const webhookSecret = (): string => getSecretSetting("github_webhook_secret") || process.env.GITHUB_WEBHOOK_SECRET?.trim() || "";
   // Catches 👍 reactions (GitHub doesn't webhook those) and anything a delivery missed.
   const safetyPollMs = Math.max(30, cfg.pollIntervalSeconds) * 1000;
 
@@ -158,7 +165,35 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
       // PWA static assets (service worker, manifest, app bundle, icons) — no auth so the
       // installed app can boot and the SW can cache them. They contain no secrets.
       if (serveStatic(url, res)) return;
-      if (!checkAuth(cfg, req, res)) return;
+
+      // Auth gate. Multi-user (session cookies) when MASTER_KEY is set; else legacy Basic Auth.
+      let sessionUser: User | null = null;
+      if (authEnabled()) {
+        const htmlHead = { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" };
+        // First run: no accounts yet → force the in-browser admin setup screen.
+        if (countUsers() === 0) return void res.writeHead(200, htmlHead).end(renderSetup());
+        if (url === "/login") return void res.writeHead(200, htmlHead).end(renderLogin());
+        if (url === "/logout") {
+          const tok = parseCookies(req)[SESSION_COOKIE];
+          if (tok) revokeSession(tok);
+          clearSessionCookie(res);
+          return void res.writeHead(302, { location: "/login" }).end();
+        }
+        if (url === "/invite") {
+          const t = new URLSearchParams((req.url ?? "").split("?")[1] ?? "").get("token") ?? "";
+          const inv = getInvite(t);
+          if (!inv) return void res.writeHead(302, { location: "/login" }).end();
+          return void res.writeHead(200, htmlHead).end(renderInvite(inv.token, inv.email));
+        }
+        sessionUser = userFromReq(req);
+        if (!sessionUser) {
+          const isNav = url === "/" || url === "/classic" || url === "/history";
+          if (isNav) return void res.writeHead(302, { location: "/login" }).end();
+          return void res.writeHead(401, { "content-type": "text/plain" }).end("authentication required");
+        }
+      } else if (!checkAuth(cfg, req, res)) {
+        return;
+      }
 
       if (url === "/events") {
         // Server-sent events: live thought-stream from the agents.
@@ -238,7 +273,13 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           res.writeHead(200, { "content-type": "application/json" });
           res.end(
             JSON.stringify({
-              env: process.env.APP_ENV?.trim() || "production",
+              env: process.env.AGENCY_ENV?.trim() || process.env.APP_ENV?.trim() || "production",
+              authEnabled: authEnabled(),
+              user: sessionUser ? { id: sessionUser.id, username: sessionUser.username, role: sessionUser.role, email: sessionUser.email } : null,
+              secretKeys: sessionUser ? listUserSecretKeys(sessionUser.id) : [],
+              users: sessionUser && sessionUser.role === "admin" ? listUsers() : [],
+              invites: sessionUser && sessionUser.role === "admin" ? listInvites() : [],
+              webhookSecretSet: sessionUser && sessionUser.role === "admin" ? Boolean(getSecretSetting("github_webhook_secret") || process.env.GITHUB_WEBHOOK_SECRET) : false,
               repos: effectiveRepos(cfg),
               auto: { resume: getAutoRaw("resume"), merge: getAutoRaw("merge") },
               autoRepos: Object.fromEntries(
@@ -261,6 +302,8 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
                 anchored: Boolean(Date.parse(getSetting("window_anchor") ?? "")),
                 byModel: tokensByModelSince(win.startIso),
               },
+              ops: opsSettingsValues(),
+              opsMeta: OPS_SETTINGS,
               config: {
                 skipArchitect: (getSetting("skip_architect") ?? "") || (process.env.SKIP_ARCHITECT?.trim().toLowerCase() === "false" ? "off" : "on"),
                 gitnexus: (getSetting("gitnexus") ?? "") || (process.env.GITNEXUS?.trim().toLowerCase() === "true" ? "on" : "off"),
@@ -294,7 +337,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
 
       // Repo picker: all repos your token can access, minus the ones already watched.
       if (url === "/repos-available") {
-        const token = cfg.adminToken ?? cfg.githubToken;
+        const token = ghUserToken() || ghBotToken() || cfg.adminToken || cfg.githubToken || "";
         void listUserRepos(token)
           .then((all) => {
             const watched = new Set(effectiveRepos(cfg));
@@ -445,12 +488,62 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
       return;
     }
 
-    // Dashboard actions (password-protected, not GitHub webhooks).
     const path = (req.url ?? "").split("?")[0];
-    if (["/archive", "/comment", "/run-checks", "/merge", "/delete", "/resume", "/fix", "/auto", "/start", "/new-issue", "/approve", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/models"].includes(path)) {
-      if (!checkAuth(cfg, req, res)) return;
+
+    // Auth forms (urlencoded, no auth required) — setup, login, accept-invite, logout.
+    if (authEnabled() && (path === "/setup" || path === "/login" || path === "/invite" || path === "/logout")) {
+      const htmlHead = { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" };
+      void readBody(req).then((body) => {
+        const form = new URLSearchParams(body.toString("utf8"));
+        if (path === "/setup") {
+          // First-run admin creation. Only valid while there are no users (prevents takeover).
+          if (countUsers() > 0) return void res.writeHead(303, { location: "/login" }).end();
+          const username = (form.get("username") ?? "").trim();
+          const pw = form.get("password") ?? "";
+          if (username.length < 2 || pw.length < 8) return void res.writeHead(200, htmlHead).end(renderSetup("Username and an 8+ character password are required."));
+          const admin = createUser(username, pw, "admin", form.get("email") || null);
+          if (!admin) return void res.writeHead(200, htmlHead).end(renderSetup("Couldn’t create the account — try a different username."));
+          setSessionCookie(req, res, createSession(admin.id));
+          return void res.writeHead(303, { location: "/" }).end();
+        }
+        if (path === "/logout") {
+          const tok = parseCookies(req)[SESSION_COOKIE];
+          if (tok) revokeSession(tok);
+          clearSessionCookie(res);
+          return void res.writeHead(303, { location: "/login" }).end();
+        }
+        if (path === "/login") {
+          const u = authenticate((form.get("username") ?? "").trim(), form.get("password") ?? "");
+          if (!u) return void res.writeHead(200, htmlHead).end(renderLogin("Wrong username or password."));
+          setSessionCookie(req, res, createSession(u.id));
+          return void res.writeHead(303, { location: "/" }).end();
+        }
+        // /invite
+        const token = form.get("token") ?? "";
+        const inv = getInvite(token);
+        if (!inv) return void res.writeHead(200, htmlHead).end(renderInvite(token, null, "This invite is invalid or already used."));
+        const username = (form.get("username") ?? "").trim();
+        const pw = form.get("password") ?? "";
+        if (username.length < 2 || pw.length < 8) return void res.writeHead(200, htmlHead).end(renderInvite(token, inv.email, "Username and an 8+ character password are required."));
+        const created = createUser(username, pw, inv.role, form.get("email") || inv.email);
+        if (!created) return void res.writeHead(200, htmlHead).end(renderInvite(token, inv.email, "That username is taken."));
+        acceptInvite(token);
+        setSessionCookie(req, res, createSession(created.id));
+        return void res.writeHead(303, { location: "/" }).end();
+      });
+      return;
+    }
+
+    // Dashboard actions (auth required), not GitHub webhooks.
+    if (["/archive", "/comment", "/run-checks", "/merge", "/delete", "/resume", "/fix", "/auto", "/start", "/new-issue", "/approve", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret"].includes(path)) {
+      const actor = authEnabled() ? userFromReq(req) : null;
+      if (authEnabled()) {
+        if (!actor) return void res.writeHead(401, { "content-type": "application/json" }).end('{"error":"auth required"}');
+      } else if (!checkAuth(cfg, req, res)) {
+        return;
+      }
       void readBody(req).then(async (body) => {
-        let p: { repo?: string; number?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; dataUrl?: string; name?: string; providers?: Provider[]; roleModels?: Record<string, { providerId: string; model: string }>; kind?: string; value?: string; skipArchitect?: string; gitnexus?: string; maxTokensPerRun?: number; maxReviseRounds?: number; start?: boolean } = {};
+        let p: { repo?: string; number?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; dataUrl?: string; name?: string; providers?: Provider[]; roleModels?: Record<string, { providerId: string; model: string }>; kind?: string; value?: string; skipArchitect?: string; gitnexus?: string; maxTokensPerRun?: number; maxReviseRounds?: number; start?: boolean; email?: string; key?: string; ops?: Record<string, string | number | boolean>; webhookSecret?: string } = {};
         try {
           p = JSON.parse(body.toString("utf8"));
         } catch {
@@ -460,6 +553,23 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         const number = Number(p.number);
         const ok = (payload = '{"ok":true}') =>
           res.writeHead(200, { "content-type": "application/json" }).end(payload);
+        // Owner-identity token for "acts as you" actions — dashboard-stored creds, then env.
+        const ownerToken = ghUserToken() || ghBotToken() || cfg.adminToken || "";
+
+        // --- multi-user: invites + per-user encrypted secrets ---
+        if (path === "/invite-create") {
+          if (!actor || actor.role !== "admin") return res.writeHead(403).end('{"error":"admin only"}');
+          const token = createInvite(p.email ?? null, p.role === "admin" ? "admin" : "member", actor.id);
+          const base = (req.headers["x-forwarded-proto"] ? `${(req.headers["x-forwarded-proto"] as string).split(",")[0]}://` : "https://") + (req.headers["host"] ?? "");
+          return ok(JSON.stringify({ ok: true, token, url: `${base}/invite?token=${token}` }));
+        }
+        if (path === "/user-secret") {
+          // Write-only: store an encrypted credential for the signed-in user. Never returned.
+          if (!actor) return res.writeHead(409).end('{"error":"multi-user not enabled"}');
+          if (!p.key) return res.writeHead(400).end("{}");
+          setUserSecret(actor.id, String(p.key), String(p.value ?? ""));
+          return ok();
+        }
 
         if (path === "/archive") {
           if (repo && number) archiveIssue(repo, number);
@@ -470,7 +580,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           if (!repo || !number || !p.body?.trim()) return res.writeHead(400).end("{}");
           try {
             // Post under the owner's account (admin token) so it shows your name, not the bot's.
-            await commentAsHuman(repo, number, p.body.trim(), cfg.adminToken);
+            await commentAsHuman(repo, number, p.body.trim(), ownerToken);
             void trigger("dashboard-comment");
             return ok();
           } catch (err) {
@@ -491,6 +601,16 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           if (p.gitnexus === "on" || p.gitnexus === "off") setSetting("gitnexus", p.gitnexus);
           if (p.maxTokensPerRun !== undefined && p.maxTokensPerRun >= 0) setSetting("max_tokens_per_run", String(Math.round(p.maxTokensPerRun)));
           if (p.maxReviseRounds !== undefined && p.maxReviseRounds >= 0) setSetting("max_revise_rounds", String(Math.round(p.maxReviseRounds)));
+          // Operations panel (global, admin-only when multi-user is on).
+          if (p.ops && typeof p.ops === "object" && (!authEnabled() || actor?.role === "admin")) {
+            for (const [k, v] of Object.entries(p.ops)) {
+              if (OPS_SETTINGS.some((s) => s.key === k)) setSetting(k, typeof v === "boolean" ? (v ? "on" : "off") : String(v));
+            }
+          }
+          // Encrypted GitHub webhook secret (admin, write-only).
+          if (p.webhookSecret !== undefined && (!authEnabled() || actor?.role === "admin")) {
+            setSecretSetting("github_webhook_secret", p.webhookSecret);
+          }
           return ok();
         }
         if (path === "/agent-save") {
@@ -530,7 +650,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         if (path === "/delete") {
           // Try a real delete (owner-only); otherwise close + hide from the board.
           if (!repo || !number) return res.writeHead(400).end("{}");
-          const r = await deleteIssueHard(repo, number, cfg.adminToken);
+          const r = await deleteIssueHard(repo, number, ownerToken);
           if (!r.ok) await closeIssue(repo, number).catch(() => {});
           archiveIssue(repo, number);
           return ok(JSON.stringify({ ok: true, deleted: r.ok }));
@@ -583,22 +703,29 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         }
         if (path === "/add-repo") {
           // Add a repo to the watch list + invite the bot + register the webhook — live, no redeploy.
-          if (!repo) return res.writeHead(400).end("{}");
-          addWatchedRepo(repo);
+          // Require a full owner/name so malformed entries (just an owner) can't be added.
+          const full = repo.trim();
+          if (!/^[\w.-]+\/[\w.-]+$/.test(full)) return res.writeHead(400).end(JSON.stringify({ error: "Use owner/name, e.g. acme/app" }));
+          addWatchedRepo(full);
           let note = "";
           try {
-            note = await ensureRepoAccess(cfg, repo);
+            note = await ensureRepoAccess(cfg, full);
           } catch {
             /* best effort */
           }
           void trigger("dashboard-add-repo");
           return ok(JSON.stringify({ ok: true, note }));
         }
+        if (path === "/remove-repo") {
+          if (!repo) return res.writeHead(400).end("{}");
+          removeWatchedRepo(repo.trim());
+          return ok();
+        }
         if (path === "/upload-image" || path === "/upload-file") {
           // Commit a pasted/picked file (image, pdf, csv, xlsx, json…) to the repo and return
           // markdown to embed: images inline, everything else as a download link.
           if (!repo || !p.dataUrl) return res.writeHead(400).end("{}");
-          if (!cfg.adminToken) return res.writeHead(409).end(JSON.stringify({ error: "needs ADMIN_GITHUB_TOKEN" }));
+          if (!ownerToken) return res.writeHead(409).end(JSON.stringify({ error: "set a GitHub token (Settings → credentials) to upload attachments" }));
           const m = /^data:([\w.+-]+\/[\w.+-]+)?;base64,(.+)$/.exec(p.dataUrl);
           if (!m) return res.writeHead(400).end(JSON.stringify({ error: "not a base64 data URL" }));
           const mime = m[1] || "application/octet-stream";
@@ -607,7 +734,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           const extFromMime = mime.split("/")[1]?.replace("jpeg", "jpg").replace(/[^\w]/g, "") || "bin";
           const fname = safe && /\.[\w]+$/.test(safe) ? safe : `${safe || "file"}.${extFromMime}`;
           const file = `.devagency/attachments/${Date.now()}-${Math.random().toString(36).slice(2, 6)}-${fname}`;
-          const r = await putRepoBase64(repo, file, m[2], `dev-agency: dashboard attachment ${fname}`, cfg.adminToken);
+          const r = await putRepoBase64(repo, file, m[2], `dev-agency: dashboard attachment ${fname}`, ownerToken);
           if (!r.ok || !r.url) return res.writeHead(500).end(JSON.stringify({ error: r.msg }));
           const label = p.name || fname;
           const md = isImage ? `![${label}](${r.url})` : `[📎 ${label}](${r.url})`;
@@ -620,7 +747,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           const handle = (p.role ?? "@dev").trim();
           const issueBody = `${handle} ${p.body ?? ""}`.trim();
           try {
-            const created = await createIssue(repo, p.title.trim(), issueBody, cfg.adminToken);
+            const created = await createIssue(repo, p.title.trim(), issueBody, ownerToken);
             if (p.start) {
               recordIssueState(repo, created.number, { title: p.title.trim(), state: "agency:in-progress" });
               void trigger("dashboard-new-issue");
@@ -649,7 +776,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
     }
 
     void readBody(req).then((body) => {
-      if (!verifySignature(secret, body, req.headers["x-hub-signature-256"] as string)) {
+      if (!verifySignature(webhookSecret(), body, req.headers["x-hub-signature-256"] as string)) {
         console.warn("[agency] rejected webhook: bad signature");
         res.writeHead(401).end("bad signature");
         return;

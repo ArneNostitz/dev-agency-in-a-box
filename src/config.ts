@@ -5,6 +5,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { sStr, sNum, sBool } from "./settings.js";
+import { getSecretSetting } from "./store.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(here, ".."); // src/ -> project root
@@ -80,7 +82,7 @@ function loadHandles(): string[] {
       if (h && h !== "@") handles.add(h);
     }
   }
-  for (const h of (process.env.HANDLES ?? "").split(",")) {
+  for (const h of sStr("handles", "HANDLES", "").split(",")) {
     const n = norm(h);
     if (n && n !== "@") handles.add(n);
   }
@@ -139,7 +141,10 @@ function parseRunMode(v: string | undefined): "once" | "watch" | "webhook" {
 }
 
 export function loadConfig(): Config {
-  const owner = required("GITHUB_OWNER");
+  // Not required at boot anymore: in multi-user mode these come from the dashboard (per-user),
+  // and even single-user should start the dashboard so you can configure it rather than
+  // crash-loop. We warn instead, and the scan loop simply no-ops until credentials + repos exist.
+  const owner = sStr("github_owner", "GITHUB_OWNER", ""); // dashboard Operations → env → empty
   const targetRepos = loadRepos(owner);
   if (targetRepos.length === 0) {
     // Not fatal: repos added at runtime via /add-repo live in the SQLite watch list.
@@ -150,22 +155,23 @@ export function loadConfig(): Config {
 
   const cfg: Config = {
     anthropicApiKey: process.env.ANTHROPIC_API_KEY?.trim() || undefined,
-    githubToken: required("GITHUB_TOKEN"),
+    githubToken: optional("GITHUB_TOKEN", ""),
     owner,
     targetRepos,
-    triggerMode: parseTrigger(process.env.TRIGGER_MODE, bool("REQUIRE_LABEL", false)),
+    // Operational settings are DB-first (dashboard-managed) with the env var as a fallback.
+    triggerMode: parseTrigger(sStr("trigger_mode", "TRIGGER_MODE", ""), bool("REQUIRE_LABEL", false)),
     handles: loadHandles(),
-    queueLabel: optional("QUEUE_LABEL", "agency:queue"),
-    ignoreLabel: optional("IGNORE_LABEL", "agency:ignore"),
+    queueLabel: sStr("queue_label", "QUEUE_LABEL", "agency:queue"),
+    ignoreLabel: sStr("ignore_label", "IGNORE_LABEL", "agency:ignore"),
     model: process.env.AGENT_MODEL?.trim() || undefined,
     runMode: parseRunMode(process.env.RUN_MODE),
-    pollIntervalSeconds: Math.max(10, Number(optional("POLL_INTERVAL_SECONDS", "60")) || 60),
-    publicUrl: process.env.PUBLIC_URL?.trim() || undefined,
-    webhookSecret: process.env.GITHUB_WEBHOOK_SECRET?.trim() || undefined,
+    pollIntervalSeconds: Math.max(10, sNum("poll_interval_seconds", "POLL_INTERVAL_SECONDS", 60)),
+    publicUrl: sStr("public_url", "PUBLIC_URL", "") || undefined,
+    webhookSecret: getSecretSetting("github_webhook_secret") || process.env.GITHUB_WEBHOOK_SECRET?.trim() || undefined,
     adminToken: process.env.ADMIN_GITHUB_TOKEN?.trim() || undefined,
     dashboardPassword: process.env.DASHBOARD_PASSWORD?.trim() || undefined,
-    agencyRepo: resolveRepo(optional("AGENCY_REPO", "dev-agency"), owner),
-    selfImprove: bool("SELF_IMPROVE", true),
+    agencyRepo: resolveRepo(sStr("agency_repo", "AGENCY_REPO", "dev-agency"), owner),
+    selfImprove: sBool("self_improve", "SELF_IMPROVE", true),
   };
 
   if (cfg.anthropicApiKey) {
@@ -189,7 +195,13 @@ export function loadConfig(): Config {
       `(trigger: ${triggerDesc})`,
   );
 
+  if (!cfg.owner || !cfg.githubToken) {
+    console.warn(
+      "[agency] GITHUB_OWNER/GITHUB_TOKEN not set — the dashboard will start, but the agency " +
+        "can't act on GitHub until they're configured (these move to per-user credentials).",
+    );
+  }
   // `gh` and `git` authenticate from GH_TOKEN; mirror the configured token into it.
-  process.env.GH_TOKEN = cfg.githubToken;
+  if (cfg.githubToken) process.env.GH_TOKEN = cfg.githubToken;
   return cfg;
 }

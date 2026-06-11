@@ -196,7 +196,7 @@ function App() {
   return html`
     <div class="app">
       <${TopBar} working=${working} env=${data.env} theme=${theme} setTheme=${setThemeP} onSettings=${() => setSheet("settings")} onNew=${() => openComposer()}/>
-      <${RepoSelector} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} onAdd=${() => openComposer()}/>
+      <${RepoSelector} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} onAdd=${() => setSheet("addrepo")}/>
       <${StatusLine} working=${working} session=${data.session} spend=${data.spendToday}/>
       <div class="content">
         <${Board} issues=${shown} repos=${repos} repoFilter=${repoFilter} tab=${tab} isDesktop=${isDesktop} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} act=${act}/>
@@ -205,6 +205,7 @@ function App() {
       ${open && html`<${Detail} key=${openKey} issue=${open} activity=${activity} act=${act} isDesktop=${isDesktop} onClose=${() => setOpenKey(null)}/>`}
       ${sheet === "composer" && html`<${Composer} repos=${repos} repo=${composerRepo} setRepo=${setComposerRepo} onClose=${() => setSheet(null)} onCreate=${createIssue}/>`}
       ${sheet === "settings" && html`<${Settings} data=${data} theme=${theme} setTheme=${setThemeP} onClose=${() => setSheet(null)} setAuto=${act.setAuto} reload=${load}/>`}
+      ${sheet === "addrepo" && html`<${AddRepo} repos=${repos} onClose=${() => setSheet(null)} reload=${load}/>`}
       <div class=${"toast " + (toastMsg ? "on" : "")}>${toastMsg}</div>
     </div>`;
 }
@@ -451,6 +452,11 @@ function Settings({ data, theme, setTheme, onClose, setAuto, reload }) {
   const gpill = (kind) => { const raw = auto[kind] || ""; const on = raw === "on", off = raw === "off"; const order = ["", "on", "off"]; const nx = order[(order.indexOf(raw) + 1) % 3]; return html`<button class=${"apill " + (on ? "on" : off ? "off" : "")} onClick=${() => setAuto(kind, nx === "" ? "inherit" : nx)}><${Icon} name=${kind === "resume" ? "refresh" : "merge"} size=${14}/> ${kind}</button>`; };
   const rpill = (repo, kind) => { const raw = (autoRepos[repo] || {})[kind] || ""; const on = raw === "on", off = raw === "off"; const order = ["", "on", "off"]; const nx = order[(order.indexOf(raw) + 1) % 3]; return html`<button class=${"apill " + (on ? "on" : off ? "off" : "")} onClick=${() => setAuto(kind, nx === "" ? "inherit" : nx, repo)}><${Icon} name=${kind === "resume" ? "refresh" : "merge"} size=${13}/> ${kind}</button>`; };
   return html`<${Sheet} title="Settings" onClose=${onClose} footer=${html`<button class="btn" onClick=${onClose}>Cancel</button><button class="btn primary" onClick=${save}>Save</button>`}>
+    ${data.user ? html`<div class="sec">Account</div>
+      <div class="muted">Signed in as <b>${data.user.username}</b> · ${data.user.role}</div>
+      <a class="btn ghost" href="/logout" style="justify-content:flex-start;margin-top:8px"><${Icon} name="arrowleft" size=${15}/> Sign out</a>
+      <${Credentials} secretKeys=${data.secretKeys || []} reload=${reload}/>
+      ${data.user.role === "admin" ? html`<${Admin} users=${data.users || []} invites=${data.invites || []} webhookSecretSet=${data.webhookSecretSet} reload=${reload}/>` : null}` : null}
     <div class="sec">Appearance</div>
     <div class="autorow">
       <button class=${"apill " + (theme === "light" ? "on" : "")} onClick=${() => setTheme("light")}><${Icon} name="sun" size=${14}/> Light</button>
@@ -468,9 +474,104 @@ function Settings({ data, theme, setTheme, onClose, setAuto, reload }) {
     <label class="ckline"><input type="checkbox" checked=${gitnexus} onChange=${(e) => setGitnexus(e.target.checked)}/> Use GitNexus code index</label>
     <label>Max tokens per run (0 = off)</label><input type="number" min="0" step="50000" value=${maxTok} onInput=${(e) => setMaxTok(e.target.value)}/>
     <label>Reviewer revise rounds before it asks you</label><input type="number" min="0" max="3" value=${revRounds} onInput=${(e) => setRevRounds(e.target.value)}/>
+    ${(!data.user || data.user.role === "admin") && data.opsMeta ? html`<${Operations} meta=${data.opsMeta} values=${data.ops || {}} reload=${reload}/>` : null}
     <div class="sec">Advanced</div>
     <a class="btn ghost" href="/classic" style="justify-content:flex-start"><${Icon} name="settings" size=${15}/> Models &amp; agents (classic editor)</a>
   <//>`;
+}
+function Operations({ meta, values, reload }) {
+  const [vals, setVals] = useState(() => Object.assign({}, values));
+  const set = (k, v) => setVals((o) => Object.assign({}, o, { [k]: v }));
+  function save() { api("/settings", { ops: vals }).then(() => { toast("Operations saved"); reload(); }).catch(() => toast("Couldn’t save")); }
+  return html`<div class="sec">Operations (advanced)</div>
+    <div class="muted" style="font-size:12px;margin-bottom:4px">Global agency settings, moved out of env. Applies on save (a few apply on next restart).</div>
+    ${meta.map((m) => html`<div key=${m.key}>
+      ${m.type === "bool"
+        ? html`<label class="ckline"><input type="checkbox" checked=${!!vals[m.key]} onChange=${(e) => set(m.key, e.target.checked)}/> ${m.label}</label>`
+        : html`<label>${m.label}</label>${m.type === "select"
+          ? html`<select value=${vals[m.key]} onChange=${(e) => set(m.key, e.target.value)}>${(m.options || []).map((o) => html`<option key=${o} value=${o}>${o}</option>`)}</select>`
+          : m.type === "num"
+          ? html`<input type="number" value=${vals[m.key]} onInput=${(e) => set(m.key, Number(e.target.value))}/>`
+          : html`<input value=${vals[m.key]} onInput=${(e) => set(m.key, e.target.value)}/>`}`}
+    </div>`)}
+    <button class="btn primary" style="margin-top:12px" onClick=${save}>Save operations</button>`;
+}
+
+// ---------- add a repo ----------
+function AddRepo({ repos, onClose, reload }) {
+  const [avail, setAvail] = useState(null);
+  const [manual, setManual] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { getJSON("/repos-available").then((d) => setAvail(d.repos || [])).catch(() => setAvail([])); }, []);
+  function add(full) {
+    if (!full || busy) return;
+    if (!/^[\w.-]+\/[\w.-]+$/.test(full)) { toast("Use owner/name, e.g. acme/app"); return; }
+    setBusy(true);
+    api("/add-repo", { repo: full }).then(() => { toast("Added " + full); setManual(""); reload(); }).catch(() => toast("Couldn’t add — use owner/name")).then(() => setBusy(false));
+  }
+  function remove(full) { if (busy) return; setBusy(true); api("/remove-repo", { repo: full }).then(() => { toast("Removed " + full); reload(); }).catch(() => toast("Couldn’t remove")).then(() => setBusy(false)); }
+  return html`<${Sheet} title="Repos" onClose=${onClose} footer=${html`<button class="btn" onClick=${onClose}>Close</button>`}>
+    <label>Add a repo (owner/name)</label>
+    <div style="display:flex;gap:8px">
+      <input placeholder="owner/name" value=${manual} onInput=${(e) => setManual(e.target.value)} onKeyDown=${(e) => { if (e.key === "Enter") add(manual.trim()); }}/>
+      <button class="btn primary" disabled=${busy} onClick=${() => add(manual.trim())}>Add</button>
+    </div>
+    ${(repos || []).length ? html`<div class="sec">Watching</div>${repos.map((r) => html`<div key=${r} style="display:flex;align-items:center;gap:8px;margin:5px 2px">
+      <span style="flex:1">${r}</span><button class="btn danger" disabled=${busy} onClick=${() => remove(r)} aria-label="Remove"><${Icon} name="trash" size=${15}/></button></div>`)}` : null}
+    <div class="sec">Your GitHub repos</div>
+    ${avail === null ? html`<div class="muted">Loading…</div>`
+      : avail.length ? avail.map((r) => html`<div key=${r.full_name} style="display:flex;align-items:center;gap:8px;margin:5px 2px">
+          <span style="flex:1">${r.full_name}</span><button class="btn" disabled=${busy} onClick=${() => add(r.full_name)}>Add</button></div>`)
+      : html`<div class="muted" style="font-size:12px">None to list yet — set a GitHub token (Settings → credentials) or type a repo above.</div>`}
+  <//>`;
+}
+
+// ---------- per-user credentials (write-only, encrypted server-side) ----------
+const CRED_FIELDS = [
+  { key: "claude_token", label: "Claude subscription token", hint: "CLAUDE_CODE_OAUTH_TOKEN — runs the Claude roles on your plan" },
+  { key: "github_user_token", label: "GitHub token (acts as you)", hint: "comments/issues authored under your account" },
+  { key: "github_bot_token", label: "GitHub bot token", hint: "the agency's commits + pull requests" },
+];
+function Credentials({ secretKeys, reload }) {
+  return html`<div class="sec">Your credentials</div>
+    <div class="muted" style="font-size:12px;margin-bottom:4px">Stored encrypted (AES-256-GCM). The agency uses them to run on your behalf. Write-only — never shown back.</div>
+    ${CRED_FIELDS.map((f) => html`<${SecretField} key=${f.key} field=${f} isSet=${secretKeys.includes(f.key)} reload=${reload}/>`)}
+    <div class="muted" style="font-size:12px;margin-top:6px">Other LLM providers (GLM, DeepSeek…) are managed in <a href="/classic">models</a> for now.</div>`;
+}
+function SecretField({ field, isSet, reload }) {
+  const [v, setV] = useState("");
+  function save() { if (!v) { toast("Enter a value"); return; } api("/user-secret", { key: field.key, value: v }).then(() => { toast("Saved"); setV(""); reload(); }).catch(() => toast("Couldn’t save")); }
+  function clear() { api("/user-secret", { key: field.key, value: "" }).then(() => { toast("Cleared"); reload(); }); }
+  return html`<label>${field.label} ${isSet ? html`<span class="statuschip s-ready"><${Icon} name="check" size=${12}/> set</span>` : null}</label>
+    <div class="muted" style="font-size:11px;margin:0 2px 4px">${field.hint}</div>
+    <div style="display:flex;gap:8px">
+      <input type="password" autocomplete="off" placeholder=${isSet ? "•••••• saved — type to replace" : "paste token"} value=${v} onInput=${(e) => setV(e.target.value)}/>
+      <button class="btn" onClick=${save}>Save</button>
+      ${isSet ? html`<button class="btn danger" onClick=${clear} aria-label="Clear"><${Icon} name="trash" size=${15}/></button>` : null}
+    </div>`;
+}
+function Admin({ users, webhookSecretSet, reload }) {
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState("member");
+  const [link, setLink] = useState("");
+  const [wh, setWh] = useState("");
+  function invite() { api("/invite-create", { email: email || null, role }).then((d) => { setLink(d.url || ""); setEmail(""); toast("Invite link created"); reload(); }).catch(() => toast("Couldn’t create invite")); }
+  function saveWh() { api("/settings", { webhookSecret: wh }).then(() => { toast("Webhook secret saved"); setWh(""); reload(); }).catch(() => toast("Couldn’t save")); }
+  return html`<div class="sec">Team (admin)</div>
+    ${users.map((u) => html`<div key=${u.id} style="display:flex;gap:8px;align-items:center;margin:4px 2px"><span style="flex:1">${u.username}</span><span class="muted" style="font-size:12px">${u.role}</span></div>`)}
+    <label>Invite a teammate</label>
+    <div style="display:flex;gap:8px">
+      <input placeholder="email (optional)" value=${email} onInput=${(e) => setEmail(e.target.value)}/>
+      <select value=${role} onChange=${(e) => setRole(e.target.value)} style="width:auto"><option value="member">member</option><option value="admin">admin</option></select>
+      <button class="btn" onClick=${invite}>Create</button>
+    </div>
+    ${link ? html`<div class="cmdbox"><code>${link}</code><button class="btn" onClick=${() => { if (navigator.clipboard) navigator.clipboard.writeText(link); toast("Copied"); }}>Copy</button></div>` : null}
+    <label>GitHub webhook secret ${webhookSecretSet ? html`<span class="statuschip s-ready"><${Icon} name="check" size=${12}/> set</span>` : null}</label>
+    <div class="muted" style="font-size:11px;margin:0 2px 4px">Only if you use GitHub push webhooks. Stored encrypted; use the same value in the repo's webhook settings.</div>
+    <div style="display:flex;gap:8px">
+      <input type="password" autocomplete="off" placeholder=${webhookSecretSet ? "•••••• saved — type to replace" : "secret"} value=${wh} onInput=${(e) => setWh(e.target.value)}/>
+      <button class="btn" onClick=${saveWh}>Save</button>
+    </div>`;
 }
 
 // ---------- Sheet wrapper ----------

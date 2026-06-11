@@ -10,86 +10,29 @@ services:
     # container (pairs with the app's graceful drain). Raise if your builds run longer.
     stop_grace_period: 600s
     environment:
-      # Trigger style: "watch" polls; "webhook" reacts instantly (set up a GitHub webhook).
-      RUN_MODE: ${RUN_MODE:-watch}
-      POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-60}
-      # How many issues/PRs to work on in parallel.
-      AGENCY_CONCURRENCY: ${AGENCY_CONCURRENCY:-3}
-      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET:-}
-      # Public URL of this service (Coolify domain). Set it + the secret and webhook mode
-      # auto-registers the GitHub webhooks for you.
-      PUBLIC_URL: ${PUBLIC_URL:-}
-      # Password for the status dashboard (Basic Auth). Unset = open.
-      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:-}
+      # ── Backend bootstrap (must be here — read before the DB/auth exist) ──
+      MASTER_KEY: ${MASTER_KEY:-}              # openssl rand -hex 32 — encrypts all stored secrets
+                                              # + enables multi-user. (Unset = legacy Basic Auth.)
       PORT: 3000
+      DB_PATH: /app/data/agency.db            # SQLite on the mounted volume
+      RUN_MODE: ${RUN_MODE:-watch}            # watch (poll) | webhook | once
+      AGENCY_ENV: ${AGENCY_ENV:-production}   # "development" on staging → DEV badge
+                                              # (named AGENCY_ENV, not APP_ENV, to avoid Coolify's
+                                              # Laravel/Symfony build heuristic warning)
 
-      # --- GitHub (required) ---
-      # GITHUB_TOKEN = the BOT account's token (so comments/PRs are attributed to the bot).
-      GITHUB_TOKEN: ${GITHUB_TOKEN}
-      # ADMIN_GITHUB_TOKEN = your OWNER token; used only to auto-invite the bot as a
-      # collaborator on watched repos (the bot can't invite itself). Optional.
-      ADMIN_GITHUB_TOKEN: ${ADMIN_GITHUB_TOKEN:-}
-      GITHUB_OWNER: ${GITHUB_OWNER}
-      # Repos come from config/repos.txt; or override with a comma-separated list:
-      TARGET_REPOS: ${TARGET_REPOS:-}
-      TARGET_REPO: ${TARGET_REPO:-}
+      # ── Execution credentials — TEMPORARY ────────────────────────────────
+      # These are the last env vars. They move to per-user encrypted credentials
+      # (managed in the dashboard) once per-user execution lands; then this whole
+      # block disappears. Until then the agency runs under these global tokens.
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}                # bot account token
+      ADMIN_GITHUB_TOKEN: ${ADMIN_GITHUB_TOKEN:-}    # owner token (auto-invite the bot)
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}   # Claude subscription
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}              # or pay-as-you-go
 
-      # Trigger: mention (default, e.g. "@dev ...") | label | any
-      TRIGGER_MODE: ${TRIGGER_MODE:-mention}
-      HANDLES: ${HANDLES:-}
-      QUEUE_LABEL: ${QUEUE_LABEL:-agency:queue}
-      IGNORE_LABEL: ${IGNORE_LABEL:-agency:ignore}
-
-      # --- Agent brains: set ONE of these ---
-      # Subscription token from `claude setup-token`:
-      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
-      # ...or a pay-as-you-go API key:
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      # ...or point at another provider / router (GLM, DeepSeek, Gemini, OpenAI, Ollama) via an
-      # Anthropic-compatible endpoint or claude-code-router / LiteLLM. Then set per-role models
-      # to whatever that gateway serves. See COOLIFY.md "Other model providers".
-      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
-      ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN:-}
-
-      # Per-role model overrides (defaults: planner=opus 4.8, dev/arch/review=sonnet, tester=haiku)
-      PLANNER_MODEL: ${PLANNER_MODEL:-}
-      ARCHITECT_MODEL: ${ARCHITECT_MODEL:-}
-      DEVELOPER_MODEL: ${DEVELOPER_MODEL:-}
-      REVIEWER_MODEL: ${REVIEWER_MODEL:-}
-      TESTER_MODEL: ${TESTER_MODEL:-}
-      LIBRARIAN_MODEL: ${LIBRARIAN_MODEL:-}
-      AGENT_MODEL: ${AGENT_MODEL:-}
-
-      # Cost guardrails (per issue / per run; 0 disables)
-      MAX_ISSUE_COST_USD: ${MAX_ISSUE_COST_USD:-}
-      MAX_ISSUE_TURNS: ${MAX_ISSUE_TURNS:-}
-      MAX_TURNS_PER_RUN: ${MAX_TURNS_PER_RUN:-}
-      MAX_TOKENS_PER_RUN: ${MAX_TOKENS_PER_RUN:-}
-      # Skip the separate architect pass (planner already plans) — saves a full agent run
-      SKIP_ARCHITECT: ${SKIP_ARCHITECT:-}
-      # GitNexus code-intelligence: index each repo (no tokens) so agents query structure via
-      # MCP instead of reading many files. Big token saver on codebase research.
-      GITNEXUS: ${GITNEXUS:-}
-      GITNEXUS_INDEX_TIMEOUT_MS: ${GITNEXUS_INDEX_TIMEOUT_MS:-}
-      # Override the analyze command/flags if your gitnexus version differs (default: "analyze")
-      GITNEXUS_ANALYZE_ARGS: ${GITNEXUS_ANALYZE_ARGS:-}
-      # Self-evolving loop (librarian lessons -> playbook PRs against AGENCY_REPO)
-      SELF_IMPROVE: ${SELF_IMPROVE:-}
-      LESSONS_PR_THRESHOLD: ${LESSONS_PR_THRESHOLD:-}
-      AGENCY_REPO: ${AGENCY_REPO:-}
-      # Re-engagement window + dashboard "Open preview" link template
-      FOLLOWUP_WINDOW_DAYS: ${FOLLOWUP_WINDOW_DAYS:-}
-      PREVIEW_URL_TEMPLATE: ${PREVIEW_URL_TEMPLATE:-}
-      # Append [skip ci] to agency commits to save GitHub Actions minutes (set false to disable)
-      SKIP_CI: ${SKIP_CI:-}
-      # Auto-stop a dashboard "Run preview" dev server after this many idle minutes
-      PREVIEW_TTL_MIN: ${PREVIEW_TTL_MIN:-}
-      # Session token gauge + graceful deploys
-      SESSION_WINDOW_HOURS: ${SESSION_WINDOW_HOURS:-}
-      SESSION_TOKEN_BUDGET: ${SESSION_TOKEN_BUDGET:-}
-      GRACEFUL_SHUTDOWN_MS: ${GRACEFUL_SHUTDOWN_MS:-}
-      # SQLite memory lives on the mounted volume so it survives redeploys.
-      DB_PATH: /app/data/agency.db
+      # ── Everything else is in the dashboard (Settings → Operations) ──────
+      # Admin account → first-run setup screen. GitHub owner, repos, trigger/labels,
+      # concurrency, poll interval, budgets, GitNexus, self-improve, follow-up window,
+      # preview, models, session budget, graceful-shutdown — all stored in the DB.
     volumes:
       - agency-data:/app/data
 

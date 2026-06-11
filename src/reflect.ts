@@ -24,6 +24,7 @@ import {
 } from "./store.js";
 import { setActive, clearActive } from "./activity.js";
 import { dispatch } from "./pool.js";
+import { sNum } from "./settings.js";
 
 /** Parse the librarian's reply: "LESSONS:\n- ..." or "NOTHING". Exported for tests. */
 export function parseLessons(text: string): string[] {
@@ -66,10 +67,7 @@ export async function runReflection(
   }
 }
 
-const lessonsPrThreshold = (): number => {
-  const v = Number(process.env.LESSONS_PR_THRESHOLD?.trim());
-  return Number.isFinite(v) && v > 0 ? v : 8;
-};
+const lessonsPrThreshold = (): number => sNum("lessons_pr_threshold", "LESSONS_PR_THRESHOLD", 5);
 
 let improving = false;
 

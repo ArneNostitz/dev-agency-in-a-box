@@ -10,6 +10,7 @@ import { pushActivity } from "../activity.js";
 import { recentLessons, recordTokens, getProviders, getRoleModels, setSession } from "../store.js";
 import { loadBudget } from "../budget.js";
 import { gitnexusWiring, GITNEXUS_PROMPT } from "../gitnexus.js";
+import { claudeToken, ghBotToken } from "../creds.js";
 
 /**
  * Per-role model routing. If this role is assigned a provider model in the dashboard, return
@@ -135,6 +136,23 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
   // Per-role provider routing (keeps Claude roles on your subscription; others go to e.g. GLM).
   const route = input.model ? null : resolveRoute(role);
   const model = input.model ?? route?.model ?? modelFor(def);
+  // Build the agent subprocess env: inject the dashboard-stored Claude token (so the SDK
+  // authenticates without CLAUDE_CODE_OAUTH_TOKEN in the container env) and the GitHub bot token
+  // (so the agent's own `git commit && git push` authenticate via gh's credential helper).
+  const ct = claudeToken();
+  const bot = ghBotToken();
+  let runEnv: Record<string, string> | undefined = route?.env;
+  if (!route && (ct || bot)) {
+    runEnv = {};
+    for (const [k, v] of Object.entries(process.env)) if (typeof v === "string") runEnv[k] = v;
+  }
+  if (runEnv) {
+    if (ct && !route) runEnv.CLAUDE_CODE_OAUTH_TOKEN = ct;
+    if (bot) {
+      runEnv.GH_TOKEN = bot;
+      runEnv.GITHUB_TOKEN = bot;
+    }
+  }
   const budget = loadBudget();
   // Per-role cap, never exceeding the global ceiling. Keeps Opus plans from ballooning.
   const maxTurns = Math.min(def.maxTurns || budget.maxTurnsPerRun, budget.maxTurnsPerRun);
@@ -167,7 +185,7 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
           model,
           allowedTools: [...def.tools, ...(gn?.tools ?? [])],
           ...(gn ? { mcpServers: gn.servers } : {}),
-          ...(route ? { env: route.env } : {}),
+          ...(runEnv ? { env: runEnv } : {}),
           ...(resumeId ? { resume: resumeId } : {}),
           // Fully autonomous. Requires the container to run as a NON-root user (Claude Code
           // refuses --dangerously-skip-permissions as root) — see Dockerfile `USER node`.
