@@ -23,14 +23,32 @@ button{width:100%;margin-top:18px;font-size:15px;font-weight:560;border:none;bac
 </form></body></html>`;
 }
 
-export function renderLogin(error?: string): string {
+export function renderLogin(error?: string, notice?: string): string {
   return page(
     "Sign in · Dev Agency",
     `<label>Username</label><input name="username" autocomplete="username" autofocus required>
      <label>Password</label><input name="password" type="password" autocomplete="current-password" required>
      <button type="submit">Sign in</button>
-     ${error ? `<div class="err">${error}</div>` : ""}`,
+     ${notice ? `<div class="muted" style="margin-top:14px;text-align:center;color:#3ddc97">${notice}</div>` : ""}
+     ${error ? `<div class="err">${error}</div>` : ""}
+     <div class="muted" style="margin-top:16px;text-align:center"><a href="/forgot" style="color:#9aa1ab">Forgot password?</a></div>`,
     "/login",
+  );
+}
+
+/** Self-service reset using the server's MASTER_KEY as the recovery secret (no email needed). */
+export function renderForgot(error?: string): string {
+  return page(
+    "Reset password · Dev Agency",
+    `<div class="muted" style="text-align:left;margin:0 2px 2px">Reset your password using your server's recovery key.</div>
+     <label>Username</label><input name="username" autocomplete="username" autofocus required>
+     <label>Recovery key</label><input name="key" type="password" required placeholder="your server's MASTER_KEY">
+     <label>New password</label><input name="password" type="password" autocomplete="new-password" minlength="8" required>
+     <button type="submit">Reset password</button>
+     ${error ? `<div class="err">${error}</div>` : ""}
+     <div class="muted" style="margin-top:14px;font-size:12px">The recovery key is the <code>MASTER_KEY</code> set on the server (Coolify env). Only the operator has it.</div>
+     <div class="muted" style="margin-top:12px;text-align:center"><a href="/login" style="color:#9aa1ab">Back to sign in</a></div>`,
+    "/forgot",
   );
 }
 

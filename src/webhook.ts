@@ -21,12 +21,12 @@ import { mergeEpic, isEpic } from "./epics.js";
 import { renderDashboard, renderHistory } from "./dashboard.js";
 import { renderShell } from "./shell.js";
 import { addLabel, removeLabel } from "./github.js";
-import { authEnabled, userFromReq, setSessionCookie, clearSessionCookie, parseCookies, SESSION_COOKIE } from "./auth.js";
+import { authEnabled, userFromReq, setSessionCookie, clearSessionCookie, parseCookies, SESSION_COOKIE, verifyRecoveryKey } from "./auth.js";
 import { OPS_SETTINGS, opsSettingsValues } from "./settings.js";
 import { getSecretSetting, setSecretSetting } from "./store.js";
 import { ghBotToken, ghUserToken } from "./creds.js";
-import { renderLogin, renderInvite, renderSetup } from "./authpages.js";
-import { authenticate, createSession, revokeSession, getInvite, acceptInvite, createInvite, createUser, listUsers, listInvites, setUserSecret, listUserSecretKeys, countUsers, setUserPassword, type User } from "./store.js";
+import { renderLogin, renderInvite, renderSetup, renderForgot } from "./authpages.js";
+import { authenticate, createSession, revokeSession, getInvite, acceptInvite, createInvite, createUser, listUsers, listInvites, setUserSecret, listUserSecretKeys, countUsers, setUserPassword, getUserByName, type User } from "./store.js";
 import { subscribe, getActive } from "./activity.js";
 import { inFlightKeys } from "./pool.js";
 import { listRateLimited } from "./store.js";
@@ -173,6 +173,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         // First run: no accounts yet → force the in-browser admin setup screen.
         if (countUsers() === 0) return void res.writeHead(200, htmlHead).end(renderSetup());
         if (url === "/login") return void res.writeHead(200, htmlHead).end(renderLogin());
+        if (url === "/forgot") return void res.writeHead(200, htmlHead).end(renderForgot());
         if (url === "/logout") {
           const tok = parseCookies(req)[SESSION_COOKIE];
           if (tok) revokeSession(tok);
@@ -492,10 +493,21 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
     const path = (req.url ?? "").split("?")[0];
 
     // Auth forms (urlencoded, no auth required) — setup, login, accept-invite, logout.
-    if (authEnabled() && (path === "/setup" || path === "/login" || path === "/invite" || path === "/logout")) {
+    if (authEnabled() && (path === "/setup" || path === "/login" || path === "/invite" || path === "/logout" || path === "/forgot")) {
       const htmlHead = { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" };
       void readBody(req).then((body) => {
         const form = new URLSearchParams(body.toString("utf8"));
+        if (path === "/forgot") {
+          // Reset using the server's MASTER_KEY as the recovery secret (no email needed).
+          if (!verifyRecoveryKey(form.get("key") ?? "")) return void res.writeHead(200, htmlHead).end(renderForgot("Recovery key is incorrect."));
+          const u = getUserByName((form.get("username") ?? "").trim());
+          const np = form.get("password") ?? "";
+          if (!u) return void res.writeHead(200, htmlHead).end(renderForgot("No account with that username."));
+          if (np.length < 8) return void res.writeHead(200, htmlHead).end(renderForgot("Password must be at least 8 characters."));
+          setUserPassword(u.id, np);
+          setSessionCookie(req, res, createSession(u.id)); // log them straight in
+          return void res.writeHead(303, { location: "/" }).end();
+        }
         if (path === "/setup") {
           // First-run admin creation. Only valid while there are no users (prevents takeover).
           if (countUsers() > 0) return void res.writeHead(303, { location: "/login" }).end();
