@@ -53,7 +53,7 @@ export async function indexRepo(workdir: string, repo: string, log: (s: string) 
   const headFile = join(cache, "HEAD");
   // Keep GitNexus artifacts out of the developer's diff/commits.
   try {
-    appendFileSync(join(workdir, ".git", "info", "exclude"), "\n.gitnexus/\n.gnhome/\nAGENTS.md\nCLAUDE.md\n");
+    appendFileSync(join(workdir, ".git", "info", "exclude"), "\n.gitnexus/\n.gnhome/\n.gncache/\n.claude/\nAGENTS.md\nCLAUDE.md\n");
   } catch {
     /* ignore */
   }
