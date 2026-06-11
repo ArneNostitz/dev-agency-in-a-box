@@ -140,7 +140,10 @@ function parseRunMode(v: string | undefined): "once" | "watch" | "webhook" {
 }
 
 export function loadConfig(): Config {
-  const owner = required("GITHUB_OWNER");
+  // Not required at boot anymore: in multi-user mode these come from the dashboard (per-user),
+  // and even single-user should start the dashboard so you can configure it rather than
+  // crash-loop. We warn instead, and the scan loop simply no-ops until credentials + repos exist.
+  const owner = optional("GITHUB_OWNER", "");
   const targetRepos = loadRepos(owner);
   if (targetRepos.length === 0) {
     // Not fatal: repos added at runtime via /add-repo live in the SQLite watch list.
@@ -151,7 +154,7 @@ export function loadConfig(): Config {
 
   const cfg: Config = {
     anthropicApiKey: process.env.ANTHROPIC_API_KEY?.trim() || undefined,
-    githubToken: required("GITHUB_TOKEN"),
+    githubToken: optional("GITHUB_TOKEN", ""),
     owner,
     targetRepos,
     // Operational settings are DB-first (dashboard-managed) with the env var as a fallback.
@@ -191,7 +194,13 @@ export function loadConfig(): Config {
       `(trigger: ${triggerDesc})`,
   );
 
+  if (!cfg.owner || !cfg.githubToken) {
+    console.warn(
+      "[agency] GITHUB_OWNER/GITHUB_TOKEN not set — the dashboard will start, but the agency " +
+        "can't act on GitHub until they're configured (these move to per-user credentials).",
+    );
+  }
   // `gh` and `git` authenticate from GH_TOKEN; mirror the configured token into it.
-  process.env.GH_TOKEN = cfg.githubToken;
+  if (cfg.githubToken) process.env.GH_TOKEN = cfg.githubToken;
   return cfg;
 }
