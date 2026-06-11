@@ -473,9 +473,27 @@ function Settings({ data, theme, setTheme, onClose, setAuto, reload }) {
     <label class="ckline"><input type="checkbox" checked=${gitnexus} onChange=${(e) => setGitnexus(e.target.checked)}/> Use GitNexus code index</label>
     <label>Max tokens per run (0 = off)</label><input type="number" min="0" step="50000" value=${maxTok} onInput=${(e) => setMaxTok(e.target.value)}/>
     <label>Reviewer revise rounds before it asks you</label><input type="number" min="0" max="3" value=${revRounds} onInput=${(e) => setRevRounds(e.target.value)}/>
+    ${(!data.user || data.user.role === "admin") && data.opsMeta ? html`<${Operations} meta=${data.opsMeta} values=${data.ops || {}} reload=${reload}/>` : null}
     <div class="sec">Advanced</div>
     <a class="btn ghost" href="/classic" style="justify-content:flex-start"><${Icon} name="settings" size=${15}/> Models &amp; agents (classic editor)</a>
   <//>`;
+}
+function Operations({ meta, values, reload }) {
+  const [vals, setVals] = useState(() => Object.assign({}, values));
+  const set = (k, v) => setVals((o) => Object.assign({}, o, { [k]: v }));
+  function save() { api("/settings", { ops: vals }).then(() => { toast("Operations saved"); reload(); }).catch(() => toast("Couldn’t save")); }
+  return html`<div class="sec">Operations (advanced)</div>
+    <div class="muted" style="font-size:12px;margin-bottom:4px">Global agency settings, moved out of env. Applies on save (a few apply on next restart).</div>
+    ${meta.map((m) => html`<div key=${m.key}>
+      ${m.type === "bool"
+        ? html`<label class="ckline"><input type="checkbox" checked=${!!vals[m.key]} onChange=${(e) => set(m.key, e.target.checked)}/> ${m.label}</label>`
+        : html`<label>${m.label}</label>${m.type === "select"
+          ? html`<select value=${vals[m.key]} onChange=${(e) => set(m.key, e.target.value)}>${(m.options || []).map((o) => html`<option key=${o} value=${o}>${o}</option>`)}</select>`
+          : m.type === "num"
+          ? html`<input type="number" value=${vals[m.key]} onInput=${(e) => set(m.key, Number(e.target.value))}/>`
+          : html`<input value=${vals[m.key]} onInput=${(e) => set(m.key, e.target.value)}/>`}`}
+    </div>`)}
+    <button class="btn primary" style="margin-top:12px" onClick=${save}>Save operations</button>`;
 }
 
 // ---------- per-user credentials (write-only, encrypted server-side) ----------

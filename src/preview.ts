@@ -15,10 +15,11 @@ import { runRole } from "./agents/roleAgent.js";
 import { cloneRepo, commentOnIssue } from "./github.js";
 import { setActive, clearActive } from "./activity.js";
 import { recordRun } from "./store.js";
+import { sStr } from "./settings.js";
 
 /** Build a preview URL for a PR from PREVIEW_URL_TEMPLATE, or null if not configured. */
 export function previewUrlFor(repoFull: string, prNumber: number, branch: string): string | null {
-  const tmpl = process.env.PREVIEW_URL_TEMPLATE?.trim();
+  const tmpl = sStr("preview_url_template", "PREVIEW_URL_TEMPLATE", "");
   if (!tmpl || !prNumber) return null;
   const [owner, repo] = repoFull.includes("/") ? repoFull.split("/") : ["", repoFull];
   return tmpl

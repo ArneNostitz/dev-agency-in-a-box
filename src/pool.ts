@@ -4,7 +4,12 @@
  * same issue/PR is never worked twice concurrently). Concurrency is capped by
  * AGENCY_CONCURRENCY (default 3) to keep cost and rate-limits sane.
  */
-const MAX = Math.max(1, Number(process.env.AGENCY_CONCURRENCY ?? "3"));
+import { sNum } from "./settings.js";
+
+/** Concurrency cap, DB-first (dashboard) → AGENCY_CONCURRENCY env → 3. Read live each pump. */
+function cap(): number {
+  return Math.max(1, sNum("concurrency", "AGENCY_CONCURRENCY", 3));
+}
 
 let running = 0;
 let stopped = false;
@@ -18,7 +23,7 @@ export function stop(): void {
 }
 
 function pump(): void {
-  while (running < MAX && queue.length > 0) {
+  while (running < cap() && queue.length > 0) {
     const task = queue.shift()!;
     running++;
     task()
@@ -48,14 +53,14 @@ export function dispatch(key: string, fn: () => Promise<void>): void {
 }
 
 export function maxConcurrency(): number {
-  return MAX;
+  return cap();
 }
 /** Keys currently dispatched (running OR waiting for a slot) — for the "queued" UI. */
 export function inFlightKeys(): string[] {
   return [...inFlight];
 }
 export function poolStatus(): { running: number; queued: number; max: number } {
-  return { running, queued: queue.length, max: MAX };
+  return { running, queued: queue.length, max: cap() };
 }
 
 /** Resolves when the pool is fully drained (used by once-mode). */

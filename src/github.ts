@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import { writeFileSync, unlinkSync, appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { sBool } from "./settings.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -518,7 +519,7 @@ export async function cloneRepo(repo: string, dest: string): Promise<void> {
   // agency branch commits is redundant. A commit-msg hook appends [skip ci] to every commit
   // the agents make (push + PR runs are skipped); the squash-merge to main still runs CI via
   // the PR title. Opt out with SKIP_CI=false.
-  if (process.env.SKIP_CI?.trim().toLowerCase() !== "false") {
+  if (sBool("skip_ci", "SKIP_CI", true)) {
     try {
       const hook = join(dest, ".git", "hooks", "commit-msg");
       const script =

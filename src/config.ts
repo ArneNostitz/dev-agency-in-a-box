@@ -5,6 +5,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { sStr, sNum, sBool } from "./settings.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const projectRoot = join(here, ".."); // src/ -> project root
@@ -80,7 +81,7 @@ function loadHandles(): string[] {
       if (h && h !== "@") handles.add(h);
     }
   }
-  for (const h of (process.env.HANDLES ?? "").split(",")) {
+  for (const h of sStr("handles", "HANDLES", "").split(",")) {
     const n = norm(h);
     if (n && n !== "@") handles.add(n);
   }
@@ -153,19 +154,20 @@ export function loadConfig(): Config {
     githubToken: required("GITHUB_TOKEN"),
     owner,
     targetRepos,
-    triggerMode: parseTrigger(process.env.TRIGGER_MODE, bool("REQUIRE_LABEL", false)),
+    // Operational settings are DB-first (dashboard-managed) with the env var as a fallback.
+    triggerMode: parseTrigger(sStr("trigger_mode", "TRIGGER_MODE", ""), bool("REQUIRE_LABEL", false)),
     handles: loadHandles(),
-    queueLabel: optional("QUEUE_LABEL", "agency:queue"),
-    ignoreLabel: optional("IGNORE_LABEL", "agency:ignore"),
+    queueLabel: sStr("queue_label", "QUEUE_LABEL", "agency:queue"),
+    ignoreLabel: sStr("ignore_label", "IGNORE_LABEL", "agency:ignore"),
     model: process.env.AGENT_MODEL?.trim() || undefined,
     runMode: parseRunMode(process.env.RUN_MODE),
-    pollIntervalSeconds: Math.max(10, Number(optional("POLL_INTERVAL_SECONDS", "60")) || 60),
-    publicUrl: process.env.PUBLIC_URL?.trim() || undefined,
+    pollIntervalSeconds: Math.max(10, sNum("poll_interval_seconds", "POLL_INTERVAL_SECONDS", 60)),
+    publicUrl: sStr("public_url", "PUBLIC_URL", "") || undefined,
     webhookSecret: process.env.GITHUB_WEBHOOK_SECRET?.trim() || undefined,
     adminToken: process.env.ADMIN_GITHUB_TOKEN?.trim() || undefined,
     dashboardPassword: process.env.DASHBOARD_PASSWORD?.trim() || undefined,
-    agencyRepo: resolveRepo(optional("AGENCY_REPO", "dev-agency"), owner),
-    selfImprove: bool("SELF_IMPROVE", true),
+    agencyRepo: resolveRepo(sStr("agency_repo", "AGENCY_REPO", "dev-agency"), owner),
+    selfImprove: sBool("self_improve", "SELF_IMPROVE", true),
   };
 
   if (cfg.anthropicApiKey) {

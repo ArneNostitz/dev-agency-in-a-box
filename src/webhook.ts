@@ -22,6 +22,7 @@ import { renderDashboard, renderHistory } from "./dashboard.js";
 import { renderShell } from "./shell.js";
 import { addLabel, removeLabel } from "./github.js";
 import { authEnabled, userFromReq, setSessionCookie, clearSessionCookie, parseCookies, SESSION_COOKIE } from "./auth.js";
+import { OPS_SETTINGS, opsSettingsValues } from "./settings.js";
 import { renderLogin, renderInvite } from "./authpages.js";
 import { authenticate, createSession, revokeSession, getInvite, acceptInvite, createInvite, createUser, listUsers, listInvites, setUserSecret, listUserSecretKeys, type User } from "./store.js";
 import { subscribe, getActive } from "./activity.js";
@@ -295,6 +296,8 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
                 anchored: Boolean(Date.parse(getSetting("window_anchor") ?? "")),
                 byModel: tokensByModelSince(win.startIso),
               },
+              ops: opsSettingsValues(),
+              opsMeta: OPS_SETTINGS,
               config: {
                 skipArchitect: (getSetting("skip_architect") ?? "") || (process.env.SKIP_ARCHITECT?.trim().toLowerCase() === "false" ? "off" : "on"),
                 gitnexus: (getSetting("gitnexus") ?? "") || (process.env.GITNEXUS?.trim().toLowerCase() === "true" ? "on" : "off"),
@@ -523,7 +526,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         return;
       }
       void readBody(req).then(async (body) => {
-        let p: { repo?: string; number?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; dataUrl?: string; name?: string; providers?: Provider[]; roleModels?: Record<string, { providerId: string; model: string }>; kind?: string; value?: string; skipArchitect?: string; gitnexus?: string; maxTokensPerRun?: number; maxReviseRounds?: number; start?: boolean; email?: string; key?: string } = {};
+        let p: { repo?: string; number?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; dataUrl?: string; name?: string; providers?: Provider[]; roleModels?: Record<string, { providerId: string; model: string }>; kind?: string; value?: string; skipArchitect?: string; gitnexus?: string; maxTokensPerRun?: number; maxReviseRounds?: number; start?: boolean; email?: string; key?: string; ops?: Record<string, string | number | boolean> } = {};
         try {
           p = JSON.parse(body.toString("utf8"));
         } catch {
@@ -579,6 +582,12 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           if (p.gitnexus === "on" || p.gitnexus === "off") setSetting("gitnexus", p.gitnexus);
           if (p.maxTokensPerRun !== undefined && p.maxTokensPerRun >= 0) setSetting("max_tokens_per_run", String(Math.round(p.maxTokensPerRun)));
           if (p.maxReviseRounds !== undefined && p.maxReviseRounds >= 0) setSetting("max_revise_rounds", String(Math.round(p.maxReviseRounds)));
+          // Operations panel (global, admin-only when multi-user is on).
+          if (p.ops && typeof p.ops === "object" && (!authEnabled() || actor?.role === "admin")) {
+            for (const [k, v] of Object.entries(p.ops)) {
+              if (OPS_SETTINGS.some((s) => s.key === k)) setSetting(k, typeof v === "boolean" ? (v ? "on" : "off") : String(v));
+            }
+          }
           return ok();
         }
         if (path === "/agent-save") {

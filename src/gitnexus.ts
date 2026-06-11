@@ -18,6 +18,7 @@ import { promisify } from "node:util";
 import { existsSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { getSetting } from "./store.js";
+import { sStr, sNum } from "./settings.js";
 
 const exec = promisify(execFile);
 
@@ -40,12 +41,11 @@ export async function indexRepo(workdir: string, log: (s: string) => void = () =
     log("🧭 indexing codebase with GitNexus (no tokens)…");
     // Flags vary by gitnexus version (e.g. some lack --skip-embeddings). Plain `analyze` always
     // works; override the args with GITNEXUS_ANALYZE_ARGS (space-separated) for your version.
-    const args = process.env.GITNEXUS_ANALYZE_ARGS?.trim()
-      ? process.env.GITNEXUS_ANALYZE_ARGS.trim().split(/\s+/)
-      : ["analyze"];
+    const argStr = sStr("gitnexus_analyze_args", "GITNEXUS_ANALYZE_ARGS", "");
+    const args = argStr ? argStr.split(/\s+/) : ["analyze"];
     await exec("gitnexus", args, {
       cwd: workdir,
-      timeout: Number(process.env.GITNEXUS_INDEX_TIMEOUT_MS?.trim()) || 300_000,
+      timeout: sNum("gitnexus_index_timeout_ms", "GITNEXUS_INDEX_TIMEOUT_MS", 300_000),
       maxBuffer: 16 * 1024 * 1024,
       env: { ...process.env, GITNEXUS_SKIP_OPTIONAL_GRAMMARS: "1" },
     });

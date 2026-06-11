@@ -25,8 +25,11 @@ export interface BudgetLimits {
 // Dashboard setting wins over env var wins over the built-in default (so it's tunable live).
 const num = (name: string, fallback: number, settingKey?: string): number => {
   if (settingKey) {
-    const s = Number(getSetting(settingKey));
-    if (Number.isFinite(s) && s >= 0) return s;
+    const raw = getSetting(settingKey);
+    if (raw != null && raw !== "") {
+      const s = Number(raw);
+      if (Number.isFinite(s) && s >= 0) return s;
+    }
   }
   const v = Number(process.env[name]?.trim());
   return Number.isFinite(v) && v >= 0 ? v : fallback;
@@ -34,9 +37,9 @@ const num = (name: string, fallback: number, settingKey?: string): number => {
 
 export function loadBudget(): BudgetLimits {
   return {
-    maxIssueCostUsd: num("MAX_ISSUE_COST_USD", 15),
-    maxIssueTurns: num("MAX_ISSUE_TURNS", 800),
-    maxTurnsPerRun: num("MAX_TURNS_PER_RUN", 250),
+    maxIssueCostUsd: num("MAX_ISSUE_COST_USD", 15, "max_issue_cost_usd"),
+    maxIssueTurns: num("MAX_ISSUE_TURNS", 800, "max_issue_turns"),
+    maxTurnsPerRun: num("MAX_TURNS_PER_RUN", 250, "max_turns_per_run"),
     maxTokensPerRun: num("MAX_TOKENS_PER_RUN", 600_000, "max_tokens_per_run"),
   };
 }

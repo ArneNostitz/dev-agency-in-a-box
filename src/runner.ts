@@ -41,6 +41,7 @@ import {
   type Issue,
 } from "./github.js";
 import { seedAdmin } from "./auth.js";
+import { sNum } from "./settings.js";
 import { decideThreadAction } from "./route.js";
 import { reconcileEpics } from "./epics.js";
 import { indexRepo } from "./gitnexus.js";
@@ -132,8 +133,8 @@ async function maybeParkRateLimited(repo: string, number: number, msg: string, i
   console.log(`[agency] rate-limited ${repo} #${number}; auto-resume after ${new Date(resetAt).toISOString()}`);
   return true;
 }
-/** Don't re-engage closed threads older than this (keeps the scan cheap). */
-const FOLLOWUP_WINDOW_DAYS = Number(process.env.FOLLOWUP_WINDOW_DAYS?.trim()) || 21;
+/** Don't re-engage closed threads older than this (keeps the scan cheap). DB-first → env → 21. */
+const followupWindowDays = (): number => sNum("followup_window_days", "FOLLOWUP_WINDOW_DAYS", 21);
 /** An in-progress issue with no live run, idle this long, is treated as an orphan. */
 const ORPHAN_GRACE_MS = (Number(process.env.ORPHAN_GRACE_MIN?.trim()) || 12) * 60_000;
 const LOCK_PATH = join(process.cwd(), ".agency.lock");
@@ -504,7 +505,7 @@ export async function forceApprove(cfg: Config, repo: string, number: number): P
 // ---- scan + dispatch ----
 
 const recentEnough = (iso: string): boolean =>
-  !iso || Date.now() - new Date(iso).getTime() <= FOLLOWUP_WINDOW_DAYS * 86400_000;
+  !iso || Date.now() - new Date(iso).getTime() <= followupWindowDays() * 86400_000;
 
 /** Scan one repo and dispatch all eligible work to the pool (deduped by key). */
 async function scanRepo(cfg: Config, repo: string): Promise<void> {
