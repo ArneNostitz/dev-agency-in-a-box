@@ -423,23 +423,52 @@ function Detail({ issue, activity, act, isDesktop, onClose, onOpenIssue }) {
   const bz = (a) => act.isBusy(a, repo, number);
   const tico = (a, name) => bz(a) ? html`<${Spinner} size=${18}/>` : html`<${Icon} name=${name}/>`;
   if (!done) {
-    if (st === "planned" || !st) tb.push(html`<button class=${"tbtn green" + (bz("start") ? " busy" : "")} disabled=${bz("start")} data-tip="Start" onClick=${() => act.start(repo, number).then(onClose)}>${tico("start", "play")}${lbl("Start")}</button>`);
-    if (st === "agency:awaiting-approval") tb.push(html`<button class=${"tbtn primary" + (bz("approve") ? " busy" : "")} disabled=${bz("approve")} data-tip="Approve & build" onClick=${() => act.approve(repo, number).then(onClose)}>${tico("approve", "check")}${lbl("Approve")}</button>`);
-    if (issue.pr_number && (needsFix || conflict)) tb.push(html`<button class=${"tbtn primary" + (bz("fix") ? " busy" : "")} disabled=${bz("fix")} data-tip=${conflict ? "Resolve conflicts" : "Fix the review"} onClick=${() => act.fix(repo, number).then(onClose)}>${tico("fix", "wrench")}${lbl(conflict ? "Resolve" : "Fix")}</button>`);
-    const working = issue.active || issue.queued || st === "agency:in-progress" || st === "agency:rate-limited";
+    // Decide actions from FACTS, not the (possibly stale) state label:
+    //  • running  — something is actually executing right now (live registry), so the only
+    //               meaningful action is Stop. A restart can leave the label "in-progress" while
+    //               nothing runs — that must NOT show Stop.
+    //  • hasPr    — a PR exists → the goal is Merge (or Fix/Resolve if blocked). Never Create PR/Close.
+    //  • approved — reviewer approved but no PR yet → Create PR (token-free).
+    const running = !!(issue.active || issue.queued);
+    const hasPr = !!issue.pr_number;
     const parked = !st || st === "planned" || st === "agency:planned";
-    if (working) tb.push(html`<button class=${"tbtn warn" + (bz("stop") ? " busy" : "")} disabled=${bz("stop")} data-tip="Stop all AI runs & move to Planned" onClick=${() => act.stop(repo, number)}>${tico("stop", "stop")}${lbl(bz("stop") ? "Stopping…" : "Stop")}</button>`);
-    else if (!parked) tb.push(html`<button class=${"tbtn" + (bz("stop") ? " busy" : "")} disabled=${bz("stop")} data-tip="Move to Planned (park it — no AI until you start it)" onClick=${() => act.stop(repo, number).then(onClose)}>${tico("stop", "planned")}${lbl(bz("stop") ? "Moving…" : "To Planned")}</button>`);
-    tb.push(html`<button class=${"tbtn" + (bz("resume") ? " busy" : "")} disabled=${bz("resume")} data-tip="Resume" onClick=${() => act.resume(repo, number)}>${tico("resume", "refresh")}${lbl(bz("resume") ? "Resuming…" : "Resume")}</button>`);
-    // Reviewer approved but no PR yet → one-click, token-free PR open from the pushed branch.
-    if (review === "approved" && !issue.pr_number) tb.push(html`<button class=${"tbtn green" + (bz("createPr") ? " busy" : "")} disabled=${bz("createPr")} data-tip="Open a pull request from the approved branch (no AI / no tokens)" onClick=${() => act.createPr(repo, number)}>${tico("createPr", "pr")}${lbl(bz("createPr") ? "Opening PR…" : "Create PR")}</button>`);
-    if (issue.pr_number && !conflict) { const ma = armed === "merge", mb = bz("merge"); tb.push(html`<button class=${"tbtn green" + (ma ? " armed" : "") + (mb ? " busy" : "")} disabled=${mb} data-tip=${ma ? "Tap again to merge" : needsFix ? "Merge anyway" : "Merge"} onClick=${() => confirmAct("merge", () => act.merge(repo, number).then(onClose))}>${mb ? html`<${Spinner} size=${18}/>` : html`<${Icon} name="merge"/>`}${(isDesktop || ma) ? html`<span class="tlabel">${mb ? "Merging…" : ma ? "Confirm merge" : needsFix ? "Merge anyway" : "Merge"}</span>` : null}</button>`); }
-    // Close (no PR to merge): master/epic issues whose work is done, or planning issues.
-    if (!issue.pr_number && !parked) {
-      const ca = armed === "close", cb = bz("close");
-      const epicAllDone = issue.epic && issue.epic.done >= issue.epic.total;
-      const clabel = ca ? "Confirm close" : cb ? "Closing…" : issue.epic ? (epicAllDone ? "Complete" : "Close epic") : "Close";
-      tb.push(html`<button class=${"tbtn green" + (ca ? " armed" : "") + (cb ? " busy" : "")} disabled=${cb} data-tip=${ca ? "Tap again to close" : "Close this issue (mark done)"} onClick=${() => confirmAct("close", () => act.close(repo, number).then(onClose))}>${cb ? html`<${Spinner} size=${18}/>` : html`<${Icon} name="check"/>`}${(isDesktop || ca) ? html`<span class="tlabel">${clabel}</span>` : null}</button>`);
+    const awaiting = st === "agency:awaiting-approval";
+    const approved = review === "approved";
+
+    const bStop = () => html`<button class=${"tbtn warn" + (bz("stop") ? " busy" : "")} disabled=${bz("stop")} data-tip="Stop the running agent & move to Planned" onClick=${() => act.stop(repo, number)}>${tico("stop", "stop")}${lbl(bz("stop") ? "Stopping…" : "Stop")}</button>`;
+    const bToPlanned = () => html`<button class=${"tbtn" + (bz("stop") ? " busy" : "")} disabled=${bz("stop")} data-tip="Move to Planned (park it — no AI until you start it)" onClick=${() => act.stop(repo, number).then(onClose)}>${tico("stop", "planned")}${lbl(bz("stop") ? "Moving…" : "To Planned")}</button>`;
+    const bStart = () => html`<button class=${"tbtn green" + (bz("start") ? " busy" : "")} disabled=${bz("start")} data-tip="Start building this" onClick=${() => act.start(repo, number).then(onClose)}>${tico("start", "play")}${lbl("Start")}</button>`;
+    const bApprove = () => html`<button class=${"tbtn primary" + (bz("approve") ? " busy" : "")} disabled=${bz("approve")} data-tip="Approve the plan & build" onClick=${() => act.approve(repo, number).then(onClose)}>${tico("approve", "check")}${lbl("Approve")}</button>`;
+    const bResume = () => html`<button class=${"tbtn" + (bz("resume") ? " busy" : "")} disabled=${bz("resume")} data-tip="Re-run the agent on this issue" onClick=${() => act.resume(repo, number)}>${tico("resume", "refresh")}${lbl(bz("resume") ? "Resuming…" : "Resume")}</button>`;
+    const bFix = () => html`<button class=${"tbtn primary" + (bz("fix") ? " busy" : "")} disabled=${bz("fix")} data-tip=${conflict ? "Resolve merge conflicts" : "Address the review's requested changes"} onClick=${() => act.fix(repo, number).then(onClose)}>${tico("fix", "wrench")}${lbl(conflict ? "Resolve" : "Fix")}</button>`;
+    const bCreatePr = () => html`<button class=${"tbtn green" + (bz("createPr") ? " busy" : "")} disabled=${bz("createPr")} data-tip="Open a PR from the approved branch (no AI / no tokens)" onClick=${() => act.createPr(repo, number)}>${tico("createPr", "pr")}${lbl(bz("createPr") ? "Opening PR…" : "Create PR")}</button>`;
+    const bMerge = (anyway) => { const ma = armed === "merge", mb = bz("merge"); return html`<button class=${"tbtn green" + (ma ? " armed" : "") + (mb ? " busy" : "")} disabled=${mb} data-tip=${ma ? "Tap again to merge" : anyway ? "Merge despite requested changes" : "Merge the PR & close the issue"} onClick=${() => confirmAct("merge", () => act.merge(repo, number).then(onClose))}>${mb ? html`<${Spinner} size=${18}/>` : html`<${Icon} name="merge"/>`}${(isDesktop || ma) ? html`<span class="tlabel">${mb ? "Merging…" : ma ? "Confirm merge" : anyway ? "Merge anyway" : "Merge"}</span>` : null}</button>`; };
+    const bClose = (epic) => { const ca = armed === "close", cb = bz("close"); const epicAllDone = issue.epic && issue.epic.done >= issue.epic.total; const clabel = ca ? "Confirm" : cb ? "Closing…" : epic ? (epicAllDone ? "Complete" : "Close epic") : "Close"; return html`<button class=${"tbtn" + (epic ? " green" : "") + (ca ? " armed" : "") + (cb ? " busy" : "")} disabled=${cb} data-tip=${ca ? "Tap again to close" : epic ? "Merge any remaining sub-PRs & close this epic" : "Close this issue (mark it done, no PR)"} onClick=${() => confirmAct("close", () => act.close(repo, number).then(onClose))}>${cb ? html`<${Spinner} size=${18}/>` : html`<${Icon} name="check"/>`}${(isDesktop || ca) ? html`<span class="tlabel">${clabel}</span>` : null}</button>`; };
+
+    if (running) {
+      tb.push(bStop()); // the only meaningful action while it's executing
+    } else if (hasPr) {
+      // A PR exists → merge it (or unblock it). Never Create PR / Close here.
+      if (conflict) tb.push(bFix());
+      else if (needsFix) { tb.push(bFix()); tb.push(bMerge(true)); }
+      else tb.push(bMerge(false));
+      tb.push(bResume());
+    } else if (parked) {
+      tb.push(bStart());
+    } else if (awaiting) {
+      tb.push(bApprove());
+      tb.push(bToPlanned());
+    } else if (issue.epic) {
+      tb.push(bClose(true)); // master issue → complete/close (merges remaining sub-PRs)
+      tb.push(bResume());
+    } else if (approved) {
+      tb.push(bCreatePr());
+      tb.push(bResume());
+    } else {
+      // ready / needs-attention / answered, no PR → re-engage, or close, or park
+      tb.push(bResume());
+      tb.push(bClose(false));
+      tb.push(bToPlanned());
     }
     tb.push(html`<span class="tbsep"></span>`);
     tb.push(autoToggle("resume"));
