@@ -28,6 +28,7 @@ import {
   getIssue,
   isNoOpComment,
   findPrForBranch,
+  ensureDraftPr,
   approvedByReaction,
   approveLastProposal,
   commentOnPr,
@@ -51,6 +52,7 @@ import { loadHandleRoleMap, roleForText, type RoleName } from "./agents/roles.js
 import { runPipeline, runPrFix, runFollowUp, runResumeBuild, runReviewFix } from "./pipeline.js";
 import {
   recordIssueState,
+  recordPr,
   getIssueRole,
   getAutofixCount,
   incAutofix,
@@ -531,6 +533,30 @@ export async function forceStop(_cfg: Config, repo: string, number: number): Pro
   console.log(`[agency] stop ${repo} #${number} (${aborted} aborted)`);
 }
 
+/**
+ * Dashboard "Create PR": deterministic, token-free (no agent). Opens a PR from the already-pushed
+ * `agency/issue-<n>` branch (or returns the existing one), and moves the issue to Ready. Use after
+ * the reviewer approved but no PR was opened.
+ */
+export async function forceCreatePr(_cfg: Config, repo: string, number: number): Promise<{ ok: boolean; url?: string; msg?: string }> {
+  const branch = `agency/issue-${number}`;
+  let pr = await findPrForBranch(repo, branch);
+  if (!pr) {
+    const issue = await getIssue(repo, number);
+    pr = await ensureDraftPr(repo, number, branch, issue?.title || `Work for #${number}`);
+  }
+  if (!pr) {
+    return { ok: false, msg: `No pushed \`${branch}\` branch to open a PR from yet — the agency hasn't produced any commits. Press Resume to build it.` };
+  }
+  for (const l of [IN_PROGRESS, NEEDS_ATTENTION, "🚧 blocked", ...AWAITING_LABELS]) await removeLabel(repo, number, l).catch(() => {});
+  await addLabel(repo, number, READY).catch(() => {});
+  recordIssueState(repo, number, { state: READY });
+  recordPr(repo, number, pr.number, pr.url);
+  await commentOnIssue(repo, number, `📎 Opened PR ${pr.url} from the dashboard (reviewer-approved). Press **Merge** when you're ready.`).catch(() => {});
+  console.log(`[agency] create-pr ${repo} #${number} -> ${pr.url}`);
+  return { ok: true, url: pr.url };
+}
+
 // ---- scan + dispatch ----
 
 const recentEnough = (iso: string): boolean =>
@@ -919,6 +945,7 @@ async function main(): Promise<void> {
       (repo, number) => forceFix(cfg, repo, number),
       (repo, number) => forceStart(cfg, repo, number),
       (repo, number) => forceStop(cfg, repo, number),
+      (repo, number) => forceCreatePr(cfg, repo, number),
     );
   } else {
     await backgroundInit(cfg);
