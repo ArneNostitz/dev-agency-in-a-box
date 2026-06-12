@@ -664,7 +664,11 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               );
             }
           }
-          void trigger("dashboard-comment");
+          // A dashboard reply should make the agent look at the issue again — immediately and
+          // regardless of trigger-mode/mention. forceResume re-engages on the existing branch; the
+          // worker pool dedupes if a run is already in flight, so this is safe to always call.
+          if (resume) void resume(repo, number);
+          else void trigger("dashboard-comment");
           return ok();
         }
         if (path === "/settings") {
