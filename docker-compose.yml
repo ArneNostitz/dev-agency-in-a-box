@@ -11,12 +11,21 @@ services:
     # Let in-flight agent runs finish on deploy/restart before the platform force-kills the
     # container (pairs with the app's graceful drain). Raise if your builds run longer.
     stop_grace_period: 600s
-    # Optional overrides — NONE are required. Uncomment only to pin a value:
-    # environment:
-    #   MASTER_KEY: ${MASTER_KEY:-}     # pin the secrets-encryption key (else auto-generated +
-    #                                   # persisted at /app/data/.masterkey — keep the volume!)
-    #   RUN_MODE: watch                 # watch (default) | webhook | once
-    #   AGENCY_ENV: development         # shows a DEV badge on staging
+    environment:
+      # Email (optional) — enables "email me a reset link" on the forgot-password page. Fill these
+      # in Coolify with the SAME SMTP credentials you gave Coolify's transactional email. Left blank
+      # they do nothing (password reset still works via the MASTER_KEY recovery key).
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}        # 465 = implicit TLS, 587/25 = STARTTLS
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}           # e.g. "Dev Agency <no-reply@yourdomain.com>"
+      SMTP_SECURE: ${SMTP_SECURE:-}       # true|false to override (defaults: true on 465, else false)
+      # Other optional overrides — uncomment only to pin a value:
+      # MASTER_KEY: ${MASTER_KEY:-}       # pin the secrets-encryption key (else auto-generated +
+      #                                   # persisted at /app/data/.masterkey — keep the volume!)
+      # RUN_MODE: ${RUN_MODE:-watch}      # watch (default) | webhook | once
+      # AGENCY_ENV: ${AGENCY_ENV:-}       # "development" shows a DEV badge on staging
     volumes:
       - agency-data:/app/data          # SQLite DB + the persisted MASTER_KEY live here — keep it!
 
