@@ -181,6 +181,13 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
 
   // Register this run so the dashboard "Stop" can abort it (and every other role run on the issue).
   const abortRun = registerRun(repo, issueNumber);
+  // Heartbeat: a single long command (e.g. a slow `pip install` / venv setup) prints nothing until
+  // it returns, so the live stream can look frozen/"stuck". Emit a line each minute so it's clearly
+  // still alive (and tells you how long it's been on the current step).
+  const runStartedAt = Date.now();
+  const heartbeat = setInterval(() => {
+    pushActivity(repo, issueNumber, role, "tool", `⏳ still working… (${Math.round((Date.now() - runStartedAt) / 60000)}m on this step)`);
+  }, 60_000);
   // For 401s, name the credential actually used + the likely fixes (this is the #1 support issue).
   const credVia = route ? `the provider model (${model})` : claudeToken() ? "your Claude subscription token" : anthropicApiKey() ? "your Anthropic API key" : "the container-env credential";
   const authAdvice = (msg: string): string =>
@@ -292,6 +299,7 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
       }
     }
   } finally {
+    clearInterval(heartbeat);
     abortRun.release();
   }
 
