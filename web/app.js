@@ -195,6 +195,7 @@ function App() {
     fix(repo, number) { return guard("fix", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/fix", { repo, number }).then(() => toast("Fixing the review")).catch(() => toast("Couldn’t fix")).then(load); }); },
     merge(repo, number) { return guard("merge", repo, number, () => api("/merge", { repo, number }).then((r) => { toast("Merged"); load(); return r; }).catch(() => toast("Couldn’t merge — conflicts?"))); },
     close(repo, number) { return guard("close", repo, number, () => { override(repo, number, { state: "merged" }); return api("/close", { repo, number }).then(() => { toast("Closed"); setOpenKey(null); }).catch((e) => toast((e && e.message) || "Couldn’t close")).then(load); }); },
+    createPr(repo, number) { return guard("createPr", repo, number, () => { override(repo, number, { state: "agency:ready" }); return api("/create-pr", { repo, number }).then((r) => toast(r && r.url ? "PR opened" : "PR opened")).catch((e) => toast((e && e.message) || "Couldn’t open PR")).then(load); }); },
     del(repo, number) { return guard("del", repo, number, () => { override(repo, number, { state: "done" }); return api("/delete", { repo, number }).then(() => { toast("Deleted"); setOpenKey(null); }).catch(() => toast("Couldn’t delete")).then(load); }); },
     runChecks(repo, number, title) { return guard("runChecks", repo, number, () => api("/run-checks", { repo, number, title }).then(() => toast("Running checks…")).catch(() => toast("Couldn’t run checks"))); },
     setAuto(kind, value, repo, number) { return guard("auto-" + kind, repo || "global", number || 0, () => { const b = { kind, value }; if (repo) b.repo = repo; if (number) b.number = number; return api("/auto", b).then(() => { toast("auto-" + kind + ": " + value); }).then(load); }); },
@@ -360,7 +361,15 @@ function Detail({ issue, activity, act, isDesktop, onClose, onOpenIssue }) {
   const armRef = useRef(null);
   const streamRef = useRef(null);
   const stickRef = useRef(true);
+  const chatRef = useRef(null);
+  const didScrollRef = useRef(false); // scroll the conversation to the newest message once, on open
   const repo = issue.repo, number = issue.number;
+  useEffect(() => {
+    if (thread && !didScrollRef.current && chatRef.current) {
+      didScrollRef.current = true;
+      requestAnimationFrame(() => { if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight; });
+    }
+  }, [thread]);
   function confirmAct(key, fn) {
     if (armed === key) { clearTimeout(armRef.current); setArmed(""); fn(); return; }
     setArmed(key); clearTimeout(armRef.current); armRef.current = setTimeout(() => setArmed(""), 3000);
@@ -397,11 +406,14 @@ function Detail({ issue, activity, act, isDesktop, onClose, onOpenIssue }) {
   // toolbar actions. Text labels show on desktop (and on a confirm-armed destructive button).
   const lbl = (t) => isDesktop ? html`<span class="tlabel">${t}</span>` : null;
   const au = issue.auto || {};
-  function cycleAuto(kind) { const cur = kind === "resume" ? au.resumeRaw : au.mergeRaw; const order = ["", "on", "off"]; const nx = order[(order.indexOf(cur || "") + 1) % 3]; act.setAuto(kind, nx === "" ? "inherit" : nx, repo, number); }
-  const autoPill = (kind) => {
-    const raw = kind === "resume" ? au.resumeRaw : au.mergeRaw, on = raw === "on", off = raw === "off";
-    const now = (kind === "resume" ? au.resume : au.merge) ? "on" : "off";
-    return html`<button class=${"tbtn auto " + (on ? "on" : off ? "off" : "")} data-tip=${"Auto-" + kind + " — set: " + (on ? "on" : off ? "off" : "inherit") + ", now: " + now} onClick=${() => cycleAuto(kind)}><${Icon} name=${kind === "resume" ? "refresh" : "merge"} size=${14}/>${lbl("auto " + kind)}</button>`;
+  // Obvious ON/OFF toggle switch. Reflects the effective state; clicking flips it (explicit on/off).
+  const autoToggle = (kind) => {
+    const on = kind === "resume" ? au.resume : au.merge;
+    const busy = act.isBusy("auto-" + kind, repo, number);
+    return html`<button class=${"autotog" + (on ? " on" : "") + (busy ? " busy" : "")} disabled=${busy} data-tip=${"Auto-" + kind + " is " + (on ? "ON" : "OFF") + " — click to turn " + (on ? "off" : "on")} onClick=${() => act.setAuto(kind, on ? "off" : "on", repo, number)}>
+      <span class="autotog-l"><${Icon} name=${kind === "resume" ? "refresh" : "merge"} size=${13}/> auto-${kind}</span>
+      <span class="autotog-sw"><span class="autotog-knob"></span></span>
+    </button>`;
   };
   const tb = [];
   tb.push(html`<a class="tbtn" data-tip="Open on GitHub" href=${ghUrl(repo, number)} target="_blank" rel="noopener"><${Icon} name="link"/>${lbl("GitHub")}</a>`);
@@ -419,7 +431,8 @@ function Detail({ issue, activity, act, isDesktop, onClose, onOpenIssue }) {
     if (working) tb.push(html`<button class=${"tbtn warn" + (bz("stop") ? " busy" : "")} disabled=${bz("stop")} data-tip="Stop all AI runs & move to Planned" onClick=${() => act.stop(repo, number)}>${tico("stop", "stop")}${lbl(bz("stop") ? "Stopping…" : "Stop")}</button>`);
     else if (!parked) tb.push(html`<button class=${"tbtn" + (bz("stop") ? " busy" : "")} disabled=${bz("stop")} data-tip="Move to Planned (park it — no AI until you start it)" onClick=${() => act.stop(repo, number).then(onClose)}>${tico("stop", "planned")}${lbl(bz("stop") ? "Moving…" : "To Planned")}</button>`);
     tb.push(html`<button class=${"tbtn" + (bz("resume") ? " busy" : "")} disabled=${bz("resume")} data-tip="Resume" onClick=${() => act.resume(repo, number)}>${tico("resume", "refresh")}${lbl(bz("resume") ? "Resuming…" : "Resume")}</button>`);
-    tb.push(html`<button class=${"tbtn" + (bz("runChecks") ? " busy" : "")} disabled=${bz("runChecks")} data-tip="Run checks" onClick=${() => act.runChecks(repo, number, issue.title)}>${tico("runChecks", "flask")}${lbl(bz("runChecks") ? "Starting…" : "Checks")}</button>`);
+    // Reviewer approved but no PR yet → one-click, token-free PR open from the pushed branch.
+    if (review === "approved" && !issue.pr_number) tb.push(html`<button class=${"tbtn green" + (bz("createPr") ? " busy" : "")} disabled=${bz("createPr")} data-tip="Open a pull request from the approved branch (no AI / no tokens)" onClick=${() => act.createPr(repo, number)}>${tico("createPr", "pr")}${lbl(bz("createPr") ? "Opening PR…" : "Create PR")}</button>`);
     if (issue.pr_number && !conflict) { const ma = armed === "merge", mb = bz("merge"); tb.push(html`<button class=${"tbtn green" + (ma ? " armed" : "") + (mb ? " busy" : "")} disabled=${mb} data-tip=${ma ? "Tap again to merge" : needsFix ? "Merge anyway" : "Merge"} onClick=${() => confirmAct("merge", () => act.merge(repo, number).then(onClose))}>${mb ? html`<${Spinner} size=${18}/>` : html`<${Icon} name="merge"/>`}${(isDesktop || ma) ? html`<span class="tlabel">${mb ? "Merging…" : ma ? "Confirm merge" : needsFix ? "Merge anyway" : "Merge"}</span>` : null}</button>`); }
     // Close (no PR to merge): master/epic issues whose work is done, or planning issues.
     if (!issue.pr_number && !parked) {
@@ -429,8 +442,8 @@ function Detail({ issue, activity, act, isDesktop, onClose, onOpenIssue }) {
       tb.push(html`<button class=${"tbtn green" + (ca ? " armed" : "") + (cb ? " busy" : "")} disabled=${cb} data-tip=${ca ? "Tap again to close" : "Close this issue (mark done)"} onClick=${() => confirmAct("close", () => act.close(repo, number).then(onClose))}>${cb ? html`<${Spinner} size=${18}/>` : html`<${Icon} name="check"/>`}${(isDesktop || ca) ? html`<span class="tlabel">${clabel}</span>` : null}</button>`);
     }
     tb.push(html`<span class="tbsep"></span>`);
-    tb.push(autoPill("resume"));
-    tb.push(autoPill("merge"));
+    tb.push(autoToggle("resume"));
+    tb.push(autoToggle("merge"));
   }
   const da = armed === "del", db = bz("del");
   tb.push(html`<span class="tbsep"></span>`);
@@ -444,7 +457,7 @@ function Detail({ issue, activity, act, isDesktop, onClose, onOpenIssue }) {
     <${RunApp} repo=${repo} number=${number} appInfo=${appInfo} issue=${issue} done=${done}/>
   </div>`;
 
-  const chatPane = html`<div class="dpane chat">
+  const chatPane = html`<div class="dpane chat" ref=${chatRef}>
     ${issue.epic ? html`<${EpicChecklist} epic=${issue.epic} repo=${repo} onOpen=${onOpenIssue} onClose=${() => act.close(repo, number).then(onClose)} closing=${act.isBusy("close", repo, number)}/>` : null}
     <div class="sec">Conversation</div>
     ${thread ? html`<div>

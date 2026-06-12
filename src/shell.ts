@@ -166,6 +166,15 @@ textarea{resize:vertical;min-height:64px}
 .tbtn.armed{background:var(--red);border-color:var(--red);color:#fff}
 .tbtn.green.armed{background:#b45309;border-color:#b45309;color:#fff}
 .tbsep{flex:0 0 auto;align-self:stretch;width:1px;margin:6px 3px;background:var(--line)}
+/* obvious ON/OFF toggle switch (auto-resume / auto-merge) */
+.autotog{flex:0 0 auto;display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);border-radius:9px;height:38px;padding:0 11px;cursor:pointer;font-size:13px;font-weight:560}
+.autotog-l{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.autotog-sw{position:relative;width:32px;height:18px;border-radius:999px;background:var(--line);transition:background .15s;flex:0 0 auto}
+.autotog-knob{position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25);transition:transform .15s}
+.autotog.on{border-color:var(--green);color:var(--green)}
+.autotog.on .autotog-sw{background:var(--green)}
+.autotog.on .autotog-knob{transform:translateX(14px)}
+.autotog.busy{opacity:.7;cursor:wait}
 .tbtn[data-tip]:hover::after{content:attr(data-tip);position:absolute;top:calc(100% + 6px);left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);font-size:11px;white-space:nowrap;padding:3px 7px;border-radius:6px;z-index:60}
 .dpanes{flex:1;display:flex;flex-direction:column;overflow:hidden}
 .dpane{overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 14px}
