@@ -15,6 +15,33 @@ import { isNoOpComment } from "../dist/github.js";
 import { renderEpicTracker, childStatus } from "../dist/epics.js";
 import { parseRateLimit, nextWindowReset, parseResetClock } from "../dist/ratelimit.js";
 import { pickWebDevScript, isTauriPackage, parseDevPort, parseTunnelUrl, buildLocalCommand } from "../dist/apprun.js";
+import { registerRun, stopRuns, hasActiveRun } from "../dist/abort.js";
+
+test("abort registry: registerRun tracks, stopRuns aborts + clears, release cleans up", () => {
+  const repo = "o/r", n = 42;
+  assert.equal(hasActiveRun(repo, n), false);
+  const a = registerRun(repo, n);
+  const b = registerRun(repo, n); // two concurrent role runs on the same issue
+  assert.equal(hasActiveRun(repo, n), true);
+  assert.equal(a.controller.signal.aborted, false);
+  const stopped = stopRuns(repo, n);
+  assert.equal(stopped, 2, "both runs aborted");
+  assert.equal(a.controller.signal.aborted, true);
+  assert.equal(b.controller.signal.aborted, true);
+  assert.equal(hasActiveRun(repo, n), false, "registry cleared after stop");
+  a.release(); b.release(); // releasing after stop is safe (no throw)
+  assert.equal(stopRuns(repo, n), 0, "nothing left to stop");
+});
+
+test("abort registry: a run releasing leaves others intact", () => {
+  const repo = "o/r2", n = 7;
+  const a = registerRun(repo, n);
+  const b = registerRun(repo, n);
+  a.release();
+  assert.equal(hasActiveRun(repo, n), true, "b still active");
+  assert.equal(stopRuns(repo, n), 1, "only b remains to abort");
+  assert.equal(b.controller.signal.aborted, true);
+});
 
 test("mentionsHandle matches whole handles only", () => {
   const H = ["@dev", "@agency"];

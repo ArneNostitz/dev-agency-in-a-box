@@ -755,6 +755,22 @@ export function getUserSecret(userId: number, key: string): string | null {
     return null;
   }
 }
+/**
+ * Health of a stored secret: "unset" (nothing saved), "ok" (decrypts), or "undecryptable" (a row
+ * exists but the MASTER_KEY can't decrypt it — usually the key changed since it was saved). The
+ * last case is the silent cause of 401s, so the dashboard surfaces it.
+ */
+export function getUserSecretStatus(userId: number, key: string): "unset" | "ok" | "undecryptable" {
+  const d = getDb();
+  if (!d) return "unset";
+  try {
+    const r = d.prepare(`SELECT value FROM user_secrets WHERE user_id = ? AND key = ?`).get(userId, key) as { value: string } | undefined;
+    if (!r || !r.value) return "unset";
+    return tryDecrypt(r.value) == null ? "undecryptable" : "ok";
+  } catch {
+    return "unset";
+  }
+}
 /** Which secret keys this user has set (names only — never the values). */
 export function listUserSecretKeys(userId: number): string[] {
   const d = getDb();
