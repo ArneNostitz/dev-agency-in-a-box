@@ -136,6 +136,7 @@ textarea{resize:vertical;min-height:64px}
 .row .btn{flex:1}
 
 /* detail */
+.dscrim{position:fixed;inset:0;z-index:44;background:transparent}
 .detail{position:fixed;inset:0;z-index:45;background:var(--bg);display:flex;flex-direction:column;transform:translateX(100%);transition:transform .22s ease}
 .detail.on{transform:translateX(0)}
 .dhead{position:sticky;top:0;background:var(--surface);border-bottom:1px solid var(--line);padding:calc(10px + var(--safe-t)) 12px 10px;display:flex;align-items:center;gap:10px}
