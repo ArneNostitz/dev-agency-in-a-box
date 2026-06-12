@@ -57,6 +57,17 @@ input,select,textarea{font-size:16px}
 .statusline{padding:6px 14px;color:var(--ink-2);font-size:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .dot{width:8px;height:8px;border-radius:50%;background:var(--green);display:inline-block;animation:pulse 1.4s infinite}
 @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(29,158,117,.5)}70%{box-shadow:0 0 0 7px rgba(29,158,117,0)}100%{box-shadow:0 0 0 0 rgba(29,158,117,0)}}
+.spin{animation:dvspin .7s linear infinite;transform-origin:center}
+@keyframes dvspin{to{transform:rotate(360deg)}}
+/* in-flight states: a busy control disables pointer + dims slightly so a click clearly registered */
+.tbtn:disabled,.cardbtn:disabled{cursor:default}
+.tbtn.busy{opacity:.85;cursor:wait}
+.cardbtn.busy{opacity:.8;cursor:wait}
+.card.busy{cursor:wait;opacity:.92}
+.card.busy:hover{box-shadow:var(--shadow)}
+/* secret-health banner (MASTER_KEY mismatch / undecryptable token) */
+.secbanner{margin:10px 12px 0;padding:10px 13px;border-radius:10px;border:1px solid var(--red);background:var(--red-weak);color:var(--red);font-size:13px;line-height:1.45}
+.secbanner b{font-weight:680}
 .gauge{display:inline-block;width:60px;height:6px;border-radius:3px;background:var(--line);overflow:hidden;vertical-align:middle}
 .gauge i{display:block;height:100%}
 
@@ -83,6 +94,10 @@ input,select,textarea{font-size:16px}
 .cardbtn{margin-left:auto;border:1px solid var(--line);background:var(--surface);color:var(--accent);border-radius:8px;padding:3px 10px;font-size:12px;font-weight:540;cursor:pointer;display:inline-flex;align-items:center;gap:4px}
 .cardbtn.play{color:var(--green);border-color:var(--green-weak);background:var(--green-weak)}
 .cardbtn.fix{color:var(--red);border-color:var(--red-weak);background:var(--red-weak)}
+.cardbtn.stop{color:var(--amber);border-color:var(--amber)}
+.testres{font-size:12px;margin:6px 2px 0;line-height:1.4}
+.testres.ok{color:var(--green)}
+.testres.bad{color:var(--red)}
 .empty{color:var(--ink-3);font-size:13px;padding:10px;text-align:center}
 
 /* mobile bottom column tabs */
@@ -134,6 +149,7 @@ textarea{resize:vertical;min-height:64px}
 .tbtn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 .tbtn.green{background:var(--green);border-color:var(--green);color:#fff}
 .tbtn.danger{color:var(--red);border-color:var(--red-weak)}
+.tbtn.warn{color:var(--amber);border-color:var(--amber)}
 .tbtn.auto.on{background:var(--green-weak);border-color:var(--green);color:var(--green)}
 .tbtn.auto.off{color:var(--ink-3);opacity:.6}
 .tbtn.armed{background:var(--red);border-color:var(--red);color:#fff}

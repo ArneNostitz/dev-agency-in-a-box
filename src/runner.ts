@@ -71,10 +71,12 @@ import {
   autoAttempts,
   bumpAutoAttempts,
   resetAutoAttempts,
+  setAuto,
 } from "./store.js";
 import { parseRateLimit, nextWindowReset } from "./ratelimit.js";
 import { startPreviewSweeper, killAllApps } from "./apprun.js";
 import { setActive, clearActive, getActive } from "./activity.js";
+import { stopRuns } from "./abort.js";
 import { dispatch, drain, stop as stopPool, poolStatus, inFlightKeys } from "./pool.js";
 import { loadBudget, overBudget, UNLIMITED_LABEL } from "./budget.js";
 import { maybeSelfImprove } from "./reflect.js";
@@ -503,6 +505,32 @@ export async function forceApprove(cfg: Config, repo: string, number: number): P
   dispatch(`${repo}#${number}`, () => processIssue(cfg, repo, issue));
 }
 
+/**
+ * Dashboard "Stop": abort any in-flight agent runs for the issue, turn off its auto-resume/merge,
+ * and park it back in Planned. The sweeper skips Planned, so nothing restarts it — no further AI
+ * interaction until the user presses ▶ again.
+ */
+export async function forceStop(_cfg: Config, repo: string, number: number): Promise<void> {
+  const aborted = stopRuns(repo, number); // abort the live SDK subprocess(es)
+  // Don't let auto-resume/auto-merge immediately pick it back up.
+  setAuto("resume", "off", repo, number);
+  setAuto("merge", "off", repo, number);
+  // Clear every live/working label and park in Planned.
+  for (const l of [IN_PROGRESS, READY, NEEDS_ATTENTION, RATE_LIMITED, "🚧 blocked", ...AWAITING_LABELS]) {
+    await removeLabel(repo, number, l).catch(() => {});
+  }
+  await addLabel(repo, number, "agency:planned").catch(() => {});
+  recordIssueState(repo, number, { state: "planned" });
+  clearRateLimited(repo, number);
+  clearActive(repo, number);
+  await commentOnIssue(
+    repo,
+    number,
+    `⏹ Stopped${aborted ? ` (${aborted} run${aborted > 1 ? "s" : ""} aborted)` : ""} — moved back to **Planned**. Press ▶ to start it again.`,
+  ).catch(() => {});
+  console.log(`[agency] stop ${repo} #${number} (${aborted} aborted)`);
+}
+
 // ---- scan + dispatch ----
 
 const recentEnough = (iso: string): boolean =>
@@ -890,6 +918,7 @@ async function main(): Promise<void> {
       (repo, number) => forceApprove(cfg, repo, number),
       (repo, number) => forceFix(cfg, repo, number),
       (repo, number) => forceStart(cfg, repo, number),
+      (repo, number) => forceStop(cfg, repo, number),
     );
   } else {
     await backgroundInit(cfg);

@@ -11,6 +11,7 @@ import { recentLessons, recordTokens, getProviders, getRoleModels, setSession } 
 import { loadBudget } from "../budget.js";
 import { gitnexusWiring, GITNEXUS_PROMPT } from "../gitnexus.js";
 import { claudeToken, anthropicApiKey, ghBotToken } from "../creds.js";
+import { registerRun } from "../abort.js";
 
 /**
  * Per-role model routing. If this role is assigned a provider model in the dashboard, return
@@ -178,6 +179,15 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
   console.log(`[agency] role:${role} ${repo}#${issueNumber} (model ${model}, ≤${maxTurns} turns)`);
   pushActivity(repo, issueNumber, role, "start", `started (${model}${input.resumeSessionId ? ", resuming" : ""})`);
 
+  // Register this run so the dashboard "Stop" can abort it (and every other role run on the issue).
+  const abortRun = registerRun(repo, issueNumber);
+  // For 401s, name the credential actually used + the likely fixes (this is the #1 support issue).
+  const credVia = route ? `the provider model (${model})` : claudeToken() ? "your Claude subscription token" : anthropicApiKey() ? "your Anthropic API key" : "the container-env credential";
+  const authAdvice = (msg: string): string =>
+    /401|authenticat|bearer|x-api-key|invalid[_ ]?(api[_ ]?)?key/i.test(msg)
+      ? ` — auth failed using ${credVia}. Re-check it in Settings (no spaces, correct type), and confirm MASTER_KEY hasn't changed since you saved it (a changed key makes stored tokens undecryptable, then it silently falls back to a stale env token).`
+      : "";
+
   const n = (u: Record<string, unknown>, k: string) => (typeof u[k] === "number" ? (u[k] as number) : 0);
   // Full usage incl. cache reads — for accurate cost/recordTokens.
   const sumUsage = (u: Record<string, unknown>): number =>
@@ -213,6 +223,7 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
           // refuses --dangerously-skip-permissions as root) — see Dockerfile `USER node`.
           permissionMode: "bypassPermissions",
           maxTurns,
+          abortController: abortRun.controller, // dashboard "Stop" aborts the SDK subprocess
           stderr: (data: string) => {
             stderrBuf += data;
           },
@@ -247,26 +258,41 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
     return { text, turns, costUsd, tokens, stopped };
   }
 
+  /** User pressed Stop: the SDK throws an AbortError — return cleanly, never retry. */
+  const wasAborted = (): boolean => abortRun.controller.signal.aborted;
+
   let r: { text: string; turns: number; costUsd: number; tokens: number; stopped: string };
   try {
-    r = await runQuery(input.resumeSessionId);
-  } catch (err) {
-    // Resume failed? fall back to a fresh run so a bad/missing session never wedges the issue.
-    if (input.resumeSessionId) {
-      console.warn(`[agency] role:${role} ${repo}#${issueNumber} resume failed — fresh: ${(err as Error).message.slice(0, 140)}`);
-      pushActivity(repo, issueNumber, role, "tool", "↻ couldn't resume the prior session — starting fresh");
-      try {
-        r = await runQuery(undefined);
-      } catch (err2) {
-        console.error(`[agency] role:${role} failed:`, (err2 as Error).message);
-        pushActivity(repo, issueNumber, role, "done", `❌ ERROR: ${(err2 as Error).message.slice(0, 400)}`);
-        throw err2;
+    try {
+      r = await runQuery(input.resumeSessionId);
+    } catch (err) {
+      if (wasAborted()) {
+        pushActivity(repo, issueNumber, role, "done", "⏹ stopped by user");
+        return { text: "", turns: 0, model, costUsd: 0 };
       }
-    } else {
-      console.error(`[agency] role:${role} failed:`, (err as Error).message);
-      pushActivity(repo, issueNumber, role, "done", `❌ ERROR: ${(err as Error).message.slice(0, 400)}`);
-      throw err;
+      // Resume failed? fall back to a fresh run so a bad/missing session never wedges the issue.
+      if (input.resumeSessionId) {
+        console.warn(`[agency] role:${role} ${repo}#${issueNumber} resume failed — fresh: ${(err as Error).message.slice(0, 140)}`);
+        pushActivity(repo, issueNumber, role, "tool", "↻ couldn't resume the prior session — starting fresh");
+        try {
+          r = await runQuery(undefined);
+        } catch (err2) {
+          if (wasAborted()) {
+            pushActivity(repo, issueNumber, role, "done", "⏹ stopped by user");
+            return { text: "", turns: 0, model, costUsd: 0 };
+          }
+          console.error(`[agency] role:${role} failed:`, (err2 as Error).message);
+          pushActivity(repo, issueNumber, role, "done", `❌ ERROR: ${(err2 as Error).message.slice(0, 400)}${authAdvice((err2 as Error).message)}`);
+          throw err2;
+        }
+      } else {
+        console.error(`[agency] role:${role} failed:`, (err as Error).message);
+        pushActivity(repo, issueNumber, role, "done", `❌ ERROR: ${(err as Error).message.slice(0, 400)}${authAdvice((err as Error).message)}`);
+        throw err;
+      }
     }
+  } finally {
+    abortRun.release();
   }
 
   const { text, turns, costUsd, tokens, stopped } = r;
@@ -282,4 +308,58 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
   );
   if (stopped) console.warn(`[agency] role:${role} ${repo}#${issueNumber} stopped — ${stopped}`);
   return { text, turns, model, costUsd };
+}
+
+/**
+ * Make a tiny real Agent SDK call with the resolved default Claude credential, so the dashboard can
+ * tell the user immediately whether their token actually authenticates — instead of discovering a
+ * 401 only on the first real run. Mirrors runRole's (no-route) env construction exactly.
+ */
+export async function testClaudeAuth(): Promise<{ ok: boolean; via: string; error?: string }> {
+  const ct = claudeToken();
+  const ak = ct ? "" : anthropicApiKey();
+  const via = ct ? "Claude subscription token" : ak ? "Anthropic API key" : "container-env credential";
+  if (!ct && !ak) return { ok: false, via, error: "No Claude credential is set — add a subscription token or API key first." };
+  const runEnv: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) if (typeof v === "string") runEnv[k] = v;
+  if (ct) {
+    runEnv.CLAUDE_CODE_OAUTH_TOKEN = ct;
+    delete runEnv.ANTHROPIC_API_KEY;
+    delete runEnv.ANTHROPIC_AUTH_TOKEN;
+    delete runEnv.ANTHROPIC_BASE_URL;
+  } else {
+    runEnv.ANTHROPIC_API_KEY = ak;
+    delete runEnv.CLAUDE_CODE_OAUTH_TOKEN;
+    delete runEnv.ANTHROPIC_AUTH_TOKEN;
+    delete runEnv.ANTHROPIC_BASE_URL;
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30_000);
+  let errText = "";
+  try {
+    for await (const message of query({
+      prompt: "Reply with exactly: ok",
+      options: {
+        model: "claude-haiku-4-5-20251001",
+        maxTurns: 1,
+        env: runEnv,
+        permissionMode: "bypassPermissions",
+        allowedTools: [],
+        abortController: controller,
+        settingSources: [],
+        stderr: () => {},
+      },
+    })) {
+      const m = message as { type?: string; is_error?: boolean; subtype?: string; result?: unknown };
+      if (m.type === "result" && (m.is_error || (typeof m.subtype === "string" && m.subtype.startsWith("error")))) {
+        errText = typeof m.result === "string" ? m.result : m.subtype || "error";
+      }
+    }
+  } catch (err) {
+    errText = (err as Error).message || String(err);
+  } finally {
+    clearTimeout(timer);
+  }
+  if (errText) return { ok: false, via, error: errText.slice(0, 300) };
+  return { ok: true, via };
 }

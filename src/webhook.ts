@@ -23,8 +23,10 @@ import { renderShell } from "./shell.js";
 import { addLabel, removeLabel } from "./github.js";
 import { authEnabled, userFromReq, setSessionCookie, clearSessionCookie, parseCookies, SESSION_COOKIE, verifyRecoveryKey } from "./auth.js";
 import { OPS_SETTINGS, opsSettingsValues } from "./settings.js";
-import { getSecretSetting, setSecretSetting } from "./store.js";
+import { getSecretSetting, setSecretSetting, getUserSecretStatus } from "./store.js";
+import { masterKeyConfigured } from "./crypto.js";
 import { ghBotToken, ghUserToken } from "./creds.js";
+import { testClaudeAuth } from "./agents/roleAgent.js";
 import { renderLogin, renderInvite, renderSetup, renderForgot } from "./authpages.js";
 import { authenticate, createSession, revokeSession, getInvite, acceptInvite, createInvite, createUser, listUsers, listInvites, setUserSecret, listUserSecretKeys, countUsers, setUserPassword, getUserByName, type User } from "./store.js";
 import { subscribe, getActive } from "./activity.js";
@@ -126,7 +128,7 @@ function serveStatic(pathname: string, res: ServerResponse): boolean {
   return true;
 }
 
-export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: Resume, approve?: Resume, fix?: Resume, start?: Resume): Promise<void> {
+export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: Resume, approve?: Resume, fix?: Resume, start?: Resume, stop?: Resume): Promise<void> {
   const port = Number(process.env.PORT?.trim() || "3000");
   // Webhook secret is read live (dashboard → env) so it can be set/rotated without a redeploy.
   const webhookSecret = (): string => getSecretSetting("github_webhook_secret") || process.env.GITHUB_WEBHOOK_SECRET?.trim() || "";
@@ -279,6 +281,15 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               user: sessionUser ? { id: sessionUser.id, username: sessionUser.username, role: sessionUser.role, email: sessionUser.email } : null,
               onboarded: sessionUser ? getSetting(`onboarded:${sessionUser.id}`) === "1" : true,
               secretKeys: sessionUser ? listUserSecretKeys(sessionUser.id) : [],
+              secretsHealth: sessionUser
+                ? {
+                    masterKey: masterKeyConfigured(),
+                    claude_token: getUserSecretStatus(sessionUser.id, "claude_token"),
+                    anthropic_api_key: getUserSecretStatus(sessionUser.id, "anthropic_api_key"),
+                    github_bot_token: getUserSecretStatus(sessionUser.id, "github_bot_token"),
+                    github_user_token: getUserSecretStatus(sessionUser.id, "github_user_token"),
+                  }
+                : null,
               users: sessionUser && sessionUser.role === "admin" ? listUsers() : [],
               invites: sessionUser && sessionUser.role === "admin" ? listInvites() : [],
               webhookSecretSet: sessionUser && sessionUser.role === "admin" ? Boolean(getSecretSetting("github_webhook_secret") || process.env.GITHUB_WEBHOOK_SECRET) : false,
@@ -548,7 +559,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
     }
 
     // Dashboard actions (auth required), not GitHub webhooks.
-    if (["/archive", "/comment", "/run-checks", "/merge", "/delete", "/resume", "/fix", "/auto", "/start", "/new-issue", "/approve", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret", "/onboarded", "/set-password"].includes(path)) {
+    if (["/archive", "/comment", "/run-checks", "/merge", "/delete", "/resume", "/stop", "/fix", "/auto", "/start", "/new-issue", "/approve", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude"].includes(path)) {
       const actor = authEnabled() ? userFromReq(req) : null;
       if (authEnabled()) {
         if (!actor) return void res.writeHead(401, { "content-type": "application/json" }).end('{"error":"auth required"}');
@@ -690,6 +701,18 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           if (!repo || !number || !resume) return res.writeHead(400).end("{}");
           await resume(repo, number).catch(() => {});
           return ok();
+        }
+        if (path === "/stop") {
+          // Abort any in-flight agent run, turn off auto, and park the issue back in Planned.
+          if (!repo || !number || !stop) return res.writeHead(400).end("{}");
+          await stop(repo, number).catch(() => {});
+          return ok();
+        }
+        if (path === "/test-claude") {
+          // Make a tiny real Agent SDK call with the resolved Claude credential so a bad/mismatched
+          // token (wrong type, expired, MASTER_KEY mismatch) is caught here, not at first run.
+          const r = await testClaudeAuth().catch((e) => ({ ok: false, via: "", error: (e as Error).message }));
+          return ok(JSON.stringify(r));
         }
         if (path === "/fix") {
           // Address the PR's outstanding review (and resolve conflicts) on its branch.

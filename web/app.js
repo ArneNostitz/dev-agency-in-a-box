@@ -39,6 +39,8 @@ const ICONS = {
   lock: '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
 };
 const Icon = ({ name, size = 18, cls }) => html`<svg class=${"lic " + (cls || "")} width=${size} height=${size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{ __html: ICONS[name] || "" }}></svg>`;
+// Spinning loader to show an action is in flight (blocks "did my click register?" ambiguity).
+const Spinner = ({ size = 18 }) => html`<svg class="lic spin" width=${size} height=${size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9" opacity="0.25"/><path d="M21 12a9 9 0 0 0-9-9"/></svg>`;
 
 // ---------- helpers ----------
 const ROLE_ICON = { planner: "layers", developer: "laptop", reviewer: "flask", tester: "flask", architect: "settings", librarian: "history" };
@@ -136,6 +138,7 @@ function App() {
   const [toastMsg, setToastMsg] = useState("");
   const [pending, setPending] = useState([]); // optimistic new issues
   const overridesRef = useRef({}); // "repo#n" -> {state, t}
+  const busyRef = useRef({}); // "action:repo#n" -> ts, while a request is in flight
   const liveRef = useRef([]); // SSE-appended activity since last poll
   const [, forceTick] = useState(0);
 
@@ -170,16 +173,29 @@ function App() {
 
   function override(repo, number, patch) { ov[repo + "#" + number] = { patch, t: Date.now() }; forceTick((x) => x + 1); }
 
-  // actions (optimistic + reconcile)
+  // In-flight tracking: while an action waits on the server/GitHub, its button shows a spinner,
+  // is disabled, and repeat clicks are ignored — no more "did that register?" multi-clicking.
+  const bkey = (action, repo, number) => action + ":" + repo + "#" + number;
+  function setBusy(k, on) { if (on) busyRef.current[k] = Date.now(); else delete busyRef.current[k]; forceTick((x) => x + 1); }
+  function guard(action, repo, number, run) {
+    const k = bkey(action, repo, number);
+    if (busyRef.current[k]) return Promise.resolve(); // already running — ignore the extra click
+    setBusy(k, true);
+    return Promise.resolve().then(run).finally(() => setBusy(k, false));
+  }
+
+  // actions (optimistic + reconcile). Each is guarded: spins + blocks until the server responds.
   const act = {
-    start(repo, number) { override(repo, number, { state: "agency:in-progress" }); api("/start", { repo, number }).then(() => toast("Starting…")).catch(() => { toast("Couldn’t start"); delete ov[repo + "#" + number]; }).then(load); },
-    approve(repo, number) { override(repo, number, { state: "agency:in-progress" }); api("/approve", { repo, number }).then(() => toast("Approved — building")).catch(() => toast("Couldn’t approve")).then(load); },
-    resume(repo, number) { override(repo, number, { state: "agency:in-progress" }); api("/resume", { repo, number }).then(() => toast("Resuming")).catch(() => toast("Couldn’t resume")).then(load); },
-    fix(repo, number) { override(repo, number, { state: "agency:in-progress" }); api("/fix", { repo, number }).then(() => toast("Fixing the review")).catch(() => toast("Couldn’t fix")).then(load); },
-    merge(repo, number) { return api("/merge", { repo, number }).then((r) => { toast("Merged"); load(); return r; }).catch(() => toast("Couldn’t merge — conflicts?")); },
-    del(repo, number) { override(repo, number, { state: "done" }); api("/delete", { repo, number }).then(() => { toast("Deleted"); setOpenKey(null); }).catch(() => toast("Couldn’t delete")).then(load); },
-    runChecks(repo, number, title) { api("/run-checks", { repo, number, title }).then(() => toast("Running checks…")); },
-    setAuto(kind, value, repo, number) { const b = { kind, value }; if (repo) b.repo = repo; if (number) b.number = number; api("/auto", b).then(() => { toast("auto-" + kind + ": " + value); }).then(load); },
+    isBusy: (action, repo, number) => Boolean(busyRef.current[bkey(action, repo, number)]),
+    start(repo, number) { return guard("start", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/start", { repo, number }).then(() => toast("Starting…")).catch(() => { toast("Couldn’t start"); delete ov[repo + "#" + number]; }).then(load); }); },
+    approve(repo, number) { return guard("approve", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/approve", { repo, number }).then(() => toast("Approved — building")).catch(() => toast("Couldn’t approve")).then(load); }); },
+    resume(repo, number) { return guard("resume", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/resume", { repo, number }).then(() => toast("Resuming")).catch(() => toast("Couldn’t resume")).then(load); }); },
+    stop(repo, number) { return guard("stop", repo, number, () => { override(repo, number, { state: "planned" }); return api("/stop", { repo, number }).then(() => toast("Stopped — moved to Planned")).catch(() => toast("Couldn’t stop")).then(load); }); },
+    fix(repo, number) { return guard("fix", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/fix", { repo, number }).then(() => toast("Fixing the review")).catch(() => toast("Couldn’t fix")).then(load); }); },
+    merge(repo, number) { return guard("merge", repo, number, () => api("/merge", { repo, number }).then((r) => { toast("Merged"); load(); return r; }).catch(() => toast("Couldn’t merge — conflicts?"))); },
+    del(repo, number) { return guard("del", repo, number, () => { override(repo, number, { state: "done" }); return api("/delete", { repo, number }).then(() => { toast("Deleted"); setOpenKey(null); }).catch(() => toast("Couldn’t delete")).then(load); }); },
+    runChecks(repo, number, title) { return guard("runChecks", repo, number, () => api("/run-checks", { repo, number, title }).then(() => toast("Running checks…")).catch(() => toast("Couldn’t run checks"))); },
+    setAuto(kind, value, repo, number) { return guard("auto-" + kind, repo || "global", number || 0, () => { const b = { kind, value }; if (repo) b.repo = repo; if (number) b.number = number; return api("/auto", b).then(() => { toast("auto-" + kind + ": " + value); }).then(load); }); },
   };
 
   function openComposer(repo) { setComposerRepo(repo || repoFilter || (repos[0] || null)); setSheet("composer"); }
@@ -199,6 +215,7 @@ function App() {
     <div class="app">
       <${TopBar} working=${working} env=${data.env} theme=${theme} setTheme=${setThemeP} onSettings=${() => setSheet("settings")} onNew=${() => openComposer()}/>
       <${RepoSelector} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} onAdd=${() => setSheet("addrepo")}/>
+      ${data.secretsHealth ? html`<${SecretBanner} h=${data.secretsHealth} onFix=${() => setSheet("settings")}/>` : null}
       <${StatusLine} working=${working} session=${data.session} spend=${data.spendToday}/>
       <div class="content">
         <${Board} issues=${shown} repos=${repos} repoFilter=${repoFilter} tab=${tab} isDesktop=${isDesktop} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onAddRepo=${() => setSheet("addrepo")} act=${act}/>
@@ -211,6 +228,16 @@ function App() {
       ${data.user && data.onboarded === false && html`<${Onboarding} repos=${repos} reload=${load}/>`}
       <div class=${"toast " + (toastMsg ? "on" : "")}>${toastMsg}</div>
     </div>`;
+}
+
+function SecretBanner({ h, onFix }) {
+  const msgs = [];
+  if (!h.masterKey) msgs.push("MASTER_KEY isn’t configured on the server — stored tokens can’t be encrypted/decrypted, so agents fall back to env credentials (usually a 401). Set a stable MASTER_KEY (openssl rand -hex 32) and re-enter your tokens.");
+  const names = { claude_token: "Claude token", anthropic_api_key: "Anthropic API key", github_bot_token: "GitHub bot token", github_user_token: "GitHub user token" };
+  const bad = Object.keys(names).filter((k) => h[k] === "undecryptable").map((k) => names[k]);
+  if (bad.length) msgs.push("Your stored " + bad.join(", ") + " can’t be decrypted — MASTER_KEY changed since you saved " + (bad.length > 1 ? "them" : "it") + ". Re-enter " + (bad.length > 1 ? "them" : "it") + " (the agency is falling back to env credentials, which usually 401s).");
+  if (!msgs.length) return null;
+  return html`<div class="secbanner"><b>⚠ Credentials need attention.</b> ${msgs.map((m, i) => html`<div key=${i} style="margin-top:3px">${m}</div>`)} <button class="btn ghost" style="margin-top:7px" onClick=${onFix}>Open Settings</button></div>`;
 }
 
 function TopBar({ working, env, theme, setTheme, onSettings, onNew }) {
@@ -268,21 +295,26 @@ function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, onAddRepo, a
 function Card({ i, multi, onOpen, act }) {
   const st = statusChip(i);
   const done = isDone(i);
+  const tmp = i._tmp || i.number < 0; // optimistic, not yet confirmed by GitHub
   let quick = null;
-  if (i.state === "planned" || (!i.state && !done)) quick = { cls: "play", icon: "play", label: "start", fn: () => act.start(i.repo, i.number) };
-  else if (i.state === "agency:awaiting-approval") quick = { cls: "", icon: "check", label: "approve", fn: () => act.approve(i.repo, i.number) };
-  else if (i.state === "agency:ready" && i.review === "changes") quick = { cls: "fix", icon: "wrench", label: "fix", fn: () => act.fix(i.repo, i.number) };
-  else if (i.state === "agency:needs-attention") quick = { cls: "", icon: "refresh", label: "resume", fn: () => act.resume(i.repo, i.number) };
+  if (i.state === "planned" || (!i.state && !done)) quick = { action: "start", cls: "play", icon: "play", label: "start", fn: () => act.start(i.repo, i.number) };
+  else if (i.state === "agency:awaiting-approval") quick = { action: "approve", cls: "", icon: "check", label: "approve", fn: () => act.approve(i.repo, i.number) };
+  else if (i.state === "agency:ready" && i.review === "changes") quick = { action: "fix", cls: "fix", icon: "wrench", label: "fix", fn: () => act.fix(i.repo, i.number) };
+  else if (i.state === "agency:needs-attention") quick = { action: "resume", cls: "", icon: "refresh", label: "resume", fn: () => act.resume(i.repo, i.number) };
+  else if (i.active || i.state === "agency:in-progress" || i.state === "agency:rate-limited") quick = { action: "stop", cls: "stop", icon: "stop", label: "stop", fn: () => act.stop(i.repo, i.number) };
+  const qBusy = quick && act.isBusy(quick.action, i.repo, i.number);
   const autoOn = i.auto && (i.auto.resume || i.auto.merge) && !done;
-  return html`<div class="card" onClick=${() => onOpen(i)}>
-    <div class="t">${i.active ? html`<span class="dot"></span> ` : null}${i.title || "#" + i.number}</div>
+  return html`<div class=${"card" + (tmp ? " busy" : "")} onClick=${tmp ? null : () => onOpen(i)}>
+    <div class="t">${(i.active || tmp) ? html`<${Spinner} size=${13}/> ` : null}${i.title || "#" + i.number}</div>
     <div class="meta">
-      <span class=${"statuschip " + st.cls}><${Icon} name=${st.icon} size=${12}/> ${st.label}</span>
+      ${tmp
+        ? html`<span class="statuschip s-working"><${Spinner} size=${12}/> ${i.state === "agency:in-progress" ? "creating & starting…" : "creating…"}</span>`
+        : html`<span class=${"statuschip " + st.cls}><${Icon} name=${st.icon} size=${12}/> ${st.label}</span>`}
       ${autoOn ? html`<span class="statuschip s-auto"><${Icon} name=${i.auto.merge ? "merge" : "refresh"} size=${12}/> auto</span>` : null}
       ${i.pr_number ? html`<a class="tagk" href=${i.pr_url || ghUrl(i.repo, i.pr_number)} target="_blank" rel="noopener" onClick=${(e) => e.stopPropagation()}><${Icon} name="pr" size=${11}/> #${i.pr_number}</a>` : null}
       ${multi ? html`<span class="tagk">${i.repo.split("/").pop()}</span>` : null}
       <span class="spacer" style="margin-left:auto"></span>
-      ${quick ? html`<button class=${"cardbtn " + quick.cls} onClick=${(e) => { e.stopPropagation(); quick.fn(); }}><${Icon} name=${quick.icon} size=${13}/> ${quick.label}</button>` : html`<span style="color:var(--ink-3);font-size:12px">${ago(i.updated_at)}</span>`}
+      ${tmp ? null : quick ? html`<button class=${"cardbtn " + quick.cls + (qBusy ? " busy" : "")} disabled=${qBusy} onClick=${(e) => { e.stopPropagation(); quick.fn(); }}>${qBusy ? html`<${Spinner} size=${13}/>` : html`<${Icon} name=${quick.icon} size=${13}/>`} ${qBusy ? "working…" : quick.label}</button>` : html`<span style="color:var(--ink-3);font-size:12px">${ago(i.updated_at)}</span>`}
     </div>
   </div>`;
 }
@@ -358,20 +390,25 @@ function Detail({ issue, activity, act, isDesktop, onClose }) {
   tb.push(html`<a class="tbtn" data-tip="Open on GitHub" href=${ghUrl(repo, number)} target="_blank" rel="noopener"><${Icon} name="link"/>${lbl("GitHub")}</a>`);
   if (issue.pr_url) tb.push(html`<a class="tbtn" data-tip="Open PR" href=${issue.pr_url} target="_blank" rel="noopener"><${Icon} name="pr"/>${lbl("PR")}</a>`);
   if (issue.previewUrl) tb.push(html`<a class="tbtn primary" data-tip="Open preview" href=${issue.previewUrl} target="_blank" rel="noopener"><${Icon} name="globe"/>${lbl("Preview")}</a>`);
+  // A toolbar icon that swaps to a spinner + disables while its action is in flight.
+  const bz = (a) => act.isBusy(a, repo, number);
+  const tico = (a, name) => bz(a) ? html`<${Spinner} size=${18}/>` : html`<${Icon} name=${name}/>`;
   if (!done) {
-    if (st === "planned" || !st) tb.push(html`<button class="tbtn green" data-tip="Start" onClick=${() => { act.start(repo, number); onClose(); }}><${Icon} name="play"/>${lbl("Start")}</button>`);
-    if (st === "agency:awaiting-approval") tb.push(html`<button class="tbtn primary" data-tip="Approve & build" onClick=${() => { act.approve(repo, number); onClose(); }}><${Icon} name="check"/>${lbl("Approve")}</button>`);
-    if (issue.pr_number && (needsFix || conflict)) tb.push(html`<button class="tbtn primary" data-tip=${conflict ? "Resolve conflicts" : "Fix the review"} onClick=${() => { act.fix(repo, number); onClose(); }}><${Icon} name="wrench"/>${lbl(conflict ? "Resolve" : "Fix")}</button>`);
-    tb.push(html`<button class="tbtn" data-tip="Resume" onClick=${() => act.resume(repo, number)}><${Icon} name="refresh"/>${lbl("Resume")}</button>`);
-    tb.push(html`<button class="tbtn" data-tip="Run checks" onClick=${() => act.runChecks(repo, number, issue.title)}><${Icon} name="flask"/>${lbl("Checks")}</button>`);
-    if (issue.pr_number && !conflict) { const ma = armed === "merge"; tb.push(html`<button class=${"tbtn green" + (ma ? " armed" : "")} data-tip=${ma ? "Tap again to merge" : needsFix ? "Merge anyway" : "Merge"} onClick=${() => confirmAct("merge", () => act.merge(repo, number).then(onClose))}><${Icon} name="merge"/>${(isDesktop || ma) ? html`<span class="tlabel">${ma ? "Confirm merge" : needsFix ? "Merge anyway" : "Merge"}</span>` : null}</button>`); }
+    if (st === "planned" || !st) tb.push(html`<button class=${"tbtn green" + (bz("start") ? " busy" : "")} disabled=${bz("start")} data-tip="Start" onClick=${() => act.start(repo, number).then(onClose)}>${tico("start", "play")}${lbl("Start")}</button>`);
+    if (st === "agency:awaiting-approval") tb.push(html`<button class=${"tbtn primary" + (bz("approve") ? " busy" : "")} disabled=${bz("approve")} data-tip="Approve & build" onClick=${() => act.approve(repo, number).then(onClose)}>${tico("approve", "check")}${lbl("Approve")}</button>`);
+    if (issue.pr_number && (needsFix || conflict)) tb.push(html`<button class=${"tbtn primary" + (bz("fix") ? " busy" : "")} disabled=${bz("fix")} data-tip=${conflict ? "Resolve conflicts" : "Fix the review"} onClick=${() => act.fix(repo, number).then(onClose)}>${tico("fix", "wrench")}${lbl(conflict ? "Resolve" : "Fix")}</button>`);
+    const working = issue.active || issue.queued || st === "agency:in-progress" || st === "agency:rate-limited";
+    if (working) tb.push(html`<button class=${"tbtn warn" + (bz("stop") ? " busy" : "")} disabled=${bz("stop")} data-tip="Stop all AI runs & move to Planned" onClick=${() => act.stop(repo, number)}>${tico("stop", "stop")}${lbl(bz("stop") ? "Stopping…" : "Stop")}</button>`);
+    tb.push(html`<button class=${"tbtn" + (bz("resume") ? " busy" : "")} disabled=${bz("resume")} data-tip="Resume" onClick=${() => act.resume(repo, number)}>${tico("resume", "refresh")}${lbl(bz("resume") ? "Resuming…" : "Resume")}</button>`);
+    tb.push(html`<button class=${"tbtn" + (bz("runChecks") ? " busy" : "")} disabled=${bz("runChecks")} data-tip="Run checks" onClick=${() => act.runChecks(repo, number, issue.title)}>${tico("runChecks", "flask")}${lbl(bz("runChecks") ? "Starting…" : "Checks")}</button>`);
+    if (issue.pr_number && !conflict) { const ma = armed === "merge", mb = bz("merge"); tb.push(html`<button class=${"tbtn green" + (ma ? " armed" : "") + (mb ? " busy" : "")} disabled=${mb} data-tip=${ma ? "Tap again to merge" : needsFix ? "Merge anyway" : "Merge"} onClick=${() => confirmAct("merge", () => act.merge(repo, number).then(onClose))}>${mb ? html`<${Spinner} size=${18}/>` : html`<${Icon} name="merge"/>`}${(isDesktop || ma) ? html`<span class="tlabel">${mb ? "Merging…" : ma ? "Confirm merge" : needsFix ? "Merge anyway" : "Merge"}</span>` : null}</button>`); }
     tb.push(html`<span class="tbsep"></span>`);
     tb.push(autoPill("resume"));
     tb.push(autoPill("merge"));
   }
-  const da = armed === "del";
+  const da = armed === "del", db = bz("del");
   tb.push(html`<span class="tbsep"></span>`);
-  tb.push(html`<button class=${"tbtn danger" + (da ? " armed" : "")} data-tip=${da ? "Tap again to delete" : "Delete"} onClick=${() => confirmAct("del", () => act.del(repo, number))}><${Icon} name="trash"/>${(isDesktop || da) ? html`<span class="tlabel">${da ? "Confirm delete" : "Delete"}</span>` : null}</button>`);
+  tb.push(html`<button class=${"tbtn danger" + (da ? " armed" : "") + (db ? " busy" : "")} disabled=${db} data-tip=${da ? "Tap again to delete" : "Delete"} onClick=${() => confirmAct("del", () => act.del(repo, number))}>${db ? html`<${Spinner} size=${18}/>` : html`<${Icon} name="trash"/>`}${(isDesktop || da) ? html`<span class="tlabel">${db ? "Deleting…" : da ? "Confirm delete" : "Delete"}</span>` : null}</button>`);
 
   const streamPane = html`<div class="dpane side">
     <div class="sec">Live stream</div>
@@ -568,16 +605,29 @@ function ObTokenStep({ def, existing, onDone, onBack }) {
   const [val, setVal] = useState("");
   const [baseUrl, setBaseUrl] = useState(def.preset?.baseUrl || "");
   const [busy, setBusy] = useState(false);
+  const [test, setTest] = useState(null); // null | "testing" | {ok, via, error}
+  const isClaude = def.secretKey === "claude_token" || def.secretKey === "anthropic_api_key";
+  const v = val.trim();
+  // Catch the most common 401 cause: pasting the wrong token TYPE into the wrong option.
+  const shapeWarn = def.secretKey === "claude_token" && /^sk-ant-/.test(v)
+    ? "That looks like an API key (sk-ant-…). Use the “Claude — API key” option instead, or it will 401."
+    : def.secretKey === "anthropic_api_key" && v && !/^sk-ant-/.test(v)
+    ? "An Anthropic API key usually starts with “sk-ant-”. If this is a subscription token, use the “Claude — subscription” option."
+    : "";
+  function storeVal() {
+    if (def.kind === "secret") return api("/user-secret", { key: def.secretKey, value: v });
+    const prov = { id: def.id + "-" + Date.now().toString(36), name: def.preset?.name || "Custom", baseUrl: def.custom ? baseUrl.trim() : def.preset.baseUrl, apiKey: v, models: def.preset?.models || [] };
+    return api("/models", { providers: (existing || []).concat(prov) });
+  }
   function save() {
-    if (!val.trim()) { toast(def.optional ? "Paste a token or Skip" : "Paste the token"); return; }
+    if (!v) { toast(def.optional ? "Paste a token or Skip" : "Paste the token"); return; }
     setBusy(true);
-    let pr;
-    if (def.kind === "secret") pr = api("/user-secret", { key: def.secretKey, value: val.trim() });
-    else {
-      const prov = { id: def.id + "-" + Date.now().toString(36), name: def.preset?.name || "Custom", baseUrl: def.custom ? baseUrl.trim() : def.preset.baseUrl, apiKey: val.trim(), models: def.preset?.models || [] };
-      pr = api("/models", { providers: (existing || []).concat(prov) });
-    }
-    pr.then(() => { toast("Saved"); onDone(); }).catch(() => toast("Couldn’t save")).then(() => setBusy(false));
+    storeVal().then(() => { toast("Saved"); onDone(); }).catch(() => toast("Couldn’t save")).then(() => setBusy(false));
+  }
+  function saveTest() {
+    if (!v) { toast("Paste the token first"); return; }
+    setTest("testing");
+    storeVal().then(() => api("/test-claude", {})).then((r) => setTest(r)).catch((e) => setTest({ ok: false, error: (e && e.message) || "failed" }));
   }
   return html`
     <div class="obki"><${Icon} name=${def.icon || "lock"} size=${26}/></div>
@@ -586,11 +636,15 @@ function ObTokenStep({ def, existing, onDone, onBack }) {
     ${def.link ? html`<a class="oblink" href=${def.link} target="_blank" rel="noopener">${def.linkLabel} <${Icon} name="link" size=${14}/></a>` : null}
     ${def.custom ? html`<label>Base URL (Anthropic-compatible)</label><input placeholder="https://…/anthropic" value=${baseUrl} onInput=${(e) => setBaseUrl(e.target.value)}/>` : null}
     <label>${def.custom ? "API key" : "Token"}</label>
-    <input type="password" autocomplete="off" placeholder=${def.placeholder} value=${val} onInput=${(e) => setVal(e.target.value)}/>
+    <input type="password" autocomplete="off" placeholder=${def.placeholder} value=${val} onInput=${(e) => { setVal(e.target.value); setTest(null); }}/>
     <div class="muted" style="font-size:11px;margin:3px 2px 0">Paste it exactly — no spaces or line breaks (a stray space causes a 401).</div>
+    ${shapeWarn ? html`<div class="testres bad">⚠ ${shapeWarn}</div>` : null}
+    ${isClaude ? html`<div class="muted" style="font-size:11px;margin:4px 2px 0">Tip: “Save & test” makes a real call so you know it works before any agent runs.</div>` : null}
+    ${test && test !== "testing" ? html`<div class=${"testres " + (test.ok ? "ok" : "bad")}>${test.ok ? "✓ Authenticated via " + (test.via || "Claude") : "✗ " + (test.error || "Failed")}</div>` : null}
     <div class="obnav">
       <button class="btn" onClick=${onBack}>Back</button>
       ${def.optional ? html`<button class="btn ghost" onClick=${onDone}>Skip</button>` : null}
+      ${isClaude ? html`<button class="btn ghost" disabled=${test === "testing"} onClick=${saveTest}>${test === "testing" ? html`<${Spinner} size=${15}/> Testing…` : "Save & test"}</button>` : null}
       <button class="btn primary" disabled=${busy} onClick=${save}>Save &amp; continue</button>
     </div>`;
 }
