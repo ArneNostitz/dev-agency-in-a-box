@@ -194,6 +194,7 @@ function App() {
     stop(repo, number) { return guard("stop", repo, number, () => { override(repo, number, { state: "planned" }); return api("/stop", { repo, number }).then(() => toast("Stopped — moved to Planned")).catch(() => toast("Couldn’t stop")).then(load); }); },
     fix(repo, number) { return guard("fix", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/fix", { repo, number }).then(() => toast("Fixing the review")).catch(() => toast("Couldn’t fix")).then(load); }); },
     merge(repo, number) { return guard("merge", repo, number, () => api("/merge", { repo, number }).then((r) => { toast("Merged"); load(); return r; }).catch(() => toast("Couldn’t merge — conflicts?"))); },
+    close(repo, number) { return guard("close", repo, number, () => { override(repo, number, { state: "merged" }); return api("/close", { repo, number }).then(() => { toast("Closed"); setOpenKey(null); }).catch((e) => toast((e && e.message) || "Couldn’t close")).then(load); }); },
     del(repo, number) { return guard("del", repo, number, () => { override(repo, number, { state: "done" }); return api("/delete", { repo, number }).then(() => { toast("Deleted"); setOpenKey(null); }).catch(() => toast("Couldn’t delete")).then(load); }); },
     runChecks(repo, number, title) { return guard("runChecks", repo, number, () => api("/run-checks", { repo, number, title }).then(() => toast("Running checks…")).catch(() => toast("Couldn’t run checks"))); },
     setAuto(kind, value, repo, number) { return guard("auto-" + kind, repo || "global", number || 0, () => { const b = { kind, value }; if (repo) b.repo = repo; if (number) b.number = number; return api("/auto", b).then(() => { toast("auto-" + kind + ": " + value); }).then(load); }); },
@@ -210,12 +211,20 @@ function App() {
   }
 
   // Keep the open detail mounted across polls. The issue object is re-fetched every 5s; if it's
-  // briefly absent from the freshly-polled list, fall back to the last-known copy so the panel
-  // doesn't flicker/close. Only clears when the user actually closes it (openKey → null).
+  // briefly absent from the freshly-polled list, fall back to the last-known copy (scoped to the
+  // same openKey) so the panel doesn't flicker/close. Also lets us open a sub-issue that isn't in
+  // the polled list via a small stub.
   const foundOpen = openKey ? issues.find((i) => i.repo + "#" + i.number === openKey) : null;
   if (foundOpen) openIssueRef.current = foundOpen;
-  else if (!openKey) openIssueRef.current = null;
-  const open = openKey ? foundOpen || openIssueRef.current : null;
+  const cachedOpen = openIssueRef.current && openIssueRef.current.repo + "#" + openIssueRef.current.number === openKey ? openIssueRef.current : null;
+  const open = openKey ? foundOpen || cachedOpen : null;
+  // Open any issue's detail by repo+number (used by the sub-issue checklist). Seeds a stub so a
+  // child that isn't in the polled list still opens (the detail loads its own thread/PR/app info).
+  function openIssue(r, n, title) {
+    const key = r + "#" + n;
+    if (!issues.some((i) => i.repo + "#" + i.number === key)) openIssueRef.current = { repo: r, number: n, title: title || "#" + n, state: "" };
+    setOpenKey(key);
+  }
   const working = (data.active || []).length;
 
   return html`
@@ -229,7 +238,7 @@ function App() {
       </div>
       ${!isDesktop && html`<${TabBar} issues=${shown} tab=${tab} setTab=${setTab}/>`}
       ${open && html`<div class="dscrim" onClick=${() => setOpenKey(null)}></div>`}
-      ${open && html`<${Detail} key=${openKey} issue=${open} activity=${activity} act=${act} isDesktop=${isDesktop} onClose=${() => setOpenKey(null)}/>`}
+      ${open && html`<${Detail} key=${openKey} issue=${open} activity=${activity} act=${act} isDesktop=${isDesktop} onClose=${() => setOpenKey(null)} onOpenIssue=${openIssue}/>`}
       ${sheet === "composer" && html`<${Composer} repos=${repos} repo=${composerRepo} setRepo=${setComposerRepo} onClose=${() => setSheet(null)} onCreate=${createIssue}/>`}
       ${sheet === "settings" && html`<${Settings} data=${data} theme=${theme} setTheme=${setThemeP} onClose=${() => setSheet(null)} setAuto=${act.setAuto} reload=${load}/>`}
       ${sheet === "addrepo" && html`<${AddRepo} repos=${repos} onClose=${() => setSheet(null)} reload=${load}/>`}
@@ -339,7 +348,7 @@ function TabBar({ issues, tab, setTab }) {
 }
 
 // ---------- Detail ----------
-function Detail({ issue, activity, act, isDesktop, onClose }) {
+function Detail({ issue, activity, act, isDesktop, onClose, onOpenIssue }) {
   const [tab, setTab] = useState("chat"); // mobile sub-tab: chat | stream
   const [thread, setThread] = useState(null);
   const [pr, setPr] = useState(null);
@@ -412,6 +421,13 @@ function Detail({ issue, activity, act, isDesktop, onClose }) {
     tb.push(html`<button class=${"tbtn" + (bz("resume") ? " busy" : "")} disabled=${bz("resume")} data-tip="Resume" onClick=${() => act.resume(repo, number)}>${tico("resume", "refresh")}${lbl(bz("resume") ? "Resuming…" : "Resume")}</button>`);
     tb.push(html`<button class=${"tbtn" + (bz("runChecks") ? " busy" : "")} disabled=${bz("runChecks")} data-tip="Run checks" onClick=${() => act.runChecks(repo, number, issue.title)}>${tico("runChecks", "flask")}${lbl(bz("runChecks") ? "Starting…" : "Checks")}</button>`);
     if (issue.pr_number && !conflict) { const ma = armed === "merge", mb = bz("merge"); tb.push(html`<button class=${"tbtn green" + (ma ? " armed" : "") + (mb ? " busy" : "")} disabled=${mb} data-tip=${ma ? "Tap again to merge" : needsFix ? "Merge anyway" : "Merge"} onClick=${() => confirmAct("merge", () => act.merge(repo, number).then(onClose))}>${mb ? html`<${Spinner} size=${18}/>` : html`<${Icon} name="merge"/>`}${(isDesktop || ma) ? html`<span class="tlabel">${mb ? "Merging…" : ma ? "Confirm merge" : needsFix ? "Merge anyway" : "Merge"}</span>` : null}</button>`); }
+    // Close (no PR to merge): master/epic issues whose work is done, or planning issues.
+    if (!issue.pr_number && !parked) {
+      const ca = armed === "close", cb = bz("close");
+      const epicAllDone = issue.epic && issue.epic.done >= issue.epic.total;
+      const clabel = ca ? "Confirm close" : cb ? "Closing…" : issue.epic ? (epicAllDone ? "Complete" : "Close epic") : "Close";
+      tb.push(html`<button class=${"tbtn green" + (ca ? " armed" : "") + (cb ? " busy" : "")} disabled=${cb} data-tip=${ca ? "Tap again to close" : "Close this issue (mark done)"} onClick=${() => confirmAct("close", () => act.close(repo, number).then(onClose))}>${cb ? html`<${Spinner} size=${18}/>` : html`<${Icon} name="check"/>`}${(isDesktop || ca) ? html`<span class="tlabel">${clabel}</span>` : null}</button>`);
+    }
     tb.push(html`<span class="tbsep"></span>`);
     tb.push(autoPill("resume"));
     tb.push(autoPill("merge"));
@@ -429,7 +445,7 @@ function Detail({ issue, activity, act, isDesktop, onClose }) {
   </div>`;
 
   const chatPane = html`<div class="dpane chat">
-    ${issue.epic ? html`<div class="sec">Sub-issues ${issue.epic.done}/${issue.epic.total}</div>` : null}
+    ${issue.epic ? html`<${EpicChecklist} epic=${issue.epic} repo=${repo} onOpen=${onOpenIssue} onClose=${() => act.close(repo, number).then(onClose)} closing=${act.isBusy("close", repo, number)}/>` : null}
     <div class="sec">Conversation</div>
     ${thread ? html`<div>
       ${thread.body ? html`<${Comment} author=${thread.author} createdAt=${thread.createdAt} body=${thread.body} isAgency=${false}/>` : null}
@@ -459,6 +475,24 @@ function Detail({ issue, activity, act, isDesktop, onClose }) {
   </div>`;
 }
 function Comment(c) { return html`<div class=${"cmt " + (c.isAgency ? "ag" : "")}><div class="h">${c.isAgency ? "🤖 " : ""}${c.author || ""} · ${ago(c.createdAt)}</div><div class="b" dangerouslySetInnerHTML=${{ __html: md(c.body) }}></div></div>`; }
+
+// Epic parent: a checklist of every sub-issue (✓ done / ○ open), each a link to its detail page,
+// plus a one-click "Complete & close" once they're all done.
+function EpicChecklist({ epic, repo, onOpen, onClose, closing }) {
+  const all = epic.total > 0 && epic.done >= epic.total;
+  const kids = (epic.children || []).slice().sort((a, b) => (a.closed === b.closed ? a.child - b.child : a.closed ? 1 : -1));
+  return html`<div class="epicbox">
+    <div class="sec" style="margin:10px 2px 6px">Sub-issues ${epic.done}/${epic.total}${all ? html` · <span class="epicalldone">all done ✓</span>` : null}</div>
+    <div class="epiclist">
+      ${kids.map((c) => html`<button class="epicrow" key=${c.child} onClick=${() => onOpen(repo, c.child, c.title)} data-tip="Open sub-issue">
+        <span class=${"epicck " + (c.closed ? "done" : "open")}><${Icon} name=${c.closed ? "check" : "planned"} size=${14}/></span>
+        <span class="epicnum">#${c.child}</span>
+        <span class="epictitle">${c.title || "#" + c.child}</span>
+      </button>`)}
+    </div>
+    ${all ? html`<button class="btn green" disabled=${closing} onClick=${onClose} style="margin-top:9px;width:100%;justify-content:center">${closing ? html`<${Spinner} size=${15}/> Closing…` : html`<${Icon} name="check" size=${15}/> Complete & close epic`}</button>` : null}
+  </div>`;
+}
 
 function RunApp({ repo, number, appInfo, issue, done }) {
   if (!appInfo || appInfo.kind === "unknown" || appInfo.kind === "none") return null;
