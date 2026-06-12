@@ -1,7 +1,9 @@
-# Coolify-ready deployment.
-# In Coolify: create a Docker Compose resource from this repo, set the env vars
-# below as secrets in the UI, and deploy. The service runs as a long-lived
-# watcher that polls GitHub issues every POLL_INTERVAL_SECONDS.
+# Coolify-ready, ZERO-CONFIG deploy: create a Docker Compose resource from this repo and deploy.
+#
+# No environment variables are required. On first boot a MASTER_KEY is auto-generated and persisted
+# on the data volume (so it stays stable across redeploys); every operational setting and credential
+# lives in the dashboard (the onboarding wizard + Settings → Operations). The first visitor creates
+# the admin account in-browser.
 services:
   agency:
     build: .
@@ -9,32 +11,14 @@ services:
     # Let in-flight agent runs finish on deploy/restart before the platform force-kills the
     # container (pairs with the app's graceful drain). Raise if your builds run longer.
     stop_grace_period: 600s
-    environment:
-      # ── Backend bootstrap (must be here — read before the DB/auth exist) ──
-      MASTER_KEY: ${MASTER_KEY:-}              # openssl rand -hex 32 — encrypts all stored secrets
-                                              # + enables multi-user. (Unset = legacy Basic Auth.)
-      PORT: 3000
-      DB_PATH: /app/data/agency.db            # SQLite on the mounted volume
-      RUN_MODE: ${RUN_MODE:-watch}            # watch (poll) | webhook | once
-      AGENCY_ENV: ${AGENCY_ENV:-production}   # "development" on staging → DEV badge
-                                              # (named AGENCY_ENV, not APP_ENV, to avoid Coolify's
-                                              # Laravel/Symfony build heuristic warning)
-
-      # ── Execution credentials — TEMPORARY ────────────────────────────────
-      # These are the last env vars. They move to per-user encrypted credentials
-      # (managed in the dashboard) once per-user execution lands; then this whole
-      # block disappears. Until then the agency runs under these global tokens.
-      GITHUB_TOKEN: ${GITHUB_TOKEN:-}                # bot account token
-      ADMIN_GITHUB_TOKEN: ${ADMIN_GITHUB_TOKEN:-}    # owner token (auto-invite the bot)
-      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}   # Claude subscription
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}              # or pay-as-you-go
-
-      # ── Everything else is in the dashboard (Settings → Operations) ──────
-      # Admin account → first-run setup screen. GitHub owner, repos, trigger/labels,
-      # concurrency, poll interval, budgets, GitNexus, self-improve, follow-up window,
-      # preview, models, session budget, graceful-shutdown — all stored in the DB.
+    # Optional overrides — NONE are required. Uncomment only to pin a value:
+    # environment:
+    #   MASTER_KEY: ${MASTER_KEY:-}     # pin the secrets-encryption key (else auto-generated +
+    #                                   # persisted at /app/data/.masterkey — keep the volume!)
+    #   RUN_MODE: watch                 # watch (default) | webhook | once
+    #   AGENCY_ENV: development         # shows a DEV badge on staging
     volumes:
-      - agency-data:/app/data
+      - agency-data:/app/data          # SQLite DB + the persisted MASTER_KEY live here — keep it!
 
 volumes:
   agency-data:

@@ -10,15 +10,53 @@
  * 32-byte key. Generate one with:  openssl rand -hex 32
  */
 import { randomBytes, createCipheriv, createDecipheriv, scryptSync, createHash, timingSafeEqual } from "node:crypto";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { join, dirname } from "node:path";
+
+/** Where the auto-generated key persists (on the data volume, so it survives redeploys). */
+function keyFilePath(): string {
+  const dataDir = process.env.DB_PATH?.trim() ? dirname(process.env.DB_PATH.trim()) : "data";
+  return join(dataDir, ".masterkey");
+}
+
+let cachedRaw: string | null = null;
+/**
+ * The effective MASTER_KEY string, resolved once and cached:
+ *   1. env MASTER_KEY (explicit override), else
+ *   2. a key persisted on the data volume from a previous boot, else
+ *   3. a freshly generated 32-byte hex key, persisted for every future boot.
+ * Auto-generating + persisting means a fresh deploy needs ZERO config and the key stays STABLE
+ * across redeploys (so stored secrets never silently become undecryptable).
+ */
+export function masterKeyRaw(): string {
+  if (cachedRaw) return cachedRaw;
+  const env = process.env.MASTER_KEY?.trim();
+  if (env) return (cachedRaw = env);
+  const f = keyFilePath();
+  try {
+    const existing = readFileSync(f, "utf8").trim();
+    if (existing) return (cachedRaw = existing);
+  } catch {
+    /* no persisted key yet */
+  }
+  const gen = randomBytes(32).toString("hex");
+  try {
+    mkdirSync(dirname(f), { recursive: true });
+    writeFileSync(f, gen, { mode: 0o600 });
+    console.log(`[agency] generated a new MASTER_KEY and stored it at ${f} (keep the data volume to keep your encrypted secrets).`);
+  } catch (err) {
+    console.warn(`[agency] could not persist the auto-generated MASTER_KEY (${(err as Error).message}). Set MASTER_KEY in env to make it stable.`);
+  }
+  return (cachedRaw = gen);
+}
 
 function masterKey(): Buffer {
-  const k = process.env.MASTER_KEY?.trim();
-  if (!k) throw new Error("MASTER_KEY is not set — required for multi-user mode (openssl rand -hex 32)");
+  const k = masterKeyRaw();
   if (/^[0-9a-fA-F]{64}$/.test(k)) return Buffer.from(k, "hex");
   return createHash("sha256").update(k).digest();
 }
 
-/** True if a usable MASTER_KEY is configured (so we can enable/disable encrypted features safely). */
+/** Always true now — a MASTER_KEY is always available (env or auto-generated + persisted). */
 export function masterKeyConfigured(): boolean {
   try {
     masterKey();
