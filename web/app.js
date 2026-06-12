@@ -139,6 +139,7 @@ function App() {
   const [pending, setPending] = useState([]); // optimistic new issues
   const overridesRef = useRef({}); // "repo#n" -> {state, t}
   const busyRef = useRef({}); // "action:repo#n" -> ts, while a request is in flight
+  const openIssueRef = useRef(null); // last-known open issue, so polls don't flicker the detail closed
   const liveRef = useRef([]); // SSE-appended activity since last poll
   const [, forceTick] = useState(0);
 
@@ -208,7 +209,13 @@ function App() {
       .catch((e) => { toast((e && e.message) || "Couldn’t create"); setPending((ps) => ps.filter((p) => p !== tmp)); });
   }
 
-  const open = openKey ? issues.find((i) => i.repo + "#" + i.number === openKey) : null;
+  // Keep the open detail mounted across polls. The issue object is re-fetched every 5s; if it's
+  // briefly absent from the freshly-polled list, fall back to the last-known copy so the panel
+  // doesn't flicker/close. Only clears when the user actually closes it (openKey → null).
+  const foundOpen = openKey ? issues.find((i) => i.repo + "#" + i.number === openKey) : null;
+  if (foundOpen) openIssueRef.current = foundOpen;
+  else if (!openKey) openIssueRef.current = null;
+  const open = openKey ? foundOpen || openIssueRef.current : null;
   const working = (data.active || []).length;
 
   return html`
@@ -221,6 +228,7 @@ function App() {
         <${Board} issues=${shown} repos=${repos} repoFilter=${repoFilter} tab=${tab} isDesktop=${isDesktop} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onAddRepo=${() => setSheet("addrepo")} act=${act}/>
       </div>
       ${!isDesktop && html`<${TabBar} issues=${shown} tab=${tab} setTab=${setTab}/>`}
+      ${open && html`<div class="dscrim" onClick=${() => setOpenKey(null)}></div>`}
       ${open && html`<${Detail} key=${openKey} issue=${open} activity=${activity} act=${act} isDesktop=${isDesktop} onClose=${() => setOpenKey(null)}/>`}
       ${sheet === "composer" && html`<${Composer} repos=${repos} repo=${composerRepo} setRepo=${setComposerRepo} onClose=${() => setSheet(null)} onCreate=${createIssue}/>`}
       ${sheet === "settings" && html`<${Settings} data=${data} theme=${theme} setTheme=${setThemeP} onClose=${() => setSheet(null)} setAuto=${act.setAuto} reload=${load}/>`}
