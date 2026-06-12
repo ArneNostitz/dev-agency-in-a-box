@@ -51,6 +51,7 @@ COPY src ./src
 COPY memory ./memory
 COPY config ./config
 COPY web ./web
+COPY scripts ./scripts
 
 RUN npm run build
 

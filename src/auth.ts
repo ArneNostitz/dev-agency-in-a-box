@@ -1,16 +1,16 @@
 /**
- * Session-cookie auth for multi-user mode. Enabled automatically when MASTER_KEY is configured
- * (so secrets can be encrypted). When it's off, the server falls back to the legacy HTTP Basic
- * Auth so existing single-user deployments keep working until they opt in.
+ * Session-cookie auth. The agency is always multi-user: a MASTER_KEY is always available (env or
+ * auto-generated + persisted on the data volume), so secrets are always encrypted and every user
+ * has an account. The first visitor creates the admin in-browser via the /setup screen.
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { timingSafeEqual } from "node:crypto";
 import { countUsers, createUser, getSessionUser, getUserByName, listUsers, setUserPassword, type User } from "./store.js";
-import { masterKeyConfigured } from "./crypto.js";
+import { masterKeyRaw } from "./crypto.js";
 
-/** Constant-time check that a submitted recovery key equals the server's MASTER_KEY. */
+/** Constant-time check that a submitted recovery key equals the server's effective MASTER_KEY. */
 export function verifyRecoveryKey(key: string): boolean {
-  const mk = process.env.MASTER_KEY?.trim();
+  const mk = masterKeyRaw();
   if (!mk || !key) return false;
   const a = Buffer.from(key);
   const b = Buffer.from(mk);
@@ -19,9 +19,9 @@ export function verifyRecoveryKey(key: string): boolean {
 
 export const SESSION_COOKIE = "da_session";
 
-/** Multi-user mode is on when we can encrypt secrets at rest. */
+/** Auth is always on now (single-user Basic Auth was removed). Kept for call-site compatibility. */
 export function authEnabled(): boolean {
-  return masterKeyConfigured();
+  return true;
 }
 
 /**
@@ -29,10 +29,10 @@ export function authEnabled(): boolean {
  * the first visitor creates the admin in-browser via the /setup screen instead.
  */
 export function seedAdmin(): void {
-  if (!authEnabled() || countUsers() > 0) return;
-  const password = process.env.ADMIN_PASSWORD?.trim() || process.env.DASHBOARD_PASSWORD?.trim();
+  if (countUsers() > 0) return;
+  const password = process.env.ADMIN_PASSWORD?.trim();
   if (!password) {
-    console.log("[agency] multi-user on, no admin yet — create the admin in-browser on first visit.");
+    console.log("[agency] no admin yet — create the admin in-browser on first visit (/setup).");
     return;
   }
   const username = process.env.ADMIN_USERNAME?.trim() || "admin";
@@ -48,7 +48,7 @@ export function seedAdmin(): void {
  */
 export function resetAdminPassword(): void {
   const np = process.env.RESET_ADMIN_PASSWORD?.trim();
-  if (!authEnabled() || !np) return;
+  if (!np) return;
   const username = process.env.ADMIN_USERNAME?.trim();
   const user = (username ? getUserByName(username) : null) || listUsers().find((u) => u.role === "admin");
   if (!user) {

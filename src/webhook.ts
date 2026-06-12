@@ -68,22 +68,6 @@ function sessionWindow(): { startIso: string; resetsIso: string } {
   return { startIso: new Date(start).toISOString(), resetsIso: new Date(start + winMs).toISOString() };
 }
 
-/** Gate the dashboard with HTTP Basic Auth if DASHBOARD_PASSWORD is set. */
-function checkAuth(cfg: Config, req: IncomingMessage, res: ServerResponse): boolean {
-  if (!cfg.dashboardPassword) return true;
-  const m = /^Basic (.+)$/.exec((req.headers["authorization"] as string) ?? "");
-  if (m) {
-    const decoded = Buffer.from(m[1], "base64").toString("utf8");
-    const pass = decoded.slice(decoded.indexOf(":") + 1);
-    const a = Buffer.from(pass);
-    const b = Buffer.from(cfg.dashboardPassword);
-    if (a.length === b.length && timingSafeEqual(a, b)) return true;
-  }
-  res.writeHead(401, { "www-authenticate": 'Basic realm="dev-agency"' });
-  res.end("Authentication required.");
-  return false;
-}
-
 function verifySignature(secret: string, body: Buffer, header: string | undefined): boolean {
   if (!secret) return true; // no secret configured -> skip verification (not recommended)
   if (!header) return false;
@@ -168,9 +152,9 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
       // installed app can boot and the SW can cache them. They contain no secrets.
       if (serveStatic(url, res)) return;
 
-      // Auth gate. Multi-user (session cookies) when MASTER_KEY is set; else legacy Basic Auth.
+      // Auth gate — always multi-user (session cookies). First visitor creates the admin.
       let sessionUser: User | null = null;
-      if (authEnabled()) {
+      {
         const htmlHead = { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" };
         // First run: no accounts yet → force the in-browser admin setup screen.
         if (countUsers() === 0) return void res.writeHead(200, htmlHead).end(renderSetup());
@@ -194,8 +178,6 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           if (isNav) return void res.writeHead(302, { location: "/login" }).end();
           return void res.writeHead(401, { "content-type": "text/plain" }).end("authentication required");
         }
-      } else if (!checkAuth(cfg, req, res)) {
-        return;
       }
 
       if (url === "/events") {
@@ -504,7 +486,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
     const path = (req.url ?? "").split("?")[0];
 
     // Auth forms (urlencoded, no auth required) — setup, login, accept-invite, logout.
-    if (authEnabled() && (path === "/setup" || path === "/login" || path === "/invite" || path === "/logout" || path === "/forgot")) {
+    if (path === "/setup" || path === "/login" || path === "/invite" || path === "/logout" || path === "/forgot") {
       const htmlHead = { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" };
       void readBody(req).then((body) => {
         const form = new URLSearchParams(body.toString("utf8"));
@@ -560,12 +542,8 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
 
     // Dashboard actions (auth required), not GitHub webhooks.
     if (["/archive", "/comment", "/run-checks", "/merge", "/delete", "/resume", "/stop", "/fix", "/auto", "/start", "/new-issue", "/approve", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude"].includes(path)) {
-      const actor = authEnabled() ? userFromReq(req) : null;
-      if (authEnabled()) {
-        if (!actor) return void res.writeHead(401, { "content-type": "application/json" }).end('{"error":"auth required"}');
-      } else if (!checkAuth(cfg, req, res)) {
-        return;
-      }
+      const actor = userFromReq(req);
+      if (!actor) return void res.writeHead(401, { "content-type": "application/json" }).end('{"error":"auth required"}');
       void readBody(req).then(async (body) => {
         let p: { repo?: string; number?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; dataUrl?: string; name?: string; providers?: Provider[]; roleModels?: Record<string, { providerId: string; model: string }>; kind?: string; value?: string; skipArchitect?: string; gitnexus?: string; maxTokensPerRun?: number; maxReviseRounds?: number; start?: boolean; email?: string; key?: string; ops?: Record<string, string | number | boolean>; webhookSecret?: string } = {};
         try {
@@ -643,13 +621,13 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           if (p.maxTokensPerRun !== undefined && p.maxTokensPerRun >= 0) setSetting("max_tokens_per_run", String(Math.round(p.maxTokensPerRun)));
           if (p.maxReviseRounds !== undefined && p.maxReviseRounds >= 0) setSetting("max_revise_rounds", String(Math.round(p.maxReviseRounds)));
           // Operations panel (global, admin-only when multi-user is on).
-          if (p.ops && typeof p.ops === "object" && (!authEnabled() || actor?.role === "admin")) {
+          if (p.ops && typeof p.ops === "object" && actor.role === "admin") {
             for (const [k, v] of Object.entries(p.ops)) {
               if (OPS_SETTINGS.some((s) => s.key === k)) setSetting(k, typeof v === "boolean" ? (v ? "on" : "off") : String(v));
             }
           }
           // Encrypted GitHub webhook secret (admin, write-only).
-          if (p.webhookSecret !== undefined && (!authEnabled() || actor?.role === "admin")) {
+          if (p.webhookSecret !== undefined && actor.role === "admin") {
             setSecretSetting("github_webhook_secret", p.webhookSecret.trim());
           }
           return ok();

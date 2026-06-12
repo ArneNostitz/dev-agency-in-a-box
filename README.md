@@ -14,9 +14,10 @@ and the self-evolving loop. Full design: [`../dev-agency-architecture.md`](../de
 
 ## Quick start
 
-1. **Deploy on Coolify** (Docker Compose from this repo). The only env var you must set is
-   `MASTER_KEY` (`openssl rand -hex 32`), and the domain must route to **container port 3000**.
-   Full steps + troubleshooting: [`COOLIFY.md`](COOLIFY.md).
+1. **Deploy on Coolify** (Docker Compose from this repo) — **zero env vars required**. A
+   `MASTER_KEY` is auto-generated and persisted on the data volume on first boot; everything else
+   is configured in-app. Just make the domain route to **container port 3000** and keep the
+   `agency-data` volume. Full steps + troubleshooting: [`COOLIFY.md`](COOLIFY.md).
 2. **Open the dashboard** → create the admin account (first-run screen).
 3. **Onboarding wizard** walks you through the rest: pick your models (Claude subscription/API,
    GLM, DeepSeek…), paste each token with step-by-step "where to get it" instructions, and add
@@ -154,20 +155,20 @@ Runs on Coolify as a Docker Compose resource — step-by-step in **[COOLIFY.md](
 The short version:
 
 1. Create a Docker Compose resource from this repo; set the domain (container port 3000).
-2. Set env vars:
+2. Deploy — **no env vars required.** A `MASTER_KEY` auto-generates and persists on the
+   `agency-data` volume. (Everything that used to be env — GitHub/Claude tokens, owner, repos,
+   run mode, budgets — is now set in-app via the onboarding wizard and Settings → Operations.)
+3. Open the dashboard → create the admin account → run onboarding to add your tokens + first repo,
+   then pin `@dev` on an issue. That's it.
 
-| Variable | What |
-| --- | --- |
-| `CLAUDE_CODE_OAUTH_TOKEN` | from `claude setup-token` (subscription) — or `ANTHROPIC_API_KEY` |
-| `GITHUB_TOKEN` | the **bot account's classic** token (`repo` scope) — actions are attributed to the bot |
-| `ADMIN_GITHUB_TOKEN` | your owner token — only used to auto-invite the bot to repos |
-| `GITHUB_OWNER` | your GitHub username or org |
-| `RUN_MODE` | `webhook` (instant; webhooks auto-register) |
-| `PUBLIC_URL` | e.g. `https://agency.example.com` (no port) |
-| `GITHUB_WEBHOOK_SECRET` | long random **alphanumeric** string (no `$` — compose mangles it) |
-| `DASHBOARD_PASSWORD` | for the dashboard (alphanumeric) |
+**Optional env overrides** (none required): `MASTER_KEY` (pin instead of auto-gen — keep it
+stable), `RUN_MODE` (`watch`/`webhook`/`once`), `AGENCY_ENV=development` (DEV badge),
+`ADMIN_USERNAME`/`ADMIN_PASSWORD` (seed the admin headlessly), `RESET_ADMIN_PASSWORD` (password
+recovery), `GITHUB_WEBHOOK_SECRET` (webhook mode).
 
-3. Deploy. Add repos with `/add-repo`, then pin `@dev` on an issue. That's it.
+**Lost / rotating the encryption key?** Run `node scripts/reset-master-key.mjs` in the container
+terminal — it wipes the stored (now-undecryptable) secrets + sessions and regenerates the key;
+re-run onboarding afterwards.
 
 Watched repos live in `config/repos.txt` (plus `/add-repo` additions in the DB volume);
 handles in `config/team.txt`. Local/macOS run: `scripts/setup-macos.sh`, `scripts/run-local.sh`.

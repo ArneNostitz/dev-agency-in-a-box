@@ -127,8 +127,6 @@ export interface Config {
    * repos. The bot (GITHUB_TOKEN) can't invite itself. Leave unset to invite manually.
    */
   adminToken?: string;
-  /** If set, the status dashboard requires this password (HTTP Basic Auth). */
-  dashboardPassword?: string;
   /** The agency's own repo (self-improvement PRs target it). */
   agencyRepo: string;
   /** Allow the agency to open playbook-improvement PRs against its own repo. */
@@ -137,7 +135,8 @@ export interface Config {
 
 function parseRunMode(v: string | undefined): "once" | "watch" | "webhook" {
   const m = v?.trim();
-  return m === "watch" || m === "webhook" ? m : "once";
+  if (m === "once" || m === "watch" || m === "webhook") return m;
+  return "watch"; // default: long-running dashboard + poller (zero-config container default)
 }
 
 export function loadConfig(): Config {
@@ -169,7 +168,6 @@ export function loadConfig(): Config {
     publicUrl: sStr("public_url", "PUBLIC_URL", "") || undefined,
     webhookSecret: getSecretSetting("github_webhook_secret") || process.env.GITHUB_WEBHOOK_SECRET?.trim() || undefined,
     adminToken: process.env.ADMIN_GITHUB_TOKEN?.trim() || undefined,
-    dashboardPassword: process.env.DASHBOARD_PASSWORD?.trim() || undefined,
     agencyRepo: resolveRepo(sStr("agency_repo", "AGENCY_REPO", "dev-agency"), owner),
     selfImprove: sBool("self_improve", "SELF_IMPROVE", true),
   };
