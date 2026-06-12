@@ -27,8 +27,9 @@ import { getSecretSetting, setSecretSetting, getUserSecretStatus } from "./store
 import { masterKeyConfigured } from "./crypto.js";
 import { ghBotToken, ghUserToken } from "./creds.js";
 import { testClaudeAuth } from "./agents/roleAgent.js";
-import { renderLogin, renderInvite, renderSetup, renderForgot } from "./authpages.js";
-import { authenticate, createSession, revokeSession, getInvite, acceptInvite, createInvite, createUser, listUsers, listInvites, setUserSecret, listUserSecretKeys, countUsers, setUserPassword, getUserByName, type User } from "./store.js";
+import { renderLogin, renderInvite, renderSetup, renderForgot, renderReset } from "./authpages.js";
+import { authenticate, createSession, revokeSession, getInvite, acceptInvite, createInvite, createUser, listUsers, listInvites, setUserSecret, listUserSecretKeys, countUsers, setUserPassword, getUserByName, getUserByNameOrEmail, createPasswordReset, consumePasswordReset, type User } from "./store.js";
+import { emailEnabled, sendPasswordReset } from "./email.js";
 import { subscribe, getActive } from "./activity.js";
 import { inFlightKeys } from "./pool.js";
 import { listRateLimited } from "./store.js";
@@ -159,7 +160,11 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         // First run: no accounts yet → force the in-browser admin setup screen.
         if (countUsers() === 0) return void res.writeHead(200, htmlHead).end(renderSetup());
         if (url === "/login") return void res.writeHead(200, htmlHead).end(renderLogin());
-        if (url === "/forgot") return void res.writeHead(200, htmlHead).end(renderForgot());
+        if (url === "/forgot") return void res.writeHead(200, htmlHead).end(renderForgot({ emailOn: emailEnabled() }));
+        if (url === "/reset") {
+          const t = new URLSearchParams((req.url ?? "").split("?")[1] ?? "").get("token") ?? "";
+          return void res.writeHead(200, htmlHead).end(renderReset(t));
+        }
         if (url === "/logout") {
           const tok = parseCookies(req)[SESSION_COOKIE];
           if (tok) revokeSession(tok);
@@ -485,18 +490,49 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
 
     const path = (req.url ?? "").split("?")[0];
 
-    // Auth forms (urlencoded, no auth required) — setup, login, accept-invite, logout.
-    if (path === "/setup" || path === "/login" || path === "/invite" || path === "/logout" || path === "/forgot") {
+    // Auth forms (urlencoded, no auth required) — setup, login, accept-invite, logout, reset.
+    if (path === "/setup" || path === "/login" || path === "/invite" || path === "/logout" || path === "/forgot" || path === "/forgot-link" || path === "/reset") {
       const htmlHead = { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" };
-      void readBody(req).then((body) => {
+      void readBody(req).then(async (body) => {
         const form = new URLSearchParams(body.toString("utf8"));
+        const emailOn = emailEnabled();
+        if (path === "/forgot-link") {
+          // Email a one-time reset link. Always respond generically (no account enumeration).
+          const notice = "If an account matches, we've sent a reset link. Check your email.";
+          const identifier = (form.get("identifier") ?? "").trim();
+          const u = identifier ? getUserByNameOrEmail(identifier) : null;
+          if (u && u.email && emailOn) {
+            const token = createPasswordReset(u.id);
+            if (token) {
+              const proto = (req.headers["x-forwarded-proto"] as string)?.split(",")[0]?.trim() || "https";
+              const base = cfg.publicUrl?.replace(/\/$/, "") || `${proto}://${req.headers["host"] ?? ""}`;
+              try {
+                await sendPasswordReset(u.email, `${base}/reset?token=${token}`);
+              } catch (err) {
+                console.warn("[agency] reset email failed:", (err as Error).message);
+              }
+            }
+          }
+          return void res.writeHead(200, htmlHead).end(renderForgot({ notice, emailOn }));
+        }
+        if (path === "/reset") {
+          // Set a new password from a one-time email-link token.
+          const token = (form.get("token") ?? "").trim();
+          const np = form.get("password") ?? "";
+          if (np.length < 8) return void res.writeHead(200, htmlHead).end(renderReset(token, "Password must be at least 8 characters."));
+          const userId = consumePasswordReset(token);
+          if (!userId) return void res.writeHead(200, htmlHead).end(renderReset(token, "This reset link is invalid or has expired. Request a new one."));
+          setUserPassword(userId, np);
+          setSessionCookie(req, res, createSession(userId)); // log them straight in
+          return void res.writeHead(303, { location: "/" }).end();
+        }
         if (path === "/forgot") {
           // Reset using the server's MASTER_KEY as the recovery secret (no email needed).
-          if (!verifyRecoveryKey(form.get("key") ?? "")) return void res.writeHead(200, htmlHead).end(renderForgot("Recovery key is incorrect."));
+          if (!verifyRecoveryKey(form.get("key") ?? "")) return void res.writeHead(200, htmlHead).end(renderForgot({ error: "Recovery key is incorrect.", emailOn }));
           const u = getUserByName((form.get("username") ?? "").trim());
           const np = form.get("password") ?? "";
-          if (!u) return void res.writeHead(200, htmlHead).end(renderForgot("No account with that username."));
-          if (np.length < 8) return void res.writeHead(200, htmlHead).end(renderForgot("Password must be at least 8 characters."));
+          if (!u) return void res.writeHead(200, htmlHead).end(renderForgot({ error: "No account with that username.", emailOn }));
+          if (np.length < 8) return void res.writeHead(200, htmlHead).end(renderForgot({ error: "Password must be at least 8 characters.", emailOn }));
           setUserPassword(u.id, np);
           setSessionCookie(req, res, createSession(u.id)); // log them straight in
           return void res.writeHead(303, { location: "/" }).end();
