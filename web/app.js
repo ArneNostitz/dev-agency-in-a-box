@@ -81,7 +81,9 @@ function isDone(i) { const s = i.state || ""; return s === "merged" || s === "ag
 function classify(i) {
   const s = i.state || "";
   if (isDone(i)) return "done";
-  if (i.active || i.queued || s === "agency:in-progress" || s === "agency:rate-limited") return "working";
+  if (i.active || i.queued) return "working"; // actually executing right now
+  if (i.pr_number) return "review"; // a PR exists → it's waiting on you, even if a restart left a stale "in-progress" label
+  if (s === "agency:in-progress" || s === "agency:rate-limited") return "working";
   if (s === "agency:epic") return i.epic && i.epic.done >= i.epic.total ? "review" : "working";
   if (s === "agency:ready" || s === "agency:needs-attention" || s === "agency:awaiting-approval" || s === "agency:awaiting-answer") return "review";
   return "planned";
