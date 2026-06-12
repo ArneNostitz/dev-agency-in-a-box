@@ -633,14 +633,38 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         if (path === "/comment") {
           // Inline reply -> posts to GitHub as the human (no agency marker) so it re-engages.
           if (!repo || !number || !p.body?.trim()) return res.writeHead(400).end("{}");
+          const text = p.body.trim();
           try {
-            // Post under the owner's account (admin token) so it shows your name, not the bot's.
-            await commentAsHuman(repo, number, p.body.trim(), ownerToken);
-            void trigger("dashboard-comment");
-            return ok();
-          } catch (err) {
-            return res.writeHead(500).end(JSON.stringify({ error: (err as Error).message }));
+            // Post under the owner's account (your token) so it shows your name, not the bot's.
+            await commentAsHuman(repo, number, text, ownerToken);
+          } catch (errOwner) {
+            // The "acts as you" token often lacks Issues:write on this repo (or isn't scoped to it).
+            // Rather than fail, fall back to the bot identity (which already works the repo).
+            const bot = ghBotToken();
+            if (bot && bot !== ownerToken) {
+              try {
+                await commentAsHuman(repo, number, text, bot);
+              } catch (errBot) {
+                return res.writeHead(500).end(
+                  JSON.stringify({
+                    error:
+                      `GitHub rejected the comment on ${repo}. Check the token has **Issues: Read & write** on this repo ` +
+                      `(and the bot account is a collaborator). Details: ${(errBot as Error).message.slice(0, 200)}`,
+                  }),
+                );
+              }
+            } else {
+              return res.writeHead(500).end(
+                JSON.stringify({
+                  error:
+                    `GitHub rejected the comment on ${repo}. The GitHub token needs **Issues: Read & write** on this repo. ` +
+                    `Details: ${(errOwner as Error).message.slice(0, 200)}`,
+                }),
+              );
+            }
           }
+          void trigger("dashboard-comment");
+          return ok();
         }
         if (path === "/settings") {
           // Save token-budget settings from the dashboard (no redeploy needed).

@@ -372,7 +372,7 @@ function Detail({ issue, activity, act, isDesktop, onClose }) {
     Promise.all(atts.map((a) => api("/upload-file", { repo, number, dataUrl: a.d, name: a.name }).then((j) => j && j.md).catch(() => null)))
       .then((mds) => { const full = [reply].concat(mds.filter(Boolean)).filter(Boolean).join("\n\n"); return api("/comment", { repo, number, body: full }); })
       .then(() => { setReply(""); setAtts([]); toast("Sent"); setTimeout(loadThread, 800); })
-      .catch(() => toast("Couldn’t send")).then(() => setBusy(false));
+      .catch((e) => toast((e && e.message) || "Couldn’t send")).then(() => setBusy(false));
   }
   function pickFiles(e) { const fs = e.target.files || []; for (let i = 0; i < fs.length; i++) readAttach(fs[i], (a) => setAtts((x) => x.concat(a))); e.target.value = ""; }
   function onPaste(e) { const items = (e.clipboardData || {}).items || []; for (let i = 0; i < items.length; i++) if (items[i].kind === "file") readAttach(items[i].getAsFile(), (a) => setAtts((x) => x.concat(a))); }
