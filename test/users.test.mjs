@@ -19,6 +19,23 @@ test("users: create, authenticate, count", () => {
   assert.equal(s.authenticate("arne", "wrong"), null, "wrong password rejected");
 });
 
+test("password reset: find by name/email, single-use token, expiry", () => {
+  const u = s.getUserByName("arne");
+  assert.equal(s.getUserByNameOrEmail("arne@x.com")?.id, u.id, "found by email (case-insensitive)");
+  assert.equal(s.getUserByNameOrEmail("ARNE@X.COM")?.id, u.id, "email match is case-insensitive");
+  assert.equal(s.getUserByNameOrEmail("arne")?.id, u.id, "found by username");
+  assert.equal(s.getUserByNameOrEmail("nobody"), null, "unknown identifier → null");
+
+  const tok = s.createPasswordReset(u.id);
+  assert.ok(tok && tok.length > 10);
+  assert.equal(s.consumePasswordReset(tok), u.id, "valid token returns the user id");
+  assert.equal(s.consumePasswordReset(tok), null, "token can't be reused");
+  assert.equal(s.consumePasswordReset("bogus"), null, "unknown token → null");
+
+  const expired = s.createPasswordReset(u.id, -1000); // already expired
+  assert.equal(s.consumePasswordReset(expired), null, "expired token → null");
+});
+
 test("sessions: create, validate, revoke", () => {
   const u = s.getUserByName("arne");
   const tok = s.createSession(u.id, 30);

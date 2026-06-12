@@ -107,6 +107,9 @@ function getDb(): DatabaseSync | null {
         user_id INTEGER NOT NULL, key TEXT NOT NULL, value TEXT,
         updated_at TEXT, PRIMARY KEY (user_id, key)
       );
+      CREATE TABLE IF NOT EXISTS password_resets (
+        token TEXT PRIMARY KEY, user_id INTEGER NOT NULL, expires_at TEXT, used INTEGER DEFAULT 0
+      );
     `);
     // Migrations for older databases (ALTER fails harmlessly if the column already exists).
     for (const sql of [
@@ -592,6 +595,52 @@ export function getUserByName(username: string): UserRow | null {
   if (!d) return null;
   try {
     return (d.prepare(`SELECT id, username, email, role, created_at, password_hash FROM users WHERE username = ?`).get(username) as unknown as UserRow) ?? null;
+  } catch {
+    return null;
+  }
+}
+/** Find a user by username OR email (case-insensitive email) — for "forgot password". */
+export function getUserByNameOrEmail(identifier: string): UserRow | null {
+  const d = getDb();
+  if (!d || !identifier) return null;
+  try {
+    return (
+      (d
+        .prepare(
+          `SELECT id, username, email, role, created_at, password_hash FROM users
+           WHERE username = ? OR lower(email) = lower(?) LIMIT 1`,
+        )
+        .get(identifier, identifier) as unknown as UserRow) ?? null
+    );
+  } catch {
+    return null;
+  }
+}
+/** Create a single-use password-reset token (default 1h expiry). Returns the token. */
+export function createPasswordReset(userId: number, ttlMs = 3_600_000): string | null {
+  const d = getDb();
+  if (!d) return null;
+  try {
+    const token = newToken(24);
+    d.prepare(`INSERT INTO password_resets (token, user_id, expires_at, used) VALUES (?, ?, ?, 0)`).run(
+      token, userId, new Date(Date.now() + ttlMs).toISOString(),
+    );
+    return token;
+  } catch {
+    return null;
+  }
+}
+/** Consume a reset token: returns the user id if valid+unused+unexpired (and marks it used), else null. */
+export function consumePasswordReset(token: string): number | null {
+  const d = getDb();
+  if (!d || !token) return null;
+  try {
+    const row = d.prepare(`SELECT user_id, expires_at, used FROM password_resets WHERE token = ?`).get(token) as
+      | { user_id: number; expires_at: string; used: number }
+      | undefined;
+    if (!row || row.used || (row.expires_at && Date.parse(row.expires_at) < Date.now())) return null;
+    d.prepare(`UPDATE password_resets SET used = 1 WHERE token = ?`).run(token);
+    return row.user_id;
   } catch {
     return null;
   }
