@@ -841,7 +841,18 @@ async function runGit(cwd: string, args: string[]): Promise<string> {
 export async function ensureBranchPushed(workdir: string, branch: string): Promise<boolean> {
   try {
     const cur = await runGit(workdir, ["rev-parse", "--abbrev-ref", "HEAD"]).catch(() => "");
-    if (cur !== branch) await runGit(workdir, ["checkout", "-B", branch]).catch(() => {});
+    if (cur !== branch) {
+      // CRITICAL: get the EXISTING remote branch first (it may already hold pushed work from a
+      // prior run). `checkout -B` alone would reset the branch to the current HEAD (base), throwing
+      // that work away and making us report "no commits" → needs-attention even though the fix is
+      // already on origin/<branch>. Fetch + checkout the remote branch when it exists.
+      await runGit(workdir, ["fetch", "origin", branch]).catch(() => {});
+      const got = await runGit(workdir, ["checkout", branch]).then(() => true).catch(() => false);
+      if (!got) {
+        const fromRemote = await runGit(workdir, ["checkout", "-B", branch, `origin/${branch}`]).then(() => true).catch(() => false);
+        if (!fromRemote) await runGit(workdir, ["checkout", "-B", branch]).catch(() => {}); // brand-new branch
+      }
+    }
     await runGit(workdir, ["add", "-A"]).catch(() => {});
     const staged = await runGit(workdir, ["diff", "--cached", "--name-only"]).catch(() => "");
     if (staged.trim()) {
