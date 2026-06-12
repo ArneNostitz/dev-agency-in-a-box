@@ -577,7 +577,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
     }
 
     // Dashboard actions (auth required), not GitHub webhooks.
-    if (["/archive", "/comment", "/run-checks", "/merge", "/delete", "/resume", "/stop", "/fix", "/auto", "/start", "/new-issue", "/approve", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude"].includes(path)) {
+    if (["/archive", "/comment", "/run-checks", "/merge", "/close", "/delete", "/resume", "/stop", "/fix", "/auto", "/start", "/new-issue", "/approve", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude"].includes(path)) {
       const actor = userFromReq(req);
       if (!actor) return void res.writeHead(401, { "content-type": "application/json" }).end('{"error":"auth required"}');
       void readBody(req).then(async (body) => {
@@ -725,6 +725,23 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
             return ok();
           }
           return res.writeHead(409).end(JSON.stringify({ error: r.msg }));
+        }
+        if (path === "/close") {
+          // Close an issue that has no PR to merge — e.g. a master/epic issue whose sub-issues are
+          // all done, or a planning issue. For an epic, merge any remaining sub-PRs first.
+          if (!repo || !number) return res.writeHead(400).end("{}");
+          try {
+            if (isEpic(repo, number)) {
+              const e = await mergeEpic(repo, number); // closes the parent when all children are done
+              if (e.ok) return ok();
+              // some child PR couldn't merge — the user still asked to close, so close the parent.
+            }
+            await closeIssue(repo, number, "✅ Closed from the dashboard.").catch(() => {});
+            recordIssueState(repo, number, { state: "merged" });
+            return ok();
+          } catch (err) {
+            return res.writeHead(500).end(JSON.stringify({ error: (err as Error).message }));
+          }
         }
         if (path === "/delete") {
           // Try a real delete (owner-only); otherwise close + hide from the board.

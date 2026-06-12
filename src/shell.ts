@@ -137,6 +137,16 @@ textarea{resize:vertical;min-height:64px}
 
 /* detail */
 .dscrim{position:fixed;inset:0;z-index:44;background:transparent}
+.epicbox{border:1px solid var(--line);border-radius:12px;padding:8px 10px;margin-bottom:6px;background:var(--surface)}
+.epicalldone{color:var(--green);font-weight:600;text-transform:none;letter-spacing:0}
+.epiclist{display:flex;flex-direction:column;gap:2px}
+.epicrow{display:flex;align-items:center;gap:8px;width:100%;text-align:left;border:none;background:transparent;color:var(--ink);padding:6px 7px;border-radius:8px;cursor:pointer;font-size:13.5px}
+.epicrow:hover{background:var(--surface-2)}
+.epicck{flex:0 0 auto;display:inline-flex;width:20px;height:20px;align-items:center;justify-content:center;border-radius:50%}
+.epicck.done{background:var(--green-weak);color:var(--green)}
+.epicck.open{border:1px solid var(--line);color:var(--ink-3)}
+.epicnum{flex:0 0 auto;color:var(--ink-3);font-size:12px}
+.epictitle{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .detail{position:fixed;inset:0;z-index:45;background:var(--bg);display:flex;flex-direction:column;transform:translateX(100%);transition:transform .22s ease}
 .detail.on{transform:translateX(0)}
 .dhead{position:sticky;top:0;background:var(--surface);border-bottom:1px solid var(--line);padding:calc(10px + var(--safe-t)) 12px 10px;display:flex;align-items:center;gap:10px}
