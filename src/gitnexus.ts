@@ -13,7 +13,7 @@
  * them. We run GitNexus with the container's normal HOME (its registry/setup live there) — a
  * per-run HOME breaks its module/setup resolution.
  */
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync, appendFileSync, mkdirSync, readFileSync, writeFileSync, rmSync, cpSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -21,6 +21,53 @@ import { getSetting } from "./store.js";
 import { sStr, sNum } from "./settings.js";
 
 const exec = promisify(execFile);
+
+/**
+ * Run `gitnexus <args>` streaming its progress to `log` (so the live stream shows the analyze
+ * progress bar instead of looking frozen), capturing the output tail for a useful error message.
+ * Resolves on exit 0; rejects with the captured tail otherwise (or on timeout).
+ */
+function runGitnexusStreaming(
+  args: string[],
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  timeoutMs: number,
+  log: (s: string) => void,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn("gitnexus", args, { cwd, env });
+    let tail = "";
+    let lastEmit = 0;
+    const onData = (buf: Buffer): void => {
+      const s = buf.toString();
+      tail = (tail + s).slice(-4000);
+      // Progress bars overwrite a line with \r — split on both, surface the latest meaningful line,
+      // throttled so the stream shows movement without flooding the activity log.
+      const lines = s.split(/[\r\n]+/).map((l) => l.trim()).filter(Boolean);
+      const last = lines[lines.length - 1];
+      const now = Date.now();
+      if (last && now - lastEmit > 1200) {
+        lastEmit = now;
+        log("🧭 " + last.replace(/\s+/g, " ").slice(0, 160));
+      }
+    };
+    child.stdout?.on("data", onData);
+    child.stderr?.on("data", onData);
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error(`timed out after ${Math.round(timeoutMs / 1000)}s — ${tail.trim().slice(-500)}`));
+    }, timeoutMs);
+    child.on("error", (e) => {
+      clearTimeout(timer);
+      reject(e);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (code === 0) resolve();
+      else reject(new Error(`exit ${code} — ${tail.trim().slice(-700)}`));
+    });
+  });
+}
 
 /** Persistent per-repo index cache on the data volume (survives the per-run clone + redeploys). */
 function cacheDirFor(repo: string): string {
@@ -78,32 +125,56 @@ export async function indexRepo(workdir: string, repo: string, log: (s: string) 
     log("🧭 reusing cached GitNexus index (codebase unchanged)");
     return true;
   }
+  log(restored ? "🧭 refreshing GitNexus index (codebase changed)…" : "🧭 indexing codebase with GitNexus (no tokens)…");
+  const argStr = sStr("gitnexus_analyze_args", "GITNEXUS_ANALYZE_ARGS", "");
+  const args = argStr ? argStr.split(/\s+/) : ["analyze"];
+  // On a refresh, drop the stale restored index first so a *failed* analyze can't leave a stale or
+  // half-written index that the MCP then rejects ("not indexed"); we re-restore from cache below if
+  // analyze produces nothing usable.
+  if (restored) rmSync(join(workdir, ".gitnexus"), { recursive: true, force: true });
+  let analyzeErr: Error | null = null;
   try {
-    log(restored ? "🧭 refreshing GitNexus index (codebase changed)…" : "🧭 indexing codebase with GitNexus (no tokens)…");
-    const argStr = sStr("gitnexus_analyze_args", "GITNEXUS_ANALYZE_ARGS", "");
-    const args = argStr ? argStr.split(/\s+/) : ["analyze"];
-    await exec("gitnexus", args, {
-      cwd: workdir,
-      timeout: sNum("gitnexus_index_timeout_ms", "GITNEXUS_INDEX_TIMEOUT_MS", 300_000),
-      maxBuffer: 16 * 1024 * 1024,
-      env: { ...process.env, GITNEXUS_SKIP_OPTIONAL_GRAMMARS: "1" },
-    });
-    // The tree was pristine before indexing, so restore any tracked files GitNexus touched.
-    await exec("git", ["checkout", "--", "."], { cwd: workdir }).catch(() => {});
-    // Save the fresh index to the cache for the next run.
+    await runGitnexusStreaming(
+      args,
+      workdir,
+      { ...process.env, GITNEXUS_SKIP_OPTIONAL_GRAMMARS: "1" },
+      sNum("gitnexus_index_timeout_ms", "GITNEXUS_INDEX_TIMEOUT_MS", 300_000),
+      log,
+    );
+  } catch (err) {
+    analyzeErr = err as Error;
+  }
+  // The tree was pristine before indexing, so restore any tracked files GitNexus touched.
+  await exec("git", ["checkout", "--", "."], { cwd: workdir }).catch(() => {});
+
+  // Keep the index if analyze actually produced one — even on a non-zero exit (e.g. the harmless
+  // "FTS extension unavailable" warning makes gitnexus exit 1 while still writing a usable index).
+  if (isIndexed(workdir)) {
+    if (analyzeErr) log("🧭 GitNexus finished with warnings but produced an index — using it.");
     try {
       mkdirSync(cache, { recursive: true });
       rmSync(cacheIndex, { recursive: true, force: true });
-      if (existsSync(join(workdir, ".gitnexus"))) cpSync(join(workdir, ".gitnexus"), cacheIndex, { recursive: true });
+      cpSync(join(workdir, ".gitnexus"), cacheIndex, { recursive: true });
       if (curHead) writeFileSync(headFile, curHead);
     } catch {
       /* cache write best-effort */
     }
-    return isIndexed(workdir);
-  } catch (err) {
-    log(`GitNexus index ${restored ? "refresh failed (using cached)" : "skipped"}: ${(err as Error).message.slice(0, 140)}`);
-    return restored; // a restored (possibly stale) index is still better than none
+    return true;
   }
+
+  // No usable index produced. Surface the REAL error (not truncated), and fall back to the cached
+  // index if we had one.
+  log(`GitNexus indexing failed — ${(analyzeErr?.message ?? "no index produced").slice(0, 600)}`);
+  if (restored && existsSync(cacheIndex)) {
+    try {
+      cpSync(cacheIndex, join(workdir, ".gitnexus"), { recursive: true });
+      log("🧭 fell back to the previous cached index.");
+      return true;
+    } catch {
+      /* ignore */
+    }
+  }
+  return false;
 }
 
 export interface GitnexusWiring {
