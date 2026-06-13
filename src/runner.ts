@@ -29,6 +29,7 @@ import {
   isNoOpComment,
   findPrForBranch,
   ensureDraftPr,
+  createIssue,
   approvedByReaction,
   approveLastProposal,
   commentOnPr,
@@ -43,13 +44,15 @@ import {
 } from "./github.js";
 import { seedAdmin, resetAdminPassword } from "./auth.js";
 import { sNum } from "./settings.js";
-import { githubReady } from "./creds.js";
+import { githubReady, ghUserToken, ghBotToken } from "./creds.js";
 import { decideThreadAction } from "./route.js";
 import { reconcileEpics } from "./epics.js";
 import { indexRepo } from "./gitnexus.js";
 import { pushActivity } from "./activity.js";
 import { loadHandleRoleMap, roleForText, type RoleName } from "./agents/roles.js";
 import { runPipeline, runPrFix, runFollowUp, runResumeBuild, runReviewFix } from "./pipeline.js";
+import { runRole } from "./agents/roleAgent.js";
+import { parseAuditProposals } from "./auditparse.js";
 import {
   recordIssueState,
   recordPr,
@@ -594,6 +597,61 @@ export async function forceCreatePr(_cfg: Config, repo: string, number: number):
   return { ok: true, url: pr.url };
 }
 
+const AUDIT_TASK = [
+  "Audit this repository's overall health and propose the highest-impact issues to fix.",
+  "Build the knowledge graph with graphify, read graphify-out/GRAPH_REPORT.md (god nodes + surprising",
+  "connections), cross-check against the actual code and `git log --oneline -30`, then return your",
+  "proposals as a STRICT JSON array (at most 5) of {title, body}, highest-impact first. Each must be a",
+  "small, reviewable refactor/cleanup with concrete evidence (files/symbols). If the codebase is healthy,",
+  "return []. Do NOT change code or create issues — output only the JSON array and stop.",
+].join("\n");
+
+/**
+ * Manual "Audit now": the independent codebase Auditor. Clones the repo, runs Graphify + the auditor
+ * agent (whole-codebase health review), and opens up to 5 scoped refactor/cleanup issues in Planned —
+ * authored as YOU (owner token). Advisory only: never changes code, opens PRs, or blocks anything.
+ */
+export async function forceAudit(_cfg: Config, repo: string): Promise<void> {
+  dispatch(`${repo}#audit`, async () => {
+    const workdir = workdirFor(repo, "audit");
+    await rm(workdir, { recursive: true, force: true }).catch(() => {});
+    setActive(repo, 0, "issue", "auditor", `Audit ${repo}`);
+    pushActivity(repo, 0, "auditor", "start", `🔎 auditing ${repo} — building the codebase graph…`);
+    try {
+      await cloneRepo(repo, workdir);
+      const res = await runRole("auditor", { task: AUDIT_TASK, workdir, repo, issueNumber: 0 });
+      const proposals = parseAuditProposals(res.text).slice(0, 5);
+      if (!proposals.length) {
+        pushActivity(repo, 0, "auditor", "done", "✅ audit complete — no issues proposed (codebase looks healthy).");
+        return;
+      }
+      const owner = ghUserToken() || ghBotToken();
+      const created: string[] = [];
+      for (const p of proposals) {
+        const issue = await createIssue(
+          repo,
+          p.title.slice(0, 250),
+          `${p.body}\n\n— _opened by the Dev Agency **Auditor** (codebase health review). Review, then ▶ Start to build it._`,
+          owner,
+        ).catch(() => null);
+        if (!issue || !issue.number) continue;
+        await addLabel(repo, issue.number, "agency:planned").catch(() => {});
+        await addLabel(repo, issue.number, "agency:audit").catch(() => {});
+        recordIssueState(repo, issue.number, { title: p.title, state: "planned" });
+        created.push(`#${issue.number}`);
+      }
+      pushActivity(repo, 0, "auditor", "done", `✅ audit complete — opened ${created.length} issue(s) in Planned: ${created.join(", ")}`);
+      console.log(`[agency] audit ${repo}: opened ${created.length} issue(s): ${created.join(", ")}`);
+    } catch (err) {
+      pushActivity(repo, 0, "auditor", "done", `❌ audit failed: ${(err as Error).message.slice(0, 200)}`);
+      console.error(`[agency] audit ${repo} failed:`, (err as Error).message);
+    } finally {
+      clearActive(repo, 0);
+      await rm(workdir, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+}
+
 // ---- scan + dispatch ----
 
 const recentEnough = (iso: string): boolean =>
@@ -984,6 +1042,7 @@ async function main(): Promise<void> {
       (repo, number) => forceStop(cfg, repo, number),
       (repo, number) => forceCreatePr(cfg, repo, number),
       (repo, number) => forceResume(cfg, repo, number, true), // onComment: re-engage to address the new message (no PR short-circuit)
+      (repo) => forceAudit(cfg, repo),
     );
   } else {
     await backgroundInit(cfg);

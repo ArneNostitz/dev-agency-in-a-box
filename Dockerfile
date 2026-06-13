@@ -31,6 +31,13 @@ RUN apt-get update \
         python3 python3-pip python3-venv python3-dev build-essential libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Graphify (https://github.com/safishamsi/graphify) — knowledge-graph engine for the codebase
+# Auditor agent: builds a structural graph (NetworkX + Leiden + tree-sitter) and a GRAPH_REPORT.md
+# (god nodes + surprising connections). Pure Python, on-device, no native FTS extension. Best-effort
+# (the audit feature degrades to direct code analysis if it's unavailable). PyPI name: graphifyy.
+RUN pip install --no-cache-dir --break-system-packages graphifyy \
+    || echo "graphify not installed (optional) — the auditor falls back to direct codebase analysis"
+
 WORKDIR /app
 
 # Enable corepack so agents can use pnpm / yarn in target repos (not just npm).

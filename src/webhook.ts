@@ -115,7 +115,8 @@ function serveStatic(pathname: string, res: ServerResponse): boolean {
 }
 
 type CreatePr = (repo: string, number: number) => Promise<{ ok: boolean; url?: string; msg?: string }>;
-export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: Resume, approve?: Resume, fix?: Resume, start?: Resume, stop?: Resume, createPr?: CreatePr, onComment?: Resume): Promise<void> {
+type Audit = (repo: string) => Promise<void>;
+export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: Resume, approve?: Resume, fix?: Resume, start?: Resume, stop?: Resume, createPr?: CreatePr, onComment?: Resume, audit?: Audit): Promise<void> {
   const port = Number(process.env.PORT?.trim() || "3000");
   // Webhook secret is read live (dashboard → env) so it can be set/rotated without a redeploy.
   const webhookSecret = (): string => getSecretSetting("github_webhook_secret") || process.env.GITHUB_WEBHOOK_SECRET?.trim() || "";
@@ -586,7 +587,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
     }
 
     // Dashboard actions (auth required), not GitHub webhooks.
-    if (["/archive", "/comment", "/run-checks", "/merge", "/close", "/create-pr", "/delete", "/resume", "/stop", "/fix", "/auto", "/start", "/new-issue", "/approve", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude"].includes(path)) {
+    if (["/archive", "/comment", "/run-checks", "/merge", "/close", "/create-pr", "/delete", "/resume", "/stop", "/fix", "/auto", "/start", "/new-issue", "/approve", "/audit", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude"].includes(path)) {
       const actor = userFromReq(req);
       if (!actor) return void res.writeHead(401, { "content-type": "application/json" }).end('{"error":"auth required"}');
       void readBody(req).then(async (body) => {
@@ -758,6 +759,12 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           if (!repo || !number || !createPr) return res.writeHead(400).end("{}");
           const r = await createPr(repo, number);
           return r.ok ? ok(JSON.stringify({ ok: true, url: r.url })) : res.writeHead(409).end(JSON.stringify({ error: r.msg }));
+        }
+        if (path === "/audit") {
+          // "Audit now": run the independent codebase Auditor — opens scoped refactor issues in Planned.
+          if (!repo || !audit) return res.writeHead(400).end("{}");
+          void audit(repo);
+          return ok();
         }
         if (path === "/close") {
           // Close an issue that has no PR to merge — e.g. a master/epic issue whose sub-issues are
