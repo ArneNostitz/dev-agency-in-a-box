@@ -118,8 +118,15 @@ const COLS = [
 ];
 
 // ---------- toast (module-level so anything can call it) ----------
+// kind: "info" (default, auto-dismiss 2s) | "error" (persists until dismissed)
 let toastFn = () => {};
-function toast(t) { toastFn(t); }
+function toast(t, kind) { toastFn(t, kind || "info"); }
+
+// ---------- Toasts molecule ----------
+function Toasts({ toasts, onDismiss }) {
+  if (!toasts || !toasts.length) return null;
+  return html`<div class="toast-stack">${toasts.map((t) => html`<div key=${t.id} class=${"toast-item" + (t.kind === "error" ? " t-error" : "")}><span>${t.msg}</span>${t.kind === "error" ? html`<button class="toast-x" onClick=${() => onDismiss(t.id)} aria-label="Dismiss">✕</button>` : null}</div>`)}</div>`;
+}
 
 // Reactive desktop/mobile breakpoint (matches the CSS @media min-width:880px). Computing this
 // inline during render is unreliable — matchMedia can report the wrong value on first paint and
@@ -145,7 +152,8 @@ function App() {
   const [sheet, setSheet] = useState(null); // "composer" | "settings"
   const [composerRepo, setComposerRepo] = useState(null);
   const [theme, setTheme] = useState(document.documentElement.getAttribute("data-theme") || "light");
-  const [toastMsg, setToastMsg] = useState("");
+  const [toasts, setToasts] = useState([]);
+  const toastIdRef = useRef(0);
   const [pending, setPending] = useState([]); // optimistic new issues
   const overridesRef = useRef({}); // "repo#n" -> {state, t}
   const busyRef = useRef({}); // "action:repo#n" -> ts, while a request is in flight
@@ -153,7 +161,13 @@ function App() {
   const liveRef = useRef([]); // SSE-appended activity since last poll
   const [, forceTick] = useState(0);
 
-  useEffect(() => { toastFn = (t) => { setToastMsg(t); setTimeout(() => setToastMsg(""), 1900); }; }, []);
+  useEffect(() => {
+    toastFn = (t, kind) => {
+      const id = ++toastIdRef.current;
+      setToasts((ts) => ts.concat({ id, msg: t, kind: kind || "info" }));
+      if ((kind || "info") !== "error") setTimeout(() => setToasts((ts) => ts.filter((x) => x.id !== id)), 2000);
+    };
+  }, []);
 
   function load() {
     getJSON("/data").then((d) => {
@@ -201,19 +215,21 @@ function App() {
   // actions (optimistic + reconcile). Each is guarded: spins + blocks until the server responds.
   const act = {
     isBusy: (action, repo, number) => Boolean(busyRef.current[bkey(action, repo, number)]),
-    start(repo, number) { return guard("start", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/start", { repo, number }).then(() => toast("Starting…")).catch(() => { toast("Couldn’t start"); delete ov[repo + "#" + number]; }).then(load); }); },
-    approve(repo, number) { return guard("approve", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/approve", { repo, number }).then(() => toast("Approved — building")).catch(() => toast("Couldn’t approve")).then(load); }); },
-    resume(repo, number) { return guard("resume", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/resume", { repo, number }).then(() => toast("Resuming")).catch(() => toast("Couldn’t resume")).then(load); }); },
-    stop(repo, number) { return guard("stop", repo, number, () => { override(repo, number, { state: "planned" }); return api("/stop", { repo, number }).then(() => toast("Stopped — moved to Planned")).catch(() => toast("Couldn’t stop")).then(load); }); },
-    fix(repo, number) { return guard("fix", repo, number, () => { override(repo, number, { state: "agency:in-progress", active: true }); return api("/fix", { repo, number }).then(() => toast("Fixing the review")).catch(() => toast("Couldn’t fix")).then(load); }); },
-    merge(repo, number) { return guard("merge", repo, number, () => api("/merge", { repo, number }).then((r) => { toast("Merged"); load(); return r; }).catch(() => toast("Couldn’t merge — conflicts?"))); },
-    close(repo, number) { return guard("close", repo, number, () => { override(repo, number, { state: "merged" }); return api("/close", { repo, number }).then(() => { toast("Closed"); setOpenKey(null); }).catch((e) => toast((e && e.message) || "Couldn’t close")).then(load); }); },
-    createPr(repo, number) { return guard("createPr", repo, number, () => { override(repo, number, { state: "agency:ready" }); return api("/create-pr", { repo, number }).then((r) => toast(r && r.url ? "PR opened" : "PR opened")).catch((e) => toast((e && e.message) || "Couldn’t open PR")).then(load); }); },
-    del(repo, number) { return guard("del", repo, number, () => { override(repo, number, { state: "done" }); return api("/delete", { repo, number }).then(() => { toast("Deleted"); setOpenKey(null); }).catch(() => toast("Couldn’t delete")).then(load); }); },
-    runChecks(repo, number, title) { return guard("runChecks", repo, number, () => api("/run-checks", { repo, number, title }).then(() => toast("Running checks…")).catch(() => toast("Couldn’t run checks"))); },
+    start(repo, number) { return guard("start", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/start", { repo, number }).then(() => toast("Starting…")).catch(() => { toast("Couldn’t start", "error"); delete ov[repo + "#" + number]; }).then(load); }); },
+    approve(repo, number) { return guard("approve", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/approve", { repo, number }).then(() => toast("Approved — building")).catch(() => toast("Couldn’t approve", "error")).then(load); }); },
+    resume(repo, number) { return guard("resume", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/resume", { repo, number }).then(() => toast("Resuming")).catch(() => toast("Couldn’t resume", "error")).then(load); }); },
+    stop(repo, number) { return guard("stop", repo, number, () => { override(repo, number, { state: "planned" }); return api("/stop", { repo, number }).then(() => toast("Stopped — moved to Planned")).catch(() => toast("Couldn’t stop", "error")).then(load); }); },
+    fix(repo, number) { return guard("fix", repo, number, () => { override(repo, number, { state: "agency:in-progress", active: true }); return api("/fix", { repo, number }).then(() => toast("Fixing the review")).catch(() => toast("Couldn’t fix", "error")).then(load); }); },
+    merge(repo, number) { return guard("merge", repo, number, () => api("/merge", { repo, number }).then((r) => { toast("Merged"); load(); return r; }).catch(() => toast("Couldn’t merge — conflicts?", "error"))); },
+    close(repo, number) { return guard("close", repo, number, () => { override(repo, number, { state: "merged" }); return api("/close", { repo, number }).then(() => { toast("Closed"); setOpenKey(null); }).catch((e) => toast((e && e.message) || "Couldn’t close", "error")).then(load); }); },
+    createPr(repo, number) { return guard("createPr", repo, number, () => { override(repo, number, { state: "agency:ready" }); return api("/create-pr", { repo, number }).then((r) => toast(r && r.url ? "PR opened" : "PR opened")).catch((e) => toast((e && e.message) || "Couldn’t open PR", "error")).then(load); }); },
+    del(repo, number) { return guard("del", repo, number, () => { override(repo, number, { state: "done" }); return api("/delete", { repo, number }).then(() => { toast("Deleted"); setOpenKey(null); }).catch(() => toast("Couldn’t delete", "error")).then(load); }); },
+    runChecks(repo, number, title) { return guard("runChecks", repo, number, () => api("/run-checks", { repo, number, title }).then(() => toast("Running checks…")).catch(() => toast("Couldn’t run checks", "error"))); },
     setAuto(kind, value, repo, number) { return guard("auto-" + kind, repo || "global", number || 0, () => { const b = { kind, value }; if (repo) b.repo = repo; if (number) b.number = number; return api("/auto", b).then(() => { toast("auto-" + kind + ": " + value); }).then(load); }); },
-    audit(repo) { return guard("audit", repo, 0, () => api("/audit", { repo }).then(() => toast("Auditing " + repo.split("/").pop() + " — proposed issues will appear in Planned")).catch((e) => toast((e && e.message) || "Couldn’t start the audit"))); },
+    audit(repo) { return guard("audit", repo, 0, () => api("/audit", { repo }).then(() => toast("Auditing " + repo.split("/").pop() + " — proposed issues will appear in Planned")).catch((e) => toast((e && e.message) || "Couldn’t start the audit", "error"))); },
   };
+
+  function dismissToast(id) { setToasts((ts) => ts.filter((t) => t.id !== id)); }
 
   function openComposer(repo) { setComposerRepo(repo || repoFilter || (repos[0] || null)); setSheet("composer"); }
   function createIssue(repo, role, title, body, start, atts) {
@@ -222,7 +238,7 @@ function App() {
     Promise.all((atts || []).map((a) => api("/upload-file", { repo, number: 0, dataUrl: a.dataUrl, name: a.name }).then((j) => j && j.md).catch(() => null)))
       .then((mds) => { const full = [body].concat(mds.filter(Boolean)).filter(Boolean).join("\n\n"); return api("/new-issue", { repo, role, title, body: full, start: !!start }); })
       .then((d) => { setPending((ps) => ps.map((p) => (p === tmp ? Object.assign({}, p, { number: d.number || p.number }) : p))); setTimeout(load, 700); })
-      .catch((e) => { toast((e && e.message) || "Couldn’t create"); setPending((ps) => ps.filter((p) => p !== tmp)); });
+      .catch((e) => { toast((e && e.message) || "Couldn’t create", "error"); setPending((ps) => ps.filter((p) => p !== tmp)); });
   }
 
   // Keep the open detail mounted across polls. The issue object is re-fetched every 5s; if it's
@@ -259,7 +275,7 @@ function App() {
       ${sheet === "addrepo" && html`<${AddRepo} repos=${repos} onClose=${() => setSheet(null)} reload=${load}/>`}
       ${sheet === "usage" && html`<${Usage} onClose=${() => setSheet(null)} onOpenIssue=${openIssue}/>`}
       ${data.user && data.onboarded === false && html`<${Onboarding} repos=${repos} reload=${load}/>`}
-      <div class=${"toast " + (toastMsg ? "on" : "")}>${toastMsg}</div>
+      <${Toasts} toasts=${toasts} onDismiss=${dismissToast}/>
     </div>`;
 }
 
@@ -434,7 +450,7 @@ function Detail({ issue, activity, act, isDesktop, onClose, onOpenIssue }) {
     Promise.all(atts.map((a) => api("/upload-file", { repo, number, dataUrl: a.d, name: a.name }).then((j) => j && j.md).catch(() => null)))
       .then((mds) => { const full = [reply].concat(mds.filter(Boolean)).filter(Boolean).join("\n\n"); return api("/comment", { repo, number, body: full }); })
       .then(() => { setReply(""); setAtts([]); if (taRef.current) taRef.current.style.height = "auto"; toast(running ? "Queued — the agent will pick it up when the run finishes" : "Sent"); setTimeout(loadThread, 800); })
-      .catch((e) => toast((e && e.message) || "Couldn’t send")).then(() => setBusy(false));
+      .catch((e) => toast((e && e.message) || "Couldn’t send", "error")).then(() => setBusy(false));
   }
   function pickFiles(e) { const fs = e.target.files || []; for (let i = 0; i < fs.length; i++) readAttach(fs[i], (a) => setAtts((x) => x.concat(a))); e.target.value = ""; }
   function onPaste(e) { const items = (e.clipboardData || {}).items || []; for (let i = 0; i < items.length; i++) if (items[i].kind === "file") readAttach(items[i].getAsFile(), (a) => setAtts((x) => x.concat(a))); }
@@ -607,7 +623,7 @@ function RunApp({ repo, number, appInfo, issue, done }) {
     ${kind === "tauri" ? html`<button class="btn" onClick=${copyRun}><${Icon} name="laptop" size=${15}/> Run on my Mac</button>` : null}
     ${app && app.status === "running" ? html`<a class="btn primary" href=${app.url} target="_blank" rel="noopener"><${Icon} name="monitor" size=${15}/> Open app</a><button class="btn" onClick=${() => api("/app-stop", { repo, number }).then(() => toast("Stopped"))}><${Icon} name="stop" size=${15}/></button>`
       : app && (app.status === "installing" || app.status === "starting") ? html`<span class="muted">⏳ ${app.status}…</span>`
-      : kind === "web" ? html`<button class="btn" onClick=${() => api("/app-run", { repo, number }).then((r) => toast(r && r.error ? r.error : "Starting preview…")).catch(() => toast("Couldn’t start"))}><${Icon} name="play" size=${15}/> Run preview</button>` : null}
+      : kind === "web" ? html`<button class="btn" onClick=${() => api("/app-run", { repo, number }).then((r) => toast(r && r.error ? r.error : "Starting preview…")).catch(() => toast("Couldn’t start", "error"))}><${Icon} name="play" size=${15}/> Run preview</button>` : null}
   </div>`;
 }
 
@@ -663,7 +679,7 @@ function Settings({ data, theme, setTheme, onClose, setAuto, reload }) {
     ${data.user ? html`<div class="sec">Account</div>
       <div class="muted">Signed in as <b>${data.user.username}</b> · ${data.user.role}</div>
       <div style="display:flex;gap:8px;margin-top:8px">
-        <button class="btn ghost" onClick=${() => { const np = window.prompt("New password (8+ characters)"); if (np == null) return; if (np.length < 8) { toast("8+ characters"); return; } api("/set-password", { value: np }).then(() => toast("Password changed")).catch((e) => toast((e && e.message) || "Couldn’t change")); }}><${Icon} name="lock" size=${15}/> Change password</button>
+        <button class="btn ghost" onClick=${() => { const np = window.prompt("New password (8+ characters)"); if (np == null) return; if (np.length < 8) { toast("8+ characters"); return; } api("/set-password", { value: np }).then(() => toast("Password changed")).catch((e) => toast((e && e.message) || "Couldn’t change", "error")); }}><${Icon} name="lock" size=${15}/> Change password</button>
         <a class="btn ghost" href="/logout" style="flex:1;justify-content:center"><${Icon} name="arrowleft" size=${15}/> Sign out</a>
       </div>
 
