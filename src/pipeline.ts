@@ -64,6 +64,7 @@ const BADGE: Record<RoleName, string> = {
   tester: "🧪 **Tester**",
   architect: "🏛 **Architect**",
   librarian: "📚 **Librarian**",
+  auditor: "🔎 **Auditor**",
 };
 function say(role: RoleName, body: string): string {
   return `${BADGE[role]} · _dev-agency_\n\n${body}`;

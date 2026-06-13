@@ -16,6 +16,20 @@ import { renderEpicTracker, childStatus } from "../dist/epics.js";
 import { parseRateLimit, nextWindowReset, parseResetClock } from "../dist/ratelimit.js";
 import { pickWebDevScript, isTauriPackage, parseDevPort, parseTunnelUrl, buildLocalCommand } from "../dist/apprun.js";
 import { registerRun, stopRuns, hasActiveRun } from "../dist/abort.js";
+import { parseAuditProposals } from "../dist/auditparse.js";
+
+test("parseAuditProposals: fenced json, bare array, prose-wrapped, empty, malformed", () => {
+  const fenced = 'Here are my findings:\n```json\n[{"title":"Split god object","body":"evidence…"}]\n```\nDone.';
+  assert.deepEqual(parseAuditProposals(fenced), [{ title: "Split god object", body: "evidence…" }]);
+
+  const bare = 'prose before [{"title":"A","body":"b"},{"title":"C","body":"d"}] prose after';
+  assert.equal(parseAuditProposals(bare).length, 2);
+
+  assert.deepEqual(parseAuditProposals("[]"), [], "empty array → no proposals");
+  assert.deepEqual(parseAuditProposals("the codebase is healthy, no issues"), [], "no JSON → []");
+  // items missing required string fields are dropped
+  assert.deepEqual(parseAuditProposals('[{"title":"ok","body":"b"},{"title":123},{"nope":1}]'), [{ title: "ok", body: "b" }]);
+});
 
 test("abort registry: registerRun tracks, stopRuns aborts + clears, release cleans up", () => {
   const repo = "o/r", n = 42;

@@ -201,6 +201,7 @@ function App() {
     del(repo, number) { return guard("del", repo, number, () => { override(repo, number, { state: "done" }); return api("/delete", { repo, number }).then(() => { toast("Deleted"); setOpenKey(null); }).catch(() => toast("Couldn’t delete")).then(load); }); },
     runChecks(repo, number, title) { return guard("runChecks", repo, number, () => api("/run-checks", { repo, number, title }).then(() => toast("Running checks…")).catch(() => toast("Couldn’t run checks"))); },
     setAuto(kind, value, repo, number) { return guard("auto-" + kind, repo || "global", number || 0, () => { const b = { kind, value }; if (repo) b.repo = repo; if (number) b.number = number; return api("/auto", b).then(() => { toast("auto-" + kind + ": " + value); }).then(load); }); },
+    audit(repo) { return guard("audit", repo, 0, () => api("/audit", { repo }).then(() => toast("Auditing " + repo.split("/").pop() + " — proposed issues will appear in Planned")).catch((e) => toast((e && e.message) || "Couldn’t start the audit"))); },
   };
 
   function openComposer(repo) { setComposerRepo(repo || repoFilter || (repos[0] || null)); setSheet("composer"); }
@@ -233,7 +234,7 @@ function App() {
   return html`
     <div class="app">
       <${TopBar} working=${working} env=${data.env} theme=${theme} setTheme=${setThemeP} onSettings=${() => setSheet("settings")} onNew=${() => openComposer()}/>
-      <${RepoSelector} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} onAdd=${() => setSheet("addrepo")}/>
+      <${RepoSelector} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} onAdd=${() => setSheet("addrepo")} onAudit=${(r) => act.audit(r)} auditing=${repoFilter ? act.isBusy("audit", repoFilter, 0) : false}/>
       ${data.secretsHealth ? html`<${SecretBanner} h=${data.secretsHealth} onFix=${() => setSheet("settings")}/>` : null}
       <${StatusLine} working=${working} session=${data.session} spend=${data.spendToday}/>
       <div class="content">
@@ -269,11 +270,12 @@ function TopBar({ working, env, theme, setTheme, onSettings, onNew }) {
     <button class="iconbtn" aria-label="Settings" onClick=${onSettings}><${Icon} name="settings"/></button>
   </div>`;
 }
-function RepoSelector({ repos, repoFilter, setRepoFilter, onAdd }) {
+function RepoSelector({ repos, repoFilter, setRepoFilter, onAdd, onAudit, auditing }) {
   return html`<div class="reposel">
     <span class=${"chip " + (repoFilter ? "" : "on")} onClick=${() => setRepoFilter(null)}>All</span>
     ${repos.map((r) => html`<span key=${r} class=${"chip " + (repoFilter === r ? "on" : "")} onClick=${() => setRepoFilter(r)}>${r.split("/").pop()}</span>`)}
     <span class="chip dash" onClick=${onAdd}><${Icon} name="plus" size=${13}/> new</span>
+    ${repoFilter ? html`<span class=${"chip dash" + (auditing ? " busy" : "")} title="Audit this repo's health — opens scoped issues in Planned" onClick=${() => !auditing && onAudit(repoFilter)}>${auditing ? html`<${Spinner} size=${12}/>` : html`<${Icon} name="search" size=${12}/>`} ${auditing ? "Auditing…" : "Audit"}</span>` : null}
   </div>`;
 }
 function StatusLine({ working, session, spend }) {

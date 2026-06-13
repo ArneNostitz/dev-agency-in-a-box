@@ -17,7 +17,7 @@ export const MODELS = {
   opus: "claude-opus-4-8",
 } as const;
 
-export type RoleName = "planner" | "architect" | "developer" | "reviewer" | "tester" | "librarian";
+export type RoleName = "planner" | "architect" | "developer" | "reviewer" | "tester" | "librarian" | "auditor";
 
 export interface RoleDef {
   name: RoleName;
@@ -104,6 +104,17 @@ export const ROLES: Record<RoleName, RoleDef> = {
     modelEnv: "LIBRARIAN_MODEL",
     tools: READ_TOOLS,
     maxTurns: 12,
+  },
+  auditor: {
+    name: "auditor",
+    personaFile: "auditor",
+    playbooks: [...SHARED_PLAYBOOKS, "logic-separation", "backend"],
+    // Whole-codebase architectural judgment — Sonnet is the sweet spot. Override with AUDITOR_MODEL.
+    defaultModel: MODELS.sonnet,
+    modelEnv: "AUDITOR_MODEL",
+    // Needs Bash to run graphify + git, and read tools to inspect the code it flags.
+    tools: ["Read", "Glob", "Grep", "Bash"],
+    maxTurns: 40,
   },
 };
 
