@@ -258,9 +258,9 @@ function App() {
 
   return html`
     <div class="app">
-      <${TopBar} working=${working} env=${data.env} theme=${theme} setTheme=${setThemeP} onSettings=${() => setSheet("settings")} onUsage=${() => setSheet("usage")} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${load}/>
+      <${TopBar} working=${working} env=${data.env} theme=${theme} setTheme=${setThemeP} onSettings=${() => setSheet("settings")} onUsage=${() => setSheet("usage")} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${load} auto=${data.auto || {}} autoRepos=${data.autoRepos || {}} setAuto=${act.setAuto}/>
       ${data.secretsHealth ? html`<${SecretBanner} h=${data.secretsHealth} onFix=${() => setSheet("settings")}/>` : null}
-      <${StatusLine} working=${working} session=${data.session} spend=${data.spendToday}/>
+      <${StatusLine} working=${working} session=${data.session} spend=${data.spendToday} reload=${load}/>
       <div class="content">
         <${Board} issues=${shown} repos=${repos} repoFilter=${repoFilter} tab=${tab} isDesktop=${isDesktop} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onAddRepo=${() => setSheet("addrepo")} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act}/>
       </div>
@@ -268,7 +268,9 @@ function App() {
       ${open && html`<div class="dscrim" onClick=${() => setOpenKey(null)}></div>`}
       ${open && html`<${Detail} key=${openKey} issue=${open} activity=${activity} act=${act} isDesktop=${isDesktop} startError=${detailError} onClose=${() => { setOpenKey(null); setDetailError(null); }} onOpenIssue=${openIssue}/>`}
       ${sheet === "composer" && html`<${Composer} repos=${repos} repo=${composerRepo} setRepo=${setComposerRepo} onClose=${() => setSheet(null)} onCreate=${createIssue}/>`}
-      ${sheet === "settings" && html`<${Settings} data=${data} theme=${theme} setTheme=${setThemeP} onClose=${() => setSheet(null)} setAuto=${act.setAuto} reload=${load}/>`}
+      ${sheet === "settings" && html`<${Settings} data=${data} onClose=${() => setSheet(null)} reload=${load} openGithubTokens=${() => setSheet("github")} openModels=${() => setSheet("models")}/>`}
+      ${sheet === "github" && html`<${GithubTokensModal} secretKeys=${data.secretKeys || []} onClose=${() => setSheet("settings")} reload=${load}/>`}
+      ${sheet === "models" && html`<${ModelsModal} onClose=${() => setSheet("settings")} reload=${load}/>`}
       ${sheet === "addrepo" && html`<${AddRepo} repos=${repos} onClose=${() => setSheet(null)} reload=${load}/>`}
       ${sheet === "usage" && html`<${Usage} onClose=${() => setSheet(null)} onOpenIssue=${openIssue}/>`}
       ${data.user && data.onboarded === false && html`<${Onboarding} repos=${repos} reload=${load}/>`}
@@ -286,11 +288,11 @@ function SecretBanner({ h, onFix }) {
   return html`<div class="secbanner"><b>⚠ Credentials need attention.</b> ${msgs.map((m, i) => html`<div key=${i} style="margin-top:3px">${m}</div>`)} <button class="btn ghost" style="margin-top:7px" onClick=${onFix}>Open Settings</button></div>`;
 }
 
-function TopBar({ working, env, theme, setTheme, onSettings, onUsage, repos, repoFilter, setRepoFilter, reload }) {
+function TopBar({ working, env, theme, setTheme, onSettings, onUsage, repos, repoFilter, setRepoFilter, reload, auto, autoRepos, setAuto }) {
   return html`<div class="topbar">
     <div class="brand"><${Icon} name="crown" size=${18}/> <span class="brandname">Dev Agency</span> ${env === "development" ? html`<span class="envbadge">DEV</span>` : null} ${working ? html`<span class="dot"></span>` : null}</div>
     <div class="spacer"></div>
-    <${RepoDropdown} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${reload}/>
+    <${RepoDropdown} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${reload} auto=${auto} autoRepos=${autoRepos} setAuto=${setAuto}/>
     <div class="spacer"></div>
     <button class="iconbtn" aria-label="Token usage" title="Token usage statistics" onClick=${onUsage}><${Icon} name="chart"/></button>
     <button class="iconbtn" aria-label="Toggle theme" onClick=${() => setTheme(theme === "dark" ? "light" : "dark")}><${Icon} name=${theme === "dark" ? "sun" : "moon"}/></button>
@@ -299,7 +301,7 @@ function TopBar({ working, env, theme, setTheme, onSettings, onUsage, repos, rep
 }
 
 // Centered repo selector that doubles as repo add/remove (replaces the pill row + Add modal).
-function RepoDropdown({ repos, repoFilter, setRepoFilter, reload }) {
+function RepoDropdown({ repos, repoFilter, setRepoFilter, reload, auto, autoRepos, setAuto }) {
   const [open, setOpen] = useState(false);
   const [avail, setAvail] = useState(null);
   const [manual, setManual] = useState("");
@@ -315,6 +317,10 @@ function RepoDropdown({ repos, repoFilter, setRepoFilter, reload }) {
     if (busy) return; setBusy(true);
     api("/remove-repo", { repo: full }).then(() => { toast("Removed " + full); if (repoFilter === full) setRepoFilter(null); reload(); }).catch(() => toast("Couldn’t remove")).then(() => setBusy(false));
   }
+  
+  const gpill = (kind) => { const raw = auto[kind] || ""; const on = raw === "on", off = raw === "off"; const order = ["", "on", "off"]; const nx = order[(order.indexOf(raw) + 1) % 3]; return html`<button class=${"apill " + (on ? "on" : off ? "off" : "")} onClick=${(e) => { e.stopPropagation(); setAuto(kind, nx === "" ? "inherit" : nx); }}><${Icon} name=${kind === "resume" ? "refresh" : "merge"} size=${12}/> ${kind}</button>`; };
+  const rpill = (repo, kind) => { const raw = (autoRepos[repo] || {})[kind] || ""; const on = raw === "on", off = raw === "off"; const order = ["", "on", "off"]; const nx = order[(order.indexOf(raw) + 1) % 3]; return html`<button class=${"apill " + (on ? "on" : off ? "off" : "")} onClick=${(e) => { e.stopPropagation(); setAuto(kind, nx === "" ? "inherit" : nx, repo); }}><${Icon} name=${kind === "resume" ? "refresh" : "merge"} size=${12}/> ${kind}</button>`; };
+
   const watching = repos || [];
   const addable = (avail || []).filter((r) => !watching.includes(r.full_name));
   const title = repoFilter ? repoFilter.split("/").pop() : "All";
@@ -324,11 +330,15 @@ function RepoDropdown({ repos, repoFilter, setRepoFilter, reload }) {
       <${Icon} name=${open ? "x" : "planned"} size=${15}/>
     </button>
     ${open ? html`<div class="dropscrim" onClick=${() => setOpen(false)}></div>
-      <div class="dropmenu repodrop-menu">
-        <button class=${"dropmenu-item" + (repoFilter ? "" : " sel")} onClick=${() => { setRepoFilter(null); setOpen(false); }}><${Icon} name="layers" size=${14}/> All repos</button>
+      <div class="dropmenu repodrop-menu" style="min-width:300px">
+        <button class=${"dropmenu-item" + (repoFilter ? "" : " sel")} onClick=${() => { setRepoFilter(null); setOpen(false); }}>
+          <div style="flex:1;display:flex;align-items:center"><${Icon} name="layers" size=${14}/> All repos</div>
+          <div class="autorow" style="margin:0">${gpill("resume")}${gpill("merge")}</div>
+        </button>
         ${watching.length ? html`<div class="dropmenu-h">Watching</div>` : null}
         ${watching.map((r) => html`<div class=${"repodrop-row" + (repoFilter === r ? " sel" : "")} key=${r}>
-          <button class="repodrop-pick" onClick=${() => { setRepoFilter(r); setOpen(false); }}><${Icon} name="pr" size=${13}/> ${r}</button>
+          <button class="repodrop-pick" onClick=${() => { setRepoFilter(r); setOpen(false); }} style="flex:1;overflow:hidden;text-overflow:ellipsis"><${Icon} name="pr" size=${13}/> ${r}</button>
+          <div class="autorow" style="margin:0">${rpill(r, "resume")}${rpill(r, "merge")}</div>
           <button class="repodrop-x" disabled=${busy} aria-label=${"Remove " + r} title="Stop watching" onClick=${() => remove(r)}><${Icon} name="trash" size=${14}/></button>
         </div>`)}
         <div class="dropmenu-h">Add a repo</div>
@@ -342,19 +352,39 @@ function RepoDropdown({ repos, repoFilter, setRepoFilter, reload }) {
       </div>` : null}
   </div>`;
 }
-function StatusLine({ working, session, spend }) {
+function StatusLine({ working, session, spend, reload }) {
   const s = session || {};
   let pct = s.budget > 0 ? Math.min(100, Math.round((100 * s.tokens) / s.budget)) : 0;
   const col = pct >= 90 ? "var(--red)" : pct >= 70 ? "var(--amber)" : "var(--green)";
   const [ver, setVer] = useState(null);
+  const [pop, setPop] = useState(false);
+  const [win, setWin] = useState(s.windowHours || 5);
+  const [bud, setBud] = useState(s.budget || 0);
+
   useEffect(() => { getJSON("/web/version.json").then(setVer).catch(() => setVer(null)); }, []);
   const verTitle = ver ? "Build " + (ver.version || "?") + (ver.sha ? " · " + ver.sha : "") + (ver.builtAt ? " · built " + new Date(ver.builtAt).toLocaleString() : "") : "Development build (not from a Docker image)";
   const verLabel = ver ? (ver.sha || ("v" + (ver.version || "?"))) + (ver.builtAt ? " · " + ago(ver.builtAt) : "") : "dev";
+  
+  function saveBudget() {
+    api("/settings", { windowHours: Number(win) || 5, budget: Number(bud) || 0 }).then(() => { toast("Budget saved"); setPop(false); reload(); });
+  }
+
   return html`<div class="statusline">
     <span>${working ? working + " working now" : "Idle"}</span>
     ${spend && spend.costUsd > 0 ? html`<span>· $${spend.costUsd.toFixed(2)} today</span>` : null}
-    ${s.budget > 0 ? html`<span>· <span class="gauge"><i style=${"width:" + pct + "%;background:" + col}></i></span> ${pct}%</span>` : null}
-    ${s.resetsAt ? html`<span>· resets ${hm(new Date(s.resetsAt))}</span>` : null}
+    <span style="position:relative">
+      <button class="iconbtn" style="padding:0 4px;height:auto;font-size:inherit" onClick=${() => setPop(!pop)}>
+        · ${s.budget > 0 ? html`<span class="gauge"><i style=${"width:" + pct + "%;background:" + col}></i></span> ${pct}%` : "No token limit"}
+      </button>
+      ${pop ? html`<div class="dropscrim" onClick=${() => setPop(false)}></div><div class="dropmenu" style="left:0;top:100%;min-width:220px;padding:12px;z-index:100">
+        <label>Session window (hours)</label>
+        <input type="number" min="1" value=${win} onInput=${(e) => setWin(e.target.value)} style="margin-bottom:8px"/>
+        <label>Budget (tokens / window, 0=off)</label>
+        <input type="number" min="0" step="1000" value=${bud} onInput=${(e) => setBud(e.target.value)} style="margin-bottom:8px"/>
+        <button class="btn primary" onClick=${saveBudget}>Save</button>
+      </div>` : null}
+    </span>
+    ${s.resetsAt && s.budget > 0 ? html`<span>· resets ${hm(new Date(s.resetsAt))}</span>` : null}
     <span class="spacer"></span>
     <span class="buildstamp" title=${verTitle}>${verLabel}</span>
     <a href="/history">history</a>
@@ -832,17 +862,13 @@ function Composer({ repos, repo, setRepo, onClose, onCreate }) {
 }
 
 // ---------- Settings ----------
-function Settings({ data, theme, setTheme, onClose, setAuto, reload }) {
-  const s = data.session || {}, cfg = data.config || {}, auto = data.auto || {}, autoRepos = data.autoRepos || {};
-  const [win, setWin] = useState(s.windowHours || 5);
-  const [budget, setBudget] = useState(s.budget || 0);
+function Settings({ data, onClose, reload, openGithubTokens, openModels }) {
+  const s = data.session || {}, cfg = data.config || {};
   const [skipArch, setSkipArch] = useState(cfg.skipArchitect !== "off");
   const [gitnexus, setGitnexus] = useState(cfg.gitnexus === "on");
   const [maxTok, setMaxTok] = useState(cfg.maxTokensPerRun || 600000);
   const [revRounds, setRevRounds] = useState(cfg.maxReviseRounds != null ? cfg.maxReviseRounds : 1);
-  function save() { api("/settings", { windowHours: Number(win) || 5, budget: Number(budget) || 0, skipArchitect: skipArch ? "on" : "off", gitnexus: gitnexus ? "on" : "off", maxTokensPerRun: Number(maxTok) || 0, maxReviseRounds: Number(revRounds) || 0 }).then(() => { toast("Saved"); onClose(); reload(); }); }
-  const gpill = (kind) => { const raw = auto[kind] || ""; const on = raw === "on", off = raw === "off"; const order = ["", "on", "off"]; const nx = order[(order.indexOf(raw) + 1) % 3]; return html`<button class=${"apill " + (on ? "on" : off ? "off" : "")} onClick=${() => setAuto(kind, nx === "" ? "inherit" : nx)}><${Icon} name=${kind === "resume" ? "refresh" : "merge"} size=${14}/> ${kind}</button>`; };
-  const rpill = (repo, kind) => { const raw = (autoRepos[repo] || {})[kind] || ""; const on = raw === "on", off = raw === "off"; const order = ["", "on", "off"]; const nx = order[(order.indexOf(raw) + 1) % 3]; return html`<button class=${"apill " + (on ? "on" : off ? "off" : "")} onClick=${() => setAuto(kind, nx === "" ? "inherit" : nx, repo)}><${Icon} name=${kind === "resume" ? "refresh" : "merge"} size=${13}/> ${kind}</button>`; };
+  function save() { api("/settings", { skipArchitect: skipArch ? "on" : "off", gitnexus: gitnexus ? "on" : "off", maxTokensPerRun: Number(maxTok) || 0, maxReviseRounds: Number(revRounds) || 0 }).then(() => { toast("Saved"); onClose(); reload(); }); }
   return html`<${Sheet} title="Settings" onClose=${onClose} footer=${html`<button class="btn" onClick=${onClose}>Cancel</button><button class="btn primary" onClick=${save}>Save</button>`}>
     ${data.user ? html`<div class="sec">Account</div>
       <div class="muted">Signed in as <b>${data.user.username}</b> · ${data.user.role}</div>
@@ -851,31 +877,24 @@ function Settings({ data, theme, setTheme, onClose, setAuto, reload }) {
         <a class="btn ghost" href="/logout" style="flex:1;justify-content:center"><${Icon} name="arrowleft" size=${15}/> Sign out</a>
       </div>
 
+      <div class="sec">Integrations & Credentials</div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn" style="flex:1;justify-content:center" onClick=${openGithubTokens}><${Icon} name="link" size=${15}/> GitHub Tokens</button>
+        <button class="btn" style="flex:1;justify-content:center" onClick=${openModels}><${Icon} name="flask" size=${15}/> Models & API Keys</button>
+      </div>
+
       <div class="sec">Setup wizard</div>
       <div class="muted" style="font-size:12px;margin-bottom:7px">Re-run the guided walkthrough to add or update your tokens, models, and first repo.</div>
       <button class="btn primary" style="width:100%" onClick=${() => api("/onboarded", { value: "0" }).then(() => { onClose(); reload(); })}><${Icon} name="play" size=${15}/> Run the setup wizard</button>
 
-      <${Credentials} secretKeys=${data.secretKeys || []} reload=${reload}/>
       ${data.user.role === "admin" ? html`<${Admin} users=${data.users || []} invites=${data.invites || []} webhookSecretSet=${data.webhookSecretSet} reload=${reload}/>` : null}` : null}
-    <div class="sec">Appearance</div>
-    <div class="autorow">
-      <button class=${"apill " + (theme === "light" ? "on" : "")} onClick=${() => setTheme("light")}><${Icon} name="sun" size=${14}/> Light</button>
-      <button class=${"apill " + (theme === "dark" ? "on" : "")} onClick=${() => setTheme("dark")}><${Icon} name="moon" size=${14}/> Dark</button>
-    </div>
-    <div class="sec">Automation (global default)</div>
-    <div class="autorow">${gpill("resume")}${gpill("merge")}</div>
-    <div class="muted" style="font-size:12px;margin-top:4px">Auto-merge only fires when the review is approved, there are no conflicts, and checks pass.</div>
-    ${(data.repos || []).length ? html`<div class="sec">Per repo</div>${(data.repos || []).map((r) => html`<div key=${r} style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:5px 2px"><span style="font-size:13px;flex:1;min-width:120px">${r.split("/").pop()}</span>${rpill(r, "resume")}${rpill(r, "merge")}</div>`)}` : null}
-    <div class="sec">Token budget</div>
-    <label>Session window (hours)</label><input type="number" min="1" value=${win} onInput=${(e) => setWin(e.target.value)}/>
-    <label>Budget — tokens per window (0 = off)</label><input type="number" min="0" step="1000" value=${budget} onInput=${(e) => setBudget(e.target.value)}/>
+    
     <div class="sec">Pipeline</div>
     <label class="ckline"><input type="checkbox" checked=${skipArch} onChange=${(e) => setSkipArch(e.target.checked)}/> Skip the architect step (faster, fewer tokens)</label>
     <label class="ckline"><input type="checkbox" checked=${gitnexus} onChange=${(e) => setGitnexus(e.target.checked)}/> Use GitNexus code index</label>
     <label>Max tokens per run (0 = off)</label><input type="number" min="0" step="50000" value=${maxTok} onInput=${(e) => setMaxTok(e.target.value)}/>
     <label>Reviewer revise rounds before it asks you</label><input type="number" min="0" max="3" value=${revRounds} onInput=${(e) => setRevRounds(e.target.value)}/>
     ${(!data.user || data.user.role === "admin") && data.opsMeta ? html`<${Operations} meta=${data.opsMeta} values=${data.ops || {}} reload=${reload}/>` : null}
-    <${ModelsPanel}/>
     <div class="sec">Advanced</div>
     <a class="btn ghost" href="/classic" style="justify-content:flex-start"><${Icon} name="settings" size=${15}/> Models &amp; agents (classic editor)</a>
   <//>`;
@@ -932,9 +951,10 @@ function Operations({ meta, values, reload }) {
   const [vals, setVals] = useState(() => Object.assign({}, values));
   const set = (k, v) => setVals((o) => Object.assign({}, o, { [k]: v }));
   function save() { api("/settings", { ops: vals }).then(() => { toast("Operations saved"); reload(); }).catch(() => toast("Couldn’t save")); }
-  return html`<div class="sec">Operations (advanced)</div>
-    <div class="muted" style="font-size:12px;margin-bottom:4px">Global agency settings, moved out of env. Applies on save (a few apply on next restart).</div>
-    ${meta.map((m) => html`<div key=${m.key}>
+  const visibleMeta = meta.filter(m => m.key === "self_improve");
+  if (!visibleMeta.length) return null;
+  return html`<div class="sec">Operations</div>
+    ${visibleMeta.map((m) => html`<div key=${m.key}>
       ${m.type === "bool"
         ? html`<label class="ckline"><input type="checkbox" checked=${!!vals[m.key]} onChange=${(e) => set(m.key, e.target.checked)}/> ${m.label}</label>`
         : html`<label>${m.label}</label>${m.type === "select"
@@ -956,6 +976,11 @@ const OB_PROVIDERS = [
     title: "Claude API key", placeholder: "sk-ant-...",
     how: "Pay-as-you-go billing instead of a subscription.\n\n1. Open platform.claude.com → API keys.\n2. Create a key.\n3. Paste it below.",
     link: "https://platform.claude.com/settings/keys", linkLabel: "Create an API key" },
+  { id: "gemini", label: "Gemini", note: "Google's models", icon: "globe", kind: "provider",
+    preset: { name: "Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", models: ["gemini-1.5-pro", "gemini-1.5-flash"] },
+    title: "Gemini API key", placeholder: "AIza...",
+    how: "Get an API key from Google AI Studio. Assign it to agents later in Settings → Models.",
+    link: "https://aistudio.google.com/app/apikey", linkLabel: "Get a Gemini key" },
   { id: "glm", label: "GLM (Zhipu)", note: "Cheap coding model", icon: "globe", kind: "provider",
     preset: { name: "GLM (Zhipu)", baseUrl: "https://open.bigmodel.cn/api/anthropic", models: ["glm-4.6", "glm-4.5"] },
     title: "GLM API key", placeholder: "GLM API key",
@@ -971,7 +996,7 @@ const OB_PROVIDERS = [
     title: "Kimi API key", placeholder: "Kimi API key",
     how: "1. Get an API key from platform.moonshot.cn.\n2. Paste it below.\n\nAssign it to agents later in Settings → Models.",
     link: "https://platform.moonshot.cn", linkLabel: "Get a Kimi key" },
-  { id: "other", label: "Other (OpenAI, Gemini, Ollama)", note: "Needs a router", icon: "settings", kind: "provider", custom: true,
+  { id: "other", label: "Other (Custom)", note: "Needs a router", icon: "settings", kind: "provider", custom: true,
     title: "Custom provider", placeholder: "API key",
     how: "OpenAI / Gemini / Ollama need an Anthropic-compatible gateway (claude-code-router or LiteLLM). Run one, then enter its base URL + key here.",
     link: "https://github.com/musistudio/claude-code-router", linkLabel: "claude-code-router" },
@@ -1122,15 +1147,73 @@ function AddRepo({ repos, onClose, reload }) {
 }
 
 // ---------- per-user credentials (write-only, encrypted server-side) ----------
-const CRED_FIELDS = [
-  { key: "claude_token", label: "Claude subscription token", hint: "CLAUDE_CODE_OAUTH_TOKEN — runs the Claude roles on your plan" },
-  { key: "github_user_token", label: "GitHub token (acts as you)", hint: "comments/issues authored under your account" },
-  { key: "github_bot_token", label: "GitHub bot token", hint: "the agency's commits + pull requests" },
-];
-function Credentials({ secretKeys, reload }) {
-  return html`<div class="sec">Your credentials</div>
-    <div class="muted" style="font-size:12px;margin-bottom:4px">Stored encrypted (AES-256-GCM). The agency uses them to run on your behalf. Write-only — never shown back.</div>
-    ${CRED_FIELDS.map((f) => html`<${SecretField} key=${f.key} field=${f} isSet=${secretKeys.includes(f.key)} reload=${reload}/>`)}`;
+function GithubTokensModal({ secretKeys, onClose, reload }) {
+  return html`<${Sheet} title="GitHub Tokens" onClose=${onClose} footer=${html`<button class="btn" onClick=${onClose}>Close</button>`}>
+    <div class="muted" style="font-size:12px;margin-bottom:12px">Stored encrypted (AES-256-GCM). The agency uses them to run on your behalf. Write-only — never shown back.</div>
+    <div style="margin-bottom:16px">
+      <${SecretField} field=${{key: "github_bot_token", label: "GitHub bot token", hint: "The account the agency ACTS as — its commits and pull requests."}} isSet=${secretKeys.includes("github_bot_token")} reload=${reload}/>
+    </div>
+    <div style="margin-bottom:16px">
+      <${SecretField} field=${{key: "github_user_token", label: "Your GitHub token", hint: "Lets the agency comment and open issues under YOUR name."}} isSet=${secretKeys.includes("github_user_token")} reload=${reload}/>
+    </div>
+  <//>`;
+}
+
+function ModelsModal({ onClose, reload }) {
+  const [existing, setExisting] = useState([]);
+  const [secretKeys, setSecretKeys] = useState([]);
+  function refresh() { 
+    getJSON("/models").then((d) => setExisting(d.providers || [])).catch(() => {}); 
+    getJSON("/data").then((d) => setSecretKeys(d.secretKeys || [])).catch(() => {});
+  }
+  useEffect(refresh, []);
+
+  return html`<${Sheet} title="Models & API Keys" onClose=${onClose} footer=${html`<button class="btn" onClick=${onClose}>Close</button>`}>
+    <div class="muted" style="font-size:12px;margin-bottom:12px">Configure your API keys for various AI models. Keys are stored securely.</div>
+    
+    <div class="sec">Claude</div>
+    <div style="margin-bottom:12px">
+      <${SecretField} field=${{key: "claude_token", label: "Claude subscription token", hint: "CLAUDE_CODE_OAUTH_TOKEN — runs the Claude roles on your plan"}} isSet=${secretKeys.includes("claude_token")} reload=${() => {reload(); refresh();}}/>
+    </div>
+    <div style="margin-bottom:12px">
+      <${SecretField} field=${{key: "anthropic_api_key", label: "Claude API key", hint: "Pay-as-you-go billing"}} isSet=${secretKeys.includes("anthropic_api_key")} reload=${() => {reload(); refresh();}}/>
+    </div>
+
+    <div class="sec">Other Providers</div>
+    ${OB_PROVIDERS.filter(p => p.kind === "provider" && !p.custom).map(p => {
+      const isSet = existing.some(ex => ex.name === p.preset.name && ex.apiKey);
+      return html`<div key=${p.id} style="margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--ink-2)">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><${Icon} name=${p.icon} size=${14}/> <b>${p.label}</b> ${isSet ? html`<span class="statuschip s-ready"><${Icon} name="check" size=${12}/> set</span>` : null}</div>
+        <div class="muted" style="font-size:11px;margin-bottom:8px">${p.how}</div>
+        <${ProviderField} providerDef=${p} existing=${existing} reload=${() => {reload(); refresh();}}/>
+      </div>`
+    })}
+
+    <div class="sec">Custom Provider</div>
+    <div style="margin-bottom:16px">
+      <div class="muted" style="font-size:11px;margin-bottom:8px">Add an Anthropic-compatible gateway (e.g. LiteLLM, claude-code-router).</div>
+      <${ProviderField} providerDef=${OB_PROVIDERS.find(p => p.custom)} existing=${existing} reload=${() => {reload(); refresh();}} custom=${true}/>
+    </div>
+
+    <${ModelsPanel}/>
+  <//>`;
+}
+
+function ProviderField({ providerDef, existing, reload, custom }) {
+  const [val, setVal] = useState("");
+  const [baseUrl, setBaseUrl] = useState(providerDef.preset?.baseUrl || "");
+  function save() {
+    if (!val) { toast("Paste an API key"); return; }
+    const prov = { id: providerDef.id + "-" + Date.now().toString(36), name: providerDef.preset?.name || "Custom", baseUrl: custom ? baseUrl.trim() : providerDef.preset.baseUrl, apiKey: val.trim(), models: providerDef.preset?.models || [] };
+    api("/models", { providers: (existing || []).concat(prov) }).then(() => { toast("Saved"); setVal(""); reload(); }).catch(() => toast("Couldn’t save"));
+  }
+  return html`
+    ${custom ? html`<input placeholder="Base URL (https://...)" value=${baseUrl} onInput=${(e) => setBaseUrl(e.target.value)} style="margin-bottom:8px"/>` : null}
+    <div style="display:flex;gap:8px">
+      <input type="password" autocomplete="off" placeholder=${providerDef.placeholder || "API Key"} value=${val} onInput=${(e) => setVal(e.target.value)}/>
+      <button class="btn" onClick=${save}>Save</button>
+    </div>
+  `;
 }
 function SecretField({ field, isSet, reload }) {
   const [v, setV] = useState("");
@@ -1176,6 +1259,10 @@ function shortModel(m) {
   if (/opus/i.test(s)) return "Opus";
   if (/sonnet/i.test(s)) return "Sonnet";
   if (/haiku/i.test(s)) return "Haiku";
+  if (/gemini/i.test(s)) return "Gemini";
+  if (/deepseek/i.test(s)) return "DeepSeek";
+  if (/glm/i.test(s)) return "GLM";
+  if (/kimi/i.test(s)) return "Kimi";
   return s.replace(/^claude-/, "");
 }
 
