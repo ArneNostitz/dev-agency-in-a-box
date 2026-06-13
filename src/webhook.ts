@@ -16,7 +16,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { Config } from "./config.js";
-import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, tokensByRoleSince, tokensByDaySince, topIssuesByTokensSince, tokensByIssueAll, recordConflict, getConflict, clearConflict, listConflicts, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getGlobalModel, setGlobalModel, getFallbackChain, setFallbackChain, getAutoSwitchOnLimit, setIssueModelOverride, getIssueModelOverride, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, getIssueRow, getModelsPresets, type AutoKind, type Provider } from "./store.js";
+import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, tokensByRoleSince, tokensByDaySince, topIssuesByTokensSince, tokensByIssueAll, recordConflict, getConflict, clearConflict, listConflicts, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getGlobalModel, setGlobalModel, getFallbackChain, setFallbackChain, getAutoSwitchOnLimit, setIssueModelOverride, getIssueModelOverride, clearIssueModelOverride, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, getIssueRow, getModelsPresets, type AutoKind, type Provider } from "./store.js";
 import { mergeEpic, isEpic } from "./epics.js";
 import { renderHistory } from "./dashboard.js";
 import { renderShell } from "./shell.js";
@@ -659,7 +659,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
     }
 
     // Dashboard actions (auth required), not GitHub webhooks.
-    if (["/archive", "/comment", "/comment-edit", "/run-checks", "/merge", "/close", "/create-pr", "/delete", "/resume", "/stop", "/fix", "/auto", "/start", "/new-issue", "/approve", "/audit", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude"].includes(path)) {
+    if (["/archive", "/comment", "/comment-edit", "/run-checks", "/merge", "/close", "/create-pr", "/delete", "/resume", "/stop", "/fix", "/auto", "/start", "/new-issue", "/approve", "/audit", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude", "/model-override"].includes(path)) {
       const actor = userFromReq(req);
       if (!actor) return void res.writeHead(401, { "content-type": "application/json" }).end('{"error":"auth required"}');
       void readBody(req).then(async (body) => {
@@ -717,8 +717,12 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           if (!repo || !number || !p.body?.trim()) return res.writeHead(400).end("{}");
           // If a model override is attached (from the chatbox model picker), store it.
           // It's applied as the provider route for all roles on the next run of this issue, then cleared.
-          if (p.model && typeof p.model === "object" && p.model.providerId && p.model.model) {
-            setIssueModelOverride(repo, number, p.model.providerId, p.model.model);
+          if (p.hasOwnProperty("model")) {
+            if (p.model && typeof p.model === "object" && p.model.providerId && p.model.model) {
+              setIssueModelOverride(repo, number, p.model.providerId, p.model.model);
+            } else {
+              clearIssueModelOverride(repo, number);
+            }
           }
           const text = p.body.trim();
           try {
@@ -840,8 +844,12 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         if (path === "/approve") {
           // Direct approve: marks it approved + moves it to Working immediately, then builds.
           if (!repo || !number || !approve) return res.writeHead(400).end("{}");
-          if (p.model && typeof p.model === "object" && p.model.providerId && p.model.model) {
-            setIssueModelOverride(repo, number, p.model.providerId, p.model.model);
+          if (p.hasOwnProperty("model")) {
+            if (p.model && typeof p.model === "object" && p.model.providerId && p.model.model) {
+              setIssueModelOverride(repo, number, p.model.providerId, p.model.model);
+            } else {
+              clearIssueModelOverride(repo, number);
+            }
           }
           await approve(repo, number).catch(() => {});
           return ok();
@@ -902,8 +910,12 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         if (path === "/resume") {
           // Unstick an issue and re-run it, whatever state it's in.
           if (!repo || !number || !resume) return res.writeHead(400).end("{}");
-          if (p.model && typeof p.model === "object" && p.model.providerId && p.model.model) {
-            setIssueModelOverride(repo, number, p.model.providerId, p.model.model);
+          if (p.hasOwnProperty("model")) {
+            if (p.model && typeof p.model === "object" && p.model.providerId && p.model.model) {
+              setIssueModelOverride(repo, number, p.model.providerId, p.model.model);
+            } else {
+              clearIssueModelOverride(repo, number);
+            }
           }
           await resume(repo, number).catch(() => {});
           return ok();
@@ -923,8 +935,12 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         if (path === "/fix") {
           // Address the PR's outstanding review (and resolve conflicts) on its branch.
           if (!repo || !number || !fix) return res.writeHead(400).end("{}");
-          if (p.model && typeof p.model === "object" && p.model.providerId && p.model.model) {
-            setIssueModelOverride(repo, number, p.model.providerId, p.model.model);
+          if (p.hasOwnProperty("model")) {
+            if (p.model && typeof p.model === "object" && p.model.providerId && p.model.model) {
+              setIssueModelOverride(repo, number, p.model.providerId, p.model.model);
+            } else {
+              clearIssueModelOverride(repo, number);
+            }
           }
           await fix(repo, number).catch(() => {});
           return ok();
@@ -955,6 +971,15 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         if (path === "/app-stop") {
           if (!repo || !number) return res.writeHead(400).end("{}");
           stopApp(repo, number);
+          return ok();
+        }
+        if (path === "/model-override") {
+          if (!repo || !number) return res.writeHead(400).end("{}");
+          if (p.model && typeof p.model === "object" && p.model.providerId && p.model.model) {
+            setIssueModelOverride(repo, number, p.model.providerId, p.model.model);
+          } else {
+            clearIssueModelOverride(repo, number);
+          }
           return ok();
         }
         if (path === "/models") {
@@ -1036,8 +1061,12 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         if (path === "/start") {
           // Play button: start a Planned issue now.
           if (!repo || !number || !start) return res.writeHead(400).end("{}");
-          if (p.model && typeof p.model === "object" && p.model.providerId && p.model.model) {
-            setIssueModelOverride(repo, number, p.model.providerId, p.model.model);
+          if (p.hasOwnProperty("model")) {
+            if (p.model && typeof p.model === "object" && p.model.providerId && p.model.model) {
+              setIssueModelOverride(repo, number, p.model.providerId, p.model.model);
+            } else {
+              clearIssueModelOverride(repo, number);
+            }
           }
           await removeLabel(repo, number, "agency:planned").catch(() => {});
           await start(repo, number).catch(() => {});

@@ -205,11 +205,11 @@ function App() {
   // actions (optimistic + reconcile). Each is guarded: spins + blocks until the server responds.
   const act = {
     isBusy: (action, repo, number) => Boolean(busyRef.current[bkey(action, repo, number)]),
-    start(repo, number, model) { return guard("start", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/start", { repo, number, ...(model ? { model } : {}) }).then(() => toast("Starting…")).catch(() => { toast("Couldn’t start"); delete ov[repo + "#" + number]; }).then(load); }); },
-    approve(repo, number, model) { return guard("approve", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/approve", { repo, number, ...(model ? { model } : {}) }).then(() => toast("Approved — building")).catch(() => toast("Couldn’t approve")).then(load); }); },
-    resume(repo, number, model) { return guard("resume", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/resume", { repo, number, ...(model ? { model } : {}) }).then(() => toast("Resuming")).catch(() => toast("Couldn’t resume")).then(load); }); },
+    start(repo, number, model) { return guard("start", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/start", { repo, number, ...(model ? { model } : {}) }).then(() => toast("Starting" + (model ? ` with model ${model.model}` : "") + "…")).catch(() => { toast("Couldn’t start"); delete ov[repo + "#" + number]; }).then(load); }); },
+    approve(repo, number, model) { return guard("approve", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/approve", { repo, number, ...(model ? { model } : {}) }).then(() => toast("Approved" + (model ? ` with model ${model.model}` : "") + " — building")).catch(() => toast("Couldn’t approve")).then(load); }); },
+    resume(repo, number, model) { return guard("resume", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/resume", { repo, number, ...(model ? { model } : {}) }).then(() => toast("Resuming" + (model ? ` with model ${model.model}` : "") + "…")).catch(() => toast("Couldn’t resume")).then(load); }); },
     stop(repo, number) { return guard("stop", repo, number, () => { override(repo, number, { state: "planned" }); return api("/stop", { repo, number }).then(() => toast("Stopped — moved to Planned")).catch(() => toast("Couldn’t stop")).then(load); }); },
-    fix(repo, number, model) { return guard("fix", repo, number, () => { override(repo, number, { state: "agency:in-progress", active: true }); return api("/fix", { repo, number, ...(model ? { model } : {}) }).then(() => toast("Fixing the review")).catch(() => toast("Couldn’t fix")).then(load); }); },
+    fix(repo, number, model) { return guard("fix", repo, number, () => { override(repo, number, { state: "agency:in-progress", active: true }); return api("/fix", { repo, number, ...(model ? { model } : {}) }).then(() => toast("Fixing review" + (model ? ` with model ${model.model}` : "") + "…")).catch(() => toast("Couldn’t fix")).then(load); }); },
     merge(repo, number) { return guard("merge", repo, number, () => api("/merge", { repo, number }).then((r) => { toast("Merged"); load(); return r; }).catch(() => toast("Couldn’t merge — conflicts?"))); },
     close(repo, number) { return guard("close", repo, number, () => { override(repo, number, { state: "merged" }); return api("/close", { repo, number }).then(() => { toast("Closed"); setOpenKey(null); }).catch((e) => toast((e && e.message) || "Couldn’t close")).then(load); }); },
     createPr(repo, number) { return guard("createPr", repo, number, () => { override(repo, number, { state: "agency:ready" }); return api("/create-pr", { repo, number }).then((r) => toast(r && r.url ? "PR opened" : "PR opened")).catch((e) => toast((e && e.message) || "Couldn’t open PR")).then(load); }); },
@@ -435,7 +435,7 @@ function Card({ i, multi, onOpen, act, data }) {
   );
   useEffect(() => {
     setModelSel(i.modelOverride ? i.modelOverride.providerId + "/" + i.modelOverride.model : "");
-  }, [i.modelOverride]);
+  }, [i.modelOverride?.providerId, i.modelOverride?.model]);
 
   const providers = data?.providers || [];
   const modelOpts = providers.flatMap((p) => (p.models || []).map((m) => ({ value: p.id + "/" + m, label: p.name + " / " + m })));
@@ -451,7 +451,17 @@ function Card({ i, multi, onOpen, act, data }) {
 
   const selectModel = (e) => {
     e.stopPropagation();
-    setModelSel(e.target.value);
+    const val = e.target.value;
+    setModelSel(val);
+    let mo = null;
+    if (val) {
+      const parts = val.split("/");
+      mo = { providerId: parts[0], model: parts.slice(1).join("/") };
+    }
+    i.modelOverride = mo;
+    api("/model-override", { repo: i.repo, number: i.number, model: mo }).catch((err) => {
+      toast("Failed to save model override: " + err.message);
+    });
   };
 
   const runQuick = (e) => {
@@ -534,6 +544,18 @@ function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIs
   const taRef = useRef(null); // compose textarea (auto-grows with content)
   const didScrollRef = useRef(false); // scroll the conversation to the newest message once, on open
   function autosize() { const el = taRef.current; if (!el) return; el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, 200) + "px"; }
+  const updateModelOverride = (val) => {
+    setModelOverride(val);
+    let mo = null;
+    if (val) {
+      const parts = val.split("/");
+      mo = { providerId: parts[0], model: parts.slice(1).join("/") };
+    }
+    issue.modelOverride = mo;
+    api("/model-override", { repo, number, model: mo }).catch((err) => {
+      toast("Failed to save model override: " + err.message);
+    });
+  };
   const repo = issue.repo, number = issue.number;
   useEffect(() => {
     if (thread && !didScrollRef.current && chatRef.current) {
@@ -570,7 +592,7 @@ function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIs
   }
   useEffect(() => {
     setModelOverride(issue.modelOverride ? issue.modelOverride.providerId + "/" + issue.modelOverride.model : "");
-  }, [issue.modelOverride]);
+  }, [issue.modelOverride?.providerId, issue.modelOverride?.model]);
   useEffect(() => {
     setThread(null); setPr(null); setAppInfo(null); setAtts([]); setPendingComments([]); stickRef.current = true;
     if (issue._audit) return; // the audit has no GitHub thread/PR — stream-only view below
@@ -688,12 +710,15 @@ function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIs
     const awaiting = st === "agency:awaiting-approval";
     const approved = review === "approved";
 
+    const parts = modelOverride ? modelOverride.split("/") : [];
+    const mo = parts.length >= 2 ? { providerId: parts[0], model: parts.slice(1).join("/") } : null;
+
     const bStop = () => html`<button class=${"tbtn warn" + (bz("stop") ? " busy" : "")} disabled=${bz("stop")} data-tip="Stop the running agent & move to Planned" onClick=${() => act.stop(repo, number)}>${tico("stop", "stop")}${lbl(bz("stop") ? "Stopping…" : "Stop")}</button>`;
     const bToPlanned = () => html`<button class=${"tbtn" + (bz("stop") ? " busy" : "")} disabled=${bz("stop")} data-tip="Move to Planned (park it — no AI until you start it)" onClick=${() => act.stop(repo, number).then(onClose)}>${tico("stop", "planned")}${lbl(bz("stop") ? "Moving…" : "To Planned")}</button>`;
-    const bStart = () => html`<button class=${"tbtn green" + (bz("start") ? " busy" : "")} disabled=${bz("start")} data-tip="Start building this" onClick=${() => act.start(repo, number).then(onClose)}>${tico("start", "play")}${lbl("Start")}</button>`;
-    const bApprove = () => html`<button class=${"tbtn primary" + (bz("approve") ? " busy" : "")} disabled=${bz("approve")} data-tip="Approve the plan & build" onClick=${() => act.approve(repo, number).then(onClose)}>${tico("approve", "check")}${lbl("Approve")}</button>`;
-    const bResume = () => html`<button class=${"tbtn" + (bz("resume") ? " busy" : "")} disabled=${bz("resume")} data-tip="Re-run the agent on this issue" onClick=${() => act.resume(repo, number)}>${tico("resume", "refresh")}${lbl(bz("resume") ? "Resuming…" : "Resume")}</button>`;
-    const bFix = () => html`<button class=${"tbtn primary" + (bz("fix") ? " busy" : "")} disabled=${bz("fix")} data-tip=${conflict ? "Resolve merge conflicts" : "Address the review's requested changes"} onClick=${() => act.fix(repo, number).then(onClose)}>${tico("fix", "wrench")}${lbl(conflict ? "Resolve" : "Fix")}</button>`;
+    const bStart = () => html`<button class=${"tbtn green" + (bz("start") ? " busy" : "")} disabled=${bz("start")} data-tip="Start building this" onClick=${() => act.start(repo, number, mo).then(onClose)}>${tico("start", "play")}${lbl("Start")}</button>`;
+    const bApprove = () => html`<button class=${"tbtn primary" + (bz("approve") ? " busy" : "")} disabled=${bz("approve")} data-tip="Approve the plan & build" onClick=${() => act.approve(repo, number, mo).then(onClose)}>${tico("approve", "check")}${lbl("Approve")}</button>`;
+    const bResume = () => html`<button class=${"tbtn" + (bz("resume") ? " busy" : "")} disabled=${bz("resume")} data-tip="Re-run the agent on this issue" onClick=${() => act.resume(repo, number, mo)}>${tico("resume", "refresh")}${lbl(bz("resume") ? "Resuming…" : "Resume")}</button>`;
+    const bFix = () => html`<button class=${"tbtn primary" + (bz("fix") ? " busy" : "")} disabled=${bz("fix")} data-tip=${conflict ? "Resolve merge conflicts" : "Address the review's requested changes"} onClick=${() => act.fix(repo, number, mo).then(onClose)}>${tico("fix", "wrench")}${lbl(conflict ? "Resolve" : "Fix")}</button>`;
     const bCreatePr = () => html`<button class=${"tbtn green" + (bz("createPr") ? " busy" : "")} disabled=${bz("createPr")} data-tip="Open a PR from the approved branch (no AI / no tokens)" onClick=${() => act.createPr(repo, number)}>${tico("createPr", "pr")}${lbl(bz("createPr") ? "Opening PR…" : "Create PR")}</button>`;
     const bMerge = (anyway) => { const ma = armed === "merge", mb = bz("merge"); return html`<button class=${"tbtn green" + (ma ? " armed" : "") + (mb ? " busy" : "")} disabled=${mb} data-tip=${ma ? "Tap again to merge" : anyway ? "Merge despite requested changes" : "Merge the PR & close the issue"} onClick=${() => confirmAct("merge", () => act.merge(repo, number).then(onClose))}>${mb ? html`<${Spinner} size=${18}/>` : html`<${Icon} name="merge"/>`}${(isDesktop || ma) ? html`<span class="tlabel">${mb ? "Merging…" : ma ? "Confirm merge" : anyway ? "Merge anyway" : "Merge"}</span>` : null}</button>`; };
     const bClose = (epic) => { const ca = armed === "close", cb = bz("close"); const epicAllDone = issue.epic && issue.epic.done >= issue.epic.total; const clabel = ca ? "Confirm" : cb ? "Closing…" : epic ? (epicAllDone ? "Complete" : "Close epic") : "Close"; return html`<button class=${"tbtn" + (epic ? " green" : "") + (ca ? " armed" : "") + (cb ? " busy" : "")} disabled=${cb} data-tip=${ca ? "Tap again to close" : epic ? "Merge any remaining sub-PRs & close this epic" : "Close this issue (mark it done, no PR)"} onClick=${() => confirmAct("close", () => act.close(repo, number).then(onClose))}>${cb ? html`<${Spinner} size=${18}/>` : html`<${Icon} name="check"/>`}${(isDesktop || ca) ? html`<span class="tlabel">${clabel}</span>` : null}</button>`; };
@@ -789,7 +814,7 @@ function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIs
       ${tb}
       ${modelOpts.length ? html`
         <span style="flex:1"></span>
-        <select title="Override model for next run" style="font-size:12px;max-width:140px;height:28px;border:1px solid var(--border);border-radius:4px;background:var(--bg-2);color:var(--text);cursor:pointer;padding:0 4px" value=${modelOverride} onChange=${(e) => setModelOverride(e.target.value)}>
+        <select title="Override model for next run" style="font-size:12px;max-width:140px;height:28px;border:1px solid var(--border);border-radius:4px;background:var(--bg-2);color:var(--text);cursor:pointer;padding:0 4px" value=${modelOverride} onChange=${(e) => updateModelOverride(e.target.value)}>
           <option value="">Default model</option>
           ${modelOpts.map((o) => html`<option key=${o.value} value=${o.value}>${o.label}</option>`)}
         </select>
@@ -808,7 +833,7 @@ function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIs
         <textarea ref=${taRef} rows="1" placeholder=${running ? "Message the agent…  (queued until the run finishes)" : "Reply…  (Cmd+Enter sends, paste image to embed)"} value=${reply} onInput=${(e) => { setReply(e.target.value); autosize(); }} onPaste=${onPaste} onKeyDown=${(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); send(); } }}></textarea>
         <div class="composer-row">
           <label class="composer-icon" title="Attach a file"><${Icon} name="paperclip" size=${18}/><input type="file" multiple style="display:none" onChange=${pickFiles}/></label>
-          ${modelOpts && modelOpts.length ? html`<select title="Override model for this run" style="font-size:12px;max-width:130px;border:none;background:transparent;color:inherit;cursor:pointer" value=${modelOverride} onChange=${(e) => setModelOverride(e.target.value)}>
+          ${modelOpts && modelOpts.length ? html`<select title="Override model for this run" style="font-size:12px;max-width:130px;border:none;background:transparent;color:inherit;cursor:pointer" value=${modelOverride} onChange=${(e) => updateModelOverride(e.target.value)}>
             <option value="">Default model</option>
             ${modelOpts.map((o) => html`<option key=${o.value} value=${o.value}>${o.label}</option>`)}
           </select>` : null}

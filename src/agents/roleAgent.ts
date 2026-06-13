@@ -192,6 +192,13 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
   console.log(`[agency] role:${role} ${repo}#${issueNumber} (model ${model}, ≤${maxTurns} turns)`);
   pushActivity(repo, issueNumber, role, "start", `started (${model}${input.resumeSessionId ? ", resuming" : ""})`);
 
+  const assignment = (input.model ? null : getIssueModelOverride(repo, issueNumber) ?? getRoleModels()[role] ?? getGlobalModel()) ?? getSessionFallback();
+  const provider = assignment?.providerId ? getProviders().find((x) => x.id === assignment.providerId) : null;
+  const providerName = provider ? provider.name : "Claude/Anthropic Subscription";
+  const baseUrl = provider ? provider.baseUrl : "https://api.anthropic.com";
+  console.log(`[LLM Call] Invoking LLM for role '${role}' on ${repo}#${issueNumber} using model '${model}' via provider '${providerName}' at URL: ${baseUrl}`);
+  pushActivity(repo, issueNumber, role, "text", `🤖 LLM Call: ${model} via ${providerName} (${baseUrl})`);
+
   // Register this run so the dashboard "Stop" can abort it (and every other role run on the issue).
   const abortRun = registerRun(repo, issueNumber);
   // Heartbeat: a single long command (e.g. a slow `pip install` / venv setup) prints nothing until
