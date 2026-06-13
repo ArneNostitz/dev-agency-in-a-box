@@ -67,7 +67,8 @@ function getDb(): DatabaseSync | null {
       CREATE TABLE IF NOT EXISTS token_usage (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         ts TEXT NOT NULL, tokens INTEGER NOT NULL DEFAULT 0,
-        cost_usd REAL NOT NULL DEFAULT 0, model TEXT
+        cost_usd REAL NOT NULL DEFAULT 0, model TEXT,
+        repo TEXT, number INTEGER, role TEXT
       );
       CREATE TABLE IF NOT EXISTS epics (
         repo TEXT NOT NULL, parent INTEGER NOT NULL, child INTEGER NOT NULL,
@@ -116,6 +117,9 @@ function getDb(): DatabaseSync | null {
       `ALTER TABLE runs ADD COLUMN cost_usd REAL NOT NULL DEFAULT 0`,
       `ALTER TABLE issues ADD COLUMN pr_number INTEGER`,
       `ALTER TABLE issues ADD COLUMN pr_url TEXT`,
+      `ALTER TABLE token_usage ADD COLUMN repo TEXT`,
+      `ALTER TABLE token_usage ADD COLUMN number INTEGER`,
+      `ALTER TABLE token_usage ADD COLUMN role TEXT`,
     ]) {
       try {
         d.exec(sql);
@@ -229,18 +233,110 @@ export function issueSpend(repo: string, number: number): { costUsd: number; tur
 }
 
 /** Record token usage for one agent run (drives the session-allowance gauge). */
-export function recordTokens(tokens: number, costUsd: number, model: string): void {
+export function recordTokens(
+  tokens: number,
+  costUsd: number,
+  model: string,
+  repo?: string,
+  number?: number,
+  role?: string,
+): void {
   const d = getDb();
   if (!d || (!tokens && !costUsd)) return;
   try {
-    d.prepare(`INSERT INTO token_usage (ts, tokens, cost_usd, model) VALUES (?, ?, ?, ?)`).run(
+    d.prepare(`INSERT INTO token_usage (ts, tokens, cost_usd, model, repo, number, role) VALUES (?, ?, ?, ?, ?, ?, ?)`).run(
       now(),
       Math.round(tokens),
       costUsd,
       model,
+      repo ?? null,
+      number ?? null,
+      role ?? null,
     );
   } catch {
     /* best effort */
+  }
+}
+
+/** Per-role token + cost totals since an ISO timestamp. */
+export function tokensByRoleSince(sinceIso: string): Array<{ role: string; tokens: number; costUsd: number; runs: number }> {
+  const d = getDb();
+  if (!d) return [];
+  try {
+    return d
+      .prepare(
+        `SELECT COALESCE(role,'?') AS role, COALESCE(SUM(tokens),0) AS tokens, COALESCE(SUM(cost_usd),0) AS costUsd, COUNT(*) AS runs
+         FROM token_usage WHERE ts >= ? GROUP BY role ORDER BY tokens DESC`,
+      )
+      .all(sinceIso) as unknown as Array<{ role: string; tokens: number; costUsd: number; runs: number }>;
+  } catch {
+    return [];
+  }
+}
+
+/** Per-day token + cost totals since an ISO timestamp (UTC day buckets), oldest first. */
+export function tokensByDaySince(sinceIso: string): Array<{ day: string; tokens: number; costUsd: number }> {
+  const d = getDb();
+  if (!d) return [];
+  try {
+    return d
+      .prepare(
+        `SELECT substr(ts,1,10) AS day, COALESCE(SUM(tokens),0) AS tokens, COALESCE(SUM(cost_usd),0) AS costUsd
+         FROM token_usage WHERE ts >= ? GROUP BY day ORDER BY day ASC`,
+      )
+      .all(sinceIso) as unknown as Array<{ day: string; tokens: number; costUsd: number }>;
+  } catch {
+    return [];
+  }
+}
+
+/** The most token-expensive issues since an ISO timestamp (only rows that have a repo/number). */
+export function topIssuesByTokensSince(sinceIso: string, limit = 12): Array<{ repo: string; number: number; tokens: number; costUsd: number; runs: number }> {
+  const d = getDb();
+  if (!d) return [];
+  try {
+    return d
+      .prepare(
+        `SELECT repo, number, COALESCE(SUM(tokens),0) AS tokens, COALESCE(SUM(cost_usd),0) AS costUsd, COUNT(*) AS runs
+         FROM token_usage WHERE ts >= ? AND repo IS NOT NULL AND number IS NOT NULL
+         GROUP BY repo, number ORDER BY tokens DESC LIMIT ?`,
+      )
+      .all(sinceIso, limit) as unknown as Array<{ repo: string; number: number; tokens: number; costUsd: number; runs: number }>;
+  } catch {
+    return [];
+  }
+}
+
+/** Lifetime tokens/cost per issue, keyed "repo#number", with the dominant model. Cheap single scan
+ *  used to decorate board cards + the detail view so each issue shows what it has cost so far. */
+export function tokensByIssueAll(): Record<string, { tokens: number; costUsd: number; model: string | null; runs: number }> {
+  const d = getDb();
+  if (!d) return {};
+  try {
+    const rows = d
+      .prepare(
+        `SELECT repo, number, model, COALESCE(SUM(tokens),0) AS tokens, COALESCE(SUM(cost_usd),0) AS costUsd, COUNT(*) AS runs
+         FROM token_usage WHERE repo IS NOT NULL AND number IS NOT NULL
+         GROUP BY repo, number, model`,
+      )
+      .all() as unknown as Array<{ repo: string; number: number; model: string | null; tokens: number; costUsd: number; runs: number }>;
+    const acc: Record<string, { tokens: number; costUsd: number; model: string | null; runs: number; _best: number }> = {};
+    for (const r of rows) {
+      const k = `${r.repo}#${r.number}`;
+      const e = (acc[k] ??= { tokens: 0, costUsd: 0, model: null, runs: 0, _best: 0 });
+      e.tokens += r.tokens || 0;
+      e.costUsd += r.costUsd || 0;
+      e.runs += r.runs || 0;
+      if ((r.tokens || 0) > e._best) { e._best = r.tokens || 0; e.model = r.model; }
+    }
+    const out: Record<string, { tokens: number; costUsd: number; model: string | null; runs: number }> = {};
+    for (const k of Object.keys(acc)) {
+      const { tokens, costUsd, model, runs } = acc[k];
+      out[k] = { tokens, costUsd, model, runs };
+    }
+    return out;
+  } catch {
+    return {};
   }
 }
 

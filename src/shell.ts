@@ -148,6 +148,25 @@ textarea{resize:vertical;min-height:64px}
 .row{display:flex;gap:8px;margin-top:14px}
 .row .btn{flex:1}
 
+/* token usage */
+.useg-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+.useg-tab{border:1px solid var(--line);background:transparent;color:var(--ink-2);padding:5px 11px;border-radius:999px;cursor:pointer;font-size:12.5px}
+.useg-tab.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.useg-totals{display:flex;gap:10px;margin-bottom:6px}
+.useg-big{flex:1;background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;gap:2px}
+.useg-big b{font-size:22px;font-weight:700;line-height:1.1}
+.useg-big span{font-size:11.5px;color:var(--ink-3);text-transform:uppercase;letter-spacing:.04em}
+.useg-sec{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-3);margin:18px 0 7px;font-weight:600}
+.useg-row,.useg-issue{display:grid;grid-template-columns:minmax(0,1fr) 34% auto;align-items:center;gap:9px;padding:5px 0;font-size:13px}
+.useg-issue{width:100%;text-align:left;border:none;background:transparent;color:var(--ink);cursor:pointer;border-radius:7px}
+.useg-issue:hover{background:var(--surface-2)}
+.useg-row-l{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.useg-row-r{text-align:right;color:var(--ink-2);font-variant-numeric:tabular-nums;white-space:nowrap}
+.useg-track{height:7px;border-radius:999px;background:var(--surface-2);overflow:hidden}
+.useg-track i{display:block;height:100%;border-radius:999px;background:var(--accent)}
+.dusage{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:8px;padding:8px 11px;border:1px solid var(--line);border-radius:10px;background:var(--surface-2);font-size:12.5px;color:var(--ink-2)}
+.dusage span{display:inline-flex;align-items:center;gap:5px;font-variant-numeric:tabular-nums}
+
 /* detail */
 .dscrim{position:fixed;inset:0;z-index:44;background:transparent}
 .prbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;border:1px solid var(--green);background:var(--green-weak);border-radius:12px;padding:9px 11px;margin:6px 0 4px}

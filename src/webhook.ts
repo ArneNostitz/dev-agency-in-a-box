@@ -16,7 +16,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { Config } from "./config.js";
-import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, getIssueRow, type AutoKind, type Provider } from "./store.js";
+import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, tokensByRoleSince, tokensByDaySince, topIssuesByTokensSince, tokensByIssueAll, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, getIssueRow, type AutoKind, type Provider } from "./store.js";
 import { mergeEpic, isEpic } from "./epics.js";
 import { renderDashboard, renderHistory } from "./dashboard.js";
 import { renderShell } from "./shell.js";
@@ -244,11 +244,13 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           }
           const epicCache: Record<string, ReturnType<typeof epicsByParent>> = {};
           const reviews = listReviews(); // verdict per "repo#number" — cheap, for the card badge
+          const tokenMap = tokensByIssueAll(); // lifetime tokens/cost/model per "repo#number"
           const enriched = issues.map((i) => {
             const byParent = (epicCache[i.repo] ??= epicsByParent(i.repo));
             const kids = byParent[i.number];
             return {
               ...i,
+              usage: tokenMap[`${i.repo}#${i.number}`] ?? null,
               previewUrl: i.pr_number ? previewUrlFor(i.repo, i.pr_number, `agency/issue-${i.number}`) : null,
               epic: kids
                 ? { total: kids.length, done: kids.filter((c) => c.closed).length, children: kids }
@@ -324,6 +326,36 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
             }),
           );
         })();
+        return;
+      }
+
+      // Token-usage statistics (fetched when the Usage view opens — not on the 5s poll).
+      if (url === "/usage") {
+        const q = new URLSearchParams((req.url ?? "").split("?")[1] ?? "");
+        const range = q.get("range") || "window";
+        const now = Date.now();
+        const midnight = new Date();
+        midnight.setHours(0, 0, 0, 0);
+        const sinceFor: Record<string, string> = {
+          today: midnight.toISOString(),
+          window: sessionWindow().startIso,
+          "7d": new Date(now - 7 * 86400_000).toISOString(),
+          "30d": new Date(now - 30 * 86400_000).toISOString(),
+          all: new Date(0).toISOString(),
+        };
+        const since = sinceFor[range] ?? sinceFor.window;
+        const total = tokensSince(since);
+        res.writeHead(200, { "content-type": "application/json" }).end(
+          JSON.stringify({
+            range,
+            since,
+            total,
+            byModel: tokensByModelSince(since),
+            byRole: tokensByRoleSince(since),
+            byDay: tokensByDaySince(since),
+            topIssues: topIssuesByTokensSince(since, 12),
+          }),
+        );
         return;
       }
 
