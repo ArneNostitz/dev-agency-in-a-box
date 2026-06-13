@@ -102,7 +102,9 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
   const click = (el) => { if (!el) throw new Error("element not found"); el.dispatchEvent(new window.MouseEvent("click", { bubbles: true })); };
 
   // Composer (uses hooks) — opening it would crash if invoked as a function not an element.
-  click(q('[aria-label="New issue"]'));
+  // "Add Issue" lives in the Planned column header now (top + button was removed).
+  const addBtn = Array.from(window.document.querySelectorAll(".colbtn.primary")).find((b) => /Add Issue/.test(b.textContent));
+  click(addBtn);
   await tick(40);
   assert.match(root.innerHTML, /Add to Planned/, "composer opens with two-button submit");
   assert.match(root.innerHTML, /Start now/, "composer has Start now");

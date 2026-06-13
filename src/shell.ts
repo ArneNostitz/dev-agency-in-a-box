@@ -43,6 +43,7 @@ input,select,textarea{font-size:16px}
 .topbar{position:sticky;top:0;z-index:30;background:var(--surface);border-bottom:1px solid var(--line);padding:calc(8px + var(--safe-t)) 14px 8px;display:flex;align-items:center;gap:10px}
 .brand{font-size:16px;font-weight:600;display:flex;align-items:center;gap:7px}
 .brand .lic{color:var(--accent)}
+@media(max-width:560px){.brandname{display:none}.repodrop-btn{max-width:52vw}}
 .sub{color:var(--ink-2);font-size:12px}
 .envbadge{font-size:10px;font-weight:600;letter-spacing:.05em;background:var(--amber-weak);color:var(--amber);border:1px solid var(--amber);border-radius:6px;padding:1px 6px;vertical-align:2px}
 .spacer{flex:1}
@@ -59,14 +60,24 @@ input,select,textarea{font-size:16px}
 .dropmenu-foot{font-size:11.5px;color:var(--ink-3);padding:6px 8px 2px;border-top:1px solid var(--line);margin-top:4px}
 .dropmenu-empty{padding:8px 9px;color:var(--ink-3);font-size:13px}
 .iconbtn:active{transform:scale(.96)}
-.reposel{position:sticky;top:0;z-index:20;background:var(--bg);border-bottom:1px solid var(--line);display:flex;gap:6px;overflow-x:auto;padding:8px 12px;-webkit-overflow-scrolling:touch;scrollbar-width:none}
-.reposel::-webkit-scrollbar{display:none}
-.searchbar{position:sticky;top:0;z-index:19;display:flex;gap:8px;padding:8px 12px;background:var(--bg);border-bottom:1px solid var(--line)}
-.searchfield{flex:1;display:flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:9px;padding:0 10px;background:var(--surface);color:var(--ink-3)}
-.searchfield input{flex:1;border:none;outline:none;background:transparent;color:var(--ink);font:14px inherit;padding:8px 0}
-.searchclear{border:none;background:transparent;color:var(--ink-3);cursor:pointer;display:flex;padding:2px;border-radius:6px}
-.searchclear:hover{background:var(--surface-2);color:var(--ink)}
-.sortsel{border:1px solid var(--line);border-radius:9px;padding:0 9px;font:13px inherit;background:var(--surface);color:var(--ink);cursor:pointer}
+/* centered repo dropdown (selector + add/remove) */
+.repodrop{flex:0 1 auto;min-width:0}
+.repodrop-btn{display:inline-flex;align-items:center;gap:8px;max-width:min(60vw,360px);border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:999px;padding:7px 14px;font:14px inherit;font-weight:600;cursor:pointer}
+.repodrop-btn:hover{border-color:var(--line-2)}
+.repodrop-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.repodrop-sub{color:var(--ink-3);font-weight:400;font-size:12.5px}
+.repodrop-menu{left:50%;right:auto;transform:translateX(-50%);min-width:280px;max-width:min(92vw,360px)}
+.repodrop-row{display:flex;align-items:center;gap:4px;border-radius:8px}
+.repodrop-row.sel{background:var(--accent-weak)}
+.repodrop-pick{flex:1;display:flex;align-items:center;gap:7px;min-width:0;text-align:left;border:none;background:transparent;color:var(--ink);padding:8px 9px;border-radius:8px;cursor:pointer;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.repodrop-pick:hover{background:var(--surface-2)}
+.repodrop-row.sel .repodrop-pick{color:var(--accent);font-weight:600}
+.repodrop-x{border:none;background:transparent;color:var(--ink-3);cursor:pointer;display:flex;padding:6px;border-radius:8px}
+.repodrop-x:hover{background:var(--red-weak);color:var(--red)}
+.dropmenu-item.sel{color:var(--accent);font-weight:600;background:var(--accent-weak)}
+.repodrop-add{display:flex;gap:6px;padding:2px 4px 6px}
+.repodrop-add input{flex:1;min-width:0;border:1px solid var(--line);border-radius:9px;padding:7px 10px;font:13.5px inherit;background:var(--surface);color:var(--ink)}
+.repodrop-avail{max-height:30vh;overflow:auto;border-top:1px solid var(--line);margin-top:2px;padding-top:2px}
 .chip{flex:0 0 auto;border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:5px 12px;font-size:13px;color:var(--ink-2);cursor:pointer;white-space:nowrap}
 .chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
 .chip.dash{border-style:dashed;color:var(--accent)}
@@ -92,6 +103,11 @@ input,select,textarea{font-size:16px}
 .board{padding:8px}
 .col{margin-bottom:14px}
 .colhead{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-2);padding:6px 8px}
+.colhead-actions{margin-left:auto;display:flex;gap:6px}
+.colbtn{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);border-radius:8px;padding:5px 10px;font:12px inherit;font-weight:600;text-transform:none;letter-spacing:0;cursor:pointer;white-space:nowrap}
+.colbtn:hover:not(:disabled){border-color:var(--line-2);color:var(--ink)}
+.colbtn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.colbtn:disabled{opacity:.5;cursor:default}
 .colhead .n{color:var(--ink-3);font-weight:500}
 .cards{display:flex;flex-direction:column;gap:8px}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:11px 13px;cursor:pointer}

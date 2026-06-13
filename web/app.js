@@ -143,8 +143,6 @@ function App() {
   const isDesktop = useIsDesktop();
   const [data, setData] = useState({ issues: [], repos: [], active: [], activity: [], session: {}, config: {}, auto: {}, autoRepos: {} });
   const [repoFilter, setRepoFilter] = useState(null);
-  const [query, setQuery] = useState("");
-  const [sortKey, setSortKey] = useState("updated");
   const [tab, setTab] = useState("planned");
   const [openKey, setOpenKey] = useState(null); // "repo#number"
   const [sheet, setSheet] = useState(null); // "composer" | "settings"
@@ -188,16 +186,7 @@ function App() {
   // Repos with a running audit — drives the spinner on the top-bar Audit dropdown. (The audit itself
   // is now a real GitHub tracking issue, so it shows as a normal card + detail.)
   const auditRepos = (data.active || []).filter((a) => a.role === "auditor").map((a) => a.repo);
-  const q = query.trim().toLowerCase();
-  const shown = issues
-    .filter((i) => !repoFilter || i.repo === repoFilter)
-    .filter((i) => !q || (i.title || "").toLowerCase().includes(q) || ("#" + i.number).includes(q) || String(i.number) === q.replace(/^#/, ""))
-    .slice()
-    .sort((a, b) =>
-      sortKey === "number" ? b.number - a.number
-        : sortKey === "title" ? (a.title || "").localeCompare(b.title || "")
-        : new Date(b.updated_at || 0) - new Date(a.updated_at || 0),
-    );
+  const shown = issues.filter((i) => !repoFilter || i.repo === repoFilter);
   const activity = (data.activity || []).concat(liveRef.current);
 
   function override(repo, number, patch) { ov[repo + "#" + number] = { patch, t: Date.now() }; forceTick((x) => x + 1); }
@@ -269,13 +258,11 @@ function App() {
 
   return html`
     <div class="app">
-      <${TopBar} working=${working} env=${data.env} theme=${theme} setTheme=${setThemeP} onSettings=${() => setSheet("settings")} onUsage=${() => setSheet("usage")} onNew=${() => openComposer()} repos=${repos} onAudit=${(r) => act.audit(r)} auditRepos=${auditRepos}/>
-      <${RepoSelector} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} onAdd=${() => setSheet("addrepo")}/>
-      <${SearchBar} query=${query} setQuery=${setQuery} sortKey=${sortKey} setSortKey=${setSortKey}/>
+      <${TopBar} working=${working} env=${data.env} theme=${theme} setTheme=${setThemeP} onSettings=${() => setSheet("settings")} onUsage=${() => setSheet("usage")} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${load}/>
       ${data.secretsHealth ? html`<${SecretBanner} h=${data.secretsHealth} onFix=${() => setSheet("settings")}/>` : null}
       <${StatusLine} working=${working} session=${data.session} spend=${data.spendToday}/>
       <div class="content">
-        <${Board} issues=${shown} repos=${repos} repoFilter=${repoFilter} tab=${tab} isDesktop=${isDesktop} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onAddRepo=${() => setSheet("addrepo")} act=${act}/>
+        <${Board} issues=${shown} repos=${repos} repoFilter=${repoFilter} tab=${tab} isDesktop=${isDesktop} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onAddRepo=${() => setSheet("addrepo")} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act}/>
       </div>
       ${!isDesktop && html`<${TabBar} issues=${shown} tab=${tab} setTab=${setTab}/>`}
       ${open && html`<div class="dscrim" onClick=${() => setOpenKey(null)}></div>`}
@@ -299,46 +286,60 @@ function SecretBanner({ h, onFix }) {
   return html`<div class="secbanner"><b>⚠ Credentials need attention.</b> ${msgs.map((m, i) => html`<div key=${i} style="margin-top:3px">${m}</div>`)} <button class="btn ghost" style="margin-top:7px" onClick=${onFix}>Open Settings</button></div>`;
 }
 
-function TopBar({ working, env, theme, setTheme, onSettings, onUsage, onNew, repos, onAudit, auditRepos }) {
-  const [auditOpen, setAuditOpen] = useState(false);
-  const isAuditing = (r) => (auditRepos || []).includes(r);
+function TopBar({ working, env, theme, setTheme, onSettings, onUsage, repos, repoFilter, setRepoFilter, reload }) {
   return html`<div class="topbar">
-    <div class="brand"><${Icon} name="crown" size=${18}/> Dev Agency ${env === "development" ? html`<span class="envbadge">DEV</span>` : null} ${working ? html`<span class="dot"></span>` : null}</div>
+    <div class="brand"><${Icon} name="crown" size=${18}/> <span class="brandname">Dev Agency</span> ${env === "development" ? html`<span class="envbadge">DEV</span>` : null} ${working ? html`<span class="dot"></span>` : null}</div>
     <div class="spacer"></div>
-    <div class="dropwrap">
-      <button class=${"iconbtn" + (auditRepos && auditRepos.length ? " on" : "")} aria-label="Audit a codebase" title="Audit a repo's codebase health" onClick=${() => setAuditOpen((o) => !o)}>${auditRepos && auditRepos.length ? html`<${Spinner} size=${18}/>` : html`<${Icon} name="search"/>`}</button>
-      ${auditOpen ? html`<div class="dropscrim" onClick=${() => setAuditOpen(false)}></div>
-        <div class="dropmenu">
-          <div class="dropmenu-h">Audit codebase health</div>
-          ${(repos || []).length ? (repos || []).map((r) => html`<button class="dropmenu-item" key=${r} disabled=${isAuditing(r)} onClick=${() => { onAudit(r); setAuditOpen(false); }}>${isAuditing(r) ? html`<${Spinner} size=${14}/>` : html`<${Icon} name="search" size=${14}/>`} ${r.split("/").pop()}${isAuditing(r) ? html`<span class="dropmenu-sub">auditing…</span>` : null}</button>`) : html`<div class="dropmenu-empty">No repos yet</div>`}
-          <div class="dropmenu-foot">Opens scoped refactor issues in Planned.</div>
-        </div>` : null}
-    </div>
+    <${RepoDropdown} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${reload}/>
+    <div class="spacer"></div>
     <button class="iconbtn" aria-label="Token usage" title="Token usage statistics" onClick=${onUsage}><${Icon} name="chart"/></button>
-    <button class="iconbtn" aria-label="New issue" onClick=${onNew}><${Icon} name="plus"/></button>
     <button class="iconbtn" aria-label="Toggle theme" onClick=${() => setTheme(theme === "dark" ? "light" : "dark")}><${Icon} name=${theme === "dark" ? "sun" : "moon"}/></button>
     <button class="iconbtn" aria-label="Settings" onClick=${onSettings}><${Icon} name="settings"/></button>
   </div>`;
 }
-function RepoSelector({ repos, repoFilter, setRepoFilter, onAdd }) {
-  return html`<div class="reposel">
-    <span class=${"chip " + (repoFilter ? "" : "on")} onClick=${() => setRepoFilter(null)}>All</span>
-    ${repos.map((r) => html`<span key=${r} class=${"chip " + (repoFilter === r ? "on" : "")} onClick=${() => setRepoFilter(r)}>${r.split("/").pop()}</span>`)}
-    <span class="chip dash" onClick=${onAdd}><${Icon} name="plus" size=${13}/> new</span>
-  </div>`;
-}
-function SearchBar({ query, setQuery, sortKey, setSortKey }) {
-  return html`<div class="searchbar">
-    <div class="searchfield">
-      <${Icon} name="search" size=${15}/>
-      <input value=${query} placeholder="Search title or #number…" autocomplete="off" oninput=${(e) => setQuery(e.target.value)}/>
-      ${query ? html`<button class="searchclear" aria-label="Clear" onClick=${() => setQuery("")}><${Icon} name="x" size=${14}/></button>` : null}
-    </div>
-    <select class="sortsel" value=${sortKey} onChange=${(e) => setSortKey(e.target.value)} aria-label="Sort issues">
-      <option value="updated">Newest</option>
-      <option value="number">By number</option>
-      <option value="title">By name</option>
-    </select>
+
+// Centered repo selector that doubles as repo add/remove (replaces the pill row + Add modal).
+function RepoDropdown({ repos, repoFilter, setRepoFilter, reload }) {
+  const [open, setOpen] = useState(false);
+  const [avail, setAvail] = useState(null);
+  const [manual, setManual] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (open && avail === null) getJSON("/repos-available").then((d) => setAvail(d.repos || [])).catch(() => setAvail([])); }, [open]);
+  function add(full) {
+    if (!full || busy) return;
+    if (!/^[\w.-]+\/[\w.-]+$/.test(full)) { toast("Use owner/name, e.g. acme/app"); return; }
+    setBusy(true);
+    api("/add-repo", { repo: full }).then(() => { toast("Added " + full); setManual(""); setRepoFilter(full); reload(); }).catch(() => toast("Couldn’t add — use owner/name")).then(() => setBusy(false));
+  }
+  function remove(full) {
+    if (busy) return; setBusy(true);
+    api("/remove-repo", { repo: full }).then(() => { toast("Removed " + full); if (repoFilter === full) setRepoFilter(null); reload(); }).catch(() => toast("Couldn’t remove")).then(() => setBusy(false));
+  }
+  const watching = repos || [];
+  const addable = (avail || []).filter((r) => !watching.includes(r.full_name));
+  const title = repoFilter ? repoFilter.split("/").pop() : "All";
+  return html`<div class="dropwrap repodrop">
+    <button class="repodrop-btn" onClick=${() => setOpen((o) => !o)}>
+      <span class="repodrop-title">${title}</span>${repoFilter ? null : html` <span class="repodrop-sub">(add/remove repos)</span>`}
+      <${Icon} name=${open ? "x" : "planned"} size=${15}/>
+    </button>
+    ${open ? html`<div class="dropscrim" onClick=${() => setOpen(false)}></div>
+      <div class="dropmenu repodrop-menu">
+        <button class=${"dropmenu-item" + (repoFilter ? "" : " sel")} onClick=${() => { setRepoFilter(null); setOpen(false); }}><${Icon} name="layers" size=${14}/> All repos</button>
+        ${watching.length ? html`<div class="dropmenu-h">Watching</div>` : null}
+        ${watching.map((r) => html`<div class=${"repodrop-row" + (repoFilter === r ? " sel" : "")} key=${r}>
+          <button class="repodrop-pick" onClick=${() => { setRepoFilter(r); setOpen(false); }}><${Icon} name="pr" size=${13}/> ${r}</button>
+          <button class="repodrop-x" disabled=${busy} aria-label=${"Remove " + r} title="Stop watching" onClick=${() => remove(r)}><${Icon} name="trash" size=${14}/></button>
+        </div>`)}
+        <div class="dropmenu-h">Add a repo</div>
+        <div class="repodrop-add">
+          <input placeholder="owner/name" value=${manual} onInput=${(e) => setManual(e.target.value)} onKeyDown=${(e) => { if (e.key === "Enter") add(manual.trim()); }}/>
+          <button class="btn primary" disabled=${busy} onClick=${() => add(manual.trim())}>Add</button>
+        </div>
+        ${avail === null ? html`<div class="dropmenu-empty">Loading your repos…</div>`
+          : addable.length ? html`<div class="repodrop-avail">${addable.slice(0, 30).map((r) => html`<button class="dropmenu-item" key=${r.full_name} disabled=${busy} onClick=${() => add(r.full_name)}><${Icon} name="plus" size=${13}/> ${r.full_name}</button>`)}</div>`
+          : null}
+      </div>` : null}
   </div>`;
 }
 function StatusLine({ working, session, spend }) {
@@ -355,7 +356,7 @@ function StatusLine({ working, session, spend }) {
   </div>`;
 }
 
-function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, onAddRepo, act }) {
+function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, onAddRepo, onAddIssue, onAnalyze, auditRepos, act }) {
   if (!(repos || []).length) {
     return html`<div class="norepo">
       <div class="obki" style="margin:0 auto 14px"><${Icon} name="pr" size=${28}/></div>
@@ -364,12 +365,21 @@ function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, onAddRepo, a
       <button class="btn primary" style="margin:0 auto;min-width:200px" onClick=${onAddRepo}><${Icon} name="plus" size=${16}/> Add your first repo</button>
     </div>`;
   }
+  // The Add Issue / Analyze buttons act on the active repo. With "All" + multiple repos there's no
+  // single target: Add Issue still opens the composer (it has a repo picker); Analyze is disabled.
+  const target = repoFilter || (repos.length === 1 ? repos[0] : null);
+  const analyzing = target && (auditRepos || []).includes(target);
   const byCol = {}; COLS.forEach((c) => (byCol[c.k] = []));
   issues.slice().sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0)).forEach((i) => byCol[classify(i)].push(i));
   const cols = isDesktop ? COLS : COLS.filter((c) => c.k === tab);
   return html`<div class="board">
     ${cols.map((c) => html`<div class="col" key=${c.k}>
-      <div class="colhead"><${Icon} name=${c.icon} size=${15}/> ${c.label} <span class="n">${byCol[c.k].length || ""}</span></div>
+      <div class="colhead"><${Icon} name=${c.icon} size=${15}/> ${c.label} <span class="n">${byCol[c.k].length || ""}</span>
+        ${c.k === "planned" ? html`<span class="colhead-actions">
+          <button class="colbtn primary" onClick=${() => onAddIssue(target)}><${Icon} name="plus" size=${14}/> Add Issue</button>
+          <button class="colbtn" disabled=${!target || analyzing} title=${target ? "Analyze " + target.split("/").pop() + "'s codebase health" : "Pick a repo first"} onClick=${() => target && onAnalyze(target)}>${analyzing ? html`<${Spinner} size=${14}/>` : html`<${Icon} name="search" size=${14}/>`} Analyze Repo</button>
+        </span>` : null}
+      </div>
       <div class="cards">
         ${byCol[c.k].length ? byCol[c.k].map((i) => html`<${Card} key=${i.repo + "#" + i.number} i=${i} multi=${!repoFilter && repos.length > 1} onOpen=${onOpen} act=${act}/>`) : html`<div class="empty">—</div>`}
       </div>
