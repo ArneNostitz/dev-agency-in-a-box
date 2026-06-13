@@ -205,14 +205,15 @@ export function gitnexusWiring(workdir: string): GitnexusWiring | null {
 /** A short prompt note telling the agent to use GitNexus FIRST for code research. */
 export const GITNEXUS_PROMPT = [
   "=== CODE INTELLIGENCE (GitNexus MCP available) ===",
-  "A knowledge graph of THIS repo is already indexed. Use it to locate and understand code.",
-  "STRONGLY PREFER GitNexus over Grep/Glob and over reading many files — it's precomputed and",
-  "far cheaper. To find where something lives or how it's used, DO NOT grep the repo:",
-  "- mcp__gitnexus__query — find code/feature/process by intent (your primary search).",
-  "- mcp__gitnexus__context — a symbol's 360° view (callers, callees, the files it lives in).",
+  "A structural knowledge graph of THIS repo is indexed. Prefer it over reading many files — it's",
+  "precomputed and far cheaper. Use the GRAPH tools (these work reliably):",
+  "- mcp__gitnexus__context — a symbol's 360° view (definition, callers, callees, the files it's in).",
+  "  This is your primary 'where does X live / how is it used' tool — pass a symbol/function/class name.",
   "- mcp__gitnexus__impact — blast radius before a change (what depends on X).",
   "- mcp__gitnexus__detect_changes — which processes your edits affect.",
-  "Use these to jump straight to the few files you need. Use Grep ONLY inside a file you've",
-  "already opened (not to search the whole repo). Read a full file only to see/modify exact code.",
-  "If a tool complains about multiple repos, call mcp__gitnexus__list_repos and pass this repo's name.",
+  "- mcp__gitnexus__cypher — structural queries over the graph when you need something specific.",
+  "NOTE: mcp__gitnexus__query (full-text/BM25 search) may be UNAVAILABLE or return empty here (the",
+  "LadybugDB FTS extension can't be installed offline). Don't rely on it — if it returns nothing, use",
+  "context/impact/cypher above, and only then a TARGETED grep on a specific dir/file (never the whole",
+  "repo). If a tool complains about multiple repos, call mcp__gitnexus__list_repos and pass this repo.",
 ].join("\n");
