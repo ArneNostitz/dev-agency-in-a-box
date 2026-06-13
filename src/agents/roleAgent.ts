@@ -7,7 +7,7 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import { ROLES, modelFor, type RoleName } from "./roles.js";
 import { loadConstitution, loadPersona, loadPlaybooks, loadLearned } from "../memory.js";
 import { pushActivity } from "../activity.js";
-import { recentLessons, recordTokens, getProviders, getRoleModels, getSessionFallback, setSession, getIssueModelOverride } from "../store.js";
+import { recentLessons, recordTokens, getProviders, getRoleModels, getSessionFallback, setSession, getIssueModelOverride, getGlobalModel } from "../store.js";
 import { loadBudget } from "../budget.js";
 import { gitnexusWiring, GITNEXUS_PROMPT } from "../gitnexus.js";
 import { claudeToken, anthropicApiKey, ghBotToken } from "../creds.js";
@@ -17,17 +17,21 @@ import { registerRun } from "../abort.js";
  * Per-role model routing. Checks (in order):
  *   1. Per-issue override (chatbox model picker — one-shot, cleared after the run)
  *   2. Per-role assignment (dashboard "Models" panel)
- *   3. Session-level fallback (temporary auto-switch on rate limit — cleared after the retry)
+ *   3. Global default setting
+ *   4. Session-level fallback (temporary auto-switch on rate limit — cleared after the retry)
  * Returns the model + an env that points this run at the provider's Anthropic-compatible
  * endpoint — leaving every other role (and the default) on your Claude subscription untouched.
  */
 function resolveRoute(role: RoleName, repo: string, issueNumber: number): { model: string; env: Record<string, string> } | null {
   // Per-issue override wins (set when the human picks a model in the chatbox).
   const issueOverride = getIssueModelOverride(repo, issueNumber);
-  // Per-role permanent assignment; fall back to the temporary session fallback if the role
-  // has no explicit provider (session fallback is set only during an auto-switch retry and
-  // is cleared in the finally block after the run — it never mutates the DB).
-  const explicit = issueOverride ?? getRoleModels()[role];
+  // Per-role permanent assignment
+  const roleOverride = getRoleModels()[role];
+  // Global default setting
+  const globalDefault = getGlobalModel();
+
+  // Fall back down the hierarchy: issue override -> role assignment -> global default -> session fallback
+  const explicit = issueOverride ?? roleOverride ?? globalDefault;
   const assignment = explicit?.providerId ? explicit : getSessionFallback();
   if (!assignment?.providerId || !assignment.model) return null;
   const p = getProviders().find((x) => x.id === assignment.providerId);

@@ -16,7 +16,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { Config } from "./config.js";
-import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, tokensByRoleSince, tokensByDaySince, topIssuesByTokensSince, tokensByIssueAll, recordConflict, getConflict, clearConflict, listConflicts, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getFallbackChain, setFallbackChain, getAutoSwitchOnLimit, setIssueModelOverride, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, getIssueRow, type AutoKind, type Provider } from "./store.js";
+import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, tokensByRoleSince, tokensByDaySince, topIssuesByTokensSince, tokensByIssueAll, recordConflict, getConflict, clearConflict, listConflicts, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getGlobalModel, setGlobalModel, getFallbackChain, setFallbackChain, getAutoSwitchOnLimit, setIssueModelOverride, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, getIssueRow, type AutoKind, type Provider } from "./store.js";
 import { mergeEpic, isEpic } from "./epics.js";
 import { renderHistory } from "./dashboard.js";
 import { renderShell } from "./shell.js";
@@ -320,6 +320,9 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               },
               ops: opsSettingsValues(),
               opsMeta: OPS_SETTINGS,
+              providers: getProviders(),
+              roleModels: getRoleModels(),
+              globalModel: getGlobalModel(),
               config: {
                 skipArchitect: (getSetting("skip_architect") ?? "") || (process.env.SKIP_ARCHITECT?.trim().toLowerCase() === "false" ? "off" : "on"),
                 gitnexus: (getSetting("gitnexus") ?? "") || (process.env.GITNEXUS?.trim().toLowerCase() === "true" ? "on" : "off"),
@@ -369,11 +372,13 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           JSON.stringify({
             providers: getProviders(),
             roleModels: getRoleModels(),
+            globalModel: getGlobalModel(),
             fallbackChain: getFallbackChain(),
             autoSwitchOnLimit: getAutoSwitchOnLimit(),
             roles: ALL_ROLES,
             // Editable presets — all expose a native Anthropic-compatible endpoint.
             presets: [
+              { name: "Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", models: ["gemini-1.5-pro", "gemini-1.5-flash"] },
               { name: "GLM (Zhipu)", baseUrl: "https://open.bigmodel.cn/api/anthropic", models: ["glm-4.6", "glm-4.5"] },
               { name: "DeepSeek", baseUrl: "https://api.deepseek.com/anthropic", models: ["deepseek-chat", "deepseek-reasoner"] },
               { name: "Kimi (Moonshot)", baseUrl: "https://api.moonshot.cn/anthropic", models: ["kimi-k2-0905-preview"] },
@@ -654,7 +659,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
       const actor = userFromReq(req);
       if (!actor) return void res.writeHead(401, { "content-type": "application/json" }).end('{"error":"auth required"}');
       void readBody(req).then(async (body) => {
-        let p: { repo?: string; number?: number; commentId?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; dataUrl?: string; name?: string; providers?: Provider[]; roleModels?: Record<string, { providerId: string; model: string }>; fallbackChain?: Array<{ providerId: string; model: string }>; autoSwitchOnLimit?: boolean; model?: { providerId: string; model: string }; kind?: string; value?: string; skipArchitect?: string; gitnexus?: string; maxTokensPerRun?: number; maxReviseRounds?: number; auditThreshold?: number; start?: boolean; email?: string; key?: string; ops?: Record<string, string | number | boolean>; webhookSecret?: string } = {};
+        let p: { repo?: string; number?: number; commentId?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; dataUrl?: string; name?: string; providers?: Provider[]; roleModels?: Record<string, { providerId: string; model: string }>; globalModel?: { providerId: string; model: string } | null; fallbackChain?: Array<{ providerId: string; model: string }>; autoSwitchOnLimit?: boolean; model?: { providerId: string; model: string } | null; kind?: string; value?: string; skipArchitect?: string; gitnexus?: string; maxTokensPerRun?: number; maxReviseRounds?: number; auditThreshold?: number; start?: boolean; email?: string; key?: string; ops?: Record<string, string | number | boolean>; webhookSecret?: string } = {};
         try {
           p = JSON.parse(body.toString("utf8"));
         } catch {
@@ -831,6 +836,9 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         if (path === "/approve") {
           // Direct approve: marks it approved + moves it to Working immediately, then builds.
           if (!repo || !number || !approve) return res.writeHead(400).end("{}");
+          if (p.model && typeof p.model === "object" && p.model.providerId && p.model.model) {
+            setIssueModelOverride(repo, number, p.model.providerId, p.model.model);
+          }
           await approve(repo, number).catch(() => {});
           return ok();
         }
@@ -890,6 +898,9 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         if (path === "/resume") {
           // Unstick an issue and re-run it, whatever state it's in.
           if (!repo || !number || !resume) return res.writeHead(400).end("{}");
+          if (p.model && typeof p.model === "object" && p.model.providerId && p.model.model) {
+            setIssueModelOverride(repo, number, p.model.providerId, p.model.model);
+          }
           await resume(repo, number).catch(() => {});
           return ok();
         }
@@ -908,6 +919,9 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         if (path === "/fix") {
           // Address the PR's outstanding review (and resolve conflicts) on its branch.
           if (!repo || !number || !fix) return res.writeHead(400).end("{}");
+          if (p.model && typeof p.model === "object" && p.model.providerId && p.model.model) {
+            setIssueModelOverride(repo, number, p.model.providerId, p.model.model);
+          }
           await fix(repo, number).catch(() => {});
           return ok();
         }
@@ -943,6 +957,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           // Save providers, per-role assignments, and fallback chain (live, next run uses them).
           if (Array.isArray(p.providers)) setProviders(p.providers);
           if (p.roleModels && typeof p.roleModels === "object") setRoleModels(p.roleModels);
+          if (p.hasOwnProperty("globalModel")) setGlobalModel(p.globalModel ?? null);
           if (Array.isArray(p.fallbackChain)) setFallbackChain(p.fallbackChain);
           if (typeof p.autoSwitchOnLimit === "boolean") setSetting("auto_switch_on_limit", p.autoSwitchOnLimit ? "on" : "off");
           return ok();
@@ -999,6 +1014,9 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           try {
             const created = await createIssue(repo, p.title.trim(), issueBody, userTok);
             if (!created.number) throw new Error("couldn't read the new issue number");
+            if (p.model && typeof p.model === "object" && p.model.providerId && p.model.model) {
+              setIssueModelOverride(repo, created.number, p.model.providerId, p.model.model);
+            }
             if (p.start) {
               recordIssueState(repo, created.number, { title: p.title.trim(), state: "agency:in-progress" });
               void trigger("dashboard-new-issue");
@@ -1014,6 +1032,9 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         if (path === "/start") {
           // Play button: start a Planned issue now.
           if (!repo || !number || !start) return res.writeHead(400).end("{}");
+          if (p.model && typeof p.model === "object" && p.model.providerId && p.model.model) {
+            setIssueModelOverride(repo, number, p.model.providerId, p.model.model);
+          }
           await removeLabel(repo, number, "agency:planned").catch(() => {});
           await start(repo, number).catch(() => {});
           return ok();

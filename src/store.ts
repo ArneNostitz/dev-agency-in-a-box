@@ -636,7 +636,6 @@ export function setProviders(list: Provider[]): void {
   setSetting("providers", JSON.stringify(list ?? []));
 }
 
-/** role -> { providerId, model } ; absent/empty = default Claude on your subscription. */
 export function getRoleModels(): Record<string, { providerId: string; model: string }> {
   try {
     return JSON.parse(getSetting("role_models") ?? "{}") as Record<string, { providerId: string; model: string }>;
@@ -647,6 +646,29 @@ export function getRoleModels(): Record<string, { providerId: string; model: str
 export function setRoleModels(map: Record<string, { providerId: string; model: string }>): void {
   setSetting("role_models", JSON.stringify(map ?? {}));
 }
+
+export function getGlobalModel(): { providerId: string; model: string } | null {
+  try {
+    const v = getSetting("global_model");
+    return v ? (JSON.parse(v) as { providerId: string; model: string }) : null;
+  } catch {
+    return null;
+  }
+}
+export function setGlobalModel(model: { providerId: string; model: string } | null): void {
+  if (model) {
+    setSetting("global_model", JSON.stringify(model));
+  } else {
+    // delete it
+    const d = getDb();
+    if (d) {
+      try {
+        d.prepare(`DELETE FROM settings WHERE key = ?`).run("global_model");
+      } catch {}
+    }
+  }
+}
+
 
 // ---- in-memory session-level fallback (not persisted; cleared after each auto-switch run) ----
 // When Claude hits a usage limit and auto-switch is on, this is set for the duration of the
