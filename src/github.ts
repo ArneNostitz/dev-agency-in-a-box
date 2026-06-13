@@ -905,6 +905,16 @@ export async function mergeBaseInto(workdir: string, base = "main"): Promise<Bas
   }
 }
 
+/** Local HEAD sha of a checkout — lets the orchestrator tell whether an agent actually committed. */
+export async function localHeadSha(workdir: string): Promise<string> {
+  return runGit(workdir, ["rev-parse", "HEAD"]).catch(() => "");
+}
+/** True if the working tree has staged/unstaged changes (agent edited but didn't commit). */
+export async function workdirDirty(workdir: string): Promise<boolean> {
+  const s = await runGit(workdir, ["status", "--porcelain"]).catch(() => "");
+  return s.trim().length > 0;
+}
+
 /** Current head commit SHA of a branch (cheap API read). Used to cache conflict probes per-SHA. */
 export async function branchHeadSha(repo: string, branch: string): Promise<string> {
   const out = await gh(["api", `repos/${repo}/commits/${encodeURIComponent(branch)}`, "-q", ".sha"]).catch(() => "");

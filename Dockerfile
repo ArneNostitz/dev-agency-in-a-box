@@ -79,11 +79,14 @@ COPY scripts ./scripts
 
 RUN npm run build
 
-# Build stamp so the dashboard can show what's actually deployed (vs what's on main). The commit
-# SHA is best-effort: Coolify can pass --build-arg BUILD_SHA=$SOURCE_COMMIT; otherwise the build
-# time alone already reveals a stale deploy.
+# Build stamp + AUTOMATIC version. The version is derived from the commit history at build time
+# (`0.<minor>.<commit-count-on-main>`), so it bumps on every commit/merge with zero manual edits and
+# is graspable ("we're on 0.1.216") while still mapping to an exact commit (short SHA also shown).
+# We copy .git only to count commits, then delete it so it never ships in the runtime image.
 ARG BUILD_SHA=
-RUN BUILD_SHA="$BUILD_SHA" node -e "require('fs').writeFileSync('web/version.json', JSON.stringify({version:require('./package.json').version, builtAt:new Date().toISOString(), sha:(process.env.BUILD_SHA||'').slice(0,7)}))"
+COPY .git ./.git
+RUN BUILD_SHA="$BUILD_SHA" node -e "const cp=require('child_process');const sh=c=>{try{return cp.execSync(c,{encoding:'utf8'}).trim()}catch(e){return''}};const count=sh('git rev-list --count HEAD')||'0';const sha=((process.env.BUILD_SHA||sh('git rev-parse --short HEAD'))||'').slice(0,7);const base=(require('./package.json').version.split('.').slice(0,2).join('.'))||'0.1';require('fs').writeFileSync('web/version.json',JSON.stringify({version:base+'.'+count,build:Number(count),builtAt:new Date().toISOString(),sha}))" \
+    && rm -rf ./.git
 
 # Webhook mode listens here (ignored in watch/once mode).
 EXPOSE 3000

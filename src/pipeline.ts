@@ -23,6 +23,8 @@ import {
   upsertTrackerComment,
   mergeBaseInto,
   prMergeStatus,
+  localHeadSha,
+  workdirDirty,
   AWAITING_LABEL,
   APPROVAL_LABEL,
 } from "./github.js";
@@ -632,6 +634,7 @@ export async function runReviewFix(repo: string, issue: Issue, workdir: string, 
   // Address the reviewer's requested changes (full developer → tester → reviewer cycle).
   // ---------------------------------------------------------------------------------------------
   await commentOnIssue(repo, issue.number, say("developer", `**On it — addressing the review.**`));
+  const beforeSha = await localHeadSha(workdir);
   const dev = await runRole("developer", {
     workdir,
     repo,
@@ -644,6 +647,18 @@ export async function runReviewFix(repo: string, issue: Issue, workdir: string, 
     ...(getSession(repo, issue.number, "developer") ? { resumeSessionId: getSession(repo, issue.number, "developer") ?? undefined } : {}),
   });
   recordRun(repo, issue.number, "developer", dev.model, dev.turns, "revise", dev.costUsd);
+
+  // Orchestrator decision: if the developer produced NO change (HEAD didn't move and the tree is
+  // clean), re-running the tester + reviewer would just re-confirm the prior verdict at full token
+  // cost. Stop and ask the human instead of blindly launching the next two agents.
+  const changed = (await localHeadSha(workdir)) !== beforeSha || (await workdirDirty(workdir));
+  if (!changed) {
+    await removeLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
+    await addLabel(repo, issue.number, NEEDS_ATTENTION).catch(() => {});
+    recordIssueState(repo, issue.number, { state: NEEDS_ATTENTION });
+    await commentOnIssue(repo, issue.number, say("developer", `**No code changes were produced** addressing the review, so I skipped the re-test/re-review to avoid burning tokens. Comment guidance and re-pin, or **Merge anyway**.`));
+    return;
+  }
 
   const test = await runRole("tester", {
     workdir,

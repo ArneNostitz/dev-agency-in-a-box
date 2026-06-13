@@ -79,7 +79,11 @@ export function gitnexusEnabled(): boolean {
   const s = getSetting("gitnexus"); // dashboard toggle wins over env
   if (s === "on") return true;
   if (s === "off") return false;
-  return process.env.GITNEXUS?.trim().toLowerCase() === "true";
+  const env = process.env.GITNEXUS?.trim().toLowerCase();
+  if (env === "false" || env === "off" || env === "0") return false;
+  // Default ON: a code-graph query is far cheaper than the agent reading whole files to orient
+  // itself, and the index is cached per-HEAD so building it is a one-off, token-free cost.
+  return true;
 }
 
 /** Has this clone been indexed (the .gitnexus dir exists)? */
