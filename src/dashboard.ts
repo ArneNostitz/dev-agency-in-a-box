@@ -35,7 +35,8 @@ const CLIENT_HELPERS = `
     hourglass:'<path d="M5 22h14"/><path d="M5 2h14"/><path d="M17 22v-4.17a2 2 0 0 0-.59-1.41L12 12l-4.41 4.42A2 2 0 0 0 7 17.83V22"/><path d="M7 2v4.17a2 2 0 0 0 .59 1.41L12 12l4.41-4.42A2 2 0 0 0 17 6.17V2"/>',
     clock:'<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
     layers:'<path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/>',
-    plus:'<path d="M5 12h14"/><path d="M12 5v14"/>'
+    plus:'<path d="M5 12h14"/><path d="M12 5v14"/>',
+    shield:'<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>'
   };
   function ic(n,sz){var s=sz||16;return '<svg width="'+s+'" height="'+s+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lic">'+(ICONS[n]||"")+'</svg>';}
   function mdInline(s){
@@ -93,6 +94,9 @@ const STYLE = `
   .chips{display:flex;gap:6px;overflow:auto;padding:8px 14px 2px;-webkit-overflow-scrolling:touch}
   .chip{flex:0 0 auto;border:1px solid var(--line);background:var(--card);border-radius:999px;padding:5px 11px;font-size:13px;color:var(--muted);cursor:pointer}
   .chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+  .repobar{display:flex;align-items:center;gap:8px;padding:8px 14px 2px}
+  .repodrop{flex:1;border:1px solid var(--line);border-radius:9px;padding:7px 11px;font:14px inherit;background:var(--card);color:var(--ink);cursor:pointer;min-width:0}
+  .btn.recommended{background:var(--amber);border-color:var(--amber);color:#fff}
   .toolbar{display:flex;gap:8px;padding:8px 14px 2px}
   .toolbar input{flex:1;border:1px solid var(--line);border-radius:9px;padding:7px 11px;font:14px inherit;background:var(--card);color:var(--ink)}
   .toolbar select{border:1px solid var(--line);border-radius:9px;padding:7px 9px;font:13px inherit;background:var(--card);color:var(--ink)}
@@ -219,7 +223,10 @@ export function renderDashboard(): string {
     <h1>🤖 Dev Agency <span id="live"></span><button class="newbtn" onclick="openComposer()">+ New</button><button class="iconbtn" onclick="openSettings()" aria-label="Settings">⚙</button></h1>
     <div class="sub" id="sub">Loading…</div>
   </div>
-  <div class="chips" id="repochips"></div>
+  <div class="repobar">
+    <select id="reposel" class="repodrop" onchange="onRepoSel(this.value)" aria-label="Select repository"></select>
+    <button class="btn" id="auditbtn" onclick="doAudit()"></button>
+  </div>
   <div class="toolbar">
     <input id="q" placeholder="Search title or #number…" autocomplete="off" oninput="onSearch(this.value)">
     <select id="sort" onchange="onSort(this.value)">
@@ -301,6 +308,7 @@ export function renderDashboard(): string {
     <label class="ckline"><input type="checkbox" id="s_gitnexus"> Use GitNexus code index (fewer research tokens)</label>
     <label>Max tokens per run (kill-switch, 0 = off)</label><input id="s_maxtok" type="number" min="0" step="50000">
     <label>Reviewer revise rounds before it asks you</label><input id="s_revrounds" type="number" min="0" max="3" step="1">
+    <label>Audit recommended threshold (open issues + PRs per repo)</label><input id="s_audthresh" type="number" min="1" step="1">
     <div class="row"><button class="btn" onclick="closeSettings()">Cancel</button><button class="btn primary" id="s_save" onclick="saveSettings()">Save</button></div>
     <div style="margin-top:14px;border-top:1px solid var(--line);padding-top:10px;display:flex;gap:8px;flex-wrap:wrap">
       <button class="btn" onclick="openAgents()">✎ Edit agents &amp; playbooks →</button>
@@ -365,7 +373,7 @@ ${CLIENT_HELPERS}
     DATA=d; INFLIGHT=new Set(d.inflight||[]);
     var RL={}; (d.rateLimited||[]).forEach(function(r){RL[r.repo+"#"+r.number]=r.resumeAt;});
     DATA.issues=(d.issues||[]).map(function(i){i.active=activeKey(i);i.queued=queuedKey(i);i.resumeAt=RL[i.repo+"#"+i.number];return i;});
-    renderSub(); renderChips(); renderBoard(); if(open) refreshDrawerLive();
+    renderSub(); renderRepoBar(); renderBoard(); if(open) refreshDrawerLive();
     if(document.getElementById("settings").classList.contains("on")) refreshSettings();
   }).catch(function(){});}
 
@@ -385,13 +393,40 @@ ${CLIENT_HELPERS}
     } else { sess=' · <span class="clk" onclick="openSettings()">set token budget</span>'; }
     document.getElementById("sub").innerHTML = (n? n+' working now':'Idle')+sp+sess+' · <a href="/history">history</a>';
   }
-  function renderChips(){
-    var repos=DATA.repos||[]; var c=document.getElementById("repochips");
-    c.innerHTML='<span class="chip '+(repoFilter?'' :'on')+'" onclick="setRepo(null)">All</span>'+
-      repos.map(function(r){return '<span class="chip '+(repoFilter===r?'on':'')+'" onclick="setRepo(\\''+r+'\\')">'+esc(r.split("/").pop())+'</span>';}).join("")+
-      '<span class="chip" style="border-style:dashed" onclick="openAddRepo()">'+ic('plus',13)+' repo</span>';
+  function repoOpenCount(repo){
+    return (DATA.issues||[]).filter(function(i){return i.repo===repo&&!isDone(i);}).reduce(function(n,i){return n+1+(i.pr_number?1:0);},0);
   }
-  window.setRepo=function(r){repoFilter=r;renderChips();renderBoard();};
+  function renderRepoBar(){
+    var repos=DATA.repos||[];
+    var sel=document.getElementById("reposel");
+    sel.innerHTML='<option value="">All repos</option>'+
+      repos.map(function(r){return '<option value="'+esc(r)+'">'+esc(r.split("/").pop())+'</option>';}).join("")+
+      '<option value="__add">+ Add a repo…</option>';
+    sel.value=repoFilter||'';
+    var thresh=((DATA.config&&DATA.config.auditThreshold)||10);
+    var cnt=repoFilter?repoOpenCount(repoFilter):0;
+    var recommended=repoFilter&&cnt>=thresh;
+    var btn=document.getElementById("auditbtn");
+    if(btn){
+      btn.disabled=!repoFilter;
+      btn.className='btn'+(recommended?' recommended':'');
+      btn.innerHTML=ic('shield',14)+(recommended?' Audit recommended':' Audit');
+    }
+  }
+  window.setRepo=function(r){repoFilter=r;renderRepoBar();renderBoard();};
+  window.onRepoSel=function(v){
+    if(v==='__add'){document.getElementById("reposel").value=repoFilter||'';openAddRepo();return;}
+    window.setRepo(v||null);
+  };
+  window.doAudit=function(){
+    if(!repoFilter)return;
+    var btn=document.getElementById("auditbtn");
+    if(btn)btn.disabled=true;
+    fetch("/audit",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({repo:repoFilter})})
+      .then(function(r){if(!r.ok)throw 0;toast("Audit started ✓");})
+      .catch(function(){toast("Couldn't start audit");})
+      .then(function(){if(btn){btn.disabled=false;renderRepoBar();}});
+  };
 
   function isDone(i){var s=i.state||"";return s==="merged"||s==="agency:merged"||s==="closed"||s==="done";}
   function card(i){
@@ -538,6 +573,7 @@ ${CLIENT_HELPERS}
     var gn=document.getElementById("s_gitnexus"); if(gn)gn.checked=cfg.gitnexus==="on";
     var mt=document.getElementById("s_maxtok"); if(mt&&!mt.value)mt.value=cfg.maxTokensPerRun||"";
     var rr=document.getElementById("s_revrounds"); if(rr&&rr.value==="")rr.value=(cfg.maxReviseRounds!=null?cfg.maxReviseRounds:1);
+    var at=document.getElementById("s_audthresh"); if(at&&at.value==="")at.value=(cfg.auditThreshold||10);
   }
   window.setAnchor=function(){
     var v=document.getElementById("s_anchor").value; if(!v){toast("Pick a date & time");return;}
@@ -553,6 +589,7 @@ ${CLIENT_HELPERS}
     document.getElementById("s_anchor").value="";
     document.getElementById("s_maxtok").value="";
     document.getElementById("s_revrounds").value="";
+    document.getElementById("s_audthresh").value="";
     refreshSettings();
     document.getElementById("settings").classList.add("on");
     document.getElementById("sscrim").classList.add("on");
@@ -582,7 +619,8 @@ ${CLIENT_HELPERS}
       skipArchitect:document.getElementById("s_skiparch").checked?"on":"off",
       gitnexus:document.getElementById("s_gitnexus").checked?"on":"off",
       maxTokensPerRun:Number(document.getElementById("s_maxtok").value)||0,
-      maxReviseRounds:Number(document.getElementById("s_revrounds").value)||0};
+      maxReviseRounds:Number(document.getElementById("s_revrounds").value)||0,
+      auditThreshold:Number(document.getElementById("s_audthresh").value)||0};
     var btn=document.getElementById("s_save"); btn.disabled=true;
     fetch("/settings",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)})
       .then(function(r){if(!r.ok)throw 0; toast("Saved"); closeSettings(); setTimeout(load,400);})
