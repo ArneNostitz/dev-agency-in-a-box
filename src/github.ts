@@ -921,3 +921,38 @@ export async function prMergeStatus(repo: string, branch: string): Promise<Merge
   const mergeable = m === "MERGEABLE" ? "clean" : m === "CONFLICTING" ? "conflict" : "unknown";
   return { prNumber: p.number, state: p.state, mergeable };
 }
+
+// ---------------------------------------------------------------------------
+// mapIssueDetail — shapes raw GitHub GraphQL/REST issue data for the board UI.
+// ---------------------------------------------------------------------------
+
+export interface IssueComment {
+  who: "human" | "agency";
+  body: string;
+  createdAt: string;
+}
+
+export interface IssueDetail {
+  labels: string[];
+  comments: IssueComment[];
+}
+
+/**
+ * Normalise a raw issue payload (labels array + comments array) into the
+ * typed shape consumed by the board.  Classifies each comment as "human" or
+ * "agency" (via AGENCY_MARKER) and strips the marker from agency bodies.
+ */
+export function mapIssueDetail(raw: {
+  labels?: Array<{ name: string }>;
+  comments?: Array<{ body: string; createdAt?: string }>;
+}): IssueDetail {
+  const labels = (raw.labels ?? []).map((l) => l.name);
+  const comments: IssueComment[] = (raw.comments ?? []).map((c) => {
+    const hasMarker = c.body?.includes(AGENCY_MARKER);
+    const body = hasMarker
+      ? c.body.replace(new RegExp(`\\s*${AGENCY_MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`), "")
+      : (c.body ?? "");
+    return { who: hasMarker ? "agency" : "human", body, createdAt: c.createdAt ?? "" };
+  });
+  return { labels, comments };
+}
