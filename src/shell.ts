@@ -47,6 +47,17 @@ input,select,textarea{font-size:16px}
 .envbadge{font-size:10px;font-weight:600;letter-spacing:.05em;background:var(--amber-weak);color:var(--amber);border:1px solid var(--amber);border-radius:6px;padding:1px 6px;vertical-align:2px}
 .spacer{flex:1}
 .iconbtn{border:1px solid var(--line);background:var(--surface);color:var(--ink-2);border-radius:10px;width:36px;height:36px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
+.iconbtn.on{color:var(--accent);border-color:var(--accent)}
+.dropwrap{position:relative;display:inline-flex}
+.dropscrim{position:fixed;inset:0;z-index:40;background:transparent}
+.dropmenu{position:absolute;top:calc(100% + 6px);right:0;z-index:41;background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);padding:6px;min-width:210px;max-height:64vh;overflow:auto}
+.dropmenu-h{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-3);padding:6px 8px 5px}
+.dropmenu-item{display:flex;align-items:center;gap:7px;width:100%;text-align:left;border:none;background:transparent;color:var(--ink);padding:8px 9px;border-radius:8px;cursor:pointer;font-size:13.5px}
+.dropmenu-item:hover{background:var(--surface-2)}
+.dropmenu-item:disabled{cursor:default}
+.dropmenu-sub{margin-left:auto;color:var(--ink-3);font-size:11.5px}
+.dropmenu-foot{font-size:11.5px;color:var(--ink-3);padding:6px 8px 2px;border-top:1px solid var(--line);margin-top:4px}
+.dropmenu-empty{padding:8px 9px;color:var(--ink-3);font-size:13px}
 .iconbtn:active{transform:scale(.96)}
 .reposel{position:sticky;top:0;z-index:20;background:var(--bg);border-bottom:1px solid var(--line);display:flex;gap:6px;overflow-x:auto;padding:8px 12px;-webkit-overflow-scrolling:touch;scrollbar-width:none}
 .reposel::-webkit-scrollbar{display:none}
