@@ -382,6 +382,8 @@ function Detail({ issue, activity, act, isDesktop, onClose, onOpenIssue }) {
   const [atts, setAtts] = useState([]);
   const [busy, setBusy] = useState(false);
   const [armed, setArmed] = useState(""); // two-tap confirm: which destructive action is armed
+  const [modelOverride, setModelOverride] = useState(""); // "providerId/model" or ""
+  const [modelOpts, setModelOpts] = useState(null); // null = not loaded yet
   const armRef = useRef(null);
   const streamRef = useRef(null);
   const stickRef = useRef(true);
@@ -422,10 +424,20 @@ function Detail({ issue, activity, act, isDesktop, onClose, onOpenIssue }) {
 
   function send() {
     if (!reply.trim() && !atts.length) return; setBusy(true);
+    const mo = modelOverride ? (() => { const parts = modelOverride.split("/"); return { providerId: parts[0], model: parts.slice(1).join("/") }; })() : null;
     Promise.all(atts.map((a) => api("/upload-file", { repo, number, dataUrl: a.d, name: a.name }).then((j) => j && j.md).catch(() => null)))
-      .then((mds) => { const full = [reply].concat(mds.filter(Boolean)).filter(Boolean).join("\n\n"); return api("/comment", { repo, number, body: full }); })
+      .then((mds) => { const full = [reply].concat(mds.filter(Boolean)).filter(Boolean).join("\n\n"); return api("/comment", { repo, number, body: full, ...(mo ? { model: mo } : {}) }); })
       .then(() => { setReply(""); setAtts([]); if (taRef.current) taRef.current.style.height = "auto"; toast(running ? "Queued — the agent will pick it up when the run finishes" : "Sent"); setTimeout(loadThread, 800); })
       .catch((e) => toast((e && e.message) || "Couldn’t send")).then(() => setBusy(false));
+  }
+  // Load model options lazily on first use (avoids the /models round-trip for every card open).
+  function ensureModelOpts() {
+    if (modelOpts !== null) return;
+    setModelOpts([]); // mark as loading
+    getJSON("/models").then((d) => {
+      const opts = (d.providers || []).flatMap((p) => (p.models || []).map((m) => ({ value: p.id + "/" + m, label: p.name + " / " + m })));
+      setModelOpts(opts);
+    }).catch(() => setModelOpts([]));
   }
   function pickFiles(e) { const fs = e.target.files || []; for (let i = 0; i < fs.length; i++) readAttach(fs[i], (a) => setAtts((x) => x.concat(a))); e.target.value = ""; }
   function onPaste(e) { const items = (e.clipboardData || {}).items || []; for (let i = 0; i < items.length; i++) if (items[i].kind === "file") readAttach(items[i].getAsFile(), (a) => setAtts((x) => x.concat(a))); }
@@ -548,9 +560,13 @@ function Detail({ issue, activity, act, isDesktop, onClose, onOpenIssue }) {
     <div class="dcompose">
       <div class="composer">
         ${atts.length ? html`<div class="composer-atts">${atts.map((a, idx) => html`<span class="att" key=${idx}>${a.img ? html`<img src=${a.d}/>` : html`<span><${Icon} name="paperclip" size=${12}/> ${a.name}</span>`}<button class="iconbtn" style="width:18px;height:18px;border:none" onClick=${() => setAtts((x) => x.filter((_, j) => j !== idx))}>×</button></span>`)}</div>` : null}
-        <textarea ref=${taRef} rows="1" placeholder=${running ? "Message the agent…  (queued until the run finishes)" : "Reply…  (paste an image to attach)"} value=${reply} onInput=${(e) => { setReply(e.target.value); autosize(); }} onPaste=${onPaste}></textarea>
+        <textarea ref=${taRef} rows="1" placeholder=${running ? "Message the agent…  (queued until the run finishes)" : "Reply…  (paste an image to attach)"} value=${reply} onInput=${(e) => { setReply(e.target.value); autosize(); }} onFocus=${ensureModelOpts} onPaste=${onPaste}></textarea>
         <div class="composer-row">
           <label class="composer-icon" title="Attach a file"><${Icon} name="paperclip" size=${18}/><input type="file" multiple style="display:none" onChange=${pickFiles}/></label>
+          ${modelOpts && modelOpts.length ? html`<select title="Override model for this run" style="font-size:12px;max-width:130px;border:none;background:transparent;color:inherit;cursor:pointer" value=${modelOverride} onChange=${(e) => setModelOverride(e.target.value)}>
+            <option value="">Default model</option>
+            ${modelOpts.map((o) => html`<option key=${o.value} value=${o.value}>${o.label}</option>`)}
+          </select>` : null}
           <span class="spacer"></span>
           ${running ? html`<button class=${"btn warn" + (bz("stop") ? " busy" : "")} title="Stop the running agent" disabled=${bz("stop")} onClick=${() => act.stop(repo, number)}>${bz("stop") ? html`<${Spinner} size=${15}/>` : html`<${Icon} name="stop" size=${15}/>`} Stop</button>` : null}
           <button class=${"btn primary" + (busy ? " busy" : "")} disabled=${busy} onClick=${send}>${busy ? html`<${Spinner} size=${15}/>` : running ? html`<${Icon} name="clock" size=${15}/>` : html`<${Icon} name="send" size=${15}/>`} ${running ? "Queue" : "Send"}</button>
@@ -676,9 +692,58 @@ function Settings({ data, theme, setTheme, onClose, setAuto, reload }) {
     <label>Max tokens per run (0 = off)</label><input type="number" min="0" step="50000" value=${maxTok} onInput=${(e) => setMaxTok(e.target.value)}/>
     <label>Reviewer revise rounds before it asks you</label><input type="number" min="0" max="3" value=${revRounds} onInput=${(e) => setRevRounds(e.target.value)}/>
     ${(!data.user || data.user.role === "admin") && data.opsMeta ? html`<${Operations} meta=${data.opsMeta} values=${data.ops || {}} reload=${reload}/>` : null}
+    <${ModelsPanel}/>
     <div class="sec">Advanced</div>
     <a class="btn ghost" href="/classic" style="justify-content:flex-start"><${Icon} name="settings" size=${15}/> Models &amp; agents (classic editor)</a>
   <//>`;
+}
+/**
+ * Inline models panel in Settings: auto-switch toggle + fallback chain config.
+ * Full provider/role management stays in /classic for now; this surfaces the new
+ * rate-limit offload settings without requiring a page nav.
+ */
+function ModelsPanel() {
+  const [md, setMd] = useState(null); // /models response
+  const [autoSwitch, setAutoSwitch] = useState(false);
+  const [chain, setChain] = useState([]); // [{providerId, model}]
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    getJSON("/models").then((d) => {
+      setMd(d);
+      setAutoSwitch(d.autoSwitchOnLimit || false);
+      setChain(d.fallbackChain || []);
+    }).catch(() => {});
+  }, []);
+  if (!md) return null;
+  const providers = md.providers || [];
+  // Flat list of {providerId, model, label} choices for the fallback select
+  const modelOpts = providers.flatMap((p) => (p.models || []).map((m) => ({ providerId: p.id, model: m, label: p.name + " / " + m })));
+  function addFallback() {
+    if (!modelOpts.length) { toast("Add a provider in Models & agents first"); return; }
+    setChain((c) => c.concat(modelOpts[0]));
+  }
+  function removeFallback(idx) { setChain((c) => c.filter((_, i) => i !== idx)); }
+  function setFallbackEntry(idx, opt) {
+    const m = modelOpts.find((o) => o.providerId + "/" + o.model === opt);
+    if (m) setChain((c) => c.map((e, i) => i === idx ? { providerId: m.providerId, model: m.model } : e));
+  }
+  function save() {
+    setBusy(true);
+    api("/models", { fallbackChain: chain, autoSwitchOnLimit: autoSwitch })
+      .then(() => toast("Saved")).catch(() => toast("Couldn't save")).then(() => setBusy(false));
+  }
+  return html`<div class="sec">Models &amp; rate limit</div>
+    <label class="ckline"><input type="checkbox" checked=${autoSwitch} onChange=${(e) => setAutoSwitch(e.target.checked)}/> Auto-switch to fallback model on Claude usage limit</label>
+    <div class="muted" style="font-size:12px;margin:3px 2px 7px">When enabled, hitting the Claude credit/session limit switches all unassigned roles to the first fallback below and retries — instead of stalling.</div>
+    <label>Fallback chain (order of models to try when primary is rate-limited)</label>
+    ${chain.map((entry, idx) => html`<div key=${idx} style="display:flex;gap:6px;align-items:center;margin-bottom:5px">
+      <select style="flex:1" value=${entry.providerId + "/" + entry.model} onChange=${(e) => setFallbackEntry(idx, e.target.value)}>
+        ${modelOpts.map((o) => html`<option key=${o.providerId + "/" + o.model} value=${o.providerId + "/" + o.model}>${o.label}</option>`)}
+      </select>
+      <button class="iconbtn" title="Remove" onClick=${() => removeFallback(idx)}><${Icon} name="trash" size=${15}/></button>
+    </div>`)}
+    ${modelOpts.length ? html`<button class="btn ghost" style="margin-bottom:4px" onClick=${addFallback}><${Icon} name="plus" size=${14}/> Add fallback</button>` : html`<div class="muted" style="font-size:12px">No alternative providers configured — add one in <a href="/classic">Models &amp; agents</a> first.</div>`}
+    <button class="btn primary" style="margin-top:8px" disabled=${busy} onClick=${save}>${busy ? html`<${Spinner} size=${14}/> Saving…` : "Save model settings"}</button>`;
 }
 function Operations({ meta, values, reload }) {
   const [vals, setVals] = useState(() => Object.assign({}, values));
