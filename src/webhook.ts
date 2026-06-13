@@ -16,7 +16,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { Config } from "./config.js";
-import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, tokensByRoleSince, tokensByDaySince, topIssuesByTokensSince, tokensByIssueAll, recordConflict, getConflict, clearConflict, listConflicts, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getGlobalModel, setGlobalModel, getFallbackChain, setFallbackChain, getAutoSwitchOnLimit, setIssueModelOverride, getIssueModelOverride, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, getIssueRow, type AutoKind, type Provider } from "./store.js";
+import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, tokensByRoleSince, tokensByDaySince, topIssuesByTokensSince, tokensByIssueAll, recordConflict, getConflict, clearConflict, listConflicts, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getGlobalModel, setGlobalModel, getFallbackChain, setFallbackChain, getAutoSwitchOnLimit, setIssueModelOverride, getIssueModelOverride, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, getIssueRow, getModelsPresets, type AutoKind, type Provider } from "./store.js";
 import { mergeEpic, isEpic } from "./epics.js";
 import { renderHistory } from "./dashboard.js";
 import { renderShell } from "./shell.js";
@@ -378,13 +378,16 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
             autoSwitchOnLimit: getAutoSwitchOnLimit(),
             roles: ALL_ROLES,
             // Editable presets — all expose a native Anthropic-compatible endpoint.
-            presets: [
-              { name: "Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", models: ["gemini-3.5-flash", "gemini-3.5-pro", "gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-pro", "gemini-1.5-flash"] },
-              { name: "GLM (Zhipu)", baseUrl: "https://open.bigmodel.cn/api/anthropic", models: ["glm-5.2", "glm-5.1", "glm-4.6", "glm-4.5"] },
-              { name: "DeepSeek", baseUrl: "https://api.deepseek.com/anthropic", models: ["deepseek-chat", "deepseek-reasoner"] },
-              { name: "Kimi (Moonshot)", baseUrl: "https://api.moonshot.cn/anthropic", models: ["kimi-k2-0905-preview"] },
-              { name: "Custom (Anthropic-compatible)", baseUrl: "", models: [] },
-            ],
+            presets: (() => {
+              const pm = getModelsPresets();
+              return [
+                { name: "Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", models: pm["Gemini"] || [] },
+                { name: "GLM (Zhipu)", baseUrl: "https://open.bigmodel.cn/api/anthropic", models: pm["GLM (Zhipu)"] || [] },
+                { name: "DeepSeek", baseUrl: "https://api.deepseek.com/anthropic", models: pm["DeepSeek"] || [] },
+                { name: "Kimi (Moonshot)", baseUrl: "https://api.moonshot.cn/anthropic", models: pm["Kimi (Moonshot)"] || [] },
+                { name: "Custom (Anthropic-compatible)", baseUrl: "", models: [] },
+              ];
+            })(),
           }),
         );
         return;

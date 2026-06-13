@@ -7,8 +7,9 @@
  * All writes are best-effort: a memory failure must never break the pipeline.
  */
 import { DatabaseSync } from "node:sqlite";
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { mkdirSync, readFileSync, existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { hashPassword, verifyPassword, newToken, encryptSecret, tryDecrypt } from "./crypto.js";
 
 let db: DatabaseSync | null = null;
@@ -625,9 +626,40 @@ export interface Provider {
   models: string[];
 }
 
+let _modelsPresetCache: Record<string, string[]> | null = null;
+export function getModelsPresets(): Record<string, string[]> {
+  if (_modelsPresetCache) return _modelsPresetCache;
+  try {
+    const filePath = join(dirname(fileURLToPath(import.meta.url)), "../web/models.json");
+    if (existsSync(filePath)) {
+      _modelsPresetCache = JSON.parse(readFileSync(filePath, "utf8")) as Record<string, string[]>;
+      return _modelsPresetCache;
+    }
+  } catch {
+    /* ignore */
+  }
+  return {
+    "Gemini": ["gemini-3.5-flash", "gemini-3.5-pro", "gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-pro", "gemini-1.5-flash"],
+    "GLM (Zhipu)": ["glm-5.2", "glm-5.1", "glm-4.6", "glm-4.5"],
+    "DeepSeek": ["deepseek-chat", "deepseek-reasoner"],
+    "Kimi (Moonshot)": ["kimi-k2-0905-preview"]
+  };
+}
+
 export function getProviders(): Provider[] {
   try {
-    return JSON.parse(getSetting("providers") ?? "[]") as Provider[];
+    const list = JSON.parse(getSetting("providers") ?? "[]") as Provider[];
+    const presets = getModelsPresets();
+    for (const p of list) {
+      const presetModels = presets[p.name];
+      if (presetModels && presetModels.length) {
+        const missing = presetModels.filter((m) => !p.models.includes(m));
+        if (missing.length > 0) {
+          p.models = [...missing, ...p.models];
+        }
+      }
+    }
+    return list;
   } catch {
     return [];
   }

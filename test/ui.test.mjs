@@ -114,9 +114,9 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
   // Settings (uses hooks).
   click(q('[aria-label="Settings"]'));
   await tick(40);
-  assert.match(root.innerHTML, /Automation/, "settings opens");
+  assert.match(root.innerHTML, /Settings/, "settings opens");
   assert.match(root.innerHTML, /Pipeline/, "settings shows pipeline knobs");
-  assert.match(root.innerHTML, /Your credentials/, "credentials section renders for a signed-in user");
+  assert.match(root.innerHTML, /Integrations &amp; Credentials/, "credentials section renders for a signed-in user");
   assert.match(root.innerHTML, /Team \(admin\)/, "admin team section renders");
   assert.match(root.innerHTML, /Operations/, "operations panel renders");
   assert.match(root.innerHTML, /arne/, "signed-in user shown");

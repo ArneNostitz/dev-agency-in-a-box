@@ -1044,6 +1044,14 @@ function Operations({ meta, values, reload }) {
 }
 
 // ---------- onboarding wizard ----------
+let modelsConfig = {
+  "Gemini": ["gemini-3.5-flash", "gemini-3.5-pro", "gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-pro", "gemini-1.5-flash"],
+  "GLM (Zhipu)": ["glm-5.2", "glm-5.1", "glm-4.6", "glm-4.5"],
+  "DeepSeek": ["deepseek-chat", "deepseek-reasoner"],
+  "Kimi (Moonshot)": ["kimi-k2-0905-preview"]
+};
+getJSON("/web/models.json").then((m) => { if (m) modelsConfig = m; }).catch(() => {});
+
 const OB_PROVIDERS = [
   { id: "claude_sub", label: "Claude — subscription", note: "Recommended · runs agents on your plan", icon: "crown", kind: "secret", secretKey: "claude_token",
     title: "Claude subscription token", placeholder: "paste the setup-token output",
@@ -1054,22 +1062,22 @@ const OB_PROVIDERS = [
     how: "Pay-as-you-go billing instead of a subscription.\n\n1. Open platform.claude.com → API keys.\n2. Create a key.\n3. Paste it below.",
     link: "https://platform.claude.com/settings/keys", linkLabel: "Create an API key" },
   { id: "gemini", label: "Gemini", note: "Google's models", icon: "globe", kind: "provider",
-    preset: { name: "Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", models: ["gemini-3.5-flash", "gemini-3.5-pro", "gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-pro", "gemini-1.5-flash"] },
+    preset: { name: "Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", get models() { return modelsConfig["Gemini"] || []; } },
     title: "Gemini API key", placeholder: "AIza...",
     how: "Get an API key from Google AI Studio. Assign it to agents later in Settings → Models.",
     link: "https://aistudio.google.com/app/apikey", linkLabel: "Get a Gemini key" },
   { id: "glm", label: "GLM (Zhipu)", note: "Cheap coding model", icon: "globe", kind: "provider",
-    preset: { name: "GLM (Zhipu)", baseUrl: "https://open.bigmodel.cn/api/anthropic", models: ["glm-5.2", "glm-5.1", "glm-4.6", "glm-4.5"] },
+    preset: { name: "GLM (Zhipu)", baseUrl: "https://open.bigmodel.cn/api/anthropic", get models() { return modelsConfig["GLM (Zhipu)"] || []; } },
     title: "GLM API key", placeholder: "GLM API key",
     how: "An Anthropic-compatible endpoint, good for the cheaper roles.\n\n1. Get an API key from open.bigmodel.cn (Zhipu).\n2. Paste it below.\n\nAfter setup, assign GLM to specific agents in Settings → Models.",
     link: "https://open.bigmodel.cn", linkLabel: "Get a GLM key" },
   { id: "deepseek", label: "DeepSeek", note: "", icon: "globe", kind: "provider",
-    preset: { name: "DeepSeek", baseUrl: "https://api.deepseek.com/anthropic", models: ["deepseek-chat", "deepseek-reasoner"] },
+    preset: { name: "DeepSeek", baseUrl: "https://api.deepseek.com/anthropic", get models() { return modelsConfig["DeepSeek"] || []; } },
     title: "DeepSeek API key", placeholder: "DeepSeek API key",
     how: "1. Get an API key from platform.deepseek.com.\n2. Paste it below.\n\nAssign it to agents later in Settings → Models.",
     link: "https://platform.deepseek.com", linkLabel: "Get a DeepSeek key" },
   { id: "kimi", label: "Kimi (Moonshot)", note: "", icon: "globe", kind: "provider",
-    preset: { name: "Kimi (Moonshot)", baseUrl: "https://api.moonshot.cn/anthropic", models: ["kimi-k2-0905-preview"] },
+    preset: { name: "Kimi (Moonshot)", baseUrl: "https://api.moonshot.cn/anthropic", get models() { return modelsConfig["Kimi (Moonshot)"] || []; } },
     title: "Kimi API key", placeholder: "Kimi API key",
     how: "1. Get an API key from platform.moonshot.cn.\n2. Paste it below.\n\nAssign it to agents later in Settings → Models.",
     link: "https://platform.moonshot.cn", linkLabel: "Get a Kimi key" },
