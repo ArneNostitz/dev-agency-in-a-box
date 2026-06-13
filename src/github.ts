@@ -155,26 +155,32 @@ export async function removeLabel(repo: string, issue: number, label: string): P
 /** Hidden marker appended to every agency comment so we can tell our messages from a human's. */
 export const AGENCY_MARKER = "<!-- dev-agency -->";
 
+export interface IssueDetailComment {
+  who: "human" | "agency";
+  body: string;
+  createdAt?: string;
+}
+
+export interface IssueDetail {
+  labels: string[];
+  comments: IssueDetailComment[];
+}
+
 /**
- * Pure transform: classify a raw issue detail object into typed labels and comments.
- * Extracted so it can be unit-tested independently of the I/O path in getThreadFull.
+ * Maps a raw GitHub issue object (with labels/comments arrays) into a typed
+ * IssueDetail with classified comments (human vs agency) and stripped markers.
  */
 export function mapIssueDetail(raw: {
-  labels?: Array<{ name?: string }>;
-  comments?: Array<{ body?: string; createdAt?: string }>;
-}): {
-  labels: string[];
-  comments: Array<{ who: "agency" | "human"; body: string; createdAt: string }>;
-} {
-  const labels = (raw.labels ?? []).map((l) => l.name ?? "").filter(Boolean);
+  labels?: Array<{ name: string } | string>;
+  comments?: Array<{ body: string; createdAt?: string }>;
+}): IssueDetail {
+  const labels = (raw.labels ?? []).map((l) =>
+    typeof l === "string" ? l : l.name
+  );
   const comments = (raw.comments ?? []).map((c) => {
-    const body = c.body ?? "";
-    const isAgency = body.includes(AGENCY_MARKER);
-    return {
-      who: (isAgency ? "agency" : "human") as "agency" | "human",
-      body: body.replace(AGENCY_MARKER, "").trim(),
-      createdAt: c.createdAt ?? "",
-    };
+    const isAgency = c.body.includes(AGENCY_MARKER);
+    const body = c.body.replace(new RegExp(`\\s*${AGENCY_MARKER.replace(/[<>!-]/g, "\\$&")}\\s*$`), "").trimEnd();
+    return { who: isAgency ? ("agency" as const) : ("human" as const), body, ...(c.createdAt ? { createdAt: c.createdAt } : {}) };
   });
   return { labels, comments };
 }
