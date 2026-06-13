@@ -150,8 +150,6 @@ function App() {
   const isDesktop = useIsDesktop();
   const [data, setData] = useState({ issues: [], repos: [], active: [], activity: [], session: {}, config: {}, auto: {}, autoRepos: {} });
   const [repoFilter, setRepoFilter] = useState(null);
-  const [query, setQuery] = useState("");
-  const [sortKey, setSortKey] = useState("updated");
   const [tab, setTab] = useState("planned");
   const [openKey, setOpenKey] = useState(null); // "repo#number"
   const [sheet, setSheet] = useState(null); // "composer" | "settings"
@@ -202,16 +200,7 @@ function App() {
   // Repos with a running audit — drives the spinner on the top-bar Audit dropdown. (The audit itself
   // is now a real GitHub tracking issue, so it shows as a normal card + detail.)
   const auditRepos = (data.active || []).filter((a) => a.role === "auditor").map((a) => a.repo);
-  const q = query.trim().toLowerCase();
-  const shown = issues
-    .filter((i) => !repoFilter || i.repo === repoFilter)
-    .filter((i) => !q || (i.title || "").toLowerCase().includes(q) || ("#" + i.number).includes(q) || String(i.number) === q.replace(/^#/, ""))
-    .slice()
-    .sort((a, b) =>
-      sortKey === "number" ? b.number - a.number
-        : sortKey === "title" ? (a.title || "").localeCompare(b.title || "")
-        : new Date(b.updated_at || 0) - new Date(a.updated_at || 0),
-    );
+  const shown = issues.filter((i) => !repoFilter || i.repo === repoFilter);
   const activity = (data.activity || []).concat(liveRef.current);
 
   function override(repo, number, patch) { ov[repo + "#" + number] = { patch, t: Date.now() }; forceTick((x) => x + 1); }
@@ -230,16 +219,17 @@ function App() {
   // actions (optimistic + reconcile). Each is guarded: spins + blocks until the server responds.
   const act = {
     isBusy: (action, repo, number) => Boolean(busyRef.current[bkey(action, repo, number)]),
-    start(repo, number) { return guard("start", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/start", { repo, number }).then(() => toast("Starting…")).catch(() => { toast("Couldn’t start", "error"); delete ov[repo + "#" + number]; }).then(load); }); },
-    approve(repo, number) { return guard("approve", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/approve", { repo, number }).then(() => toast("Approved — building")).catch(() => toast("Couldn’t approve", "error")).then(load); }); },
-    resume(repo, number) { return guard("resume", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/resume", { repo, number }).then(() => toast("Resuming")).catch(() => toast("Couldn’t resume", "error")).then(load); }); },
+    start(repo, number, model) { return guard("start", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/start", { repo, number, ...(model ? { model } : {}) }).then(() => toast("Starting" + (model ? ` with model ${model.model}` : "") + "…")).catch(() => { toast("Couldn’t start", "error"); delete ov[repo + "#" + number]; }).then(load); }); },
+    approve(repo, number, model) { return guard("approve", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/approve", { repo, number, ...(model ? { model } : {}) }).then(() => toast("Approved" + (model ? ` with model ${model.model}` : "") + " — building")).catch(() => toast("Couldn’t approve", "error")).then(load); }); },
+    resume(repo, number, model) { return guard("resume", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/resume", { repo, number, ...(model ? { model } : {}) }).then(() => toast("Resuming" + (model ? ` with model ${model.model}` : "") + "…")).catch(() => toast("Couldn’t resume", "error")).then(load); }); },
     stop(repo, number) { return guard("stop", repo, number, () => { override(repo, number, { state: "planned" }); return api("/stop", { repo, number }).then(() => toast("Stopped — moved to Planned")).catch(() => toast("Couldn’t stop", "error")).then(load); }); },
-    fix(repo, number) { return guard("fix", repo, number, () => { override(repo, number, { state: "agency:in-progress", active: true }); return api("/fix", { repo, number }).then(() => toast("Fixing the review")).catch(() => toast("Couldn’t fix", "error")).then(load); }); },
+    fix(repo, number, model) { return guard("fix", repo, number, () => { override(repo, number, { state: "agency:in-progress", active: true }); return api("/fix", { repo, number, ...(model ? { model } : {}) }).then(() => toast("Fixing the review" + (model ? ` with model ${model.model}` : "") + "…")).catch(() => toast("Couldn’t fix", "error")).then(load); }); },
     merge(repo, number) { return guard("merge", repo, number, () => api("/merge", { repo, number }).then((r) => { toast("Merged"); load(); return r; }).catch(() => toast("Couldn’t merge — conflicts?", "error"))); },
     close(repo, number) { return guard("close", repo, number, () => { override(repo, number, { state: "merged" }); return api("/close", { repo, number }).then(() => { toast("Closed"); setOpenKey(null); }).catch((e) => toast((e && e.message) || "Couldn’t close", "error")).then(load); }); },
     createPr(repo, number) { return guard("createPr", repo, number, () => { override(repo, number, { state: "agency:ready" }); return api("/create-pr", { repo, number }).then((r) => toast(r && r.url ? "PR opened" : "PR opened")).catch((e) => toast((e && e.message) || "Couldn’t open PR", "error")).then(load); }); },
     del(repo, number) { return guard("del", repo, number, () => { override(repo, number, { state: "done" }); return api("/delete", { repo, number }).then(() => { toast("Deleted"); setOpenKey(null); }).catch(() => toast("Couldn’t delete", "error")).then(load); }); },
     runChecks(repo, number, title) { return guard("runChecks", repo, number, () => api("/run-checks", { repo, number, title }).then(() => toast("Running checks…")).catch(() => toast("Couldn’t run checks", "error"))); },
+
     setAuto(kind, value, repo, number) { return guard("auto-" + kind, repo || "global", number || 0, () => { const b = { kind, value }; if (repo) b.repo = repo; if (number) b.number = number; return api("/auto", b).then(() => { toast("auto-" + kind + ": " + value); }).then(load); }); },
     audit(repo) { return guard("audit", repo, 0, () => api("/audit", { repo }).then(() => toast("Auditing " + repo.split("/").pop() + " — proposed issues will appear in Planned")).catch((e) => toast((e && e.message) || "Couldn’t start the audit", "error"))); },
   };
@@ -247,13 +237,13 @@ function App() {
   function dismissToast(id) { setToasts((ts) => ts.filter((t) => t.id !== id)); }
 
   function openComposer(repo) { setComposerRepo(repo || repoFilter || (repos[0] || null)); setSheet("composer"); }
-  function createIssue(repo, role, title, body, start, atts) {
+  function createIssue(repo, role, title, body, start, atts, model) {
     const tmpNum = -Date.now();
     const tmp = { repo, number: tmpNum, title, role, state: start ? "agency:in-progress" : "planned", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), _tmp: true };
     setPending((ps) => ps.concat(tmp)); setSheet(null); toast(start ? "Creating & starting…" : "Added to Planned");
     if (start) { setOpenKey(repo + "#" + tmpNum); setDetailError(null); }
     Promise.all((atts || []).map((a) => api("/upload-file", { repo, number: 0, dataUrl: a.dataUrl, name: a.name }).then((j) => j && j.md).catch(() => null)))
-      .then((mds) => { const full = [body].concat(mds.filter(Boolean)).filter(Boolean).join("\n\n"); return api("/new-issue", { repo, role, title, body: full, start: !!start }); })
+      .then((mds) => { const full = [body].concat(mds.filter(Boolean)).filter(Boolean).join("\n\n"); return api("/new-issue", { repo, role, title, body: full, start: !!start, ...(model ? { model } : {}) }); })
       .then((d) => {
         if (start && d && d.number) setOpenKey(repo + "#" + d.number);
         setPending((ps) => ps.map((p) => (p === tmp ? Object.assign({}, p, { number: d.number || p.number }) : p)));
@@ -285,19 +275,19 @@ function App() {
 
   return html`
     <div class="app">
-      <${TopBar} working=${working} env=${data.env} theme=${theme} setTheme=${setThemeP} onSettings=${() => setSheet("settings")} onUsage=${() => setSheet("usage")} onNew=${() => openComposer()} repos=${repos} onAudit=${(r) => act.audit(r)} auditRepos=${auditRepos}/>
-      <${RepoSelector} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} onAdd=${() => setSheet("addrepo")}/>
-      <${SearchBar} query=${query} setQuery=${setQuery} sortKey=${sortKey} setSortKey=${setSortKey}/>
+      <${TopBar} working=${working} env=${data.env} theme=${theme} setTheme=${setThemeP} onSettings=${() => setSheet("settings")} onUsage=${() => setSheet("usage")} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${load} auto=${data.auto || {}} autoRepos=${data.autoRepos || {}} setAuto=${act.setAuto}/>
       ${data.secretsHealth ? html`<${SecretBanner} h=${data.secretsHealth} onFix=${() => setSheet("settings")}/>` : null}
-      <${StatusLine} working=${working} session=${data.session} spend=${data.spendToday}/>
+      <${StatusLine} working=${working} session=${data.session} spend=${data.spendToday} reload=${load}/>
       <div class="content">
-        <${Board} issues=${shown} repos=${repos} repoFilter=${repoFilter} tab=${tab} isDesktop=${isDesktop} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onAddRepo=${() => setSheet("addrepo")} act=${act}/>
+        <${Board} issues=${shown} repos=${repos} repoFilter=${repoFilter} tab=${tab} isDesktop=${isDesktop} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onAddRepo=${() => setSheet("addrepo")} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data}/>
       </div>
       ${!isDesktop && html`<${TabBar} issues=${shown} tab=${tab} setTab=${setTab}/>`}
       ${open && html`<div class="dscrim" onClick=${() => setOpenKey(null)}></div>`}
-      ${open && html`<${Detail} key=${openKey} issue=${open} activity=${activity} act=${act} isDesktop=${isDesktop} startError=${detailError} onClose=${() => { setOpenKey(null); setDetailError(null); }} onOpenIssue=${openIssue}/>`}
-      ${sheet === "composer" && html`<${Composer} repos=${repos} repo=${composerRepo} setRepo=${setComposerRepo} onClose=${() => setSheet(null)} onCreate=${createIssue}/>`}
-      ${sheet === "settings" && html`<${Settings} data=${data} theme=${theme} setTheme=${setThemeP} onClose=${() => setSheet(null)} setAuto=${act.setAuto} reload=${load}/>`}
+      ${open && html`<${Detail} key=${openKey} issue=${open} activity=${activity} act=${act} isDesktop=${isDesktop} startError=${detailError} onClose=${() => { setOpenKey(null); setDetailError(null); }} onOpenIssue=${openIssue} data=${data}/>`}
+      ${sheet === "composer" && html`<${Composer} repos=${repos} repo=${composerRepo} setRepo=${setComposerRepo} onClose=${() => setSheet(null)} onCreate=${createIssue} data=${data}/>`}
+      ${sheet === "settings" && html`<${Settings} data=${data} onClose=${() => setSheet(null)} reload=${load} openGithubTokens=${() => setSheet("github")} openModels=${() => setSheet("models")}/>`}
+      ${sheet === "github" && html`<${GithubTokensModal} secretKeys=${data.secretKeys || []} onClose=${() => setSheet("settings")} reload=${load}/>`}
+      ${sheet === "models" && html`<${ModelsModal} onClose=${() => setSheet("settings")} reload=${load}/>`}
       ${sheet === "addrepo" && html`<${AddRepo} repos=${repos} onClose=${() => setSheet(null)} reload=${load}/>`}
       ${sheet === "usage" && html`<${Usage} onClose=${() => setSheet(null)} onOpenIssue=${openIssue}/>`}
       ${data.user && data.onboarded === false && html`<${Onboarding} repos=${repos} reload=${load}/>`}
@@ -315,63 +305,110 @@ function SecretBanner({ h, onFix }) {
   return html`<div class="secbanner"><b>⚠ Credentials need attention.</b> ${msgs.map((m, i) => html`<div key=${i} style="margin-top:3px">${m}</div>`)} <button class="btn ghost" style="margin-top:7px" onClick=${onFix}>Open Settings</button></div>`;
 }
 
-function TopBar({ working, env, theme, setTheme, onSettings, onUsage, onNew, repos, onAudit, auditRepos }) {
-  const [auditOpen, setAuditOpen] = useState(false);
-  const isAuditing = (r) => (auditRepos || []).includes(r);
+function TopBar({ working, env, theme, setTheme, onSettings, onUsage, repos, repoFilter, setRepoFilter, reload, auto, autoRepos, setAuto }) {
   return html`<div class="topbar">
-    <div class="brand"><${Icon} name="crown" size=${18}/> Dev Agency ${env === "development" ? html`<span class="envbadge">DEV</span>` : null} ${working ? html`<span class="dot"></span>` : null}</div>
+    <div class="brand"><${Icon} name="crown" size=${18}/> <span class="brandname">Dev Agency</span> ${env === "development" ? html`<span class="envbadge">DEV</span>` : null} ${working ? html`<span class="dot"></span>` : null}</div>
     <div class="spacer"></div>
-    <div class="dropwrap">
-      <button class=${"iconbtn" + (auditRepos && auditRepos.length ? " on" : "")} aria-label="Audit a codebase" title="Audit a repo's codebase health" onClick=${() => setAuditOpen((o) => !o)}>${auditRepos && auditRepos.length ? html`<${Spinner} size=${18}/>` : html`<${Icon} name="search"/>`}</button>
-      ${auditOpen ? html`<div class="dropscrim" onClick=${() => setAuditOpen(false)}></div>
-        <div class="dropmenu">
-          <div class="dropmenu-h">Audit codebase health</div>
-          ${(repos || []).length ? (repos || []).map((r) => html`<button class="dropmenu-item" key=${r} disabled=${isAuditing(r)} onClick=${() => { onAudit(r); setAuditOpen(false); }}>${isAuditing(r) ? html`<${Spinner} size=${14}/>` : html`<${Icon} name="search" size=${14}/>`} ${r.split("/").pop()}${isAuditing(r) ? html`<span class="dropmenu-sub">auditing…</span>` : null}</button>`) : html`<div class="dropmenu-empty">No repos yet</div>`}
-          <div class="dropmenu-foot">Opens scoped refactor issues in Planned.</div>
-        </div>` : null}
-    </div>
+    <${RepoDropdown} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${reload} auto=${auto} autoRepos=${autoRepos} setAuto=${setAuto}/>
+    <div class="spacer"></div>
     <button class="iconbtn" aria-label="Token usage" title="Token usage statistics" onClick=${onUsage}><${Icon} name="chart"/></button>
-    <button class="iconbtn" aria-label="New issue" onClick=${onNew}><${Icon} name="plus"/></button>
     <button class="iconbtn" aria-label="Toggle theme" onClick=${() => setTheme(theme === "dark" ? "light" : "dark")}><${Icon} name=${theme === "dark" ? "sun" : "moon"}/></button>
     <button class="iconbtn" aria-label="Settings" onClick=${onSettings}><${Icon} name="settings"/></button>
   </div>`;
 }
-function RepoSelector({ repos, repoFilter, setRepoFilter, onAdd }) {
-  return html`<div class="reposel">
-    <span class=${"chip " + (repoFilter ? "" : "on")} onClick=${() => setRepoFilter(null)}>All</span>
-    ${repos.map((r) => html`<span key=${r} class=${"chip " + (repoFilter === r ? "on" : "")} onClick=${() => setRepoFilter(r)}>${r.split("/").pop()}</span>`)}
-    <span class="chip dash" onClick=${onAdd}><${Icon} name="plus" size=${13}/> new</span>
+
+// Centered repo selector that doubles as repo add/remove (replaces the pill row + Add modal).
+function RepoDropdown({ repos, repoFilter, setRepoFilter, reload, auto, autoRepos, setAuto }) {
+  const [open, setOpen] = useState(false);
+  const [avail, setAvail] = useState(null);
+  const [manual, setManual] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { if (open && avail === null) getJSON("/repos-available").then((d) => setAvail(d.repos || [])).catch(() => setAvail([])); }, [open]);
+  function add(full) {
+    if (!full || busy) return;
+    if (!/^[\w.-]+\/[\w.-]+$/.test(full)) { toast("Use owner/name, e.g. acme/app"); return; }
+    setBusy(true);
+    api("/add-repo", { repo: full }).then(() => { toast("Added " + full); setManual(""); setRepoFilter(full); reload(); }).catch(() => toast("Couldn’t add — use owner/name")).then(() => setBusy(false));
+  }
+  function remove(full) {
+    if (busy) return; setBusy(true);
+    api("/remove-repo", { repo: full }).then(() => { toast("Removed " + full); if (repoFilter === full) setRepoFilter(null); reload(); }).catch(() => toast("Couldn’t remove")).then(() => setBusy(false));
+  }
+  
+  const gpill = (kind) => { const raw = auto[kind] || ""; const on = raw === "on", off = raw === "off"; const order = ["", "on", "off"]; const nx = order[(order.indexOf(raw) + 1) % 3]; return html`<button class=${"apill " + (on ? "on" : off ? "off" : "")} onClick=${(e) => { e.stopPropagation(); setAuto(kind, nx === "" ? "inherit" : nx); }}><${Icon} name=${kind === "resume" ? "refresh" : "merge"} size=${12}/> ${kind}</button>`; };
+  const rpill = (repo, kind) => { const raw = (autoRepos[repo] || {})[kind] || ""; const on = raw === "on", off = raw === "off"; const order = ["", "on", "off"]; const nx = order[(order.indexOf(raw) + 1) % 3]; return html`<button class=${"apill " + (on ? "on" : off ? "off" : "")} onClick=${(e) => { e.stopPropagation(); setAuto(kind, nx === "" ? "inherit" : nx, repo); }}><${Icon} name=${kind === "resume" ? "refresh" : "merge"} size=${12}/> ${kind}</button>`; };
+
+  const watching = repos || [];
+  const addable = (avail || []).filter((r) => !watching.includes(r.full_name));
+  const title = repoFilter ? repoFilter.split("/").pop() : "All";
+  return html`<div class="dropwrap repodrop">
+    <button class="repodrop-btn" onClick=${() => setOpen((o) => !o)}>
+      <span class="repodrop-title">${title}</span>${repoFilter ? null : html` <span class="repodrop-sub">(add/remove repos)</span>`}
+      <${Icon} name=${open ? "x" : "planned"} size=${15}/>
+    </button>
+    ${open ? html`<div class="dropscrim" onClick=${() => setOpen(false)}></div>
+      <div class="dropmenu repodrop-menu" style="min-width:300px">
+        <button class=${"dropmenu-item" + (repoFilter ? "" : " sel")} onClick=${() => { setRepoFilter(null); setOpen(false); }}>
+          <div style="flex:1;display:flex;align-items:center"><${Icon} name="layers" size=${14}/> All repos</div>
+          <div class="autorow" style="margin:0">${gpill("resume")}${gpill("merge")}</div>
+        </button>
+        ${watching.length ? html`<div class="dropmenu-h">Watching</div>` : null}
+        ${watching.map((r) => html`<div class=${"repodrop-row" + (repoFilter === r ? " sel" : "")} key=${r}>
+          <button class="repodrop-pick" onClick=${() => { setRepoFilter(r); setOpen(false); }} style="flex:1;overflow:hidden;text-overflow:ellipsis"><${Icon} name="pr" size=${13}/> ${r}</button>
+          <div class="autorow" style="margin:0">${rpill(r, "resume")}${rpill(r, "merge")}</div>
+          <button class="repodrop-x" disabled=${busy} aria-label=${"Remove " + r} title="Stop watching" onClick=${() => remove(r)}><${Icon} name="trash" size=${14}/></button>
+        </div>`)}
+        <div class="dropmenu-h">Add a repo</div>
+        <div class="repodrop-add">
+          <input placeholder="owner/name" value=${manual} onInput=${(e) => setManual(e.target.value)} onKeyDown=${(e) => { if (e.key === "Enter") add(manual.trim()); }}/>
+          <button class="btn primary" disabled=${busy} onClick=${() => add(manual.trim())}>Add</button>
+        </div>
+        ${avail === null ? html`<div class="dropmenu-empty">Loading your repos…</div>`
+          : addable.length ? html`<div class="repodrop-avail">${addable.slice(0, 30).map((r) => html`<button class="dropmenu-item" key=${r.full_name} disabled=${busy} onClick=${() => add(r.full_name)}><${Icon} name="plus" size=${13}/> ${r.full_name}</button>`)}</div>`
+          : null}
+      </div>` : null}
   </div>`;
 }
-function SearchBar({ query, setQuery, sortKey, setSortKey }) {
-  return html`<div class="searchbar">
-    <div class="searchfield">
-      <${Icon} name="search" size=${15}/>
-      <input value=${query} placeholder="Search title or #number…" autocomplete="off" oninput=${(e) => setQuery(e.target.value)}/>
-      ${query ? html`<button class="searchclear" aria-label="Clear" onClick=${() => setQuery("")}><${Icon} name="x" size=${14}/></button>` : null}
-    </div>
-    <select class="sortsel" value=${sortKey} onChange=${(e) => setSortKey(e.target.value)} aria-label="Sort issues">
-      <option value="updated">Newest</option>
-      <option value="number">By number</option>
-      <option value="title">By name</option>
-    </select>
-  </div>`;
-}
-function StatusLine({ working, session, spend }) {
+function StatusLine({ working, session, spend, reload }) {
   const s = session || {};
   let pct = s.budget > 0 ? Math.min(100, Math.round((100 * s.tokens) / s.budget)) : 0;
   const col = pct >= 90 ? "var(--red)" : pct >= 70 ? "var(--amber)" : "var(--green)";
+  const [ver, setVer] = useState(null);
+  const [pop, setPop] = useState(false);
+  const [win, setWin] = useState(s.windowHours || 5);
+  const [bud, setBud] = useState(s.budget || 0);
+
+  useEffect(() => { getJSON("/web/version.json").then(setVer).catch(() => setVer(null)); }, []);
+  const verTitle = ver ? "Build " + (ver.version || "?") + (ver.sha ? " · " + ver.sha : "") + (ver.builtAt ? " · built " + new Date(ver.builtAt).toLocaleString() : "") : "Development build (not from a Docker image)";
+  const verLabel = ver ? (ver.sha || ("v" + (ver.version || "?"))) + (ver.builtAt ? " · " + ago(ver.builtAt) : "") : "dev";
+  
+  function saveBudget() {
+    api("/settings", { windowHours: Number(win) || 5, budget: Number(bud) || 0 }).then(() => { toast("Budget saved"); setPop(false); reload(); });
+  }
+
   return html`<div class="statusline">
     <span>${working ? working + " working now" : "Idle"}</span>
     ${spend && spend.costUsd > 0 ? html`<span>· $${spend.costUsd.toFixed(2)} today</span>` : null}
-    ${s.budget > 0 ? html`<span>· <span class="gauge"><i style=${"width:" + pct + "%;background:" + col}></i></span> ${pct}%</span>` : null}
-    ${s.resetsAt ? html`<span>· resets ${hm(new Date(s.resetsAt))}</span>` : null}
+    <span style="position:relative">
+      <button class="iconbtn" style="padding:0 4px;height:auto;font-size:inherit" onClick=${() => setPop(!pop)}>
+        · ${s.budget > 0 ? html`<span class="gauge"><i style=${"width:" + pct + "%;background:" + col}></i></span> ${pct}%` : "No token limit"}
+      </button>
+      ${pop ? html`<div class="dropscrim" onClick=${() => setPop(false)}></div><div class="dropmenu" style="left:0;top:100%;min-width:220px;padding:12px;z-index:100">
+        <label>Session window (hours)</label>
+        <input type="number" min="1" value=${win} onInput=${(e) => setWin(e.target.value)} style="margin-bottom:8px"/>
+        <label>Budget (tokens / window, 0=off)</label>
+        <input type="number" min="0" step="1000" value=${bud} onInput=${(e) => setBud(e.target.value)} style="margin-bottom:8px"/>
+        <button class="btn primary" onClick=${saveBudget}>Save</button>
+      </div>` : null}
+    </span>
+    ${s.resetsAt && s.budget > 0 ? html`<span>· resets ${hm(new Date(s.resetsAt))}</span>` : null}
     <span class="spacer"></span>
+    <span class="buildstamp" title=${verTitle}>${verLabel}</span>
     <a href="/history">history</a>
   </div>`;
 }
 
-function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, onAddRepo, act }) {
+function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, onAddRepo, onAddIssue, onAnalyze, auditRepos, act, data }) {
   if (!(repos || []).length) {
     return html`<div class="norepo">
       <div class="obki" style="margin:0 auto 14px"><${Icon} name="pr" size=${28}/></div>
@@ -380,14 +417,22 @@ function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, onAddRepo, a
       <button class="btn primary" style="margin:0 auto;min-width:200px" onClick=${onAddRepo}><${Icon} name="plus" size=${16}/> Add your first repo</button>
     </div>`;
   }
+  // The Add Issue / Analyze buttons act on the active repo. With "All" + multiple repos there's no
+  // single target: Add Issue still opens the composer (it has a repo picker); Analyze is disabled.
+  const target = repoFilter || (repos.length === 1 ? repos[0] : null);
+  const analyzing = target && (auditRepos || []).includes(target);
   const byCol = {}; COLS.forEach((c) => (byCol[c.k] = []));
   issues.slice().sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0)).forEach((i) => byCol[classify(i)].push(i));
   const cols = isDesktop ? COLS : COLS.filter((c) => c.k === tab);
   return html`<div class="board">
     ${cols.map((c) => html`<div class="col" key=${c.k}>
       <div class="colhead"><${Icon} name=${c.icon} size=${15}/> ${c.label} <span class="n">${byCol[c.k].length || ""}</span></div>
+      ${c.k === "planned" ? html`<div class="planned-actions">
+        <button class="colbtn primary" onClick=${() => onAddIssue(target)}><${Icon} name="plus" size=${14}/> Add Issue</button>
+        <button class="colbtn" disabled=${!target || analyzing} title=${target ? "Analyze " + target.split("/").pop() + "'s codebase health" : "Pick a repo first"} onClick=${() => target && onAnalyze(target)}>${analyzing ? html`<${Spinner} size=${14}/>` : html`<${Icon} name="search" size=${14}/>`} Analyze Repo</button>
+      </div>` : null}
       <div class="cards">
-        ${byCol[c.k].length ? byCol[c.k].map((i) => html`<${Card} key=${i.repo + "#" + i.number} i=${i} multi=${!repoFilter && repos.length > 1} onOpen=${onOpen} act=${act}/>`) : html`<div class="empty">—</div>`}
+        ${byCol[c.k].length ? byCol[c.k].map((i) => html`<${Card} key=${i.repo + "#" + i.number} i=${i} multi=${!repoFilter && repos.length > 1} onOpen=${onOpen} act=${act} data=${data}/>`) : html`<div class="empty">—</div>`}
       </div>
     </div>`)}
   </div>`;
@@ -398,10 +443,20 @@ function usageTitle(u) {
   return `${fmtTok(u.tokens)} tokens · $${Number(u.costUsd || 0).toFixed(2)}${u.model ? " · " + shortModel(u.model) : ""} · ${u.runs || 0} runs`;
 }
 
-function Card({ i, multi, onOpen, act }) {
+function Card({ i, multi, onOpen, act, data }) {
   const st = statusChip(i);
   const done = isDone(i);
   const tmp = i._tmp || i.number < 0; // optimistic, not yet confirmed by GitHub
+  const [modelSel, setModelSel] = useState(
+    i.modelOverride ? i.modelOverride.providerId + "/" + i.modelOverride.model : ""
+  );
+  useEffect(() => {
+    setModelSel(i.modelOverride ? i.modelOverride.providerId + "/" + i.modelOverride.model : "");
+  }, [i.modelOverride?.providerId, i.modelOverride?.model]);
+
+  const providers = data?.providers || [];
+  const modelOpts = providers.flatMap((p) => (p.models || []).map((m) => ({ value: p.id + "/" + m, label: p.name + " / " + m })));
+
   let quick = null;
   if (i.state === "planned" || (!i.state && !done)) quick = { action: "start", cls: "play", icon: "play", label: "start", fn: () => act.start(i.repo, i.number) };
   else if (i.state === "agency:awaiting-approval") quick = { action: "approve", cls: "", icon: "check", label: "approve", fn: () => act.approve(i.repo, i.number) };
@@ -410,6 +465,37 @@ function Card({ i, multi, onOpen, act }) {
   else if (i.active || i.state === "agency:in-progress" || i.state === "agency:rate-limited") quick = { action: "stop", cls: "stop", icon: "stop", label: "stop", fn: () => act.stop(i.repo, i.number) };
   const qBusy = quick && act.isBusy(quick.action, i.repo, i.number);
   const autoOn = i.auto && (i.auto.resume || i.auto.merge) && !done;
+
+  const selectModel = (e) => {
+    e.stopPropagation();
+    const val = e.target.value;
+    setModelSel(val);
+    let mo = null;
+    if (val) {
+      const parts = val.split("/");
+      mo = { providerId: parts[0], model: parts.slice(1).join("/") };
+    }
+    i.modelOverride = mo;
+    api("/model-override", { repo: i.repo, number: i.number, model: mo }).catch((err) => {
+      toast("Failed to save model override: " + err.message);
+    });
+  };
+
+  const runQuick = (e) => {
+    e.stopPropagation();
+    if (!quick) return;
+    let mo = null;
+    if (modelSel) {
+      const parts = modelSel.split("/");
+      mo = { providerId: parts[0], model: parts.slice(1).join("/") };
+    }
+    if (quick.action === "start") act.start(i.repo, i.number, mo);
+    else if (quick.action === "approve") act.approve(i.repo, i.number, mo);
+    else if (quick.action === "fix") act.fix(i.repo, i.number, mo);
+    else if (quick.action === "resume") act.resume(i.repo, i.number, mo);
+    else quick.fn();
+  };
+
   return html`<div class=${"card" + (tmp ? " busy" : "") + (i.active ? " active-now" : "")} title=${usageTitle(i.usage)} onClick=${tmp ? null : () => onOpen(i)}>
     <div class="t">${(i.active || tmp) ? html`<${Spinner} size=${13}/> ` : null}${i.title || "#" + i.number}</div>
     <div class="meta">
@@ -423,7 +509,17 @@ function Card({ i, multi, onOpen, act }) {
       ${i.usage && i.usage.tokens ? html`<span class="tagk" title=${usageTitle(i.usage)}><${Icon} name="chart" size=${11}/> ${fmtTok(i.usage.tokens)}${i.usage.model ? " · " + shortModel(i.usage.model) : ""}</span>` : null}
       ${multi ? html`<span class="tagk">${i.repo.split("/").pop()}</span>` : null}
       <span class="spacer" style="margin-left:auto"></span>
-      ${tmp ? null : quick ? html`<button class=${"cardbtn " + quick.cls + (qBusy ? " busy" : "")} disabled=${qBusy} onClick=${(e) => { e.stopPropagation(); quick.fn(); }}>${qBusy ? html`<${Spinner} size=${13}/>` : html`<${Icon} name=${quick.icon} size=${13}/>`} ${qBusy ? "working…" : quick.label}</button>` : html`<span style="color:var(--ink-3);font-size:12px">${ago(i.updated_at)}</span>`}
+      ${tmp ? null : quick ? html`
+        <div style="display:inline-flex;gap:4px;align-items:center" onClick=${(e) => e.stopPropagation()}>
+          ${modelOpts.length && quick.action !== "stop" ? html`
+            <select style="font-size:11px;max-width:110px;height:22px;border:1px solid var(--border);border-radius:3px;background:var(--bg-2);color:var(--text);cursor:pointer;padding:0 2px" value=${modelSel} onChange=${selectModel}>
+              <option value="">Default model</option>
+              ${modelOpts.map((o) => html`<option key=${o.value} value=${o.value}>${o.label.split(" / ").pop()}</option>`)}
+            </select>
+          ` : null}
+          <button class=${"cardbtn " + quick.cls + (qBusy ? " busy" : "")} disabled=${qBusy} onClick=${runQuick}>${qBusy ? html`<${Spinner} size=${13}/>` : html`<${Icon} name=${quick.icon} size=${13}/>`} ${qBusy ? "working…" : quick.label}</button>
+        </div>
+      ` : html`<span style="color:var(--ink-3);font-size:12px">${ago(i.updated_at)}</span>`}
     </div>
   </div>`;
 }
@@ -440,7 +536,7 @@ function TabBar({ issues, tab, setTab }) {
 }
 
 // ---------- Detail ----------
-function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIssue }) {
+function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIssue, data }) {
   const [tab, setTab] = useState("chat"); // mobile sub-tab: chat | stream
   const [thread, setThread] = useState(null);
   const [pr, setPr] = useState(null);
@@ -449,6 +545,11 @@ function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIs
   const [atts, setAtts] = useState([]);
   const [busy, setBusy] = useState(false);
   const [armed, setArmed] = useState(""); // two-tap confirm: which destructive action is armed
+  const [modelOverride, setModelOverride] = useState(
+    issue.modelOverride ? issue.modelOverride.providerId + "/" + issue.modelOverride.model : ""
+  );
+  const providers = data?.providers || [];
+  const modelOpts = providers.flatMap((p) => (p.models || []).map((m) => ({ value: p.id + "/" + m, label: p.name + " / " + m })));
   const [pendingComments, setPendingComments] = useState([]); // optimistic skeleton comments
   const [chatAtBottom, setChatAtBottom] = useState(true);
   const [chatAtTop, setChatAtTop] = useState(true);
@@ -460,6 +561,18 @@ function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIs
   const taRef = useRef(null); // compose textarea (auto-grows with content)
   const didScrollRef = useRef(false); // scroll the conversation to the newest message once, on open
   function autosize() { const el = taRef.current; if (!el) return; el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, 200) + "px"; }
+  const updateModelOverride = (val) => {
+    setModelOverride(val);
+    let mo = null;
+    if (val) {
+      const parts = val.split("/");
+      mo = { providerId: parts[0], model: parts.slice(1).join("/") };
+    }
+    issue.modelOverride = mo;
+    api("/model-override", { repo, number, model: mo }).catch((err) => {
+      toast("Failed to save model override: " + err.message);
+    });
+  };
   const repo = issue.repo, number = issue.number;
   useEffect(() => {
     if (thread && !didScrollRef.current && chatRef.current) {
@@ -480,11 +593,23 @@ function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIs
   function loadThread() {
     getJSON("/thread?repo=" + encodeURIComponent(repo) + "&number=" + number)
       .then((t) => {
-        if (t && Array.isArray(t.comments)) setThread(t);
-        else setThread({ _err: "No thread data received from GitHub — the issue may not exist yet or the token lacks access." });
+        if (t && Array.isArray(t.comments)) {
+          setThread(t);
+        } else {
+          const errMsg = (t && t.error) || "No thread data received from GitHub — the issue may not exist yet or the token lacks access.";
+          setThread({ _err: errMsg });
+          toast(errMsg);
+        }
       })
-      .catch(() => setThread((prev) => prev || { _err: "Couldn't load thread. Check network and GitHub token." }));
+      .catch((e) => {
+        const errMsg = (e && e.message) || "Couldn't load thread. Check network and GitHub token.";
+        setThread((prev) => prev || { _err: errMsg });
+        toast(errMsg);
+      });
   }
+  useEffect(() => {
+    setModelOverride(issue.modelOverride ? issue.modelOverride.providerId + "/" + issue.modelOverride.model : "");
+  }, [issue.modelOverride?.providerId, issue.modelOverride?.model]);
   useEffect(() => {
     setThread(null); setPr(null); setAppInfo(null); setAtts([]); setPendingComments([]); stickRef.current = true;
     if (issue._audit) return; // the audit has no GitHub thread/PR — stream-only view below
@@ -492,7 +617,7 @@ function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIs
     if (issue.pr_number) getJSON("/pr-status?repo=" + encodeURIComponent(repo) + "&number=" + number).then(setPr).catch(() => {});
     getJSON("/app-info?repo=" + encodeURIComponent(repo) + "&number=" + number).then(setAppInfo).catch(() => setAppInfo({ kind: "unknown" }));
     const t = setInterval(loadThread, 6000); return () => clearInterval(t);
-  }, [repo, number]);
+  }, [repo, number, issue._audit, issue.pr_number]);
 
   const stream = activity.filter((a) => a.repo === repo && a.number === number).slice(-60);
   useEffect(() => { const el = streamRef.current; if (el && stickRef.current) el.scrollTop = el.scrollHeight; });
@@ -510,6 +635,7 @@ function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIs
   function send() {
     if (!reply.trim() && !atts.length) return;
     setBusy(true);
+    const mo = modelOverride ? (() => { const parts = modelOverride.split("/"); return { providerId: parts[0], model: parts.slice(1).join("/") }; })() : null;
     // Optimistic skeleton: show the comment immediately before the server confirms
     const skelId = Date.now();
     setPendingComments((ps) => ps.concat({ _skel: true, id: skelId, author: "you", createdAt: new Date().toISOString(), body: reply }));
@@ -529,7 +655,7 @@ function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIs
           else if (r.md) appended.push(r.md);
         }
         if (appended.length) full = [full].concat(appended).filter(Boolean).join("\n\n");
-        return api("/comment", { repo, number, body: full });
+        return api("/comment", { repo, number, body: full, ...(mo ? { model: mo } : {}) });
       })
       .then(() => {
         setReply(""); setAtts([]);
@@ -601,12 +727,15 @@ function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIs
     const awaiting = st === "agency:awaiting-approval";
     const approved = review === "approved";
 
+    const parts = modelOverride ? modelOverride.split("/") : [];
+    const mo = parts.length >= 2 ? { providerId: parts[0], model: parts.slice(1).join("/") } : null;
+
     const bStop = () => html`<button class=${"tbtn warn" + (bz("stop") ? " busy" : "")} disabled=${bz("stop")} data-tip="Stop the running agent & move to Planned" onClick=${() => act.stop(repo, number)}>${tico("stop", "stop")}${lbl(bz("stop") ? "Stopping…" : "Stop")}</button>`;
     const bToPlanned = () => html`<button class=${"tbtn" + (bz("stop") ? " busy" : "")} disabled=${bz("stop")} data-tip="Move to Planned (park it — no AI until you start it)" onClick=${() => act.stop(repo, number).then(onClose)}>${tico("stop", "planned")}${lbl(bz("stop") ? "Moving…" : "To Planned")}</button>`;
-    const bStart = () => html`<button class=${"tbtn green" + (bz("start") ? " busy" : "")} disabled=${bz("start")} data-tip="Start building this" onClick=${() => act.start(repo, number).then(onClose)}>${tico("start", "play")}${lbl("Start")}</button>`;
-    const bApprove = () => html`<button class=${"tbtn primary" + (bz("approve") ? " busy" : "")} disabled=${bz("approve")} data-tip="Approve the plan & build" onClick=${() => act.approve(repo, number).then(onClose)}>${tico("approve", "check")}${lbl("Approve")}</button>`;
-    const bResume = () => html`<button class=${"tbtn" + (bz("resume") ? " busy" : "")} disabled=${bz("resume")} data-tip="Re-run the agent on this issue" onClick=${() => act.resume(repo, number)}>${tico("resume", "refresh")}${lbl(bz("resume") ? "Resuming…" : "Resume")}</button>`;
-    const bFix = () => html`<button class=${"tbtn primary" + (bz("fix") ? " busy" : "")} disabled=${bz("fix")} data-tip=${conflict ? "Resolve merge conflicts" : "Address the review's requested changes"} onClick=${() => act.fix(repo, number).then(onClose)}>${tico("fix", "wrench")}${lbl(conflict ? "Resolve" : "Fix")}</button>`;
+    const bStart = () => html`<button class=${"tbtn green" + (bz("start") ? " busy" : "")} disabled=${bz("start")} data-tip="Start building this" onClick=${() => act.start(repo, number, mo).then(onClose)}>${tico("start", "play")}${lbl("Start")}</button>`;
+    const bApprove = () => html`<button class=${"tbtn primary" + (bz("approve") ? " busy" : "")} disabled=${bz("approve")} data-tip="Approve the plan & build" onClick=${() => act.approve(repo, number, mo).then(onClose)}>${tico("approve", "check")}${lbl("Approve")}</button>`;
+    const bResume = () => html`<button class=${"tbtn" + (bz("resume") ? " busy" : "")} disabled=${bz("resume")} data-tip="Re-run the agent on this issue" onClick=${() => act.resume(repo, number, mo)}>${tico("resume", "refresh")}${lbl(bz("resume") ? "Resuming…" : "Resume")}</button>`;
+    const bFix = () => html`<button class=${"tbtn primary" + (bz("fix") ? " busy" : "")} disabled=${bz("fix")} data-tip=${conflict ? "Resolve merge conflicts" : "Address the review's requested changes"} onClick=${() => act.fix(repo, number, mo).then(onClose)}>${tico("fix", "wrench")}${lbl(conflict ? "Resolve" : "Fix")}</button>`;
     const bCreatePr = () => html`<button class=${"tbtn green" + (bz("createPr") ? " busy" : "")} disabled=${bz("createPr")} data-tip="Open a PR from the approved branch (no AI / no tokens)" onClick=${() => act.createPr(repo, number)}>${tico("createPr", "pr")}${lbl(bz("createPr") ? "Opening PR…" : "Create PR")}</button>`;
     const bMerge = (anyway) => { const ma = armed === "merge", mb = bz("merge"); return html`<button class=${"tbtn green" + (ma ? " armed" : "") + (mb ? " busy" : "")} disabled=${mb} data-tip=${ma ? "Tap again to merge" : anyway ? "Merge despite requested changes" : "Merge the PR & close the issue"} onClick=${() => confirmAct("merge", () => act.merge(repo, number).then(onClose))}>${mb ? html`<${Spinner} size=${18}/>` : html`<${Icon} name="merge"/>`}${(isDesktop || ma) ? html`<span class="tlabel">${mb ? "Merging…" : ma ? "Confirm merge" : anyway ? "Merge anyway" : "Merge"}</span>` : null}</button>`; };
     const bClose = (epic) => { const ca = armed === "close", cb = bz("close"); const epicAllDone = issue.epic && issue.epic.done >= issue.epic.total; const clabel = ca ? "Confirm" : cb ? "Closing…" : epic ? (epicAllDone ? "Complete" : "Close epic") : "Close"; return html`<button class=${"tbtn" + (epic ? " green" : "") + (ca ? " armed" : "") + (cb ? " busy" : "")} disabled=${cb} data-tip=${ca ? "Tap again to close" : epic ? "Merge any remaining sub-PRs & close this epic" : "Close this issue (mark it done, no PR)"} onClick=${() => confirmAct("close", () => act.close(repo, number).then(onClose))}>${cb ? html`<${Spinner} size=${18}/>` : html`<${Icon} name="check"/>`}${(isDesktop || ca) ? html`<span class="tlabel">${clabel}</span>` : null}</button>`; };
@@ -698,7 +827,16 @@ function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIs
       <button class="iconbtn" aria-label="Close" onClick=${onClose}><${Icon} name="arrowleft"/></button>
       <div class="tt">${issue.title || "#" + number} <span class="dmeta">· ${repo.split("/").pop()} #${number}${st ? " · " + st.replace("agency:", "") : ""}</span></div>
     </div>
-    <div class="dtoolbar">${tb}</div>
+    <div class="dtoolbar">
+      ${tb}
+      ${modelOpts.length ? html`
+        <span style="flex:1"></span>
+        <select title="Override model for next run" style="font-size:12px;max-width:140px;height:28px;border:1px solid var(--border);border-radius:4px;background:var(--bg-2);color:var(--text);cursor:pointer;padding:0 4px" value=${modelOverride} onChange=${(e) => updateModelOverride(e.target.value)}>
+          <option value="">Default model</option>
+          ${modelOpts.map((o) => html`<option key=${o.value} value=${o.value}>${o.label}</option>`)}
+        </select>
+      ` : null}
+    </div>
     ${!isDesktop ? html`<div class="dtoolbar" style="justify-content:center">
       <button class=${"btn ghost " + (tab === "chat" ? "primary" : "")} onClick=${() => setTab("chat")}>Chat</button>
       <button class=${"btn ghost " + (tab === "stream" ? "primary" : "")} onClick=${() => setTab("stream")}>Stream</button>
@@ -712,6 +850,10 @@ function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIs
         <textarea ref=${taRef} rows="1" placeholder=${running ? "Message the agent…  (queued until the run finishes)" : "Reply…  (Cmd+Enter sends, paste image to embed)"} value=${reply} onInput=${(e) => { setReply(e.target.value); autosize(); }} onPaste=${onPaste} onKeyDown=${(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); send(); } }}></textarea>
         <div class="composer-row">
           <label class="composer-icon" title="Attach a file"><${Icon} name="paperclip" size=${18}/><input type="file" multiple style="display:none" onChange=${pickFiles}/></label>
+          ${modelOpts && modelOpts.length ? html`<select title="Override model for this run" style="font-size:12px;max-width:130px;border:none;background:transparent;color:inherit;cursor:pointer" value=${modelOverride} onChange=${(e) => updateModelOverride(e.target.value)}>
+            <option value="">Default model</option>
+            ${modelOpts.map((o) => html`<option key=${o.value} value=${o.value}>${o.label}</option>`)}
+          </select>` : null}
           <span class="spacer"></span>
           ${running ? html`<button class=${"btn warn" + (bz("stop") ? " busy" : "")} title="Stop the running agent" disabled=${bz("stop")} onClick=${() => act.stop(repo, number)}>${bz("stop") ? html`<${Spinner} size=${15}/>` : html`<${Icon} name="stop" size=${15}/>`} Stop</button>` : null}
           <button class=${"btn primary" + (busy ? " busy" : "")} disabled=${busy} onClick=${send}>${busy ? html`<${Spinner} size=${15}/>` : running ? html`<${Icon} name="clock" size=${15}/>` : html`<${Icon} name="send" size=${15}/>`} ${running ? "Queue" : "Send"}</button>
@@ -782,26 +924,43 @@ function RunApp({ repo, number, appInfo, issue, done }) {
 }
 
 // ---------- Composer ----------
-function Composer({ repos, repo, setRepo, onClose, onCreate }) {
+function Composer({ repos, repo, setRepo, onClose, onCreate, data }) {
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [role, setRole] = useState("@dev");
   const [atts, setAtts] = useState([]);
+  const providers = data?.providers || [];
+  const modelOpts = providers.flatMap((p) => (p.models || []).map((m) => ({ providerId: p.id, model: m, label: p.name + " / " + m })));
+  const [model, setModel] = useState(
+    data?.globalModel ? data.globalModel.providerId + "/" + data.globalModel.model : ""
+  );
   const taRef = useRef(null);
   function autosize() { const el = taRef.current; if (!el) return; el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, 200) + "px"; }
-  function submit(start) { if (!repo || !title.trim()) { toast("Repo + title needed"); return; } onCreate(repo, role, title.trim(), body.trim(), start, atts.map((a) => ({ dataUrl: a.d, name: a.name }))); }
+  function submit(start) {
+    if (!repo || !title.trim()) { toast("Repo + title needed"); return; }
+    let modelOverride = null;
+    if (model) {
+      const [providerId, mName] = model.split("/");
+      modelOverride = { providerId, model: mName };
+    }
+    onCreate(repo, role, title.trim(), body.trim(), start, atts.map((a) => ({ dataUrl: a.d, name: a.name })), modelOverride);
+  }
   function pick(e) { const fs = e.target.files || []; for (let i = 0; i < fs.length; i++) readAttach(fs[i], (a) => setAtts((x) => x.concat(a))); e.target.value = ""; }
   function onPaste(e) { const items = (e.clipboardData || {}).items || []; for (let i = 0; i < items.length; i++) if (items[i].kind === "file") readAttach(items[i].getAsFile(), (a) => setAtts((x) => x.concat(a))); }
   return html`<${Sheet} title="New issue" onClose=${onClose}>
     <div style="display:flex;gap:8px;margin-bottom:10px">
-      <select style="flex:1;width:auto" value=${repo || ""} onChange=${(e) => setRepo(e.target.value)}>${repos.map((r) => html`<option key=${r} value=${r}>${r.split("/").pop()}</option>`)}</select>
-      <select style="width:auto" value=${role} onChange=${(e) => setRole(e.target.value)}>
+      <select style="flex:1.5;width:auto" value=${repo || ""} onChange=${(e) => setRepo(e.target.value)}>${repos.map((r) => html`<option key=${r} value=${r}>${r.split("/").pop()}</option>`)}</select>
+      <select style="flex:1;width:auto" value=${role} onChange=${(e) => setRole(e.target.value)}>
         <option value="@dev">@dev</option>
         <option value="@plan">@plan</option>
         <option value="@arch">@arch</option>
         <option value="@review">@review</option>
         <option value="@test">@test</option>
       </select>
+      ${modelOpts.length ? html`<select style="flex:1.5;width:auto" value=${model} onChange=${(e) => setModel(e.target.value)}>
+        <option value="">Default model</option>
+        ${modelOpts.map((o) => html`<option key=${o.providerId + "/" + o.model} value=${o.providerId + "/" + o.model}>${o.label}</option>`)}
+      </select>` : null}
     </div>
     <input value=${title} onInput=${(e) => setTitle(e.target.value)} placeholder="What should it do?" style="margin-bottom:10px"/>
     <div class="composer">
@@ -818,17 +977,13 @@ function Composer({ repos, repo, setRepo, onClose, onCreate }) {
 }
 
 // ---------- Settings ----------
-function Settings({ data, theme, setTheme, onClose, setAuto, reload }) {
-  const s = data.session || {}, cfg = data.config || {}, auto = data.auto || {}, autoRepos = data.autoRepos || {};
-  const [win, setWin] = useState(s.windowHours || 5);
-  const [budget, setBudget] = useState(s.budget || 0);
+function Settings({ data, onClose, reload, openGithubTokens, openModels }) {
+  const s = data.session || {}, cfg = data.config || {};
   const [skipArch, setSkipArch] = useState(cfg.skipArchitect !== "off");
   const [gitnexus, setGitnexus] = useState(cfg.gitnexus === "on");
   const [maxTok, setMaxTok] = useState(cfg.maxTokensPerRun || 600000);
   const [revRounds, setRevRounds] = useState(cfg.maxReviseRounds != null ? cfg.maxReviseRounds : 1);
-  function save() { api("/settings", { windowHours: Number(win) || 5, budget: Number(budget) || 0, skipArchitect: skipArch ? "on" : "off", gitnexus: gitnexus ? "on" : "off", maxTokensPerRun: Number(maxTok) || 0, maxReviseRounds: Number(revRounds) || 0 }).then(() => { toast("Saved"); onClose(); reload(); }); }
-  const gpill = (kind) => { const raw = auto[kind] || ""; const on = raw === "on", off = raw === "off"; const order = ["", "on", "off"]; const nx = order[(order.indexOf(raw) + 1) % 3]; return html`<button class=${"apill " + (on ? "on" : off ? "off" : "")} onClick=${() => setAuto(kind, nx === "" ? "inherit" : nx)}><${Icon} name=${kind === "resume" ? "refresh" : "merge"} size=${14}/> ${kind}</button>`; };
-  const rpill = (repo, kind) => { const raw = (autoRepos[repo] || {})[kind] || ""; const on = raw === "on", off = raw === "off"; const order = ["", "on", "off"]; const nx = order[(order.indexOf(raw) + 1) % 3]; return html`<button class=${"apill " + (on ? "on" : off ? "off" : "")} onClick=${() => setAuto(kind, nx === "" ? "inherit" : nx, repo)}><${Icon} name=${kind === "resume" ? "refresh" : "merge"} size=${13}/> ${kind}</button>`; };
+  function save() { api("/settings", { skipArchitect: skipArch ? "on" : "off", gitnexus: gitnexus ? "on" : "off", maxTokensPerRun: Number(maxTok) || 0, maxReviseRounds: Number(revRounds) || 0 }).then(() => { toast("Saved"); onClose(); reload(); }); }
   return html`<${Sheet} title="Settings" onClose=${onClose} footer=${html`<button class="btn" onClick=${onClose}>Cancel</button><button class="btn primary" onClick=${save}>Save</button>`}>
     ${data.user ? html`<div class="sec">Account</div>
       <div class="muted">Signed in as <b>${data.user.username}</b> · ${data.user.role}</div>
@@ -837,39 +992,99 @@ function Settings({ data, theme, setTheme, onClose, setAuto, reload }) {
         <a class="btn ghost" href="/logout" style="flex:1;justify-content:center"><${Icon} name="arrowleft" size=${15}/> Sign out</a>
       </div>
 
+      <div class="sec">Integrations & Credentials</div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="btn" style="flex:1;justify-content:center" onClick=${openGithubTokens}><${Icon} name="link" size=${15}/> GitHub Tokens</button>
+        <button class="btn" style="flex:1;justify-content:center" onClick=${openModels}><${Icon} name="flask" size=${15}/> Models & API Keys</button>
+      </div>
+
       <div class="sec">Setup wizard</div>
       <div class="muted" style="font-size:12px;margin-bottom:7px">Re-run the guided walkthrough to add or update your tokens, models, and first repo.</div>
       <button class="btn primary" style="width:100%" onClick=${() => api("/onboarded", { value: "0" }).then(() => { onClose(); reload(); })}><${Icon} name="play" size=${15}/> Run the setup wizard</button>
 
-      <${Credentials} secretKeys=${data.secretKeys || []} reload=${reload}/>
       ${data.user.role === "admin" ? html`<${Admin} users=${data.users || []} invites=${data.invites || []} webhookSecretSet=${data.webhookSecretSet} reload=${reload}/>` : null}` : null}
-    <div class="sec">Appearance</div>
-    <div class="autorow">
-      <button class=${"apill " + (theme === "light" ? "on" : "")} onClick=${() => setTheme("light")}><${Icon} name="sun" size=${14}/> Light</button>
-      <button class=${"apill " + (theme === "dark" ? "on" : "")} onClick=${() => setTheme("dark")}><${Icon} name="moon" size=${14}/> Dark</button>
-    </div>
-    <div class="sec">Automation (global default)</div>
-    <div class="autorow">${gpill("resume")}${gpill("merge")}</div>
-    <div class="muted" style="font-size:12px;margin-top:4px">Auto-merge only fires when the review is approved, there are no conflicts, and checks pass.</div>
-    ${(data.repos || []).length ? html`<div class="sec">Per repo</div>${(data.repos || []).map((r) => html`<div key=${r} style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:5px 2px"><span style="font-size:13px;flex:1;min-width:120px">${r.split("/").pop()}</span>${rpill(r, "resume")}${rpill(r, "merge")}</div>`)}` : null}
-    <div class="sec">Token budget</div>
-    <label>Session window (hours)</label><input type="number" min="1" value=${win} onInput=${(e) => setWin(e.target.value)}/>
-    <label>Budget — tokens per window (0 = off)</label><input type="number" min="0" step="1000" value=${budget} onInput=${(e) => setBudget(e.target.value)}/>
+    
     <div class="sec">Pipeline</div>
     <label class="ckline"><input type="checkbox" checked=${skipArch} onChange=${(e) => setSkipArch(e.target.checked)}/> Skip the architect step (faster, fewer tokens)</label>
     <label class="ckline"><input type="checkbox" checked=${gitnexus} onChange=${(e) => setGitnexus(e.target.checked)}/> Use GitNexus code index</label>
     <label>Max tokens per run (0 = off)</label><input type="number" min="0" step="50000" value=${maxTok} onInput=${(e) => setMaxTok(e.target.value)}/>
     <label>Reviewer revise rounds before it asks you</label><input type="number" min="0" max="3" value=${revRounds} onInput=${(e) => setRevRounds(e.target.value)}/>
     ${(!data.user || data.user.role === "admin") && data.opsMeta ? html`<${Operations} meta=${data.opsMeta} values=${data.ops || {}} reload=${reload}/>` : null}
+    <div class="sec">Advanced</div>
+    <a class="btn ghost" href="/classic" style="justify-content:flex-start"><${Icon} name="settings" size=${15}/> Models &amp; agents (classic editor)</a>
   <//>`;
+}
+/**
+ * Inline models panel in Settings: auto-switch toggle + fallback chain config.
+ * Full provider/role management stays in /classic for now; this surfaces the new
+ * rate-limit offload settings without requiring a page nav.
+ */
+function ModelsPanel() {
+  const [md, setMd] = useState(null); // /models response
+  const [autoSwitch, setAutoSwitch] = useState(false);
+  const [chain, setChain] = useState([]); // [{providerId, model}]
+  const [globalModel, setGlobalModel] = useState(null); // {providerId, model} | null
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    getJSON("/models").then((d) => {
+      setMd(d);
+      setAutoSwitch(d.autoSwitchOnLimit || false);
+      setChain(d.fallbackChain || []);
+      setGlobalModel(d.globalModel || null);
+    }).catch(() => {});
+  }, []);
+  if (!md) return null;
+  const providers = md.providers || [];
+  // Flat list of {providerId, model, label} choices for the fallback select
+  const modelOpts = providers.flatMap((p) => (p.models || []).map((m) => ({ providerId: p.id, model: m, label: p.name + " / " + m })));
+  function addFallback() {
+    if (!modelOpts.length) { toast("Add a provider in Models & agents first"); return; }
+    setChain((c) => c.concat(modelOpts[0]));
+  }
+  function removeFallback(idx) { setChain((c) => c.filter((_, i) => i !== idx)); }
+  function setFallbackEntry(idx, opt) {
+    const m = modelOpts.find((o) => o.providerId + "/" + o.model === opt);
+    if (m) setChain((c) => c.map((e, i) => i === idx ? { providerId: m.providerId, model: m.model } : e));
+  }
+  function save() {
+    setBusy(true);
+    api("/models", { fallbackChain: chain, autoSwitchOnLimit: autoSwitch, globalModel })
+      .then(() => toast("Saved")).catch(() => toast("Couldn't save")).then(() => setBusy(false));
+  }
+  return html`<div class="sec">Models &amp; rate limit</div>
+    <label style="margin-top:6px;display:block">Global Default Model</label>
+    <select style="width:100%;margin-bottom:12px" value=${globalModel ? globalModel.providerId + "/" + globalModel.model : ""} onChange=${(e) => {
+      const val = e.target.value;
+      if (!val) {
+        setGlobalModel(null);
+      } else {
+        const [providerId, model] = val.split("/");
+        setGlobalModel({ providerId, model });
+      }
+    }}>
+      <option value="">Default (Claude subscription / role defaults)</option>
+      ${modelOpts.map((o) => html`<option key=${o.providerId + "/" + o.model} value=${o.providerId + "/" + o.model}>${o.label}</option>`)}
+    </select>
+    <label class="ckline"><input type="checkbox" checked=${autoSwitch} onChange=${(e) => setAutoSwitch(e.target.checked)}/> Auto-switch to fallback model on Claude usage limit</label>
+    <div class="muted" style="font-size:12px;margin:3px 2px 7px">When enabled, hitting the Claude credit/session limit switches all unassigned roles to the first fallback below and retries — instead of stalling.</div>
+    <label>Fallback chain (order of models to try when primary is rate-limited)</label>
+    ${chain.map((entry, idx) => html`<div key=${idx} style="display:flex;gap:6px;align-items:center;margin-bottom:5px">
+      <select style="flex:1" value=${entry.providerId + "/" + entry.model} onChange=${(e) => setFallbackEntry(idx, e.target.value)}>
+        ${modelOpts.map((o) => html`<option key=${o.providerId + "/" + o.model} value=${o.providerId + "/" + o.model}>${o.label}</option>`)}
+      </select>
+      <button class="iconbtn" title="Remove" onClick=${() => removeFallback(idx)}><${Icon} name="trash" size=${15}/></button>
+    </div>`)}
+    ${modelOpts.length ? html`<button class="btn ghost" style="margin-bottom:4px" onClick=${addFallback}><${Icon} name="plus" size=${14}/> Add fallback</button>` : html`<div class="muted" style="font-size:12px">No alternative providers configured — add one in <a href="/classic">Models &amp; agents</a> first.</div>`}
+    <button class="btn primary" style="margin-top:8px" disabled=${busy} onClick=${save}>${busy ? html`<${Spinner} size=${14}/> Saving…` : "Save model settings"}</button>`;
 }
 function Operations({ meta, values, reload }) {
   const [vals, setVals] = useState(() => Object.assign({}, values));
   const set = (k, v) => setVals((o) => Object.assign({}, o, { [k]: v }));
   function save() { api("/settings", { ops: vals }).then(() => { toast("Operations saved"); reload(); }).catch(() => toast("Couldn’t save")); }
-  return html`<div class="sec">Operations (advanced)</div>
-    <div class="muted" style="font-size:12px;margin-bottom:4px">Global agency settings, moved out of env. Applies on save (a few apply on next restart).</div>
-    ${meta.map((m) => html`<div key=${m.key}>
+  const visibleMeta = meta.filter(m => m.key === "self_improve");
+  if (!visibleMeta.length) return null;
+  return html`<div class="sec">Operations</div>
+    ${visibleMeta.map((m) => html`<div key=${m.key}>
       ${m.type === "bool"
         ? html`<label class="ckline"><input type="checkbox" checked=${!!vals[m.key]} onChange=${(e) => set(m.key, e.target.checked)}/> ${m.label}</label>`
         : html`<label>${m.label}</label>${m.type === "select"
@@ -882,6 +1097,14 @@ function Operations({ meta, values, reload }) {
 }
 
 // ---------- onboarding wizard ----------
+let modelsConfig = {
+  "Gemini": ["gemini-3.5-flash", "gemini-3.5-pro", "gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-pro", "gemini-1.5-flash"],
+  "GLM (Zhipu)": ["glm-5.2", "glm-5.1", "glm-4.6", "glm-4.5"],
+  "DeepSeek": ["deepseek-chat", "deepseek-reasoner"],
+  "Kimi (Moonshot)": ["kimi-k2-0905-preview"]
+};
+getJSON("/web/models.json").then((m) => { if (m) modelsConfig = m; }).catch(() => {});
+
 const OB_PROVIDERS = [
   { id: "claude_sub", label: "Claude — subscription", note: "Recommended · runs agents on your plan", icon: "crown", kind: "secret", secretKey: "claude_token",
     title: "Claude subscription token", placeholder: "paste the setup-token output",
@@ -891,22 +1114,27 @@ const OB_PROVIDERS = [
     title: "Claude API key", placeholder: "sk-ant-...",
     how: "Pay-as-you-go billing instead of a subscription.\n\n1. Open platform.claude.com → API keys.\n2. Create a key.\n3. Paste it below.",
     link: "https://platform.claude.com/settings/keys", linkLabel: "Create an API key" },
+  { id: "gemini", label: "Gemini", note: "Google's models", icon: "globe", kind: "provider",
+    preset: { name: "Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", get models() { return modelsConfig["Gemini"] || []; } },
+    title: "Gemini API key", placeholder: "AIza...",
+    how: "Get an API key from Google AI Studio. Assign it to agents later in Settings → Models.",
+    link: "https://aistudio.google.com/app/apikey", linkLabel: "Get a Gemini key" },
   { id: "glm", label: "GLM (Zhipu)", note: "Cheap coding model", icon: "globe", kind: "provider",
-    preset: { name: "GLM (Zhipu)", baseUrl: "https://open.bigmodel.cn/api/anthropic", models: ["glm-4.6", "glm-4.5"] },
+    preset: { name: "GLM (Zhipu)", baseUrl: "https://open.bigmodel.cn/api/anthropic", get models() { return modelsConfig["GLM (Zhipu)"] || []; } },
     title: "GLM API key", placeholder: "GLM API key",
     how: "An Anthropic-compatible endpoint, good for the cheaper roles.\n\n1. Get an API key from open.bigmodel.cn (Zhipu).\n2. Paste it below.\n\nAfter setup, assign GLM to specific agents in Settings → Models.",
     link: "https://open.bigmodel.cn", linkLabel: "Get a GLM key" },
   { id: "deepseek", label: "DeepSeek", note: "", icon: "globe", kind: "provider",
-    preset: { name: "DeepSeek", baseUrl: "https://api.deepseek.com/anthropic", models: ["deepseek-chat", "deepseek-reasoner"] },
+    preset: { name: "DeepSeek", baseUrl: "https://api.deepseek.com/anthropic", get models() { return modelsConfig["DeepSeek"] || []; } },
     title: "DeepSeek API key", placeholder: "DeepSeek API key",
     how: "1. Get an API key from platform.deepseek.com.\n2. Paste it below.\n\nAssign it to agents later in Settings → Models.",
     link: "https://platform.deepseek.com", linkLabel: "Get a DeepSeek key" },
   { id: "kimi", label: "Kimi (Moonshot)", note: "", icon: "globe", kind: "provider",
-    preset: { name: "Kimi (Moonshot)", baseUrl: "https://api.moonshot.cn/anthropic", models: ["kimi-k2-0905-preview"] },
+    preset: { name: "Kimi (Moonshot)", baseUrl: "https://api.moonshot.cn/anthropic", get models() { return modelsConfig["Kimi (Moonshot)"] || []; } },
     title: "Kimi API key", placeholder: "Kimi API key",
     how: "1. Get an API key from platform.moonshot.cn.\n2. Paste it below.\n\nAssign it to agents later in Settings → Models.",
     link: "https://platform.moonshot.cn", linkLabel: "Get a Kimi key" },
-  { id: "other", label: "Other (OpenAI, Gemini, Ollama)", note: "Needs a router", icon: "settings", kind: "provider", custom: true,
+  { id: "other", label: "Other (Custom)", note: "Needs a router", icon: "settings", kind: "provider", custom: true,
     title: "Custom provider", placeholder: "API key",
     how: "OpenAI / Gemini / Ollama need an Anthropic-compatible gateway (claude-code-router or LiteLLM). Run one, then enter its base URL + key here.",
     link: "https://github.com/musistudio/claude-code-router", linkLabel: "claude-code-router" },
@@ -1057,15 +1285,73 @@ function AddRepo({ repos, onClose, reload }) {
 }
 
 // ---------- per-user credentials (write-only, encrypted server-side) ----------
-const CRED_FIELDS = [
-  { key: "claude_token", label: "Claude subscription token", hint: "CLAUDE_CODE_OAUTH_TOKEN — runs the Claude roles on your plan" },
-  { key: "github_user_token", label: "GitHub token (acts as you)", hint: "comments/issues authored under your account" },
-  { key: "github_bot_token", label: "GitHub bot token", hint: "the agency's commits + pull requests" },
-];
-function Credentials({ secretKeys, reload }) {
-  return html`<div class="sec">Your credentials</div>
-    <div class="muted" style="font-size:12px;margin-bottom:4px">Stored encrypted (AES-256-GCM). The agency uses them to run on your behalf. Write-only — never shown back.</div>
-    ${CRED_FIELDS.map((f) => html`<${SecretField} key=${f.key} field=${f} isSet=${secretKeys.includes(f.key)} reload=${reload}/>`)}`;
+function GithubTokensModal({ secretKeys, onClose, reload }) {
+  return html`<${Sheet} title="GitHub Tokens" onClose=${onClose} footer=${html`<button class="btn" onClick=${onClose}>Close</button>`}>
+    <div class="muted" style="font-size:12px;margin-bottom:12px">Stored encrypted (AES-256-GCM). The agency uses them to run on your behalf. Write-only — never shown back.</div>
+    <div style="margin-bottom:16px">
+      <${SecretField} field=${{key: "github_bot_token", label: "GitHub bot token", hint: "The account the agency ACTS as — its commits and pull requests."}} isSet=${secretKeys.includes("github_bot_token")} reload=${reload}/>
+    </div>
+    <div style="margin-bottom:16px">
+      <${SecretField} field=${{key: "github_user_token", label: "Your GitHub token", hint: "Lets the agency comment and open issues under YOUR name."}} isSet=${secretKeys.includes("github_user_token")} reload=${reload}/>
+    </div>
+  <//>`;
+}
+
+function ModelsModal({ onClose, reload }) {
+  const [existing, setExisting] = useState([]);
+  const [secretKeys, setSecretKeys] = useState([]);
+  function refresh() { 
+    getJSON("/models").then((d) => setExisting(d.providers || [])).catch(() => {}); 
+    getJSON("/data").then((d) => setSecretKeys(d.secretKeys || [])).catch(() => {});
+  }
+  useEffect(refresh, []);
+
+  return html`<${Sheet} title="Models & API Keys" onClose=${onClose} footer=${html`<button class="btn" onClick=${onClose}>Close</button>`}>
+    <div class="muted" style="font-size:12px;margin-bottom:12px">Configure your API keys for various AI models. Keys are stored securely.</div>
+    
+    <div class="sec">Claude</div>
+    <div style="margin-bottom:12px">
+      <${SecretField} field=${{key: "claude_token", label: "Claude subscription token", hint: "CLAUDE_CODE_OAUTH_TOKEN — runs the Claude roles on your plan"}} isSet=${secretKeys.includes("claude_token")} reload=${() => {reload(); refresh();}}/>
+    </div>
+    <div style="margin-bottom:12px">
+      <${SecretField} field=${{key: "anthropic_api_key", label: "Claude API key", hint: "Pay-as-you-go billing"}} isSet=${secretKeys.includes("anthropic_api_key")} reload=${() => {reload(); refresh();}}/>
+    </div>
+
+    <div class="sec">Other Providers</div>
+    ${OB_PROVIDERS.filter(p => p.kind === "provider" && !p.custom).map(p => {
+      const isSet = existing.some(ex => ex.name === p.preset.name && ex.apiKey);
+      return html`<div key=${p.id} style="margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--ink-2)">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><${Icon} name=${p.icon} size=${14}/> <b>${p.label}</b> ${isSet ? html`<span class="statuschip s-ready"><${Icon} name="check" size=${12}/> set</span>` : null}</div>
+        <div class="muted" style="font-size:11px;margin-bottom:8px">${p.how}</div>
+        <${ProviderField} providerDef=${p} existing=${existing} reload=${() => {reload(); refresh();}}/>
+      </div>`
+    })}
+
+    <div class="sec">Custom Provider</div>
+    <div style="margin-bottom:16px">
+      <div class="muted" style="font-size:11px;margin-bottom:8px">Add an Anthropic-compatible gateway (e.g. LiteLLM, claude-code-router).</div>
+      <${ProviderField} providerDef=${OB_PROVIDERS.find(p => p.custom)} existing=${existing} reload=${() => {reload(); refresh();}} custom=${true}/>
+    </div>
+
+    <${ModelsPanel}/>
+  <//>`;
+}
+
+function ProviderField({ providerDef, existing, reload, custom }) {
+  const [val, setVal] = useState("");
+  const [baseUrl, setBaseUrl] = useState(providerDef.preset?.baseUrl || "");
+  function save() {
+    if (!val) { toast("Paste an API key"); return; }
+    const prov = { id: providerDef.id + "-" + Date.now().toString(36), name: providerDef.preset?.name || "Custom", baseUrl: custom ? baseUrl.trim() : providerDef.preset.baseUrl, apiKey: val.trim(), models: providerDef.preset?.models || [] };
+    api("/models", { providers: (existing || []).concat(prov) }).then(() => { toast("Saved"); setVal(""); reload(); }).catch(() => toast("Couldn’t save"));
+  }
+  return html`
+    ${custom ? html`<input placeholder="Base URL (https://...)" value=${baseUrl} onInput=${(e) => setBaseUrl(e.target.value)} style="margin-bottom:8px"/>` : null}
+    <div style="display:flex;gap:8px">
+      <input type="password" autocomplete="off" placeholder=${providerDef.placeholder || "API Key"} value=${val} onInput=${(e) => setVal(e.target.value)}/>
+      <button class="btn" onClick=${save}>Save</button>
+    </div>
+  `;
 }
 function SecretField({ field, isSet, reload }) {
   const [v, setV] = useState("");
@@ -1111,6 +1397,10 @@ function shortModel(m) {
   if (/opus/i.test(s)) return "Opus";
   if (/sonnet/i.test(s)) return "Sonnet";
   if (/haiku/i.test(s)) return "Haiku";
+  if (/gemini/i.test(s)) return "Gemini";
+  if (/deepseek/i.test(s)) return "DeepSeek";
+  if (/glm/i.test(s)) return "GLM";
+  if (/kimi/i.test(s)) return "Kimi";
   return s.replace(/^claude-/, "");
 }
 

@@ -7,21 +7,34 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import { ROLES, modelFor, type RoleName } from "./roles.js";
 import { loadConstitution, loadPersona, loadPlaybooks, loadLearned } from "../memory.js";
 import { pushActivity } from "../activity.js";
-import { recentLessons, recordTokens, getProviders, getRoleModels, setSession } from "../store.js";
+import { recentLessons, recordTokens, getProviders, getRoleModels, getSessionFallback, setSession, getIssueModelOverride, getGlobalModel } from "../store.js";
 import { loadBudget } from "../budget.js";
 import { gitnexusWiring, GITNEXUS_PROMPT } from "../gitnexus.js";
 import { claudeToken, anthropicApiKey, ghBotToken } from "../creds.js";
 import { registerRun } from "../abort.js";
 
 /**
- * Per-role model routing. If this role is assigned a provider model in the dashboard, return
- * the model + an env that points THIS run at that provider's Anthropic-compatible endpoint —
- * leaving every other role (and the default) on your Claude subscription untouched.
+ * Per-role model routing. Checks (in order):
+ *   1. Per-issue override (chatbox model picker — one-shot, cleared after the run)
+ *   2. Per-role assignment (dashboard "Models" panel)
+ *   3. Global default setting
+ *   4. Session-level fallback (temporary auto-switch on rate limit — cleared after the retry)
+ * Returns the model + an env that points this run at the provider's Anthropic-compatible
+ * endpoint — leaving every other role (and the default) on your Claude subscription untouched.
  */
-function resolveRoute(role: RoleName): { model: string; env: Record<string, string> } | null {
-  const rm = getRoleModels()[role];
-  if (!rm?.providerId || !rm.model) return null;
-  const p = getProviders().find((x) => x.id === rm.providerId);
+function resolveRoute(role: RoleName, repo: string, issueNumber: number): { model: string; env: Record<string, string> } | null {
+  // Per-issue override wins (set when the human picks a model in the chatbox).
+  const issueOverride = getIssueModelOverride(repo, issueNumber);
+  // Per-role permanent assignment
+  const roleOverride = getRoleModels()[role];
+  // Global default setting
+  const globalDefault = getGlobalModel();
+
+  // Fall back down the hierarchy: issue override -> role assignment -> global default -> session fallback
+  const explicit = issueOverride ?? roleOverride ?? globalDefault;
+  const assignment = explicit?.providerId ? explicit : getSessionFallback();
+  if (!assignment?.providerId || !assignment.model) return null;
+  const p = getProviders().find((x) => x.id === assignment.providerId);
   if (!p?.baseUrl || !p.apiKey) return null;
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) if (typeof v === "string") env[k] = v;
@@ -29,7 +42,7 @@ function resolveRoute(role: RoleName): { model: string; env: Record<string, stri
   env.ANTHROPIC_BASE_URL = p.baseUrl;
   env.ANTHROPIC_AUTH_TOKEN = p.apiKey;
   env.ANTHROPIC_API_KEY = p.apiKey;
-  return { model: rm.model, env };
+  return { model: assignment.model, env };
 }
 
 /** A short, meaningful one-liner for a tool call (the command/file, not just the tool name). */
@@ -135,7 +148,7 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
   const gn = gitnexusWiring(input.workdir);
   const systemPrompt = (await buildSystemPrompt(role)) + (gn ? `\n\n${GITNEXUS_PROMPT}` : "");
   // Per-role provider routing (keeps Claude roles on your subscription; others go to e.g. GLM).
-  const route = input.model ? null : resolveRoute(role);
+  const route = input.model ? null : resolveRoute(role, input.repo, input.issueNumber);
   const model = input.model ?? route?.model ?? modelFor(def);
   // Build the agent subprocess env: inject the dashboard-stored Claude token (so the SDK
   // authenticates without CLAUDE_CODE_OAUTH_TOKEN in the container env) and the GitHub bot token
@@ -178,6 +191,13 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
   const { repo, issueNumber } = input;
   console.log(`[agency] role:${role} ${repo}#${issueNumber} (model ${model}, ≤${maxTurns} turns)`);
   pushActivity(repo, issueNumber, role, "start", `started (${model}${input.resumeSessionId ? ", resuming" : ""})`);
+
+  const assignment = (input.model ? null : getIssueModelOverride(repo, issueNumber) ?? getRoleModels()[role] ?? getGlobalModel()) ?? getSessionFallback();
+  const provider = assignment?.providerId ? getProviders().find((x) => x.id === assignment.providerId) : null;
+  const providerName = provider ? provider.name : "Claude/Anthropic Subscription";
+  const baseUrl = provider ? provider.baseUrl : "https://api.anthropic.com";
+  console.log(`[LLM Call] Invoking LLM for role '${role}' on ${repo}#${issueNumber} using model '${model}' via provider '${providerName}' at URL: ${baseUrl}`);
+  pushActivity(repo, issueNumber, role, "text", `🤖 LLM Call: ${model} via ${providerName} (${baseUrl})`);
 
   // Register this run so the dashboard "Stop" can abort it (and every other role run on the issue).
   const abortRun = registerRun(repo, issueNumber);

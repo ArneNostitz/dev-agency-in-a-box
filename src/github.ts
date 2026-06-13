@@ -156,35 +156,7 @@ export async function removeLabel(repo: string, issue: number, label: string): P
 /** Hidden marker appended to every agency comment so we can tell our messages from a human's. */
 export const AGENCY_MARKER = "<!-- dev-agency -->";
 
-export interface IssueDetailComment {
-  who: "human" | "agency";
-  body: string;
-  createdAt?: string;
-}
 
-export interface IssueDetail {
-  labels: string[];
-  comments: IssueDetailComment[];
-}
-
-/**
- * Maps a raw GitHub issue object (with labels/comments arrays) into a typed
- * IssueDetail with classified comments (human vs agency) and stripped markers.
- */
-export function mapIssueDetail(raw: {
-  labels?: Array<{ name: string } | string>;
-  comments?: Array<{ body: string; createdAt?: string }>;
-}): IssueDetail {
-  const labels = (raw.labels ?? []).map((l) =>
-    typeof l === "string" ? l : l.name
-  );
-  const comments = (raw.comments ?? []).map((c) => {
-    const isAgency = c.body.includes(AGENCY_MARKER);
-    const body = c.body.replace(new RegExp(`\\s*${AGENCY_MARKER.replace(/[<>!-]/g, "\\$&")}\\s*$`), "").trimEnd();
-    return { who: isAgency ? ("agency" as const) : ("human" as const), body, ...(c.createdAt ? { createdAt: c.createdAt } : {}) };
-  });
-  return { labels, comments };
-}
 
 export async function commentOnIssue(repo: string, issue: number, body: string): Promise<void> {
   await gh(["issue", "comment", String(issue), "--repo", repo, "--body", `${body}\n\n${AGENCY_MARKER}`]);
@@ -1060,4 +1032,39 @@ export async function prMergeStatus(repo: string, branch: string): Promise<Merge
   const m = (p.mergeable || "").toUpperCase();
   const mergeable = m === "MERGEABLE" ? "clean" : m === "CONFLICTING" ? "conflict" : "unknown";
   return { prNumber: p.number, state: p.state, mergeable };
+}
+
+// ---------------------------------------------------------------------------
+// mapIssueDetail — shapes raw GitHub GraphQL/REST issue data for the board UI.
+// ---------------------------------------------------------------------------
+
+export interface IssueComment {
+  who: "human" | "agency";
+  body: string;
+  createdAt?: string;
+}
+
+export interface IssueDetail {
+  labels: string[];
+  comments: IssueComment[];
+}
+
+/**
+ * Normalise a raw issue payload (labels array + comments array) into the
+ * typed shape consumed by the board.  Classifies each comment as "human" or
+ * "agency" (via AGENCY_MARKER) and strips the marker from agency bodies.
+ */
+export function mapIssueDetail(raw: {
+  labels?: Array<{ name: string } | string>;
+  comments?: Array<{ body: string; createdAt?: string }>;
+}): IssueDetail {
+  const labels = (raw.labels ?? []).map((l) => typeof l === "string" ? l : l.name);
+  const comments: IssueComment[] = (raw.comments ?? []).map((c) => {
+    const hasMarker = c.body?.includes(AGENCY_MARKER);
+    const body = hasMarker
+      ? c.body.replace(new RegExp(`\\s*${AGENCY_MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`), "")
+      : (c.body ?? "");
+    return { who: hasMarker ? "agency" : "human", body, createdAt: c.createdAt };
+  });
+  return { labels, comments };
 }

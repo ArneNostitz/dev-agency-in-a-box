@@ -1,6 +1,6 @@
 {
   "name": "dev-agency",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A self-contained, self-evolving developer agency of AI agents driven by GitHub issues.",
   "type": "module",
   "private": true,

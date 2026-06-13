@@ -16,7 +16,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { Config } from "./config.js";
-import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, tokensByRoleSince, tokensByDaySince, topIssuesByTokensSince, tokensByIssueAll, recordConflict, getConflict, clearConflict, listConflicts, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, getIssueRow, type AutoKind, type Provider } from "./store.js";
+import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, tokensByRoleSince, tokensByDaySince, topIssuesByTokensSince, tokensByIssueAll, recordConflict, getConflict, clearConflict, listConflicts, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getGlobalModel, setGlobalModel, getFallbackChain, setFallbackChain, getAutoSwitchOnLimit, setIssueModelOverride, getIssueModelOverride, clearIssueModelOverride, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, getIssueRow, getModelsPresets, type AutoKind, type Provider } from "./store.js";
 import { mergeEpic, isEpic } from "./epics.js";
 import { renderHistory } from "./dashboard.js";
 import { renderShell } from "./shell.js";
@@ -27,6 +27,7 @@ import { getSecretSetting, setSecretSetting, getUserSecretStatus } from "./store
 import { masterKeyConfigured } from "./crypto.js";
 import { ghBotToken, ghUserToken } from "./creds.js";
 import { testClaudeAuth } from "./agents/roleAgent.js";
+import { ALL_ROLES } from "./agents/roles.js";
 import { hasActiveRun } from "./abort.js";
 import { renderLogin, renderInvite, renderSetup, renderForgot, renderReset } from "./authpages.js";
 import { authenticate, createSession, revokeSession, getInvite, acceptInvite, createInvite, createUser, listUsers, listInvites, setUserSecret, listUserSecretKeys, countUsers, setUserPassword, getUserByName, getUserByNameOrEmail, createPasswordReset, consumePasswordReset, type User } from "./store.js";
@@ -108,7 +109,7 @@ function serveStatic(pathname: string, res: ServerResponse): boolean {
   if (!file.startsWith(WEB_DIR) || !existsSync(file) || !statSync(file).isFile()) { res.writeHead(404).end("not found"); return true; }
   const ext = file.slice(file.lastIndexOf("."));
   // sw.js must not be long-cached; other assets are network-first in the SW anyway.
-  const cache = pathname === "/sw.js" || pathname === "/web/app.js" ? "no-cache" : "public, max-age=3600";
+  const cache = pathname === "/sw.js" || pathname === "/web/app.js" || pathname === "/web/version.json" ? "no-cache" : "public, max-age=3600";
   res.writeHead(200, { "content-type": MIME[ext] || "application/octet-stream", "cache-control": cache });
   res.end(readFileSync(file));
   return true;
@@ -260,6 +261,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
                 : null,
               app: getApp(i.repo, i.number),
               review: reviews[`${i.repo}#${i.number}`] ?? null,
+              modelOverride: getIssueModelOverride(i.repo, i.number),
               // True iff a Claude run is actually executing for this issue right now (abort registry
               // — the precise signal). Drives the Stop button so it's reliably shown only while live.
               running: hasActiveRun(i.repo, i.number),
@@ -319,6 +321,9 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               },
               ops: opsSettingsValues(),
               opsMeta: OPS_SETTINGS,
+              providers: getProviders(),
+              roleModels: getRoleModels(),
+              globalModel: getGlobalModel(),
               config: {
                 skipArchitect: (getSetting("skip_architect") ?? "") || (process.env.SKIP_ARCHITECT?.trim().toLowerCase() === "false" ? "off" : "on"),
                 gitnexus: (getSetting("gitnexus") ?? "") || (process.env.GITNEXUS?.trim().toLowerCase() === "true" ? "on" : "off"),
@@ -362,20 +367,27 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         return;
       }
 
-      // Models panel: providers, per-role assignments, and quick presets.
+      // Models panel: providers, per-role assignments, fallback chain, and quick presets.
       if (url === "/models") {
         res.writeHead(200, { "content-type": "application/json" }).end(
           JSON.stringify({
             providers: getProviders(),
             roleModels: getRoleModels(),
-            roles: ["planner", "architect", "developer", "reviewer", "tester", "librarian"],
+            globalModel: getGlobalModel(),
+            fallbackChain: getFallbackChain(),
+            autoSwitchOnLimit: getAutoSwitchOnLimit(),
+            roles: ALL_ROLES,
             // Editable presets — all expose a native Anthropic-compatible endpoint.
-            presets: [
-              { name: "GLM (Zhipu)", baseUrl: "https://open.bigmodel.cn/api/anthropic", models: ["glm-4.6", "glm-4.5"] },
-              { name: "DeepSeek", baseUrl: "https://api.deepseek.com/anthropic", models: ["deepseek-chat", "deepseek-reasoner"] },
-              { name: "Kimi (Moonshot)", baseUrl: "https://api.moonshot.cn/anthropic", models: ["kimi-k2-0905-preview"] },
-              { name: "Custom (Anthropic-compatible)", baseUrl: "", models: [] },
-            ],
+            presets: (() => {
+              const pm = getModelsPresets();
+              return [
+                { name: "Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", models: pm["Gemini"] || [] },
+                { name: "GLM (Zhipu)", baseUrl: "https://open.bigmodel.cn/api/anthropic", models: pm["GLM (Zhipu)"] || [] },
+                { name: "DeepSeek", baseUrl: "https://api.deepseek.com/anthropic", models: pm["DeepSeek"] || [] },
+                { name: "Kimi (Moonshot)", baseUrl: "https://api.moonshot.cn/anthropic", models: pm["Kimi (Moonshot)"] || [] },
+                { name: "Custom (Anthropic-compatible)", baseUrl: "", models: [] },
+              ];
+            })(),
           }),
         );
         return;
@@ -539,7 +551,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         }
         void getThreadFull(repo, number)
           .then((t) => res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(t)))
-          .catch(() => res.writeHead(200, { "content-type": "application/json" }).end("{}"));
+          .catch((err) => res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ error: (err as Error).message || "Internal Server Error" })));
         return;
       }
 
@@ -647,11 +659,11 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
     }
 
     // Dashboard actions (auth required), not GitHub webhooks.
-    if (["/archive", "/comment", "/comment-edit", "/run-checks", "/merge", "/close", "/create-pr", "/delete", "/resume", "/stop", "/fix", "/auto", "/start", "/new-issue", "/approve", "/audit", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude"].includes(path)) {
+    if (["/archive", "/comment", "/comment-edit", "/run-checks", "/merge", "/close", "/create-pr", "/delete", "/resume", "/stop", "/fix", "/auto", "/start", "/new-issue", "/approve", "/audit", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude", "/model-override"].includes(path)) {
       const actor = userFromReq(req);
       if (!actor) return void res.writeHead(401, { "content-type": "application/json" }).end('{"error":"auth required"}');
       void readBody(req).then(async (body) => {
-        let p: { repo?: string; number?: number; commentId?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; dataUrl?: string; name?: string; providers?: Provider[]; roleModels?: Record<string, { providerId: string; model: string }>; kind?: string; value?: string; skipArchitect?: string; gitnexus?: string; maxTokensPerRun?: number; maxReviseRounds?: number; auditThreshold?: number; start?: boolean; email?: string; key?: string; ops?: Record<string, string | number | boolean>; webhookSecret?: string } = {};
+        let p: { repo?: string; number?: number; commentId?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; dataUrl?: string; name?: string; providers?: Provider[]; roleModels?: Record<string, { providerId: string; model: string }>; globalModel?: { providerId: string; model: string } | null; fallbackChain?: Array<{ providerId: string; model: string }>; autoSwitchOnLimit?: boolean; model?: { providerId: string; model: string } | null; kind?: string; value?: string; skipArchitect?: string; gitnexus?: string; maxTokensPerRun?: number; maxReviseRounds?: number; auditThreshold?: number; start?: boolean; email?: string; key?: string; ops?: Record<string, string | number | boolean>; webhookSecret?: string } = {};
         try {
           p = JSON.parse(body.toString("utf8"));
         } catch {
@@ -703,6 +715,15 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         if (path === "/comment") {
           // Inline reply -> posts to GitHub as the human (no agency marker) so it re-engages.
           if (!repo || !number || !p.body?.trim()) return res.writeHead(400).end("{}");
+          // If a model override is attached (from the chatbox model picker), store it.
+          // It's applied as the provider route for all roles on the next run of this issue, then cleared.
+          if (p.hasOwnProperty("model")) {
+            if (p.model && typeof p.model === "object" && p.model.providerId && p.model.model) {
+              setIssueModelOverride(repo, number, p.model.providerId, p.model.model);
+            } else {
+              clearIssueModelOverride(repo, number);
+            }
+          }
           const text = p.body.trim();
           try {
             // Post under the owner's account (your token) so it shows your name, not the bot's.
@@ -823,6 +844,13 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         if (path === "/approve") {
           // Direct approve: marks it approved + moves it to Working immediately, then builds.
           if (!repo || !number || !approve) return res.writeHead(400).end("{}");
+          if (p.hasOwnProperty("model")) {
+            if (p.model && typeof p.model === "object" && p.model.providerId && p.model.model) {
+              setIssueModelOverride(repo, number, p.model.providerId, p.model.model);
+            } else {
+              clearIssueModelOverride(repo, number);
+            }
+          }
           await approve(repo, number).catch(() => {});
           return ok();
         }
@@ -882,6 +910,13 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         if (path === "/resume") {
           // Unstick an issue and re-run it, whatever state it's in.
           if (!repo || !number || !resume) return res.writeHead(400).end("{}");
+          if (p.hasOwnProperty("model")) {
+            if (p.model && typeof p.model === "object" && p.model.providerId && p.model.model) {
+              setIssueModelOverride(repo, number, p.model.providerId, p.model.model);
+            } else {
+              clearIssueModelOverride(repo, number);
+            }
+          }
           await resume(repo, number).catch(() => {});
           return ok();
         }
@@ -900,6 +935,13 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         if (path === "/fix") {
           // Address the PR's outstanding review (and resolve conflicts) on its branch.
           if (!repo || !number || !fix) return res.writeHead(400).end("{}");
+          if (p.hasOwnProperty("model")) {
+            if (p.model && typeof p.model === "object" && p.model.providerId && p.model.model) {
+              setIssueModelOverride(repo, number, p.model.providerId, p.model.model);
+            } else {
+              clearIssueModelOverride(repo, number);
+            }
+          }
           await fix(repo, number).catch(() => {});
           return ok();
         }
@@ -931,10 +973,22 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           stopApp(repo, number);
           return ok();
         }
+        if (path === "/model-override") {
+          if (!repo || !number) return res.writeHead(400).end("{}");
+          if (p.model && typeof p.model === "object" && p.model.providerId && p.model.model) {
+            setIssueModelOverride(repo, number, p.model.providerId, p.model.model);
+          } else {
+            clearIssueModelOverride(repo, number);
+          }
+          return ok();
+        }
         if (path === "/models") {
-          // Save providers + per-role model assignments (live, next run uses them).
+          // Save providers, per-role assignments, and fallback chain (live, next run uses them).
           if (Array.isArray(p.providers)) setProviders(p.providers);
           if (p.roleModels && typeof p.roleModels === "object") setRoleModels(p.roleModels);
+          if (p.hasOwnProperty("globalModel")) setGlobalModel(p.globalModel ?? null);
+          if (Array.isArray(p.fallbackChain)) setFallbackChain(p.fallbackChain);
+          if (typeof p.autoSwitchOnLimit === "boolean") setSetting("auto_switch_on_limit", p.autoSwitchOnLimit ? "on" : "off");
           return ok();
         }
         if (path === "/add-repo") {
@@ -989,6 +1043,9 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           try {
             const created = await createIssue(repo, p.title.trim(), issueBody, userTok);
             if (!created.number) throw new Error("couldn't read the new issue number");
+            if (p.model && typeof p.model === "object" && p.model.providerId && p.model.model) {
+              setIssueModelOverride(repo, created.number, p.model.providerId, p.model.model);
+            }
             if (p.start) {
               recordIssueState(repo, created.number, { title: p.title.trim(), state: "agency:in-progress" });
               void trigger("dashboard-new-issue");
@@ -1004,6 +1061,13 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         if (path === "/start") {
           // Play button: start a Planned issue now.
           if (!repo || !number || !start) return res.writeHead(400).end("{}");
+          if (p.hasOwnProperty("model")) {
+            if (p.model && typeof p.model === "object" && p.model.providerId && p.model.model) {
+              setIssueModelOverride(repo, number, p.model.providerId, p.model.model);
+            } else {
+              clearIssueModelOverride(repo, number);
+            }
+          }
           await removeLabel(repo, number, "agency:planned").catch(() => {});
           await start(repo, number).catch(() => {});
           return ok();

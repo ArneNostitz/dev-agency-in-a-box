@@ -102,7 +102,9 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
   const click = (el) => { if (!el) throw new Error("element not found"); el.dispatchEvent(new window.MouseEvent("click", { bubbles: true })); };
 
   // Composer (uses hooks) — opening it would crash if invoked as a function not an element.
-  click(q('[aria-label="New issue"]'));
+  // "Add Issue" lives in the Planned column header now (top + button was removed).
+  const addBtn = Array.from(window.document.querySelectorAll(".colbtn.primary")).find((b) => /Add Issue/.test(b.textContent));
+  click(addBtn);
   await tick(40);
   assert.match(root.innerHTML, /Add to Planned/, "composer opens with two-button submit");
   assert.match(root.innerHTML, /Start now/, "composer has Start now");
@@ -112,9 +114,9 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
   // Settings (uses hooks).
   click(q('[aria-label="Settings"]'));
   await tick(40);
-  assert.match(root.innerHTML, /Automation/, "settings opens");
+  assert.match(root.innerHTML, /Settings/, "settings opens");
   assert.match(root.innerHTML, /Pipeline/, "settings shows pipeline knobs");
-  assert.match(root.innerHTML, /Your credentials/, "credentials section renders for a signed-in user");
+  assert.match(root.innerHTML, /Integrations &amp; Credentials/, "credentials section renders for a signed-in user");
   assert.match(root.innerHTML, /Team \(admin\)/, "admin team section renders");
   assert.match(root.innerHTML, /Operations/, "operations panel renders");
   assert.match(root.innerHTML, /arne/, "signed-in user shown");
