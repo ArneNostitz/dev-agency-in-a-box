@@ -220,10 +220,14 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         midnight.setHours(0, 0, 0, 0);
         void (async () => {
           const issues = recentIssues(60);
-          // Backfill PR links for delivered issues opened before PR linkage existed (one-time:
-          // we persist what we find, so later polls read it straight from the DB).
+          // Backfill PR links: an agent can open a PR mid-run (and a restart can interrupt before the
+          // orchestrator records it), so detect+persist the PR for any post-build issue that lacks one
+          // — not just "ready". Without this the dashboard shows "Create PR" while the PR is already
+          // open. We persist what we find, so later polls read it straight from the DB (one gh call/issue
+          // only until it's recorded). Skip planned / awaiting-approval (no branch yet).
+          const PR_BACKFILL_STATES = ["agency:ready", "agency:in-progress", "agency:needs-attention", "agency:awaiting-answer", "agency:rate-limited"];
           for (const i of issues) {
-            if (!i.pr_number && i.state === "agency:ready") {
+            if (!i.pr_number && PR_BACKFILL_STATES.includes(i.state ?? "")) {
               try {
                 const pr = await findPrForBranch(i.repo, `agency/issue-${i.number}`);
                 if (pr) {

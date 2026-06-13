@@ -356,6 +356,28 @@ export async function forceResume(cfg: Config, repo: string, number: number): Pr
     console.log(`[agency] resume blocked (rate-limited) ${repo} #${number}`);
     return;
   }
+  // If a PR is ALREADY open for this issue, the work is done — do NOT rebuild/retest (that's the
+  // cause of "resume re-ran the whole test suite even though the PR was open & approved, then timed
+  // out"). Record the PR, surface the review verdict, and either route to Ready (merge) or run just
+  // the Fix when the reviewer asked for changes.
+  const prBranch = `agency/issue-${number}`;
+  const existingPr = await findPrForBranch(repo, prBranch).catch(() => null);
+  if (existingPr) {
+    recordPr(repo, number, existingPr.number, existingPr.url);
+    const review = getReview(repo, number);
+    for (const l of [IN_PROGRESS, NEEDS_ATTENTION, "🚧 blocked", ...AWAITING_LABELS]) await removeLabel(repo, number, l).catch(() => {});
+    clearActive(repo, number);
+    if (review?.verdict === "changes") {
+      await commentOnIssue(repo, number, `🔧 PR ${existingPr.url} is already open with requested changes — addressing the review on the existing branch (not rebuilding).`).catch(() => {});
+      console.log(`[agency] resume → existing PR ${existingPr.url}, has changes → fix`);
+      return forceFix(cfg, repo, number);
+    }
+    await addLabel(repo, number, READY).catch(() => {});
+    recordIssueState(repo, number, { state: READY });
+    await commentOnIssue(repo, number, `✅ PR ${existingPr.url} is already open${review?.verdict === "approved" ? " and approved" : ""} — nothing to rebuild. Press **Merge** on the dashboard.`).catch(() => {});
+    console.log(`[agency] resume → existing PR ${existingPr.url}; routed to READY (no rerun)`);
+    return;
+  }
   await reopenIssue(repo, number).catch(() => {});
   for (const l of [IN_PROGRESS, NEEDS_ATTENTION, "🚧 blocked", ...AWAITING_LABELS]) {
     await removeLabel(repo, number, l).catch(() => {});
