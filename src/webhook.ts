@@ -16,7 +16,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { Config } from "./config.js";
-import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, type AutoKind, type Provider } from "./store.js";
+import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getFallbackChain, setFallbackChain, getAutoSwitchOnLimit, setIssueModelOverride, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, type AutoKind, type Provider } from "./store.js";
 import { mergeEpic, isEpic } from "./epics.js";
 import { renderDashboard, renderHistory } from "./dashboard.js";
 import { renderShell } from "./shell.js";
@@ -327,12 +327,14 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         return;
       }
 
-      // Models panel: providers, per-role assignments, and quick presets.
+      // Models panel: providers, per-role assignments, fallback chain, and quick presets.
       if (url === "/models") {
         res.writeHead(200, { "content-type": "application/json" }).end(
           JSON.stringify({
             providers: getProviders(),
             roleModels: getRoleModels(),
+            fallbackChain: getFallbackChain(),
+            autoSwitchOnLimit: getAutoSwitchOnLimit(),
             roles: ["planner", "architect", "developer", "reviewer", "tester", "librarian"],
             // Editable presets — all expose a native Anthropic-compatible endpoint.
             presets: [
@@ -644,6 +646,11 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         if (path === "/comment") {
           // Inline reply -> posts to GitHub as the human (no agency marker) so it re-engages.
           if (!repo || !number || !p.body?.trim()) return res.writeHead(400).end("{}");
+          // If a model override is attached (from the chatbox model picker), store it.
+          // It's applied as the provider route for all roles on the next run of this issue, then cleared.
+          if (p.model && typeof p.model === "object" && p.model.providerId && p.model.model) {
+            setIssueModelOverride(repo, number, p.model.providerId, p.model.model);
+          }
           const text = p.body.trim();
           try {
             // Post under the owner's account (your token) so it shows your name, not the bot's.
@@ -846,9 +853,11 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           return ok();
         }
         if (path === "/models") {
-          // Save providers + per-role model assignments (live, next run uses them).
+          // Save providers, per-role assignments, and fallback chain (live, next run uses them).
           if (Array.isArray(p.providers)) setProviders(p.providers);
           if (p.roleModels && typeof p.roleModels === "object") setRoleModels(p.roleModels);
+          if (Array.isArray(p.fallbackChain)) setFallbackChain(p.fallbackChain);
+          if (typeof p.autoSwitchOnLimit === "boolean") setSetting("auto_switch_on_limit", p.autoSwitchOnLimit ? "on" : "off");
           return ok();
         }
         if (path === "/add-repo") {
