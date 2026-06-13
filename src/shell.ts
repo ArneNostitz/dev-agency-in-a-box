@@ -113,6 +113,8 @@ input,select,textarea{font-size:16px}
 .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 .btn.green{background:var(--green);border-color:var(--green);color:#fff}
 .btn.danger{color:var(--red);border-color:var(--red-weak)}
+.btn.warn{color:var(--amber);border-color:var(--amber)}
+.btn.busy{opacity:.7;cursor:wait}
 .btn.ghost{background:transparent}
 .btn[disabled]{opacity:.5;pointer-events:none}
 label{display:block;font-size:13px;color:var(--ink-2);margin:12px 2px 5px}
