@@ -209,6 +209,16 @@ textarea{resize:vertical;min-height:64px}
 .cmt .b pre{background:var(--bg);padding:8px 10px;border-radius:8px;overflow:auto;font-size:12px}
 .cmt .b code{background:var(--bg);padding:1px 5px;border-radius:5px;font-size:.9em}
 .cmt .b img{max-width:100%;border-radius:8px}
+.cmt .b h1{font-size:1.35em;font-weight:700;margin:.5em 0 .2em;border-bottom:1px solid var(--line);padding-bottom:.2em}
+.cmt .b h2{font-size:1.15em;font-weight:700;margin:.45em 0 .2em;border-bottom:1px solid var(--line);padding-bottom:.15em}
+.cmt .b h3{font-size:1.05em;font-weight:600;margin:.4em 0 .15em}
+.cmt .b h4,.cmt .b h5,.cmt .b h6{font-size:1em;font-weight:600;margin:.3em 0 .1em}
+.cmt .b ul,.cmt .b ol{margin:.35em 0;padding-left:1.5em}
+.cmt .b li{margin:.1em 0}
+.cmt .b blockquote{border-left:3px solid var(--line-2);margin:.35em 0;padding:.1em .7em;color:var(--ink-2)}
+.cmt .b blockquote p{margin:.15em 0}
+.cmt .b hr{border:none;border-top:1px solid var(--line);margin:.6em 0}
+.cmt .b p{margin:.3em 0}
 .cmt-edit-ta{width:100%;border:1px solid var(--line);border-radius:9px;background:var(--bg);color:var(--ink);font:inherit;font-size:14px;padding:8px 10px;resize:vertical;min-height:80px;box-sizing:border-box}
 .cmt-edit-row{display:flex;gap:6px;margin-top:6px;justify-content:flex-end}
 .scroll-fab-wrap{position:sticky;bottom:8px;display:flex;justify-content:flex-end;pointer-events:none;margin-top:4px}
@@ -247,8 +257,8 @@ textarea{resize:vertical;min-height:64px}
   .dpanes{flex-direction:row}
   .dpane.chat{flex:1 1 auto;border-right:1px solid var(--line)}
   .dpane.side{flex:0 0 46%;width:46%;max-width:520px}
-  .sheet.bottom{left:auto;right:24px;bottom:24px;width:440px;max-height:84dvh;border-radius:16px;border:1px solid var(--line);transform:translateY(calc(100% + 40px))}
-  .sheet.bottom.on{transform:translateY(0)}
+  .sheet.bottom{left:50%;top:50%;right:auto;bottom:auto;width:min(620px,92vw);max-height:88dvh;border-radius:16px;border:1px solid var(--line);transform:translate(-50%,-50%) scale(.97);opacity:0;pointer-events:none;transition:opacity .18s,transform .18s ease}
+  .sheet.bottom.on{transform:translate(-50%,-50%) scale(1);opacity:1;pointer-events:auto}
 }
 .norepo{padding:48px 20px;display:flex;flex-direction:column;align-items:center;text-align:center}
 .searchrow{display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:10px;padding:0 8px;margin:6px 0}

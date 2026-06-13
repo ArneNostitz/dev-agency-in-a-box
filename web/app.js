@@ -61,20 +61,27 @@ function mdInline(s) {
     .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
 }
 function md(src) {
-  const lines = escHtml(String(src || "")).split(/\r?\n/), out = []; let inList = false, inCode = false, code = [];
-  const closeList = () => { if (inList) { out.push("</ul>"); inList = false; } };
+  const lines = escHtml(String(src || "")).split(/\r?\n/), out = [];
+  let inUL = false, inOL = false, inBQ = false, inCode = false, code = [];
+  const closeUL = () => { if (inUL) { out.push("</ul>"); inUL = false; } };
+  const closeOL = () => { if (inOL) { out.push("</ol>"); inOL = false; } };
+  const closeBQ = () => { if (inBQ) { out.push("</blockquote>"); inBQ = false; } };
+  const closeBlocks = () => { closeUL(); closeOL(); closeBQ(); };
   for (let i = 0; i < lines.length; i++) {
     const ln = lines[i];
-    if (/^\s*```/.test(ln)) { if (inCode) { out.push("<pre><code>" + code.join("\n") + "</code></pre>"); code = []; inCode = false; } else { closeList(); inCode = true; } continue; }
+    if (/^\s*```/.test(ln)) { if (inCode) { out.push("<pre><code>" + code.join("\n") + "</code></pre>"); code = []; inCode = false; } else { closeBlocks(); inCode = true; } continue; }
     if (inCode) { code.push(ln); continue; }
-    const h = /^(#{1,6})\s+(.*)$/.exec(ln);
-    if (h) { closeList(); out.push("<h4>" + mdInline(h[2]) + "</h4>"); continue; }
-    if (/^\s*[-*]\s+/.test(ln)) { if (!inList) { out.push("<ul>"); inList = true; } out.push("<li>" + mdInline(ln.replace(/^\s*[-*]\s+/, "")) + "</li>"); continue; }
-    if (ln.trim() === "") { closeList(); continue; }
-    closeList(); out.push("<p>" + mdInline(ln) + "</p>");
+    const h = /^(#{1,6})\s+(.+)$/.exec(ln);
+    if (h) { closeBlocks(); const lv = h[1].length; out.push("<h" + lv + ">" + mdInline(h[2]) + "</h" + lv + ">"); continue; }
+    if (/^([-*_] *){3,}$/.test(ln.trim())) { closeBlocks(); out.push("<hr>"); continue; }
+    if (/^>\s?/.test(ln)) { closeUL(); closeOL(); if (!inBQ) { out.push("<blockquote>"); inBQ = true; } out.push("<p>" + mdInline(ln.replace(/^>\s?/, "")) + "</p>"); continue; }
+    if (/^\d+\.\s+/.test(ln)) { closeBQ(); closeUL(); if (!inOL) { out.push("<ol>"); inOL = true; } out.push("<li>" + mdInline(ln.replace(/^\d+\.\s+/, "")) + "</li>"); continue; }
+    if (/^\s*[-*+]\s+/.test(ln)) { closeBQ(); closeOL(); if (!inUL) { out.push("<ul>"); inUL = true; } out.push("<li>" + mdInline(ln.replace(/^\s*[-*+]\s+/, "")) + "</li>"); continue; }
+    if (ln.trim() === "") { closeBlocks(); continue; }
+    closeBlocks(); out.push("<p>" + mdInline(ln) + "</p>");
   }
   if (inCode) out.push("<pre><code>" + code.join("\n") + "</code></pre>");
-  closeList();
+  closeUL(); closeOL(); closeBQ();
   return out.join("");
 }
 function api(url, body) { return fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}) }).then(async (r) => { if (!r.ok) { let msg = "http " + r.status; try { const j = await r.json(); if (j && j.error) msg = j.error; } catch (e) {} throw new Error(msg); } return r.json().catch(() => ({})); }); }
@@ -382,6 +389,7 @@ function Detail({ issue, activity, act, isDesktop, onClose, onOpenIssue }) {
   const [pendingComments, setPendingComments] = useState([]); // optimistic skeleton comments
   const [chatAtBottom, setChatAtBottom] = useState(true);
   const [chatAtTop, setChatAtTop] = useState(true);
+  const [streamAtBottom, setStreamAtBottom] = useState(true);
   const armRef = useRef(null);
   const streamRef = useRef(null);
   const stickRef = useRef(true);
@@ -594,7 +602,6 @@ function Detail({ issue, activity, act, isDesktop, onClose, onOpenIssue }) {
   tb.push(html`<span class="tbsep"></span>`);
   tb.push(html`<button class=${"tbtn danger" + (da ? " armed" : "") + (db ? " busy" : "")} disabled=${db} data-tip=${da ? "Tap again to delete" : "Delete"} onClick=${() => confirmAct("del", () => act.del(repo, number))}>${db ? html`<${Spinner} size=${18}/>` : html`<${Icon} name="trash"/>`}${(isDesktop || da) ? html`<span class="tlabel">${db ? "Deleting…" : da ? "Confirm delete" : "Delete"}</span>` : null}</button>`);
 
-  const [streamAtBottom, setStreamAtBottom] = useState(true);
   const streamPane = html`<div class="dpane side">
     <div class="sec">Live stream</div>
     <div class="dstream" ref=${streamRef} onScroll=${(e) => { const el = e.target; const atB = el.scrollHeight - el.scrollTop - el.clientHeight < 50; stickRef.current = atB; setStreamAtBottom(atB); }}>
@@ -723,28 +730,33 @@ function Composer({ repos, repo, setRepo, onClose, onCreate }) {
   const [body, setBody] = useState("");
   const [role, setRole] = useState("@dev");
   const [atts, setAtts] = useState([]);
+  const taRef = useRef(null);
+  function autosize() { const el = taRef.current; if (!el) return; el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, 200) + "px"; }
   function submit(start) { if (!repo || !title.trim()) { toast("Repo + title needed"); return; } onCreate(repo, role, title.trim(), body.trim(), start, atts.map((a) => ({ dataUrl: a.d, name: a.name }))); }
   function pick(e) { const fs = e.target.files || []; for (let i = 0; i < fs.length; i++) readAttach(fs[i], (a) => setAtts((x) => x.concat(a))); e.target.value = ""; }
   function onPaste(e) { const items = (e.clipboardData || {}).items || []; for (let i = 0; i < items.length; i++) if (items[i].kind === "file") readAttach(items[i].getAsFile(), (a) => setAtts((x) => x.concat(a))); }
-  return html`<${Sheet} title="New issue" onClose=${onClose} footer=${html`
-      <button class="btn" onClick=${() => submit(false)}>Add to Planned</button>
-      <button class="btn primary" onClick=${() => submit(true)}><${Icon} name="play" size=${15}/> Start now</button>`}>
-    <label>Repo</label>
-    <select value=${repo || ""} onChange=${(e) => setRepo(e.target.value)}>${repos.map((r) => html`<option key=${r} value=${r}>${r}</option>`)}</select>
-    <label>Assign to</label>
-    <select value=${role} onChange=${(e) => setRole(e.target.value)}>
-      <option value="@dev">@dev — full pipeline (plan → build → PR)</option>
-      <option value="@plan">@plan — plan only</option>
-      <option value="@arch">@arch — architect</option>
-      <option value="@review">@review — review</option>
-      <option value="@test">@test — run checks</option>
-    </select>
-    <label>Title</label>
-    <input value=${title} onInput=${(e) => setTitle(e.target.value)} placeholder="What should it do?"/>
-    <label>Details</label>
-    <textarea value=${body} onInput=${(e) => setBody(e.target.value)} onPaste=${onPaste} placeholder="Context, acceptance criteria…  (paste an image to attach)"></textarea>
-    ${atts.length ? html`<div style="margin-top:6px">${atts.map((a, idx) => html`<span class="att" key=${idx}>${a.img ? html`<img src=${a.d}/>` : a.name}<button class="iconbtn" style="width:18px;height:18px;border:none" onClick=${() => setAtts((x) => x.filter((_, j) => j !== idx))}>×</button></span>`)}</div>` : null}
-    <label class="btn ghost" style="cursor:pointer;margin-top:8px;justify-content:flex-start"><${Icon} name="paperclip" size=${15}/> Attach file<input type="file" multiple style="display:none" onChange=${pick}/></label>
+  return html`<${Sheet} title="New issue" onClose=${onClose}>
+    <div style="display:flex;gap:8px;margin-bottom:10px">
+      <select style="flex:1;width:auto" value=${repo || ""} onChange=${(e) => setRepo(e.target.value)}>${repos.map((r) => html`<option key=${r} value=${r}>${r.split("/").pop()}</option>`)}</select>
+      <select style="width:auto" value=${role} onChange=${(e) => setRole(e.target.value)}>
+        <option value="@dev">@dev</option>
+        <option value="@plan">@plan</option>
+        <option value="@arch">@arch</option>
+        <option value="@review">@review</option>
+        <option value="@test">@test</option>
+      </select>
+    </div>
+    <input value=${title} onInput=${(e) => setTitle(e.target.value)} placeholder="What should it do?" style="margin-bottom:10px"/>
+    <div class="composer">
+      ${atts.length ? html`<div class="composer-atts">${atts.map((a, idx) => html`<span class="att" key=${idx}>${a.img ? html`<img src=${a.d}/>` : html`<span><${Icon} name="paperclip" size=${12}/> ${a.name}</span>`}<button class="iconbtn" style="width:18px;height:18px;border:none" onClick=${() => setAtts((x) => x.filter((_, j) => j !== idx))}>×</button></span>`)}</div>` : null}
+      <textarea ref=${taRef} rows="1" placeholder="Details, context, acceptance criteria…  (paste an image to attach)" value=${body} onInput=${(e) => { setBody(e.target.value); autosize(); }} onPaste=${onPaste}></textarea>
+      <div class="composer-row">
+        <label class="composer-icon" title="Attach a file"><${Icon} name="paperclip" size=${18}/><input type="file" multiple style="display:none" onChange=${pick}/></label>
+        <span class="spacer"></span>
+        <button class="btn ghost" onClick=${() => submit(false)}>Add to Planned</button>
+        <button class="btn primary" onClick=${() => submit(true)}><${Icon} name="play" size=${15}/> Start now</button>
+      </div>
+    </div>
   <//>`;
 }
 
@@ -1044,7 +1056,7 @@ function Sheet({ title, onClose, footer, children }) {
     <div class="sheet bottom on">
       <div class="sh"><span style="flex:1">${title}</span><button class="iconbtn" aria-label="Close" onClick=${onClose}><${Icon} name="x"/></button></div>
       <div class="sb">${children}</div>
-      <div class="sf">${footer}</div>
+      ${footer ? html`<div class="sf">${footer}</div>` : null}
     </div></div>`;
 }
 
