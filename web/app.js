@@ -205,11 +205,11 @@ function App() {
   // actions (optimistic + reconcile). Each is guarded: spins + blocks until the server responds.
   const act = {
     isBusy: (action, repo, number) => Boolean(busyRef.current[bkey(action, repo, number)]),
-    start(repo, number) { return guard("start", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/start", { repo, number }).then(() => toast("Starting…")).catch(() => { toast("Couldn’t start"); delete ov[repo + "#" + number]; }).then(load); }); },
-    approve(repo, number) { return guard("approve", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/approve", { repo, number }).then(() => toast("Approved — building")).catch(() => toast("Couldn’t approve")).then(load); }); },
-    resume(repo, number) { return guard("resume", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/resume", { repo, number }).then(() => toast("Resuming")).catch(() => toast("Couldn’t resume")).then(load); }); },
+    start(repo, number, model) { return guard("start", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/start", { repo, number, ...(model ? { model } : {}) }).then(() => toast("Starting…")).catch(() => { toast("Couldn’t start"); delete ov[repo + "#" + number]; }).then(load); }); },
+    approve(repo, number, model) { return guard("approve", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/approve", { repo, number, ...(model ? { model } : {}) }).then(() => toast("Approved — building")).catch(() => toast("Couldn’t approve")).then(load); }); },
+    resume(repo, number, model) { return guard("resume", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/resume", { repo, number, ...(model ? { model } : {}) }).then(() => toast("Resuming")).catch(() => toast("Couldn’t resume")).then(load); }); },
     stop(repo, number) { return guard("stop", repo, number, () => { override(repo, number, { state: "planned" }); return api("/stop", { repo, number }).then(() => toast("Stopped — moved to Planned")).catch(() => toast("Couldn’t stop")).then(load); }); },
-    fix(repo, number) { return guard("fix", repo, number, () => { override(repo, number, { state: "agency:in-progress", active: true }); return api("/fix", { repo, number }).then(() => toast("Fixing the review")).catch(() => toast("Couldn’t fix")).then(load); }); },
+    fix(repo, number, model) { return guard("fix", repo, number, () => { override(repo, number, { state: "agency:in-progress", active: true }); return api("/fix", { repo, number, ...(model ? { model } : {}) }).then(() => toast("Fixing the review")).catch(() => toast("Couldn’t fix")).then(load); }); },
     merge(repo, number) { return guard("merge", repo, number, () => api("/merge", { repo, number }).then((r) => { toast("Merged"); load(); return r; }).catch(() => toast("Couldn’t merge — conflicts?"))); },
     close(repo, number) { return guard("close", repo, number, () => { override(repo, number, { state: "merged" }); return api("/close", { repo, number }).then(() => { toast("Closed"); setOpenKey(null); }).catch((e) => toast((e && e.message) || "Couldn’t close")).then(load); }); },
     createPr(repo, number) { return guard("createPr", repo, number, () => { override(repo, number, { state: "agency:ready" }); return api("/create-pr", { repo, number }).then((r) => toast(r && r.url ? "PR opened" : "PR opened")).catch((e) => toast((e && e.message) || "Couldn’t open PR")).then(load); }); },
@@ -220,13 +220,13 @@ function App() {
   };
 
   function openComposer(repo) { setComposerRepo(repo || repoFilter || (repos[0] || null)); setSheet("composer"); }
-  function createIssue(repo, role, title, body, start, atts) {
+  function createIssue(repo, role, title, body, start, atts, model) {
     const tmpNum = -Date.now();
     const tmp = { repo, number: tmpNum, title, role, state: start ? "agency:in-progress" : "planned", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), _tmp: true };
     setPending((ps) => ps.concat(tmp)); setSheet(null); toast(start ? "Creating & starting…" : "Added to Planned");
     if (start) { setOpenKey(repo + "#" + tmpNum); setDetailError(null); }
     Promise.all((atts || []).map((a) => api("/upload-file", { repo, number: 0, dataUrl: a.dataUrl, name: a.name }).then((j) => j && j.md).catch(() => null)))
-      .then((mds) => { const full = [body].concat(mds.filter(Boolean)).filter(Boolean).join("\n\n"); return api("/new-issue", { repo, role, title, body: full, start: !!start }); })
+      .then((mds) => { const full = [body].concat(mds.filter(Boolean)).filter(Boolean).join("\n\n"); return api("/new-issue", { repo, role, title, body: full, start: !!start, ...(model ? { model } : {}) }); })
       .then((d) => {
         if (start && d && d.number) setOpenKey(repo + "#" + d.number);
         setPending((ps) => ps.map((p) => (p === tmp ? Object.assign({}, p, { number: d.number || p.number }) : p)));
@@ -262,12 +262,12 @@ function App() {
       ${data.secretsHealth ? html`<${SecretBanner} h=${data.secretsHealth} onFix=${() => setSheet("settings")}/>` : null}
       <${StatusLine} working=${working} session=${data.session} spend=${data.spendToday} reload=${load}/>
       <div class="content">
-        <${Board} issues=${shown} repos=${repos} repoFilter=${repoFilter} tab=${tab} isDesktop=${isDesktop} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onAddRepo=${() => setSheet("addrepo")} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act}/>
+        <${Board} issues=${shown} repos=${repos} repoFilter=${repoFilter} tab=${tab} isDesktop=${isDesktop} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onAddRepo=${() => setSheet("addrepo")} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data}/>
       </div>
       ${!isDesktop && html`<${TabBar} issues=${shown} tab=${tab} setTab=${setTab}/>`}
       ${open && html`<div class="dscrim" onClick=${() => setOpenKey(null)}></div>`}
-      ${open && html`<${Detail} key=${openKey} issue=${open} activity=${activity} act=${act} isDesktop=${isDesktop} startError=${detailError} onClose=${() => { setOpenKey(null); setDetailError(null); }} onOpenIssue=${openIssue}/>`}
-      ${sheet === "composer" && html`<${Composer} repos=${repos} repo=${composerRepo} setRepo=${setComposerRepo} onClose=${() => setSheet(null)} onCreate=${createIssue}/>`}
+      ${open && html`<${Detail} key=${openKey} issue=${open} activity=${activity} act=${act} isDesktop=${isDesktop} startError=${detailError} onClose=${() => { setOpenKey(null); setDetailError(null); }} onOpenIssue=${openIssue} data=${data}/>`}
+      ${sheet === "composer" && html`<${Composer} repos=${repos} repo=${composerRepo} setRepo=${setComposerRepo} onClose=${() => setSheet(null)} onCreate=${createIssue} data=${data}/>`}
       ${sheet === "settings" && html`<${Settings} data=${data} onClose=${() => setSheet(null)} reload=${load} openGithubTokens=${() => setSheet("github")} openModels=${() => setSheet("models")}/>`}
       ${sheet === "github" && html`<${GithubTokensModal} secretKeys=${data.secretKeys || []} onClose=${() => setSheet("settings")} reload=${load}/>`}
       ${sheet === "models" && html`<${ModelsModal} onClose=${() => setSheet("settings")} reload=${load}/>`}
@@ -391,7 +391,7 @@ function StatusLine({ working, session, spend, reload }) {
   </div>`;
 }
 
-function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, onAddRepo, onAddIssue, onAnalyze, auditRepos, act }) {
+function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, onAddRepo, onAddIssue, onAnalyze, auditRepos, act, data }) {
   if (!(repos || []).length) {
     return html`<div class="norepo">
       <div class="obki" style="margin:0 auto 14px"><${Icon} name="pr" size=${28}/></div>
@@ -415,7 +415,7 @@ function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, onAddRepo, o
         <button class="colbtn" disabled=${!target || analyzing} title=${target ? "Analyze " + target.split("/").pop() + "'s codebase health" : "Pick a repo first"} onClick=${() => target && onAnalyze(target)}>${analyzing ? html`<${Spinner} size=${14}/>` : html`<${Icon} name="search" size=${14}/>`} Analyze Repo</button>
       </div>` : null}
       <div class="cards">
-        ${byCol[c.k].length ? byCol[c.k].map((i) => html`<${Card} key=${i.repo + "#" + i.number} i=${i} multi=${!repoFilter && repos.length > 1} onOpen=${onOpen} act=${act}/>`) : html`<div class="empty">—</div>`}
+        ${byCol[c.k].length ? byCol[c.k].map((i) => html`<${Card} key=${i.repo + "#" + i.number} i=${i} multi=${!repoFilter && repos.length > 1} onOpen=${onOpen} act=${act} data=${data}/>`) : html`<div class="empty">—</div>`}
       </div>
     </div>`)}
   </div>`;
@@ -426,10 +426,20 @@ function usageTitle(u) {
   return `${fmtTok(u.tokens)} tokens · $${Number(u.costUsd || 0).toFixed(2)}${u.model ? " · " + shortModel(u.model) : ""} · ${u.runs || 0} runs`;
 }
 
-function Card({ i, multi, onOpen, act }) {
+function Card({ i, multi, onOpen, act, data }) {
   const st = statusChip(i);
   const done = isDone(i);
   const tmp = i._tmp || i.number < 0; // optimistic, not yet confirmed by GitHub
+  const [modelSel, setModelSel] = useState(
+    i.modelOverride ? i.modelOverride.providerId + "/" + i.modelOverride.model : ""
+  );
+  useEffect(() => {
+    setModelSel(i.modelOverride ? i.modelOverride.providerId + "/" + i.modelOverride.model : "");
+  }, [i.modelOverride]);
+
+  const providers = data?.providers || [];
+  const modelOpts = providers.flatMap((p) => (p.models || []).map((m) => ({ value: p.id + "/" + m, label: p.name + " / " + m })));
+
   let quick = null;
   if (i.state === "planned" || (!i.state && !done)) quick = { action: "start", cls: "play", icon: "play", label: "start", fn: () => act.start(i.repo, i.number) };
   else if (i.state === "agency:awaiting-approval") quick = { action: "approve", cls: "", icon: "check", label: "approve", fn: () => act.approve(i.repo, i.number) };
@@ -438,6 +448,27 @@ function Card({ i, multi, onOpen, act }) {
   else if (i.active || i.state === "agency:in-progress" || i.state === "agency:rate-limited") quick = { action: "stop", cls: "stop", icon: "stop", label: "stop", fn: () => act.stop(i.repo, i.number) };
   const qBusy = quick && act.isBusy(quick.action, i.repo, i.number);
   const autoOn = i.auto && (i.auto.resume || i.auto.merge) && !done;
+
+  const selectModel = (e) => {
+    e.stopPropagation();
+    setModelSel(e.target.value);
+  };
+
+  const runQuick = (e) => {
+    e.stopPropagation();
+    if (!quick) return;
+    let mo = null;
+    if (modelSel) {
+      const parts = modelSel.split("/");
+      mo = { providerId: parts[0], model: parts.slice(1).join("/") };
+    }
+    if (quick.action === "start") act.start(i.repo, i.number, mo);
+    else if (quick.action === "approve") act.approve(i.repo, i.number, mo);
+    else if (quick.action === "fix") act.fix(i.repo, i.number, mo);
+    else if (quick.action === "resume") act.resume(i.repo, i.number, mo);
+    else quick.fn();
+  };
+
   return html`<div class=${"card" + (tmp ? " busy" : "") + (i.active ? " active-now" : "")} title=${usageTitle(i.usage)} onClick=${tmp ? null : () => onOpen(i)}>
     <div class="t">${(i.active || tmp) ? html`<${Spinner} size=${13}/> ` : null}${i.title || "#" + i.number}</div>
     <div class="meta">
@@ -451,7 +482,17 @@ function Card({ i, multi, onOpen, act }) {
       ${i.usage && i.usage.tokens ? html`<span class="tagk" title=${usageTitle(i.usage)}><${Icon} name="chart" size=${11}/> ${fmtTok(i.usage.tokens)}${i.usage.model ? " · " + shortModel(i.usage.model) : ""}</span>` : null}
       ${multi ? html`<span class="tagk">${i.repo.split("/").pop()}</span>` : null}
       <span class="spacer" style="margin-left:auto"></span>
-      ${tmp ? null : quick ? html`<button class=${"cardbtn " + quick.cls + (qBusy ? " busy" : "")} disabled=${qBusy} onClick=${(e) => { e.stopPropagation(); quick.fn(); }}>${qBusy ? html`<${Spinner} size=${13}/>` : html`<${Icon} name=${quick.icon} size=${13}/>`} ${qBusy ? "working…" : quick.label}</button>` : html`<span style="color:var(--ink-3);font-size:12px">${ago(i.updated_at)}</span>`}
+      ${tmp ? null : quick ? html`
+        <div style="display:inline-flex;gap:4px;align-items:center" onClick=${(e) => e.stopPropagation()}>
+          ${modelOpts.length && quick.action !== "stop" ? html`
+            <select style="font-size:11px;max-width:110px;height:22px;border:1px solid var(--border);border-radius:3px;background:var(--bg-2);color:var(--text);cursor:pointer;padding:0 2px" value=${modelSel} onChange=${selectModel}>
+              <option value="">Default model</option>
+              ${modelOpts.map((o) => html`<option key=${o.value} value=${o.value}>${o.label.split(" / ").pop()}</option>`)}
+            </select>
+          ` : null}
+          <button class=${"cardbtn " + quick.cls + (qBusy ? " busy" : "")} disabled=${qBusy} onClick=${runQuick}>${qBusy ? html`<${Spinner} size=${13}/>` : html`<${Icon} name=${quick.icon} size=${13}/>`} ${qBusy ? "working…" : quick.label}</button>
+        </div>
+      ` : html`<span style="color:var(--ink-3);font-size:12px">${ago(i.updated_at)}</span>`}
     </div>
   </div>`;
 }
@@ -468,7 +509,7 @@ function TabBar({ issues, tab, setTab }) {
 }
 
 // ---------- Detail ----------
-function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIssue }) {
+function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIssue, data }) {
   const [tab, setTab] = useState("chat"); // mobile sub-tab: chat | stream
   const [thread, setThread] = useState(null);
   const [pr, setPr] = useState(null);
@@ -477,8 +518,11 @@ function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIs
   const [atts, setAtts] = useState([]);
   const [busy, setBusy] = useState(false);
   const [armed, setArmed] = useState(""); // two-tap confirm: which destructive action is armed
-  const [modelOverride, setModelOverride] = useState(""); // "providerId/model" or ""
-  const [modelOpts, setModelOpts] = useState(null); // null = not loaded yet
+  const [modelOverride, setModelOverride] = useState(
+    issue.modelOverride ? issue.modelOverride.providerId + "/" + issue.modelOverride.model : ""
+  );
+  const providers = data?.providers || [];
+  const modelOpts = providers.flatMap((p) => (p.models || []).map((m) => ({ value: p.id + "/" + m, label: p.name + " / " + m })));
   const [pendingComments, setPendingComments] = useState([]); // optimistic skeleton comments
   const [chatAtBottom, setChatAtBottom] = useState(true);
   const [chatAtTop, setChatAtTop] = useState(true);
@@ -517,12 +561,13 @@ function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIs
   }
   useEffect(() => {
     setThread(null); setPr(null); setAppInfo(null); setAtts([]); setPendingComments([]); stickRef.current = true;
+    setModelOverride(issue.modelOverride ? issue.modelOverride.providerId + "/" + issue.modelOverride.model : "");
     if (issue._audit) return; // the audit has no GitHub thread/PR — stream-only view below
     loadThread();
     if (issue.pr_number) getJSON("/pr-status?repo=" + encodeURIComponent(repo) + "&number=" + number).then(setPr).catch(() => {});
     getJSON("/app-info?repo=" + encodeURIComponent(repo) + "&number=" + number).then(setAppInfo).catch(() => setAppInfo({ kind: "unknown" }));
     const t = setInterval(loadThread, 6000); return () => clearInterval(t);
-  }, [repo, number]);
+  }, [repo, number, issue]);
 
   const stream = activity.filter((a) => a.repo === repo && a.number === number).slice(-60);
   useEffect(() => { const el = streamRef.current; if (el && stickRef.current) el.scrollTop = el.scrollHeight; });
@@ -574,15 +619,6 @@ function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIs
   function editComment(id, body) {
     return api("/comment-edit", { repo, number, commentId: id, body })
       .then(() => { toast("Comment updated"); setTimeout(loadThread, 400); });
-  }
-  // Load model options lazily on first use (avoids the /models round-trip for every card open).
-  function ensureModelOpts() {
-    if (modelOpts !== null) return;
-    setModelOpts([]); // mark as loading
-    getJSON("/models").then((d) => {
-      const opts = (d.providers || []).flatMap((p) => (p.models || []).map((m) => ({ value: p.id + "/" + m, label: p.name + " / " + m })));
-      setModelOpts(opts);
-    }).catch(() => setModelOpts([]));
   }
   function pickFiles(e) { const fs = e.target.files || []; for (let i = 0; i < fs.length; i++) readAttach(fs[i], (a) => setAtts((x) => x.concat(a))); e.target.value = ""; }
   function onPaste(e) {
@@ -738,7 +774,16 @@ function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIs
       <button class="iconbtn" aria-label="Close" onClick=${onClose}><${Icon} name="arrowleft"/></button>
       <div class="tt">${issue.title || "#" + number} <span class="dmeta">· ${repo.split("/").pop()} #${number}${st ? " · " + st.replace("agency:", "") : ""}</span></div>
     </div>
-    <div class="dtoolbar">${tb}</div>
+    <div class="dtoolbar">
+      ${tb}
+      ${modelOpts.length ? html`
+        <span style="flex:1"></span>
+        <select title="Override model for next run" style="font-size:12px;max-width:140px;height:28px;border:1px solid var(--border);border-radius:4px;background:var(--bg-2);color:var(--text);cursor:pointer;padding:0 4px" value=${modelOverride} onChange=${(e) => setModelOverride(e.target.value)}>
+          <option value="">Default model</option>
+          ${modelOpts.map((o) => html`<option key=${o.value} value=${o.value}>${o.label}</option>`)}
+        </select>
+      ` : null}
+    </div>
     ${!isDesktop ? html`<div class="dtoolbar" style="justify-content:center">
       <button class=${"btn ghost " + (tab === "chat" ? "primary" : "")} onClick=${() => setTab("chat")}>Chat</button>
       <button class=${"btn ghost " + (tab === "stream" ? "primary" : "")} onClick=${() => setTab("stream")}>Stream</button>
@@ -749,7 +794,7 @@ function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIs
     <div class="dcompose">
       <div class="composer">
         ${atts.length ? html`<div class="composer-atts">${atts.map((a, idx) => html`<span class="att" key=${idx}>${a.img ? html`<img src=${a.d}/>` : html`<span><${Icon} name="paperclip" size=${12}/> ${a.name}</span>`}<button class="iconbtn" style="width:18px;height:18px;border:none" onClick=${() => setAtts((x) => x.filter((_, j) => j !== idx))}>×</button></span>`)}</div>` : null}
-        <textarea ref=${taRef} rows="1" placeholder=${running ? "Message the agent…  (queued until the run finishes)" : "Reply…  (Cmd+Enter sends, paste image to embed)"} value=${reply} onInput=${(e) => { setReply(e.target.value); autosize(); }} onFocus=${ensureModelOpts} onPaste=${onPaste} onKeyDown=${(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); send(); } }}></textarea>
+        <textarea ref=${taRef} rows="1" placeholder=${running ? "Message the agent…  (queued until the run finishes)" : "Reply…  (Cmd+Enter sends, paste image to embed)"} value=${reply} onInput=${(e) => { setReply(e.target.value); autosize(); }} onPaste=${onPaste} onKeyDown=${(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); send(); } }}></textarea>
         <div class="composer-row">
           <label class="composer-icon" title="Attach a file"><${Icon} name="paperclip" size=${18}/><input type="file" multiple style="display:none" onChange=${pickFiles}/></label>
           ${modelOpts && modelOpts.length ? html`<select title="Override model for this run" style="font-size:12px;max-width:130px;border:none;background:transparent;color:inherit;cursor:pointer" value=${modelOverride} onChange=${(e) => setModelOverride(e.target.value)}>
@@ -826,26 +871,43 @@ function RunApp({ repo, number, appInfo, issue, done }) {
 }
 
 // ---------- Composer ----------
-function Composer({ repos, repo, setRepo, onClose, onCreate }) {
+function Composer({ repos, repo, setRepo, onClose, onCreate, data }) {
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [role, setRole] = useState("@dev");
   const [atts, setAtts] = useState([]);
+  const providers = data?.providers || [];
+  const modelOpts = providers.flatMap((p) => (p.models || []).map((m) => ({ providerId: p.id, model: m, label: p.name + " / " + m })));
+  const [model, setModel] = useState(
+    data?.globalModel ? data.globalModel.providerId + "/" + data.globalModel.model : ""
+  );
   const taRef = useRef(null);
   function autosize() { const el = taRef.current; if (!el) return; el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, 200) + "px"; }
-  function submit(start) { if (!repo || !title.trim()) { toast("Repo + title needed"); return; } onCreate(repo, role, title.trim(), body.trim(), start, atts.map((a) => ({ dataUrl: a.d, name: a.name }))); }
+  function submit(start) {
+    if (!repo || !title.trim()) { toast("Repo + title needed"); return; }
+    let modelOverride = null;
+    if (model) {
+      const [providerId, mName] = model.split("/");
+      modelOverride = { providerId, model: mName };
+    }
+    onCreate(repo, role, title.trim(), body.trim(), start, atts.map((a) => ({ dataUrl: a.d, name: a.name })), modelOverride);
+  }
   function pick(e) { const fs = e.target.files || []; for (let i = 0; i < fs.length; i++) readAttach(fs[i], (a) => setAtts((x) => x.concat(a))); e.target.value = ""; }
   function onPaste(e) { const items = (e.clipboardData || {}).items || []; for (let i = 0; i < items.length; i++) if (items[i].kind === "file") readAttach(items[i].getAsFile(), (a) => setAtts((x) => x.concat(a))); }
   return html`<${Sheet} title="New issue" onClose=${onClose}>
     <div style="display:flex;gap:8px;margin-bottom:10px">
-      <select style="flex:1;width:auto" value=${repo || ""} onChange=${(e) => setRepo(e.target.value)}>${repos.map((r) => html`<option key=${r} value=${r}>${r.split("/").pop()}</option>`)}</select>
-      <select style="width:auto" value=${role} onChange=${(e) => setRole(e.target.value)}>
+      <select style="flex:1.5;width:auto" value=${repo || ""} onChange=${(e) => setRepo(e.target.value)}>${repos.map((r) => html`<option key=${r} value=${r}>${r.split("/").pop()}</option>`)}</select>
+      <select style="flex:1;width:auto" value=${role} onChange=${(e) => setRole(e.target.value)}>
         <option value="@dev">@dev</option>
         <option value="@plan">@plan</option>
         <option value="@arch">@arch</option>
         <option value="@review">@review</option>
         <option value="@test">@test</option>
       </select>
+      ${modelOpts.length ? html`<select style="flex:1.5;width:auto" value=${model} onChange=${(e) => setModel(e.target.value)}>
+        <option value="">Default model</option>
+        ${modelOpts.map((o) => html`<option key=${o.providerId + "/" + o.model} value=${o.providerId + "/" + o.model}>${o.label}</option>`)}
+      </select>` : null}
     </div>
     <input value=${title} onInput=${(e) => setTitle(e.target.value)} placeholder="What should it do?" style="margin-bottom:10px"/>
     <div class="composer">
@@ -908,12 +970,14 @@ function ModelsPanel() {
   const [md, setMd] = useState(null); // /models response
   const [autoSwitch, setAutoSwitch] = useState(false);
   const [chain, setChain] = useState([]); // [{providerId, model}]
+  const [globalModel, setGlobalModel] = useState(null); // {providerId, model} | null
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     getJSON("/models").then((d) => {
       setMd(d);
       setAutoSwitch(d.autoSwitchOnLimit || false);
       setChain(d.fallbackChain || []);
+      setGlobalModel(d.globalModel || null);
     }).catch(() => {});
   }, []);
   if (!md) return null;
@@ -931,10 +995,23 @@ function ModelsPanel() {
   }
   function save() {
     setBusy(true);
-    api("/models", { fallbackChain: chain, autoSwitchOnLimit: autoSwitch })
+    api("/models", { fallbackChain: chain, autoSwitchOnLimit: autoSwitch, globalModel })
       .then(() => toast("Saved")).catch(() => toast("Couldn't save")).then(() => setBusy(false));
   }
   return html`<div class="sec">Models &amp; rate limit</div>
+    <label style="margin-top:6px;display:block">Global Default Model</label>
+    <select style="width:100%;margin-bottom:12px" value=${globalModel ? globalModel.providerId + "/" + globalModel.model : ""} onChange=${(e) => {
+      const val = e.target.value;
+      if (!val) {
+        setGlobalModel(null);
+      } else {
+        const [providerId, model] = val.split("/");
+        setGlobalModel({ providerId, model });
+      }
+    }}>
+      <option value="">Default (Claude subscription / role defaults)</option>
+      ${modelOpts.map((o) => html`<option key=${o.providerId + "/" + o.model} value=${o.providerId + "/" + o.model}>${o.label}</option>`)}
+    </select>
     <label class="ckline"><input type="checkbox" checked=${autoSwitch} onChange=${(e) => setAutoSwitch(e.target.checked)}/> Auto-switch to fallback model on Claude usage limit</label>
     <div class="muted" style="font-size:12px;margin:3px 2px 7px">When enabled, hitting the Claude credit/session limit switches all unassigned roles to the first fallback below and retries — instead of stalling.</div>
     <label>Fallback chain (order of models to try when primary is rate-limited)</label>

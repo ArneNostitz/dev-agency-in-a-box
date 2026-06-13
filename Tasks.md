@@ -1,0 +1,22 @@
+# Tasks for Model Selector Implementation
+
+- [x] Task 1: Update backend DB store and route resolution to support `global_model` fallback
+  - Retrieve `global_model` from settings database.
+  - In `resolveRoute`, check `global_model` as the fallback if no issue override or role assignment exists.
+- [x] Task 2: Update `/models` and `/data` GET routes in `src/webhook.ts`
+  - Add `Gemini` preset to `/models` response.
+  - Add `providers`, `roleModels`, and `globalModel` to `/data` response so they are instantly loaded on app start and polls.
+- [x] Task 3: Update action routes (`/start`, `/resume`, `/fix`, `/approve`, `/new-issue`) to accept model override
+  - Check if `p.model` is provided, call `setIssueModelOverride` before running the action.
+- [x] Task 4: Add "Global Default Model" selector in Settings Models panel
+  - Render a "Global Default Model" select element.
+  - On save, save `global_model` via the `/models` endpoint or `/settings` endpoint.
+- [x] Task 5: Add model selectors in frontend components
+  - In `Composer` (New Issue dialog): add a select element defaulting to the global default.
+  - In `Detail` (Issue detail page):
+    - In header/toolbar: show model select next to actions.
+    - In chatbox composer: make model options available on load, render select cleanly.
+  - In `Card` (Dashboard cards): show model select next to quick action buttons (Start, Resume, Fix, Approve).
+- [x] Task 6: Test changes
+  - Run `npm run typecheck` or `npm run dev` to ensure no compile/startup errors.
+  - Verify styling and aesthetics of added model selectors.
