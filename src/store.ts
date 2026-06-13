@@ -648,6 +648,69 @@ export function setRoleModels(map: Record<string, { providerId: string; model: s
   setSetting("role_models", JSON.stringify(map ?? {}));
 }
 
+// ---- in-memory session-level fallback (not persisted; cleared after each auto-switch run) ----
+// When Claude hits a usage limit and auto-switch is on, this is set for the duration of the
+// retry, then cleared in the finally block — so user's permanent role assignments are untouched.
+// NOTE: not concurrent-safe — if two issues auto-switch simultaneously the second
+// clearSessionFallback() call in finally will reset the first issue's fallback mid-retry.
+// Self-healing: the affected issue will re-park and retry on the next run.
+let _sessionFallback: { providerId: string; model: string } | null = null;
+export function setSessionFallback(f: { providerId: string; model: string }): void {
+  _sessionFallback = f;
+}
+export function clearSessionFallback(): void {
+  _sessionFallback = null;
+}
+/** Returns the active session-level fallback, or null if none is set. */
+export function getSessionFallback(): { providerId: string; model: string } | null {
+  return _sessionFallback;
+}
+
+/**
+ * Ordered fallback chain: when the primary model (Claude) hits a usage limit, the agency
+ * tries providers in this list in order. Each entry references a configured provider + model.
+ */
+export function getFallbackChain(): Array<{ providerId: string; model: string }> {
+  try {
+    return JSON.parse(getSetting("fallback_chain") ?? "[]") as Array<{ providerId: string; model: string }>;
+  } catch {
+    return [];
+  }
+}
+export function setFallbackChain(chain: Array<{ providerId: string; model: string }>): void {
+  setSetting("fallback_chain", JSON.stringify(chain ?? []));
+}
+
+/** true → when Claude hits a usage limit, automatically switch all unassigned roles to the fallback chain */
+export function getAutoSwitchOnLimit(): boolean {
+  return getSetting("auto_switch_on_limit") === "on";
+}
+
+/**
+ * Per-issue model override: when the human picks a model in the chatbox, it's stored here
+ * and used for the next run on this issue (cleared after the pipeline finishes).
+ */
+export function setIssueModelOverride(repo: string, number: number, providerId: string, model: string): void {
+  setSetting(`issue_model.${repo}#${number}`, JSON.stringify({ providerId, model }));
+}
+export function getIssueModelOverride(repo: string, number: number): { providerId: string; model: string } | null {
+  try {
+    const v = getSetting(`issue_model.${repo}#${number}`);
+    return v ? (JSON.parse(v) as { providerId: string; model: string }) : null;
+  } catch {
+    return null;
+  }
+}
+export function clearIssueModelOverride(repo: string, number: number): void {
+  const d = getDb();
+  if (!d) return;
+  try {
+    d.prepare(`DELETE FROM settings WHERE key = ?`).run(`issue_model.${repo}#${number}`);
+  } catch {
+    /* best effort */
+  }
+}
+
 // ---- settings (editable from the dashboard, no redeploy) ----
 export function getSetting(key: string): string | null {
   const d = getDb();

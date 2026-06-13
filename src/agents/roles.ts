@@ -118,6 +118,9 @@ export const ROLES: Record<RoleName, RoleDef> = {
   },
 };
 
+/** All role names, derived from the canonical ROLES map — single source of truth. */
+export const ALL_ROLES = Object.keys(ROLES) as RoleName[];
+
 /** Resolve the model for a role: per-role env override, else global AGENT_MODEL, else default. */
 export function modelFor(role: RoleDef): string {
   return (

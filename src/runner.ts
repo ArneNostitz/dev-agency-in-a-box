@@ -51,7 +51,7 @@ import { decideThreadAction } from "./route.js";
 import { reconcileEpics } from "./epics.js";
 import { indexRepo } from "./gitnexus.js";
 import { pushActivity } from "./activity.js";
-import { loadHandleRoleMap, roleForText, type RoleName } from "./agents/roles.js";
+import { loadHandleRoleMap, roleForText, ALL_ROLES, type RoleName } from "./agents/roles.js";
 import { runPipeline, runPrFix, runFollowUp, runResumeBuild, runReviewFix } from "./pipeline.js";
 import { runRole } from "./agents/roleAgent.js";
 import { parseAuditProposals } from "./auditparse.js";
@@ -79,6 +79,11 @@ import {
   bumpAutoAttempts,
   resetAutoAttempts,
   setAuto,
+  getFallbackChain,
+  getAutoSwitchOnLimit,
+  setSessionFallback,
+  clearSessionFallback,
+  clearIssueModelOverride,
 } from "./store.js";
 import { parseRateLimit, nextWindowReset } from "./ratelimit.js";
 import { startPreviewSweeper, killAllApps } from "./apprun.js";
@@ -127,15 +132,42 @@ function nextResetMs(): number {
 }
 
 /**
- * If `msg` is a usage-limit wall, park the issue to auto-resume after the reset and pause new
- * agent work until then. Returns true if it was handled as a rate-limit (caller skips its
- * normal failure path). No tokens used.
+ * If `msg` is a usage-limit wall, handle it. Returns:
+ *   false    — not a rate limit (caller handles as normal error)
+ *   true     — parked for auto-resume (caller returns early)
+ *   "switch" — auto-switched all Claude roles to the fallback model (caller should retry the pipeline)
+ *
+ * When auto_switch_on_limit is ON and a fallback chain is configured, instead of parking
+ * the issue we re-route all unassigned (Claude) roles to the first fallback provider and
+ * signal the caller to retry. No tokens used.
  */
-async function maybeParkRateLimited(repo: string, number: number, msg: string, isPr = false): Promise<boolean> {
+async function maybeParkRateLimited(repo: string, number: number, msg: string, isPr = false): Promise<boolean | "switch"> {
   const rl = parseRateLimit(msg);
   if (!rl.limited) return false;
   const parsed = Boolean(rl.resetAt && rl.resetAt > Date.now());
   const resetAt = parsed ? (rl.resetAt as number) : nextResetMs();
+
+  // Auto-switch: when enabled and a fallback model is configured, set a session-level fallback
+  // for all unassigned roles instead of permanently overwriting the DB. The session fallback is
+  // cleared in the processIssue finally block after the retry, so user assignments are untouched.
+  if (!isPr && getAutoSwitchOnLimit()) {
+    const chain = getFallbackChain();
+    if (chain.length > 0) {
+      const fallback = chain[0];
+      setSessionFallback(fallback);
+      // Still pause the global agent queue so we don't spam the exhausted Claude endpoint
+      // with other issues — but this issue will retry immediately with the fallback.
+      pauseAgents(resetAt, parsed);
+      await commentOnIssue(
+        repo,
+        number,
+        `🔄 Claude usage limit hit — auto-switched to **${fallback.model}** for all unassigned roles. Retrying with the fallback model…`,
+      ).catch(() => {});
+      console.log(`[agency] rate-limited ${repo} #${number}: auto-switched to fallback ${fallback.model} (session-only, ${ALL_ROLES.length} roles)`);
+      return "switch";
+    }
+  }
+
   pauseAgents(resetAt, parsed); // a reset time read from Claude's error is authoritative
   const when = new Date(resetAt).toLocaleString();
   if (isPr) {
@@ -226,7 +258,24 @@ async function processIssue(cfg: Config, repo: string, issue: Issue): Promise<vo
   } catch (err) {
     const msg = (err as Error).message ?? String(err);
     console.error(`[agency] pipeline error ${repo} #${issue.number}:`, msg);
-    if (await maybeParkRateLimited(repo, issue.number, msg)) return;
+    const rl = await maybeParkRateLimited(repo, issue.number, msg);
+    if (rl === "switch") {
+      // Auto-switched to fallback model — retry the pipeline in the same workdir (no re-clone).
+      try {
+        await runPipeline(cfg, repo, issue, role, workdir, thread);
+      } catch (err2) {
+        const msg2 = (err2 as Error).message ?? String(err2);
+        console.error(`[agency] pipeline error after model switch ${repo} #${issue.number}:`, msg2);
+        if (await maybeParkRateLimited(repo, issue.number, msg2)) return;
+        await removeLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
+        await addLabel(repo, issue.number, NEEDS_ATTENTION).catch(() => {});
+        await addLabel(repo, issue.number, "🚧 blocked").catch(() => {});
+        recordIssueState(repo, issue.number, { state: NEEDS_ATTENTION });
+        await commentOnIssue(repo, issue.number, `❌ Run failed even after model switch: ${msg2.slice(0, 300)} — fix and re-pin.`).catch(() => {});
+      }
+      return;
+    }
+    if (rl) return;
     await removeLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
     await addLabel(repo, issue.number, NEEDS_ATTENTION).catch(() => {});
     await addLabel(repo, issue.number, "🚧 blocked").catch(() => {});
@@ -234,6 +283,8 @@ async function processIssue(cfg: Config, repo: string, issue: Issue): Promise<vo
     await commentOnIssue(repo, issue.number, `❌ Run failed: ${msg.slice(0, 300)} — fix and re-pin.`).catch(() => {});
   } finally {
     clearActive(repo, issue.number);
+    clearIssueModelOverride(repo, issue.number); // one-shot chatbox override: consume it after each run
+    clearSessionFallback(); // one-shot auto-switch: revert to user's permanent role assignments
   }
 }
 
