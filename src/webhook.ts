@@ -379,8 +379,8 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
             roles: ALL_ROLES,
             // Editable presets — all expose a native Anthropic-compatible endpoint.
             presets: [
-              { name: "Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", models: ["gemini-1.5-pro", "gemini-1.5-flash"] },
-              { name: "GLM (Zhipu)", baseUrl: "https://open.bigmodel.cn/api/anthropic", models: ["glm-4.6", "glm-4.5"] },
+              { name: "Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", models: ["gemini-3.5-flash", "gemini-3.5-pro", "gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-pro", "gemini-1.5-flash"] },
+              { name: "GLM (Zhipu)", baseUrl: "https://open.bigmodel.cn/api/anthropic", models: ["glm-5.2", "glm-5.1", "glm-4.6", "glm-4.5"] },
               { name: "DeepSeek", baseUrl: "https://api.deepseek.com/anthropic", models: ["deepseek-chat", "deepseek-reasoner"] },
               { name: "Kimi (Moonshot)", baseUrl: "https://api.moonshot.cn/anthropic", models: ["kimi-k2-0905-preview"] },
               { name: "Custom (Anthropic-compatible)", baseUrl: "", models: [] },
