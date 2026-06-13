@@ -16,9 +16,9 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { Config } from "./config.js";
-import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, tokensByRoleSince, tokensByDaySince, topIssuesByTokensSince, tokensByIssueAll, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, type AutoKind, type Provider } from "./store.js";
+import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, tokensByRoleSince, tokensByDaySince, topIssuesByTokensSince, tokensByIssueAll, recordConflict, getConflict, clearConflict, listConflicts, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, getIssueRow, type AutoKind, type Provider } from "./store.js";
 import { mergeEpic, isEpic } from "./epics.js";
-import { renderDashboard, renderHistory } from "./dashboard.js";
+import { renderHistory } from "./dashboard.js";
 import { renderShell } from "./shell.js";
 import { addLabel, removeLabel } from "./github.js";
 import { authEnabled, userFromReq, setSessionCookie, clearSessionCookie, parseCookies, SESSION_COOKIE, verifyRecoveryKey } from "./auth.js";
@@ -35,7 +35,7 @@ import { subscribe, getActive } from "./activity.js";
 import { inFlightKeys } from "./pool.js";
 import { listRateLimited } from "./store.js";
 import { effectiveRepos } from "./commands.js";
-import { getThreadFull, commentAsHuman, mergePrForBranch, closeIssue, deleteIssueHard, findPrForBranch, prMergeStatus, detectReviewVerdict, createIssue, readRepoFile, putRepoBase64, listUserRepos } from "./github.js";
+import { getThreadFull, commentAsHuman, editCommentAsHuman, commentOnIssue, mergePrForBranch, closeIssue, deleteIssueHard, findPrForBranch, prMergeStatus, conflictFiles, branchHeadSha, detectReviewVerdict, createIssue, readRepoFile, putRepoBase64, listUserRepos } from "./github.js";
 import { listAgentFiles, readAgentFile, isSafeAgentPath } from "./memory.js";
 import { startApp, stopApp, getApp, pickWebDevScript, isTauriPackage, buildLocalCommand } from "./apprun.js";
 import { ensureRepoAccess } from "./commands.js";
@@ -182,7 +182,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         }
         sessionUser = userFromReq(req);
         if (!sessionUser) {
-          const isNav = url === "/" || url === "/classic" || url === "/history";
+          const isNav = url === "/" || url === "/history";
           if (isNav) return void res.writeHead(302, { location: "/login" }).end();
           return void res.writeHead(401, { "content-type": "text/plain" }).end("authentication required");
         }
@@ -245,12 +245,15 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           const epicCache: Record<string, ReturnType<typeof epicsByParent>> = {};
           const reviews = listReviews(); // verdict per "repo#number" — cheap, for the card badge
           const tokenMap = tokensByIssueAll(); // lifetime tokens/cost/model per "repo#number"
+          const conflictMap = listConflicts(); // conflicting files per "repo#number"
           const enriched = issues.map((i) => {
             const byParent = (epicCache[i.repo] ??= epicsByParent(i.repo));
             const kids = byParent[i.number];
+            const conflictFilesFor = conflictMap[`${i.repo}#${i.number}`];
             return {
               ...i,
               usage: tokenMap[`${i.repo}#${i.number}`] ?? null,
+              conflict: conflictFilesFor ? { files: conflictFilesFor } : null,
               previewUrl: i.pr_number ? previewUrlFor(i.repo, i.pr_number, `agency/issue-${i.number}`) : null,
               epic: kids
                 ? { total: kids.length, done: kids.filter((c) => c.closed).length, children: kids }
@@ -440,10 +443,34 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               review = { verdict: d.verdict, summary: d.summary };
             }
           }
-          const merge = repo && number ? await prMergeStatus(repo, `agency/issue-${number}`).catch(() => null) : null;
+          const branch = `agency/issue-${number}`;
+          const merge = repo && number ? await prMergeStatus(repo, branch).catch(() => null) : null;
+          let conflict: { files: string[] } | null = null;
+          if (merge?.mergeable === "conflict" && repo && number) {
+            // Surface WHICH files conflict (GitHub only exposes a boolean). Compute the file list
+            // once per head SHA, persist it, and post a one-time note into the conversation so the
+            // conflict is visible without opening GitHub.
+            const sha = await branchHeadSha(repo, branch).catch(() => "");
+            const stored = getConflict(repo, number);
+            if (stored && stored.sha === sha) {
+              conflict = { files: stored.files };
+            } else {
+              const files = await conflictFiles(repo, branch, "main").catch(() => []);
+              recordConflict(repo, number, sha, files);
+              conflict = { files };
+              const list = files.length ? files.map((f) => `- \`${f}\``).join("\n") : "_(couldn't list the exact files)_";
+              await commentOnIssue(
+                repo,
+                number,
+                `🔀 **Merge conflicts with \`main\`** — this PR can't merge until they're resolved.\n\nConflicting file${files.length === 1 ? "" : "s"}:\n${list}\n\nPress **Fix merge conflicts** on the card to have the agency resolve them automatically.`,
+              ).catch(() => {});
+            }
+          } else if (repo && number) {
+            clearConflict(repo, number); // mergeable again — drop the stale conflict box
+          }
           res
             .writeHead(200, { "content-type": "application/json" })
-            .end(JSON.stringify({ review, merge }));
+            .end(JSON.stringify({ review, merge, conflict }));
         })();
         return;
       }
@@ -522,8 +549,8 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         "content-type": "text/html; charset=utf-8",
         "cache-control": "no-store, must-revalidate",
       });
-      // New Preact UI at /; old dashboard kept at /classic as a fallback; /history unchanged.
-      res.end(url === "/history" ? renderHistory() : url === "/classic" ? renderDashboard() : renderShell());
+      // Preact UI at /; /history renders the run log.
+      res.end(url === "/history" ? renderHistory() : renderShell());
       return;
     }
     if (req.method !== "POST") {
@@ -620,11 +647,11 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
     }
 
     // Dashboard actions (auth required), not GitHub webhooks.
-    if (["/archive", "/comment", "/run-checks", "/merge", "/close", "/create-pr", "/delete", "/resume", "/stop", "/fix", "/auto", "/start", "/new-issue", "/approve", "/audit", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude"].includes(path)) {
+    if (["/archive", "/comment", "/comment-edit", "/run-checks", "/merge", "/close", "/create-pr", "/delete", "/resume", "/stop", "/fix", "/auto", "/start", "/new-issue", "/approve", "/audit", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude"].includes(path)) {
       const actor = userFromReq(req);
       if (!actor) return void res.writeHead(401, { "content-type": "application/json" }).end('{"error":"auth required"}');
       void readBody(req).then(async (body) => {
-        let p: { repo?: string; number?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; dataUrl?: string; name?: string; providers?: Provider[]; roleModels?: Record<string, { providerId: string; model: string }>; kind?: string; value?: string; skipArchitect?: string; gitnexus?: string; maxTokensPerRun?: number; maxReviseRounds?: number; auditThreshold?: number; start?: boolean; email?: string; key?: string; ops?: Record<string, string | number | boolean>; webhookSecret?: string } = {};
+        let p: { repo?: string; number?: number; commentId?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; dataUrl?: string; name?: string; providers?: Provider[]; roleModels?: Record<string, { providerId: string; model: string }>; kind?: string; value?: string; skipArchitect?: string; gitnexus?: string; maxTokensPerRun?: number; maxReviseRounds?: number; auditThreshold?: number; start?: boolean; email?: string; key?: string; ops?: Record<string, string | number | boolean>; webhookSecret?: string } = {};
         try {
           p = JSON.parse(body.toString("utf8"));
         } catch {
@@ -708,7 +735,12 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           }
           // Make the agent act on the reply (bypasses trigger-mode/mention). onComment re-engages to
           // ADDRESS the message even if a PR exists (unlike plain Resume, which just offers the merge).
-          const reengage = onComment ?? resume;
+          // Exception: planned / awaiting-approval issues have no branch yet — posting a comment should
+          // NOT kick off a run automatically. The human will start it explicitly when ready.
+          const issueRow = getIssueRow(repo, number);
+          const issueState = issueRow?.state ?? "";
+          const isPlanned = issueState === "planned" || issueState === "agency:planned" || issueState === "agency:awaiting-approval";
+          const reengage = isPlanned ? null : (onComment ?? resume);
           if (hasActiveRun(repo, number) && reengage) {
             // QUEUE: don't interrupt the current run. The comment is already posted; re-engage once the
             // issue goes idle so the agent re-reads the thread (with this message) and acts on it.
@@ -724,6 +756,27 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
             void reengage(repo, number);
           } else {
             void trigger("dashboard-comment");
+          }
+          return ok();
+        }
+        if (path === "/comment-edit") {
+          // Edit an existing comment by its id (from getThreadFull). Attempts owner token first,
+          // falls back to bot token — so you can edit both your own comments and agency comments.
+          if (!repo || !number || !p.commentId || !p.body?.trim()) return res.writeHead(400).end("{}");
+          const text = p.body.trim();
+          try {
+            await editCommentAsHuman(repo, p.commentId, text, ownerToken);
+          } catch (errOwner) {
+            const bot = ghBotToken();
+            if (bot && bot !== ownerToken) {
+              try {
+                await editCommentAsHuman(repo, p.commentId, text, bot);
+              } catch (errBot) {
+                return res.writeHead(500).end(JSON.stringify({ error: `Couldn't edit comment: ${(errBot as Error).message.slice(0, 200)}` }));
+              }
+            } else {
+              return res.writeHead(500).end(JSON.stringify({ error: `Couldn't edit comment: ${(errOwner as Error).message.slice(0, 200)}` }));
+            }
           }
           return ok();
         }
@@ -784,6 +837,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           if (r.ok) {
             await closeIssue(repo, number, `🚀 Merged ${r.msg} from the dashboard.`).catch(() => {});
             recordIssueState(repo, number, { state: "merged" });
+            clearConflict(repo, number);
             return ok();
           }
           return res.writeHead(409).end(JSON.stringify({ error: r.msg }));

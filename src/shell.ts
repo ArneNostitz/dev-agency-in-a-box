@@ -1,8 +1,8 @@
 /**
  * The v2 dashboard shell: a tiny HTML page with the design-token stylesheet (light + dark),
  * PWA wiring (manifest + service worker), and a Preact app loaded as an ES module from /web/app.js.
- * All the UI lives in /web/app.js (Preact + htm, no build step). The old dashboard stays at
- * /classic as a fallback while this matures.
+ * All the UI lives in /web/app.js (Preact + htm, no build step). A read-only run log lives at
+ * /history.
  */
 export function renderShell(): string {
   return `<!doctype html><html lang="en"><head>
@@ -61,6 +61,12 @@ input,select,textarea{font-size:16px}
 .iconbtn:active{transform:scale(.96)}
 .reposel{position:sticky;top:0;z-index:20;background:var(--bg);border-bottom:1px solid var(--line);display:flex;gap:6px;overflow-x:auto;padding:8px 12px;-webkit-overflow-scrolling:touch;scrollbar-width:none}
 .reposel::-webkit-scrollbar{display:none}
+.searchbar{position:sticky;top:0;z-index:19;display:flex;gap:8px;padding:8px 12px;background:var(--bg);border-bottom:1px solid var(--line)}
+.searchfield{flex:1;display:flex;align-items:center;gap:7px;border:1px solid var(--line);border-radius:9px;padding:0 10px;background:var(--surface);color:var(--ink-3)}
+.searchfield input{flex:1;border:none;outline:none;background:transparent;color:var(--ink);font:14px inherit;padding:8px 0}
+.searchclear{border:none;background:transparent;color:var(--ink-3);cursor:pointer;display:flex;padding:2px;border-radius:6px}
+.searchclear:hover{background:var(--surface-2);color:var(--ink)}
+.sortsel{border:1px solid var(--line);border-radius:9px;padding:0 9px;font:13px inherit;background:var(--surface);color:var(--ink);cursor:pointer}
 .chip{flex:0 0 auto;border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:5px 12px;font-size:13px;color:var(--ink-2);cursor:pointer;white-space:nowrap}
 .chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
 .chip.dash{border-style:dashed;color:var(--accent)}
@@ -100,6 +106,7 @@ input,select,textarea{font-size:16px}
 .s-changes{background:var(--red-weak);color:var(--red)}
 .s-attn{background:var(--amber-weak);color:var(--amber)}
 .s-auto{background:var(--green-weak);color:var(--green)}
+.s-conflict{background:var(--amber-weak);color:var(--amber)}
 .s-done{background:var(--surface-2);color:var(--ink-3)}
 .s-epic{background:var(--purple-weak);color:var(--purple)}
 .tagk{display:inline-flex;align-items:center;gap:3px;font-size:11px;color:var(--ink-3);border:1px solid var(--line);border-radius:999px;padding:1px 8px}
@@ -167,6 +174,12 @@ textarea{resize:vertical;min-height:64px}
 .useg-track i{display:block;height:100%;border-radius:999px;background:var(--accent)}
 .dusage{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:8px;padding:8px 11px;border:1px solid var(--line);border-radius:10px;background:var(--surface-2);font-size:12.5px;color:var(--ink-2)}
 .dusage span{display:inline-flex;align-items:center;gap:5px;font-variant-numeric:tabular-nums}
+.conflictbox{border:1px solid var(--amber);border-radius:12px;padding:12px 14px;margin-bottom:12px;background:color-mix(in srgb,var(--amber) 10%,var(--surface))}
+.conflictbox-h{display:flex;align-items:center;gap:7px;font-weight:600;color:var(--amber);font-size:14px}
+.conflictbox-b{font-size:13px;color:var(--ink-2);margin:6px 0}
+.conflictbox-files{margin:6px 0 10px;padding-left:0;list-style:none;display:flex;flex-direction:column;gap:3px}
+.conflictbox-files li a{display:inline-flex;align-items:center;gap:5px;font:12.5px ui-monospace,Menlo,monospace;color:var(--ink-2);text-decoration:none}
+.conflictbox-files li a:hover{color:var(--accent);text-decoration:underline}
 
 /* detail */
 .dscrim{position:fixed;inset:0;z-index:44;background:transparent}
@@ -221,7 +234,10 @@ textarea{resize:vertical;min-height:64px}
 .sec{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-3);margin:14px 2px 7px}
 .cmt{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:9px 11px;margin-bottom:8px}
 .cmt.ag{background:var(--surface-2)}
-.cmt .h{font-size:12px;color:var(--ink-2);margin-bottom:4px}
+.cmt.skel{opacity:.55}
+.cmt .h{font-size:12px;color:var(--ink-2);margin-bottom:4px;display:flex;align-items:center;gap:6px}
+.cmt .h .cmt-edit-btn{margin-left:auto;opacity:0;transition:opacity .15s;padding:2px}
+.cmt:hover .h .cmt-edit-btn{opacity:1}
 .cmt .b{font-size:14px}
 .cmt .b pre{background:var(--bg);padding:8px 10px;border-radius:8px;overflow:auto;font-size:12px}
 .cmt .b code{background:var(--bg);padding:1px 5px;border-radius:5px;font-size:.9em}
@@ -236,6 +252,11 @@ textarea{resize:vertical;min-height:64px}
 .cmt .b blockquote p{margin:.15em 0}
 .cmt .b hr{border:none;border-top:1px solid var(--line);margin:.6em 0}
 .cmt .b p{margin:.3em 0}
+.cmt-edit-ta{width:100%;border:1px solid var(--line);border-radius:9px;background:var(--bg);color:var(--ink);font:inherit;font-size:14px;padding:8px 10px;resize:vertical;min-height:80px;box-sizing:border-box}
+.cmt-edit-row{display:flex;gap:6px;margin-top:6px;justify-content:flex-end}
+.scroll-fab-wrap{position:sticky;bottom:8px;display:flex;justify-content:flex-end;pointer-events:none;margin-top:4px}
+.scroll-fab-wrap.top{bottom:auto;top:8px;justify-content:flex-start;margin-top:0;margin-bottom:4px}
+.scroll-fab{pointer-events:auto;background:var(--surface)!important;border:1px solid var(--line)!important;box-shadow:var(--shadow);border-radius:50%!important;width:32px!important;height:32px!important;display:flex;align-items:center;justify-content:center}
 .dcompose{position:sticky;bottom:0;background:var(--bg);border-top:1px solid var(--line);padding:10px 12px calc(10px + var(--safe-b))}
 .composer{display:flex;flex-direction:column;gap:8px;background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:11px 13px;box-shadow:0 1px 3px rgba(0,0,0,.05);transition:border-color .15s,box-shadow .15s}
 .composer:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-weak,rgba(47,109,246,.12))}

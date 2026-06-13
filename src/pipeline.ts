@@ -21,13 +21,15 @@ import {
   approvedByReaction,
   commentOnPr,
   upsertTrackerComment,
+  mergeBaseInto,
+  prMergeStatus,
   AWAITING_LABEL,
   APPROVAL_LABEL,
 } from "./github.js";
 import { EPIC_LABEL, renderEpicTracker } from "./epics.js";
 import { runRole } from "./agents/roleAgent.js";
 import type { RoleName } from "./agents/roles.js";
-import { recordRun, recordPlan, lastPlan, recordIssueState, recordPr, addEpicChild, listEpicChildren, getSession, issueActivity, recordReview, getReview, getSetting } from "./store.js";
+import { recordRun, recordPlan, lastPlan, recordIssueState, recordPr, addEpicChild, listEpicChildren, getSession, issueActivity, recordReview, getReview, clearConflict, getSetting } from "./store.js";
 import { runReflection } from "./reflect.js";
 
 const IN_PROGRESS = "agency:in-progress";
@@ -572,11 +574,38 @@ export async function runResumeBuild(repo: string, issue: Issue, workdir: string
 export async function runReviewFix(repo: string, issue: Issue, workdir: string, opts?: { conflict?: boolean }): Promise<void> {
   const branch = `agency/issue-${issue.number}`;
   const review = getReview(repo, issue.number)?.summary || "(see the reviewer's latest comment on the issue)";
-  const conflictRule = opts?.conflict
-    ? `This branch CONFLICTS with main. First merge the latest main in and resolve all conflicts: ` +
-      `\`git fetch origin main && git merge origin/main\` (or rebase), fix every conflict, build, then continue. `
-    : "";
-  await commentOnIssue(repo, issue.number, say("developer", `**On it — addressing the review${opts?.conflict ? " + resolving conflicts" : ""}.**`));
+
+  // Resolve merge conflicts DETERMINISTICALLY in code (the agent can't be trusted to run the right
+  // git incantation in a shallow clone). We merge origin/main into the branch here; a clean
+  // auto-merge needs no agent, and only genuine content conflicts get handed off with the exact
+  // file list. `mergeBaseInto` leaves the conflicted working tree in place for the agent to fix.
+  let conflictRule = "";
+  let mergeAttempted = false;
+  if (opts?.conflict) {
+    const m = await mergeBaseInto(workdir, "main");
+    mergeAttempted = true;
+    if (m.status === "clean") {
+      conflictRule =
+        `The latest main has ALREADY been merged into this branch for you (no conflicts) — the merge is staged in the working tree. ` +
+        `Do NOT run git merge/rebase again. Just make sure the build still passes after the merge. `;
+      await commentOnIssue(repo, issue.number, say("developer", `**Merged the latest main in cleanly** — no conflicts. Verifying the build.`));
+    } else if (m.status === "conflicts") {
+      conflictRule =
+        `A merge of origin/main is IN PROGRESS and has conflicts in these files:\n` +
+        m.files.map((f) => `- \`${f}\``).join("\n") +
+        `\nResolve every conflict by editing those files (remove all \`<<<<<<<\`/\`=======\`/\`>>>>>>>\` markers), then \`git add\` each resolved file. ` +
+        `Do NOT run \`git merge\` or \`git rebase\` again and do NOT \`git merge --abort\`. After resolving, make sure the build passes. `;
+      await commentOnIssue(repo, issue.number, say("developer", `**Resolving merge conflicts with main** in ${m.files.length} file(s): ${m.files.map((f) => "`" + f + "`").join(", ")}.`));
+    } else {
+      // Couldn't even start the merge (fetch/history problem) — fall back to asking the agent.
+      conflictRule =
+        `This branch CONFLICTS with main and I couldn't auto-merge it. Run \`git fetch origin main && git merge origin/main\`, ` +
+        `resolve every conflict, \`git add\` them, then build. `;
+      await commentOnIssue(repo, issue.number, say("developer", `**Branch conflicts with main** — attempting to resolve.`));
+    }
+  } else {
+    await commentOnIssue(repo, issue.number, say("developer", `**On it — addressing the review.**`));
+  }
 
   const dev = await runRole("developer", {
     workdir,
@@ -614,6 +643,28 @@ export async function runReviewFix(repo: string, issue: Issue, workdir: string, 
   const stillChanges = changesRequested(review2.text);
   recordReview(repo, issue.number, stillChanges ? "changes" : "approved", review2.text);
   await finalizeWithPr(repo, issue, workdir, branch, stillChanges);
+
+  // Verify the conflict actually cleared. finalizeWithPr optimistically lands on READY, but if the
+  // agent failed to resolve/commit the merge the PR is still unmergeable — and the user gets a
+  // "ready" card that won't merge. Re-check GitHub's mergeable state and, only when it's still
+  // explicitly CONFLICTING, flip to needs-attention with a clear note (a transient "unknown" right
+  // after a push must NOT trip this, so we act on "conflict" alone).
+  if (mergeAttempted && !stillChanges) {
+    const after = await prMergeStatus(repo, branch).catch(() => null);
+    if (after?.mergeable === "conflict") {
+      await removeLabel(repo, issue.number, READY).catch(() => {});
+      await addLabel(repo, issue.number, NEEDS_ATTENTION).catch(() => {});
+      recordIssueState(repo, issue.number, { state: NEEDS_ATTENTION });
+      await commentOnIssue(
+        repo,
+        issue.number,
+        say("developer", `**⚠️ The merge conflict with main is still unresolved** after this pass, so the PR can't merge yet. Press **Fix merge conflicts** to try again, or resolve it manually on branch \`${branch}\`.`),
+      );
+      console.log(`[agency] ${repo} #${issue.number} -> ${NEEDS_ATTENTION} (conflict persists after fix).`);
+    } else {
+      clearConflict(repo, issue.number); // resolved (or no longer conflicting) — drop the box
+    }
+  }
 }
 
 export async function runFollowUp(
