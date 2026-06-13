@@ -137,6 +137,9 @@ textarea{resize:vertical;min-height:64px}
 
 /* detail */
 .dscrim{position:fixed;inset:0;z-index:44;background:transparent}
+.prbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;border:1px solid var(--green);background:var(--green-weak);border-radius:12px;padding:9px 11px;margin:6px 0 4px}
+.prbar-l{display:inline-flex;align-items:center;gap:6px;font-weight:600;font-size:13.5px;margin-right:auto}
+.prbar .btn{padding:6px 11px;font-size:13px}
 .epicbox{border:1px solid var(--line);border-radius:12px;padding:8px 10px;margin-bottom:6px;background:var(--surface)}
 .epicalldone{color:var(--green);font-weight:600;text-transform:none;letter-spacing:0}
 .epiclist{display:flex;flex-direction:column;gap:2px}
