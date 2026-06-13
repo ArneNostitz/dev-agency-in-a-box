@@ -10,10 +10,12 @@
 2. [src/webhook.ts](file:///Users/arne/_Coding/dev-agency/src/webhook.ts)
    - Route `/data` needs to return `providers`, `roleModels`, and `globalModel`.
    - Route `/models` needs to return `presets` including `Gemini`.
-   - Routes `/start`, `/resume`, `/fix`, `/approve`, `/new-issue` need to accept `p.model` (containing `providerId` and `model` name) and set the issue model override BEFORE invoking their respective actions.
+   - Route `/model-override` added to set/clear per-issue model overrides immediately on the backend.
+   - Routes `/start`, `/resume`, `/fix`, `/approve`, `/new-issue` need to accept `p.model` (containing `providerId` and `model` name) and set the issue model override BEFORE invoking their respective actions (and clear it if model property is empty).
 
 3. [src/agents/roleAgent.ts](file:///Users/arne/_Coding/dev-agency/src/agents/roleAgent.ts)
    - Route resolution logic: `resolveRoute` needs to fall back to `global_model` if no issue override or role assignment is set, before falling back to session fallback or Claude default.
+   - Logs details of every LLM call (model, provider name, and base URL) to the console and appends status updates to the live activity stream.
 
 ## Frontend Files
 

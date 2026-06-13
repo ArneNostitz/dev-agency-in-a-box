@@ -20,3 +20,13 @@
 - [x] Task 6: Test changes
   - Run `npm run typecheck` or `npm run dev` to ensure no compile/startup errors.
   - Verify styling and aesthetics of added model selectors.
+- [x] Task 7: Fix Detail panel model override reset loop
+  - Update frontend useEffect dependencies to primitive values (`[issue.modelOverride?.providerId, issue.modelOverride?.model]`).
+  - Implement `/model-override` POST route to persist model selection immediately on dropdown change.
+- [x] Task 8: Pass selected model to Detail toolbar actions
+  - Ensure `Start`, `Approve`, `Resume`, and `Fix` actions in the Detail toolbar pass the parsed model override.
+- [x] Task 9: Log LLM provider communication
+  - Print LLM invocation URL and details to the console on start.
+  - Push activity event to dashboard live activity stream (e.g., `🤖 LLM Call: [model] via [provider] ([url])`).
+  - Include model details in frontend startup toast notifications.
+

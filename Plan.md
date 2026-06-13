@@ -40,3 +40,13 @@
 ## Phase 6: Verification & Polish
 1. Run `npm run typecheck` to verify code correctness.
 2. Confirm the UI matches premium styling.
+
+## Phase 7: Bugfixes & Logging (Latest changes)
+1. Fix dependency array in `Card` and `Detail` components in `web/app.js` using primitives to avoid object reference inequality resets on polling.
+2. Add new `/model-override` endpoint to `src/webhook.ts` that immediately stores/clears model overrides in the settings DB.
+3. Update `web/app.js` dropdown onChange events to immediately call `/model-override` and save the choice.
+4. Pass `mo` to `act.start/resume/fix/approve` in Detail view toolbar.
+5. Log LLM provider URLs and credentials used to the terminal console on start.
+6. Push a status activity log (text type) to the live-stream so user sees LLM calls immediately.
+7. Include the selected model in frontend starting toasts.
+
