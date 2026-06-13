@@ -30,6 +30,7 @@ import {
   findPrForBranch,
   ensureDraftPr,
   createIssue,
+  listQueuedIssues,
   approvedByReaction,
   approveLastProposal,
   commentOnPr,
@@ -370,6 +371,12 @@ export async function forceResume(cfg: Config, repo: string, number: number, add
   // cause of "resume re-ran the whole test suite even though the PR was open & approved, then timed
   // out"). Record the PR, surface the review verdict, and either route to Ready (merge) or run just
   // the Fix when the reviewer asked for changes.
+  // An audit tracking issue resumes by RE-RUNNING the auditor (not the dev pipeline). This is how a
+  // usage-limit-interrupted audit auto-resumes after the reset (or via the Resume button).
+  if (issue.labels.includes(AUDIT_LABEL)) {
+    console.log(`[agency] resume → re-run audit ${repo} #${number}`);
+    return runAuditOn(cfg, repo, number);
+  }
   // When the human left a steering comment (addressComment), DON'T short-circuit — re-engage so the
   // agent addresses it, even if a PR exists. Only the plain Resume button / auto-resume short-circuits.
   const prBranch = `agency/issue-${number}`;
@@ -619,47 +626,87 @@ const AUDIT_TASK = [
   "return []. Do NOT change code or create issues — output only the JSON array and stop.",
 ].join("\n");
 
+export const AUDIT_LABEL = "agency:audit";
+const AUDIT_ISSUE_BODY =
+  "The Dev Agency **Auditor** is reviewing this codebase's health (architecture, duplication, dead " +
+  "code, complexity, test coverage) and will open scoped refactor/cleanup issues into Planned.\n\n" +
+  "This tracking issue auto-closes when the audit completes. If it's interrupted (e.g. a usage " +
+  "limit), it persists here — press **Resume** to re-run it.";
+
 /**
- * Manual "Audit now": the independent codebase Auditor. Clones the repo, runs Graphify + the auditor
- * agent (whole-codebase health review), and opens up to 5 scoped refactor/cleanup issues in Planned —
- * authored as YOU (owner token). Advisory only: never changes code, opens PRs, or blocks anything.
+ * Manual "Audit now": the independent codebase Auditor. Opens (or reuses) a real GitHub **tracking
+ * issue** so the audit survives errors/restarts and can be resumed, then runs the audit under it.
  */
-export async function forceAudit(_cfg: Config, repo: string): Promise<void> {
-  dispatch(`${repo}#audit`, async () => {
-    const workdir = workdirFor(repo, "audit");
+export async function forceAudit(cfg: Config, repo: string): Promise<void> {
+  // Reuse an open audit tracking issue (e.g. one a usage-limit interrupted) instead of duplicating.
+  const open = await listQueuedIssues(repo, AUDIT_LABEL).catch(() => [] as Array<{ number: number }>);
+  let number = open[0]?.number;
+  if (!number) {
+    const created = await createIssue(
+      repo,
+      `🔎 Codebase audit — ${new Date().toISOString().slice(0, 10)}`,
+      AUDIT_ISSUE_BODY,
+      ghUserToken() || ghBotToken(),
+    ).catch(() => null);
+    if (!created || !created.number) {
+      console.error(`[agency] audit ${repo}: couldn't open a tracking issue`);
+      return;
+    }
+    await addLabel(repo, created.number, AUDIT_LABEL).catch(() => {});
+    number = created.number;
+  }
+  await runAuditOn(cfg, repo, number);
+}
+
+/** Run (or re-run) the auditor under an existing tracking issue. Persists on the issue; resumable. */
+export async function runAuditOn(cfg: Config, repo: string, number: number): Promise<void> {
+  dispatch(`${repo}#${number}`, async () => {
+    const workdir = workdirFor(repo, `audit-${number}`);
     await rm(workdir, { recursive: true, force: true }).catch(() => {});
-    setActive(repo, 0, "issue", "auditor", `Audit ${repo}`);
-    pushActivity(repo, 0, "auditor", "start", `🔎 auditing ${repo} — building the codebase graph…`);
+    setActive(repo, number, "issue", "auditor", "Codebase audit");
+    for (const l of [NEEDS_ATTENTION, RATE_LIMITED, ...AWAITING_LABELS]) await removeLabel(repo, number, l).catch(() => {});
+    await addLabel(repo, number, IN_PROGRESS).catch(() => {});
+    recordIssueState(repo, number, { title: "🔎 Codebase audit", state: IN_PROGRESS });
     try {
       await cloneRepo(repo, workdir);
-      const res = await runRole("auditor", { task: AUDIT_TASK, workdir, repo, issueNumber: 0 });
+      const res = await runRole("auditor", { task: AUDIT_TASK, workdir, repo, issueNumber: number });
       const proposals = parseAuditProposals(res.text).slice(0, 5);
-      if (!proposals.length) {
-        pushActivity(repo, 0, "auditor", "done", "✅ audit complete — no issues proposed (codebase looks healthy).");
-        return;
-      }
       const owner = ghUserToken() || ghBotToken();
       const created: string[] = [];
       for (const p of proposals) {
         const issue = await createIssue(
           repo,
           p.title.slice(0, 250),
-          `${p.body}\n\n— _opened by the Dev Agency **Auditor** (codebase health review). Review, then ▶ Start to build it._`,
+          `${p.body}\n\n— _opened by the Dev Agency **Auditor** (tracking #${number}). Review, then ▶ Start to build it._`,
           owner,
         ).catch(() => null);
         if (!issue || !issue.number) continue;
         await addLabel(repo, issue.number, "agency:planned").catch(() => {});
-        await addLabel(repo, issue.number, "agency:audit").catch(() => {});
+        await addLabel(repo, issue.number, "agency:audit-finding").catch(() => {}); // NOT agency:audit — these are normal build issues
         recordIssueState(repo, issue.number, { title: p.title, state: "planned" });
         created.push(`#${issue.number}`);
       }
-      pushActivity(repo, 0, "auditor", "done", `✅ audit complete — opened ${created.length} issue(s) in Planned: ${created.join(", ")}`);
-      console.log(`[agency] audit ${repo}: opened ${created.length} issue(s): ${created.join(", ")}`);
+      const summary = created.length
+        ? `🔎 **Audit complete** — opened ${created.length} issue(s) in Planned: ${created.join(", ")}.`
+        : "🔎 **Audit complete** — no issues to propose; the codebase looks healthy.";
+      await commentOnIssue(repo, number, summary).catch(() => {});
+      await closeIssue(repo, number, "Audit complete.").catch(() => {});
+      recordIssueState(repo, number, { state: "merged" }); // → Done
+      await removeLabel(repo, number, IN_PROGRESS).catch(() => {});
+      console.log(`[agency] audit ${repo} #${number}: opened ${created.length} issue(s)`);
     } catch (err) {
-      pushActivity(repo, 0, "auditor", "done", `❌ audit failed: ${(err as Error).message.slice(0, 200)}`);
-      console.error(`[agency] audit ${repo} failed:`, (err as Error).message);
+      const msg = (err as Error).message ?? String(err);
+      // Survive a usage limit (auto-resumes after reset) or any error (resumable) — the tracking
+      // issue persists either way, so the audit is never silently lost.
+      if (!(await maybeParkRateLimited(repo, number, msg))) {
+        await removeLabel(repo, number, IN_PROGRESS).catch(() => {});
+        await addLabel(repo, number, NEEDS_ATTENTION).catch(() => {});
+        recordIssueState(repo, number, { state: NEEDS_ATTENTION });
+        await commentOnIssue(repo, number, `❌ Audit run failed: ${msg.slice(0, 300)} — press **Resume** to retry.`).catch(() => {});
+      }
+      console.error(`[agency] audit ${repo} #${number} failed:`, msg);
     } finally {
-      clearActive(repo, 0);
+      clearActive(repo, number);
       await rm(workdir, { recursive: true, force: true }).catch(() => {});
     }
   });

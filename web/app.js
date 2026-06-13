@@ -171,10 +171,9 @@ function App() {
   const ov = overridesRef.current;
   let issues = (data.issues || []).map((i) => { const o = ov[i.repo + "#" + i.number]; return o ? Object.assign({}, i, o.patch) : i; });
   issues = issues.concat(pending.filter((p) => !issues.some((i) => i.repo === p.repo && i.number === p.number)));
-  // A running codebase audit shows as a live card (sentinel #0) so you can watch its stream.
-  const auditing = (data.active || []).filter((a) => a.role === "auditor" && a.number === 0);
-  const auditRepos = auditing.map((a) => a.repo);
-  issues = issues.concat(auditing.filter((a) => !issues.some((i) => i.repo === a.repo && i.number === 0)).map((a) => ({ repo: a.repo, number: 0, title: "🔎 Codebase audit", state: "agency:in-progress", active: true, running: true, _audit: true, updated_at: new Date(a.since || Date.now()).toISOString() })));
+  // Repos with a running audit — drives the spinner on the top-bar Audit dropdown. (The audit itself
+  // is now a real GitHub tracking issue, so it shows as a normal card + detail.)
+  const auditRepos = (data.active || []).filter((a) => a.role === "auditor").map((a) => a.repo);
   const shown = issues.filter((i) => !repoFilter || i.repo === repoFilter);
   const activity = (data.activity || []).concat(liveRef.current);
 
@@ -398,7 +397,6 @@ function Detail({ issue, activity, act, isDesktop, onClose, onOpenIssue }) {
   function loadThread() { getJSON("/thread?repo=" + encodeURIComponent(repo) + "&number=" + number).then(setThread).catch(() => {}); }
   useEffect(() => {
     setThread(null); setPr(null); setAppInfo(null); stickRef.current = true;
-    if (issue._audit) return; // the audit has no GitHub thread/PR — stream-only view below
     loadThread();
     if (issue.pr_number) getJSON("/pr-status?repo=" + encodeURIComponent(repo) + "&number=" + number).then(setPr).catch(() => {});
     getJSON("/app-info?repo=" + encodeURIComponent(repo) + "&number=" + number).then(setAppInfo).catch(() => setAppInfo({ kind: "unknown" }));
@@ -414,30 +412,6 @@ function Detail({ issue, activity, act, isDesktop, onClose, onOpenIssue }) {
   const done = isDone(issue);
   const st = issue.state || "";
   const running = !!(issue.running || issue.active || issue.queued); // a Claude run is executing right now
-
-  // Codebase audit (sentinel #0): no GitHub thread/PR — a stream-only detail with a Stop button.
-  if (issue._audit) {
-    const astream = activity.filter((a) => a.repo === repo && a.number === 0).slice(-200);
-    const sbusy = act.isBusy("stop", repo, 0);
-    return html`<div class="detail on">
-      <div class="dhead">
-        <button class="iconbtn" aria-label="Close" onClick=${onClose}><${Icon} name="arrowleft"/></button>
-        <div class="tt">🔎 Auditing ${repo.split("/").pop()} <span class="dmeta">· codebase health review → issues land in Planned</span></div>
-      </div>
-      <div class="dtoolbar">
-        <a class="tbtn" data-tip="Open repo on GitHub" href=${"https://github.com/" + repo} target="_blank" rel="noopener"><${Icon} name="link"/>${isDesktop ? html`<span class="tlabel">GitHub</span>` : null}</a>
-        <button class=${"tbtn warn" + (sbusy ? " busy" : "")} disabled=${sbusy} data-tip="Stop the audit" onClick=${() => act.stop(repo, 0)}>${sbusy ? html`<${Spinner} size=${18}/>` : html`<${Icon} name="stop"/>`}${isDesktop ? html`<span class="tlabel">${sbusy ? "Stopping…" : "Stop"}</span>` : null}</button>
-      </div>
-      <div class="dpanes">
-        <div class="dpane side" style="flex:1 1 auto;width:auto;max-width:none">
-          <div class="sec">Live stream — Auditor</div>
-          <div class="dstream" ref=${streamRef} onScroll=${(e) => { const el = e.target; stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 50; }}>
-            ${astream.length ? astream.map((a, idx) => html`<div key=${idx} class=${"l " + (a.kind === "tool" ? "tool" : a.kind === "start" || a.kind === "done" ? "muted" : "")}>${a.text}</div>`) : html`<div class="l muted">Starting the audit…</div>`}
-          </div>
-        </div>
-      </div>
-    </div>`;
-  }
 
   function send() {
     if (!reply.trim() && !atts.length) return; setBusy(true);
