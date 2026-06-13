@@ -37,6 +37,7 @@ const ICONS = {
   history: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>',
   search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
   lock: '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+  chart: '<path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/>',
 };
 const Icon = ({ name, size = 18, cls }) => html`<svg class=${"lic " + (cls || "")} width=${size} height=${size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{ __html: ICONS[name] || "" }}></svg>`;
 // Spinning loader to show an action is in flight (blocks "did my click register?" ambiguity).
@@ -243,7 +244,7 @@ function App() {
 
   return html`
     <div class="app">
-      <${TopBar} working=${working} env=${data.env} theme=${theme} setTheme=${setThemeP} onSettings=${() => setSheet("settings")} onNew=${() => openComposer()} repos=${repos} onAudit=${(r) => act.audit(r)} auditRepos=${auditRepos}/>
+      <${TopBar} working=${working} env=${data.env} theme=${theme} setTheme=${setThemeP} onSettings=${() => setSheet("settings")} onUsage=${() => setSheet("usage")} onNew=${() => openComposer()} repos=${repos} onAudit=${(r) => act.audit(r)} auditRepos=${auditRepos}/>
       <${RepoSelector} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} onAdd=${() => setSheet("addrepo")}/>
       ${data.secretsHealth ? html`<${SecretBanner} h=${data.secretsHealth} onFix=${() => setSheet("settings")}/>` : null}
       <${StatusLine} working=${working} session=${data.session} spend=${data.spendToday}/>
@@ -256,6 +257,7 @@ function App() {
       ${sheet === "composer" && html`<${Composer} repos=${repos} repo=${composerRepo} setRepo=${setComposerRepo} onClose=${() => setSheet(null)} onCreate=${createIssue}/>`}
       ${sheet === "settings" && html`<${Settings} data=${data} theme=${theme} setTheme=${setThemeP} onClose=${() => setSheet(null)} setAuto=${act.setAuto} reload=${load}/>`}
       ${sheet === "addrepo" && html`<${AddRepo} repos=${repos} onClose=${() => setSheet(null)} reload=${load}/>`}
+      ${sheet === "usage" && html`<${Usage} onClose=${() => setSheet(null)} onOpenIssue=${openIssue}/>`}
       ${data.user && data.onboarded === false && html`<${Onboarding} repos=${repos} reload=${load}/>`}
       <div class=${"toast " + (toastMsg ? "on" : "")}>${toastMsg}</div>
     </div>`;
@@ -271,7 +273,7 @@ function SecretBanner({ h, onFix }) {
   return html`<div class="secbanner"><b>⚠ Credentials need attention.</b> ${msgs.map((m, i) => html`<div key=${i} style="margin-top:3px">${m}</div>`)} <button class="btn ghost" style="margin-top:7px" onClick=${onFix}>Open Settings</button></div>`;
 }
 
-function TopBar({ working, env, theme, setTheme, onSettings, onNew, repos, onAudit, auditRepos }) {
+function TopBar({ working, env, theme, setTheme, onSettings, onUsage, onNew, repos, onAudit, auditRepos }) {
   const [auditOpen, setAuditOpen] = useState(false);
   const isAuditing = (r) => (auditRepos || []).includes(r);
   return html`<div class="topbar">
@@ -286,6 +288,7 @@ function TopBar({ working, env, theme, setTheme, onSettings, onNew, repos, onAud
           <div class="dropmenu-foot">Opens scoped refactor issues in Planned.</div>
         </div>` : null}
     </div>
+    <button class="iconbtn" aria-label="Token usage" title="Token usage statistics" onClick=${onUsage}><${Icon} name="chart"/></button>
     <button class="iconbtn" aria-label="New issue" onClick=${onNew}><${Icon} name="plus"/></button>
     <button class="iconbtn" aria-label="Toggle theme" onClick=${() => setTheme(theme === "dark" ? "light" : "dark")}><${Icon} name=${theme === "dark" ? "sun" : "moon"}/></button>
     <button class="iconbtn" aria-label="Settings" onClick=${onSettings}><${Icon} name="settings"/></button>
@@ -334,6 +337,11 @@ function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, onAddRepo, a
   </div>`;
 }
 
+function usageTitle(u) {
+  if (!u || !u.tokens) return "No token usage recorded yet";
+  return `${fmtTok(u.tokens)} tokens · $${Number(u.costUsd || 0).toFixed(2)}${u.model ? " · " + shortModel(u.model) : ""} · ${u.runs || 0} runs`;
+}
+
 function Card({ i, multi, onOpen, act }) {
   const st = statusChip(i);
   const done = isDone(i);
@@ -346,7 +354,7 @@ function Card({ i, multi, onOpen, act }) {
   else if (i.active || i.state === "agency:in-progress" || i.state === "agency:rate-limited") quick = { action: "stop", cls: "stop", icon: "stop", label: "stop", fn: () => act.stop(i.repo, i.number) };
   const qBusy = quick && act.isBusy(quick.action, i.repo, i.number);
   const autoOn = i.auto && (i.auto.resume || i.auto.merge) && !done;
-  return html`<div class=${"card" + (tmp ? " busy" : "")} onClick=${tmp ? null : () => onOpen(i)}>
+  return html`<div class=${"card" + (tmp ? " busy" : "")} title=${usageTitle(i.usage)} onClick=${tmp ? null : () => onOpen(i)}>
     <div class="t">${(i.active || tmp) ? html`<${Spinner} size=${13}/> ` : null}${i.title || "#" + i.number}</div>
     <div class="meta">
       ${tmp
@@ -354,6 +362,7 @@ function Card({ i, multi, onOpen, act }) {
         : html`<span class=${"statuschip " + st.cls}><${Icon} name=${st.icon} size=${12}/> ${st.label}</span>`}
       ${autoOn ? html`<span class="statuschip s-auto"><${Icon} name=${i.auto.merge ? "merge" : "refresh"} size=${12}/> auto</span>` : null}
       ${i.pr_number ? html`<a class="tagk" href=${i.pr_url || ghUrl(i.repo, i.pr_number)} target="_blank" rel="noopener" onClick=${(e) => e.stopPropagation()}><${Icon} name="pr" size=${11}/> #${i.pr_number}</a>` : null}
+      ${i.usage && i.usage.tokens ? html`<span class="tagk" title=${usageTitle(i.usage)}><${Icon} name="chart" size=${11}/> ${fmtTok(i.usage.tokens)}${i.usage.model ? " · " + shortModel(i.usage.model) : ""}</span>` : null}
       ${multi ? html`<span class="tagk">${i.repo.split("/").pop()}</span>` : null}
       <span class="spacer" style="margin-left:auto"></span>
       ${tmp ? null : quick ? html`<button class=${"cardbtn " + quick.cls + (qBusy ? " busy" : "")} disabled=${qBusy} onClick=${(e) => { e.stopPropagation(); quick.fn(); }}>${qBusy ? html`<${Spinner} size=${13}/>` : html`<${Icon} name=${quick.icon} size=${13}/>`} ${qBusy ? "working…" : quick.label}</button>` : html`<span style="color:var(--ink-3);font-size:12px">${ago(i.updated_at)}</span>`}
@@ -521,6 +530,12 @@ function Detail({ issue, activity, act, isDesktop, onClose, onOpenIssue }) {
     <div class="dstream" ref=${streamRef} onScroll=${(e) => { const el = e.target; stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 50; }}>
       ${stream.length ? stream.map((a, idx) => html`<div key=${idx} class=${"l " + (a.kind === "tool" ? "tool" : a.kind === "start" || a.kind === "done" ? "muted" : "")}>${a.text}</div>`) : html`<div class="l muted">No live activity yet.</div>`}
     </div>
+    ${issue.usage && issue.usage.tokens ? html`<div class="dusage" title=${usageTitle(issue.usage)}>
+      <span><${Icon} name="chart" size=${13}/> ${fmtTok(issue.usage.tokens)} tokens</span>
+      <span>$${Number(issue.usage.costUsd || 0).toFixed(2)}</span>
+      ${issue.usage.model ? html`<span>${shortModel(issue.usage.model)}</span>` : null}
+      <span class="muted">${issue.usage.runs || 0} runs</span>
+    </div>` : null}
     <${RunApp} repo=${repo} number=${number} appInfo=${appInfo} issue=${issue} done=${done}/>
   </div>`;
 
@@ -988,6 +1003,73 @@ function Admin({ users, webhookSecretSet, reload }) {
 }
 
 // ---------- Sheet wrapper ----------
+function shortModel(m) {
+  if (!m) return "?";
+  const s = String(m);
+  if (/opus/i.test(s)) return "Opus";
+  if (/sonnet/i.test(s)) return "Sonnet";
+  if (/haiku/i.test(s)) return "Haiku";
+  return s.replace(/^claude-/, "");
+}
+
+function UsageBar({ label, sub, value, max, cost }) {
+  const pct = Math.round((100 * (value || 0)) / (max || 1));
+  return html`<div class="useg-row">
+    <span class="useg-row-l">${label}${sub ? html` <span class="muted">${sub}</span>` : null}</span>
+    <span class="useg-track"><i style=${"width:" + Math.max(2, pct) + "%"}></i></span>
+    <span class="useg-row-r">${fmtTok(value)}${cost != null ? " · $" + Number(cost).toFixed(2) : ""}</span>
+  </div>`;
+}
+
+function Usage({ onClose, onOpenIssue }) {
+  const [range, setRange] = useState("window");
+  const [d, setD] = useState(null);
+  const [err, setErr] = useState(false);
+  useEffect(() => {
+    let live = true;
+    setD(null); setErr(false);
+    getJSON("/usage?range=" + range)
+      .then((r) => { if (live) setD(r); })
+      .catch(() => { if (live) setErr(true); });
+    return () => { live = false; };
+  }, [range]);
+  const RANGES = [["today", "Today"], ["window", "Window"], ["7d", "7 days"], ["30d", "30 days"], ["all", "All"]];
+  const maxOf = (arr, k) => Math.max(1, ...(arr || []).map((x) => x[k] || 0));
+  return html`<${Sheet} title="Token usage" onClose=${onClose}>
+    <div class="useg-tabs">
+      ${RANGES.map(([k, l]) => html`<button key=${k} class=${"useg-tab" + (range === k ? " on" : "")} onClick=${() => setRange(k)}>${l}</button>`)}
+    </div>
+    ${err ? html`<div class="muted">Couldn't load usage.</div>`
+      : !d ? html`<div class="muted">Loading…</div>`
+      : html`
+        <div class="useg-totals">
+          <div class="useg-big"><b>${fmtTok(d.total && d.total.tokens)}</b><span>tokens</span></div>
+          <div class="useg-big"><b>$${Number((d.total && d.total.costUsd) || 0).toFixed(2)}</b><span>est. cost</span></div>
+        </div>
+        <div class="useg-sec">By model</div>
+        ${(d.byModel && d.byModel.length)
+          ? d.byModel.map((m) => html`<${UsageBar} key=${m.model} label=${shortModel(m.model)} value=${m.tokens} max=${maxOf(d.byModel, "tokens")} cost=${m.costUsd}/>`)
+          : html`<div class="muted">No usage in this range.</div>`}
+        <div class="useg-sec">By agent role</div>
+        ${(d.byRole && d.byRole.length)
+          ? d.byRole.map((r) => html`<${UsageBar} key=${r.role || "?"} label=${r.role || "—"} sub=${(r.runs || 0) + " runs"} value=${r.tokens} max=${maxOf(d.byRole, "tokens")} cost=${r.costUsd}/>`)
+          : html`<div class="muted">No role-tagged usage yet.</div>`}
+        <div class="useg-sec">Most expensive issues</div>
+        ${(d.topIssues && d.topIssues.length)
+          ? d.topIssues.map((i) => html`<button class="useg-issue" key=${i.repo + "#" + i.number} onClick=${() => { onClose(); onOpenIssue && onOpenIssue(i.repo, i.number); }}>
+              <span class="useg-row-l">${String(i.repo || "").split("/").pop()} <b>#${i.number}</b> <span class="muted">${(i.runs || 0) + " runs"}</span></span>
+              <span class="useg-track"><i style=${"width:" + Math.max(2, Math.round((100 * i.tokens) / maxOf(d.topIssues, "tokens"))) + "%"}></i></span>
+              <span class="useg-row-r">${fmtTok(i.tokens)} · $${Number(i.costUsd || 0).toFixed(2)}</span>
+            </button>`)
+          : html`<div class="muted">No per-issue data yet (older runs weren't tagged).</div>`}
+        <div class="useg-sec">Per day</div>
+        ${(d.byDay && d.byDay.length)
+          ? d.byDay.map((day) => html`<${UsageBar} key=${day.day} label=${String(day.day).slice(5)} value=${day.tokens} max=${maxOf(d.byDay, "tokens")} cost=${day.costUsd}/>`)
+          : html`<div class="muted">No daily data.</div>`}
+      `}
+  <//>`;
+}
+
 function Sheet({ title, onClose, footer, children }) {
   return html`<div><div class="scrim on" onClick=${onClose}></div>
     <div class="sheet bottom on">

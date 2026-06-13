@@ -309,7 +309,7 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
 
   const { text, turns, costUsd, tokens, stopped } = r;
   if (sessionId) setSession(repo, issueNumber, role, sessionId); // for resume after an interruption
-  recordTokens(tokens, costUsd, model);
+  recordTokens(tokens, costUsd, model, repo, issueNumber, role);
   const tok = tokens ? `, ${Math.round(tokens / 1000)}k tok` : "";
   pushActivity(
     repo,
