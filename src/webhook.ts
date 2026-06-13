@@ -551,7 +551,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         }
         void getThreadFull(repo, number)
           .then((t) => res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(t)))
-          .catch(() => res.writeHead(200, { "content-type": "application/json" }).end("{}"));
+          .catch((err) => res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ error: (err as Error).message || "Internal Server Error" })));
         return;
       }
 

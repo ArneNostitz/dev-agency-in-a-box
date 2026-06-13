@@ -554,20 +554,31 @@ function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIs
   function loadThread() {
     getJSON("/thread?repo=" + encodeURIComponent(repo) + "&number=" + number)
       .then((t) => {
-        if (t && Array.isArray(t.comments)) setThread(t);
-        else setThread({ _err: "No thread data received from GitHub — the issue may not exist yet or the token lacks access." });
+        if (t && Array.isArray(t.comments)) {
+          setThread(t);
+        } else {
+          const errMsg = (t && t.error) || "No thread data received from GitHub — the issue may not exist yet or the token lacks access.";
+          setThread({ _err: errMsg });
+          toast(errMsg);
+        }
       })
-      .catch(() => setThread((prev) => prev || { _err: "Couldn't load thread. Check network and GitHub token." }));
+      .catch((e) => {
+        const errMsg = (e && e.message) || "Couldn't load thread. Check network and GitHub token.";
+        setThread((prev) => prev || { _err: errMsg });
+        toast(errMsg);
+      });
   }
   useEffect(() => {
-    setThread(null); setPr(null); setAppInfo(null); setAtts([]); setPendingComments([]); stickRef.current = true;
     setModelOverride(issue.modelOverride ? issue.modelOverride.providerId + "/" + issue.modelOverride.model : "");
+  }, [issue.modelOverride]);
+  useEffect(() => {
+    setThread(null); setPr(null); setAppInfo(null); setAtts([]); setPendingComments([]); stickRef.current = true;
     if (issue._audit) return; // the audit has no GitHub thread/PR — stream-only view below
     loadThread();
     if (issue.pr_number) getJSON("/pr-status?repo=" + encodeURIComponent(repo) + "&number=" + number).then(setPr).catch(() => {});
     getJSON("/app-info?repo=" + encodeURIComponent(repo) + "&number=" + number).then(setAppInfo).catch(() => setAppInfo({ kind: "unknown" }));
     const t = setInterval(loadThread, 6000); return () => clearInterval(t);
-  }, [repo, number, issue]);
+  }, [repo, number, issue._audit, issue.pr_number]);
 
   const stream = activity.filter((a) => a.repo === repo && a.number === number).slice(-60);
   useEffect(() => { const el = streamRef.current; if (el && stickRef.current) el.scrollTop = el.scrollHeight; });
