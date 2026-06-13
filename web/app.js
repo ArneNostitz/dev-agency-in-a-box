@@ -147,6 +147,7 @@ function App() {
   const [theme, setTheme] = useState(document.documentElement.getAttribute("data-theme") || "light");
   const [toastMsg, setToastMsg] = useState("");
   const [pending, setPending] = useState([]); // optimistic new issues
+  const [detailError, setDetailError] = useState(null); // inline error for the open detail
   const overridesRef = useRef({}); // "repo#n" -> {state, t}
   const busyRef = useRef({}); // "action:repo#n" -> ts, while a request is in flight
   const openIssueRef = useRef(null); // last-known open issue, so polls don't flicker the detail closed
@@ -217,12 +218,22 @@ function App() {
 
   function openComposer(repo) { setComposerRepo(repo || repoFilter || (repos[0] || null)); setSheet("composer"); }
   function createIssue(repo, role, title, body, start, atts) {
-    const tmp = { repo, number: -Date.now(), title, role, state: start ? "agency:in-progress" : "planned", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), _tmp: true };
+    const tmpNum = -Date.now();
+    const tmp = { repo, number: tmpNum, title, role, state: start ? "agency:in-progress" : "planned", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), _tmp: true };
     setPending((ps) => ps.concat(tmp)); setSheet(null); toast(start ? "Creating & starting…" : "Added to Planned");
+    if (start) { setOpenKey(repo + "#" + tmpNum); setDetailError(null); }
     Promise.all((atts || []).map((a) => api("/upload-file", { repo, number: 0, dataUrl: a.dataUrl, name: a.name }).then((j) => j && j.md).catch(() => null)))
       .then((mds) => { const full = [body].concat(mds.filter(Boolean)).filter(Boolean).join("\n\n"); return api("/new-issue", { repo, role, title, body: full, start: !!start }); })
-      .then((d) => { setPending((ps) => ps.map((p) => (p === tmp ? Object.assign({}, p, { number: d.number || p.number }) : p))); setTimeout(load, 700); })
-      .catch((e) => { toast((e && e.message) || "Couldn’t create"); setPending((ps) => ps.filter((p) => p !== tmp)); });
+      .then((d) => {
+        if (start && d && d.number) setOpenKey(repo + "#" + d.number);
+        setPending((ps) => ps.map((p) => (p === tmp ? Object.assign({}, p, { number: d.number || p.number }) : p)));
+        setTimeout(load, 700);
+      })
+      .catch((e) => {
+        const msg = (e && e.message) || "Couldn’t create";
+        if (start) { setDetailError(msg); } else { toast(msg); }
+        setPending((ps) => ps.filter((p) => p !== tmp));
+      });
   }
 
   // Keep the open detail mounted across polls. The issue object is re-fetched every 5s; if it's
@@ -253,7 +264,7 @@ function App() {
       </div>
       ${!isDesktop && html`<${TabBar} issues=${shown} tab=${tab} setTab=${setTab}/>`}
       ${open && html`<div class="dscrim" onClick=${() => setOpenKey(null)}></div>`}
-      ${open && html`<${Detail} key=${openKey} issue=${open} activity=${activity} act=${act} isDesktop=${isDesktop} onClose=${() => setOpenKey(null)} onOpenIssue=${openIssue}/>`}
+      ${open && html`<${Detail} key=${openKey} issue=${open} activity=${activity} act=${act} isDesktop=${isDesktop} startError=${detailError} onClose=${() => { setOpenKey(null); setDetailError(null); }} onOpenIssue=${openIssue}/>`}
       ${sheet === "composer" && html`<${Composer} repos=${repos} repo=${composerRepo} setRepo=${setComposerRepo} onClose=${() => setSheet(null)} onCreate=${createIssue}/>`}
       ${sheet === "settings" && html`<${Settings} data=${data} theme=${theme} setTheme=${setThemeP} onClose=${() => setSheet(null)} setAuto=${act.setAuto} reload=${load}/>`}
       ${sheet === "addrepo" && html`<${AddRepo} repos=${repos} onClose=${() => setSheet(null)} reload=${load}/>`}
@@ -354,12 +365,13 @@ function Card({ i, multi, onOpen, act }) {
   else if (i.active || i.state === "agency:in-progress" || i.state === "agency:rate-limited") quick = { action: "stop", cls: "stop", icon: "stop", label: "stop", fn: () => act.stop(i.repo, i.number) };
   const qBusy = quick && act.isBusy(quick.action, i.repo, i.number);
   const autoOn = i.auto && (i.auto.resume || i.auto.merge) && !done;
-  return html`<div class=${"card" + (tmp ? " busy" : "")} title=${usageTitle(i.usage)} onClick=${tmp ? null : () => onOpen(i)}>
+  return html`<div class=${"card" + (tmp ? " busy" : "") + (i.active ? " active-now" : "")} title=${usageTitle(i.usage)} onClick=${tmp ? null : () => onOpen(i)}>
     <div class="t">${(i.active || tmp) ? html`<${Spinner} size=${13}/> ` : null}${i.title || "#" + i.number}</div>
     <div class="meta">
       ${tmp
         ? html`<span class="statuschip s-working"><${Spinner} size=${12}/> ${i.state === "agency:in-progress" ? "creating & starting…" : "creating…"}</span>`
         : html`<span class=${"statuschip " + st.cls}><${Icon} name=${st.icon} size=${12}/> ${st.label}</span>`}
+      ${i.active && !tmp ? html`<span class="dot"></span>` : null}
       ${autoOn ? html`<span class="statuschip s-auto"><${Icon} name=${i.auto.merge ? "merge" : "refresh"} size=${12}/> auto</span>` : null}
       ${i.pr_number ? html`<a class="tagk" href=${i.pr_url || ghUrl(i.repo, i.pr_number)} target="_blank" rel="noopener" onClick=${(e) => e.stopPropagation()}><${Icon} name="pr" size=${11}/> #${i.pr_number}</a>` : null}
       ${i.usage && i.usage.tokens ? html`<span class="tagk" title=${usageTitle(i.usage)}><${Icon} name="chart" size=${11}/> ${fmtTok(i.usage.tokens)}${i.usage.model ? " · " + shortModel(i.usage.model) : ""}</span>` : null}
@@ -382,7 +394,7 @@ function TabBar({ issues, tab, setTab }) {
 }
 
 // ---------- Detail ----------
-function Detail({ issue, activity, act, isDesktop, onClose, onOpenIssue }) {
+function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIssue }) {
   const [tab, setTab] = useState("chat"); // mobile sub-tab: chat | stream
   const [thread, setThread] = useState(null);
   const [pr, setPr] = useState(null);
@@ -515,8 +527,9 @@ function Detail({ issue, activity, act, isDesktop, onClose, onOpenIssue }) {
 
   const streamPane = html`<div class="dpane side">
     <div class="sec">Live stream</div>
+    ${startError ? html`<div class="secbanner">⚠ ${startError}</div>` : null}
     <div class="dstream" ref=${streamRef} onScroll=${(e) => { const el = e.target; stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 50; }}>
-      ${stream.length ? stream.map((a, idx) => html`<div key=${idx} class=${"l " + (a.kind === "tool" ? "tool" : a.kind === "start" || a.kind === "done" ? "muted" : "")}>${a.text}</div>`) : html`<div class="l muted">No live activity yet.</div>`}
+      ${stream.length ? stream.map((a, idx) => html`<div key=${idx} class=${"l " + (a.kind === "tool" ? "tool" : a.kind === "start" || a.kind === "done" ? "muted" : "")}>${a.text}</div>`) : html`<div class="l muted">${startError ? "Failed to start." : "No live activity yet."}</div>`}
     </div>
     ${issue.usage && issue.usage.tokens ? html`<div class="dusage" title=${usageTitle(issue.usage)}>
       <span><${Icon} name="chart" size=${13}/> ${fmtTok(issue.usage.tokens)} tokens</span>
@@ -539,12 +552,12 @@ function Detail({ issue, activity, act, isDesktop, onClose, onOpenIssue }) {
   })() : null;
   const chatPane = html`<div class="dpane chat" ref=${chatRef}>
     ${issue.epic ? html`<${EpicChecklist} epic=${issue.epic} repo=${repo} onOpen=${onOpenIssue} onClose=${() => act.close(repo, number).then(onClose)} closing=${act.isBusy("close", repo, number)}/>` : null}
-    ${prBar}
     <div class="sec">Conversation</div>
     ${thread ? html`<div>
       ${thread.body ? html`<${Comment} author=${thread.author} createdAt=${thread.createdAt} body=${thread.body} isAgency=${false}/>` : null}
       ${(thread.comments || []).map((c, idx) => html`<${Comment} key=${idx} author=${c.author} createdAt=${c.createdAt} body=${c.body} isAgency=${c.isAgency}/>`)}
     </div>` : html`<div class="muted">Loading…</div>`}
+    ${prBar}
   </div>`;
 
   return html`<div class="detail on">
