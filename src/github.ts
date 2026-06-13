@@ -336,6 +336,7 @@ export async function upsertTrackerComment(repo: string, parent: number, body: s
 }
 
 export interface ThreadComment {
+  id: number;
   author: string;
   body: string;
   createdAt: string;
@@ -362,17 +363,20 @@ export async function getThreadFull(repo: string, number: number): Promise<Threa
   } catch {
     /* ignore */
   }
+  // --paginate with an array jq expression produces one JSON array per page, which concatenates
+  // to invalid JSON ("[...][...]"). Use NDJSON (one object per line) and parse line-by-line.
   const out = await gh([
     "api", `repos/${repo}/issues/${number}/comments`, "--paginate",
-    "--jq", "[.[]|{author:.user.login, body:.body, createdAt:.created_at}]",
-  ]).catch(() => "[]");
-  let raw: Array<{ author?: string; body?: string; createdAt?: string }> = [];
-  try {
-    raw = JSON.parse(out);
-  } catch {
-    /* ignore */
+    "--jq", ".[]|{id:.id, author:.user.login, body:.body, createdAt:.created_at}",
+  ]).catch(() => "");
+  const raw: Array<{ id?: number; author?: string; body?: string; createdAt?: string }> = [];
+  for (const line of out.split("\n")) {
+    const l = line.trim();
+    if (!l) continue;
+    try { raw.push(JSON.parse(l)); } catch { /* skip malformed line */ }
   }
   const comments: ThreadComment[] = raw.map((c) => ({
+    id: c.id ?? 0,
     author: c.author ?? "?",
     body: (c.body ?? "").replace(AGENCY_MARKER, "").trim(),
     createdAt: c.createdAt ?? "",
@@ -398,6 +402,16 @@ export async function getThreadFull(repo: string, number: number): Promise<Threa
  */
 export async function commentAsHuman(repo: string, number: number, body: string, asToken?: string): Promise<void> {
   const args = ["api", "-X", "POST", `repos/${repo}/issues/${number}/comments`, "-f", `body=${body}`];
+  if (asToken) await ghAs(asToken, args);
+  else await gh(args);
+}
+
+/**
+ * Edit an existing issue comment. Uses the owner's token first (so edits appear under your name),
+ * falls back to the bot token. Pass the comment's numeric id (from getThreadFull).
+ */
+export async function editCommentAsHuman(repo: string, commentId: number, body: string, asToken?: string): Promise<void> {
+  const args = ["api", "-X", "PATCH", `repos/${repo}/issues/comments/${commentId}`, "-f", `body=${body}`];
   if (asToken) await ghAs(asToken, args);
   else await gh(args);
 }

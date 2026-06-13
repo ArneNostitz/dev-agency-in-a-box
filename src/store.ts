@@ -1174,6 +1174,18 @@ export function recentRuns(limit = 40): RunRow[] {
 }
 
 /** Recent issue states (excluding archived), newest first (for the status dashboard). */
+export function getIssueRow(repo: string, number: number): IssueRow | null {
+  const d = getDb();
+  if (!d) return null;
+  try {
+    return (d
+      .prepare(`SELECT repo, number, title, role, state, updated_at, pr_number, pr_url FROM issues WHERE repo = ? AND number = ?`)
+      .get(repo, number) as unknown as IssueRow | null) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export function recentIssues(limit = 40): IssueRow[] {
   const d = getDb();
   if (!d) return [];
