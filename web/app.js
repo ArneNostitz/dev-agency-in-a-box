@@ -364,7 +364,9 @@ function Detail({ issue, activity, act, isDesktop, onClose, onOpenIssue }) {
   const streamRef = useRef(null);
   const stickRef = useRef(true);
   const chatRef = useRef(null);
+  const taRef = useRef(null); // compose textarea (auto-grows with content)
   const didScrollRef = useRef(false); // scroll the conversation to the newest message once, on open
+  function autosize() { const el = taRef.current; if (!el) return; el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, 200) + "px"; }
   const repo = issue.repo, number = issue.number;
   useEffect(() => {
     if (thread && !didScrollRef.current && chatRef.current) {
@@ -400,7 +402,7 @@ function Detail({ issue, activity, act, isDesktop, onClose, onOpenIssue }) {
     if (!reply.trim() && !atts.length) return; setBusy(true);
     Promise.all(atts.map((a) => api("/upload-file", { repo, number, dataUrl: a.d, name: a.name }).then((j) => j && j.md).catch(() => null)))
       .then((mds) => { const full = [reply].concat(mds.filter(Boolean)).filter(Boolean).join("\n\n"); return api("/comment", { repo, number, body: full }); })
-      .then(() => { setReply(""); setAtts([]); toast("Sent"); setTimeout(loadThread, 800); })
+      .then(() => { setReply(""); setAtts([]); if (taRef.current) taRef.current.style.height = "auto"; toast(running ? "Queued — the agent will pick it up when the run finishes" : "Sent"); setTimeout(loadThread, 800); })
       .catch((e) => toast((e && e.message) || "Couldn’t send")).then(() => setBusy(false));
   }
   function pickFiles(e) { const fs = e.target.files || []; for (let i = 0; i < fs.length; i++) readAttach(fs[i], (a) => setAtts((x) => x.concat(a))); e.target.value = ""; }
@@ -522,11 +524,16 @@ function Detail({ issue, activity, act, isDesktop, onClose, onOpenIssue }) {
       ${isDesktop ? html`${chatPane}${streamPane}` : tab === "chat" ? chatPane : streamPane}
     </div>
     <div class="dcompose">
-      ${atts.length ? html`<div style="position:absolute;bottom:100%;left:0;padding:0 10px">${atts.map((a, idx) => html`<span class="att" key=${idx}>${a.img ? html`<img src=${a.d}/>` : html`<span><${Icon} name="paperclip" size=${12}/> ${a.name}</span>`}<button class="iconbtn" style="width:18px;height:18px;border:none" onClick=${() => setAtts((x) => x.filter((_, j) => j !== idx))}>×</button></span>`)}</div>` : null}
-      <label class="iconbtn" style="cursor:pointer"><${Icon} name="paperclip"/><input type="file" multiple style="display:none" onChange=${pickFiles}/></label>
-      <textarea placeholder=${running ? "Reply to steer the run…  (sending stops it & re-engages with your message)" : "Reply…  (paste an image to attach)"} value=${reply} onInput=${(e) => setReply(e.target.value)} onPaste=${onPaste}></textarea>
-      ${running ? html`<button class=${"btn warn" + (bz("stop") ? " busy" : "")} title="Stop the running agent" disabled=${bz("stop")} onClick=${() => act.stop(repo, number)}>${bz("stop") ? html`<${Spinner} size=${16}/>` : html`<${Icon} name="stop"/>`}</button>` : null}
-      <button class="btn primary" disabled=${busy} onClick=${send}><${Icon} name="send"/></button>
+      <div class="composer">
+        ${atts.length ? html`<div class="composer-atts">${atts.map((a, idx) => html`<span class="att" key=${idx}>${a.img ? html`<img src=${a.d}/>` : html`<span><${Icon} name="paperclip" size=${12}/> ${a.name}</span>`}<button class="iconbtn" style="width:18px;height:18px;border:none" onClick=${() => setAtts((x) => x.filter((_, j) => j !== idx))}>×</button></span>`)}</div>` : null}
+        <textarea ref=${taRef} rows="1" placeholder=${running ? "Message the agent…  (queued until the run finishes)" : "Reply…  (paste an image to attach)"} value=${reply} onInput=${(e) => { setReply(e.target.value); autosize(); }} onPaste=${onPaste}></textarea>
+        <div class="composer-row">
+          <label class="composer-icon" title="Attach a file"><${Icon} name="paperclip" size=${18}/><input type="file" multiple style="display:none" onChange=${pickFiles}/></label>
+          <span class="spacer"></span>
+          ${running ? html`<button class=${"btn warn" + (bz("stop") ? " busy" : "")} title="Stop the running agent" disabled=${bz("stop")} onClick=${() => act.stop(repo, number)}>${bz("stop") ? html`<${Spinner} size=${15}/>` : html`<${Icon} name="stop" size=${15}/>`} Stop</button>` : null}
+          <button class=${"btn primary" + (busy ? " busy" : "")} disabled=${busy} onClick=${send}>${busy ? html`<${Spinner} size=${15}/>` : running ? html`<${Icon} name="clock" size=${15}/>` : html`<${Icon} name="send" size=${15}/>`} ${running ? "Queue" : "Send"}</button>
+        </div>
+      </div>
     </div>
   </div>`;
 }
