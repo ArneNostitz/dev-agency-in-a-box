@@ -340,7 +340,7 @@ async function processFollowUp(cfg: Config, repo: string, issue: Issue): Promise
  * in-progress, parked needs-attention, blocked, or just quiet) and re-run it. Clears the agency
  * labels + any zombie active entry, then re-dispatches the pipeline.
  */
-export async function forceResume(cfg: Config, repo: string, number: number): Promise<void> {
+export async function forceResume(cfg: Config, repo: string, number: number, addressComment = false): Promise<void> {
   const issue = await getIssue(repo, number);
   if (!issue) return;
   // Don't let a manual Resume hammer the usage wall — it'll auto-resume after the reset.
@@ -360,8 +360,10 @@ export async function forceResume(cfg: Config, repo: string, number: number): Pr
   // cause of "resume re-ran the whole test suite even though the PR was open & approved, then timed
   // out"). Record the PR, surface the review verdict, and either route to Ready (merge) or run just
   // the Fix when the reviewer asked for changes.
+  // When the human left a steering comment (addressComment), DON'T short-circuit — re-engage so the
+  // agent addresses it, even if a PR exists. Only the plain Resume button / auto-resume short-circuits.
   const prBranch = `agency/issue-${number}`;
-  const existingPr = await findPrForBranch(repo, prBranch).catch(() => null);
+  const existingPr = addressComment ? null : await findPrForBranch(repo, prBranch).catch(() => null);
   if (existingPr) {
     recordPr(repo, number, existingPr.number, existingPr.url);
     const review = getReview(repo, number);
@@ -536,21 +538,34 @@ export async function forceApprove(cfg: Config, repo: string, number: number): P
  */
 export async function forceStop(_cfg: Config, repo: string, number: number): Promise<void> {
   const aborted = stopRuns(repo, number); // abort the live SDK subprocess(es)
-  // Don't let auto-resume/auto-merge immediately pick it back up.
+  clearActive(repo, number);
+  const abortedNote = aborted ? ` (${aborted} run${aborted > 1 ? "s" : ""} aborted)` : "";
+  // If the work already produced a PR, stopping shouldn't bury it in Planned — keep it in Review
+  // so you can just merge. Otherwise park it back in Planned.
+  const existingPr = await findPrForBranch(repo, `agency/issue-${number}`).catch(() => null);
+  if (existingPr) {
+    recordPr(repo, number, existingPr.number, existingPr.url);
+    setAuto("resume", "off", repo, number); // stop auto from re-running it
+    for (const l of [IN_PROGRESS, NEEDS_ATTENTION, RATE_LIMITED, "🚧 blocked", ...AWAITING_LABELS]) await removeLabel(repo, number, l).catch(() => {});
+    await addLabel(repo, number, READY).catch(() => {});
+    recordIssueState(repo, number, { state: READY });
+    clearRateLimited(repo, number);
+    await commentOnIssue(repo, number, `⏹ Stopped${abortedNote}. PR ${existingPr.url} is open — press **Merge** when you're ready.`).catch(() => {});
+    console.log(`[agency] stop ${repo} #${number} → kept PR ${existingPr.url} (Review)`);
+    return;
+  }
   setAuto("resume", "off", repo, number);
   setAuto("merge", "off", repo, number);
-  // Clear every live/working label and park in Planned.
   for (const l of [IN_PROGRESS, READY, NEEDS_ATTENTION, RATE_LIMITED, "🚧 blocked", ...AWAITING_LABELS]) {
     await removeLabel(repo, number, l).catch(() => {});
   }
   await addLabel(repo, number, "agency:planned").catch(() => {});
   recordIssueState(repo, number, { state: "planned" });
   clearRateLimited(repo, number);
-  clearActive(repo, number);
   await commentOnIssue(
     repo,
     number,
-    `⏹ Stopped${aborted ? ` (${aborted} run${aborted > 1 ? "s" : ""} aborted)` : ""} — moved back to **Planned**. Press ▶ to start it again.`,
+    `⏹ Stopped${abortedNote} — moved back to **Planned**. Press ▶ to start it again.`,
   ).catch(() => {});
   console.log(`[agency] stop ${repo} #${number} (${aborted} aborted)`);
 }
@@ -968,6 +983,7 @@ async function main(): Promise<void> {
       (repo, number) => forceStart(cfg, repo, number),
       (repo, number) => forceStop(cfg, repo, number),
       (repo, number) => forceCreatePr(cfg, repo, number),
+      (repo, number) => forceResume(cfg, repo, number, true), // onComment: re-engage to address the new message (no PR short-circuit)
     );
   } else {
     await backgroundInit(cfg);

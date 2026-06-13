@@ -27,6 +27,7 @@ import { getSecretSetting, setSecretSetting, getUserSecretStatus } from "./store
 import { masterKeyConfigured } from "./crypto.js";
 import { ghBotToken, ghUserToken } from "./creds.js";
 import { testClaudeAuth } from "./agents/roleAgent.js";
+import { hasActiveRun, stopRuns } from "./abort.js";
 import { renderLogin, renderInvite, renderSetup, renderForgot, renderReset } from "./authpages.js";
 import { authenticate, createSession, revokeSession, getInvite, acceptInvite, createInvite, createUser, listUsers, listInvites, setUserSecret, listUserSecretKeys, countUsers, setUserPassword, getUserByName, getUserByNameOrEmail, createPasswordReset, consumePasswordReset, type User } from "./store.js";
 import { emailEnabled, sendPasswordReset } from "./email.js";
@@ -114,7 +115,7 @@ function serveStatic(pathname: string, res: ServerResponse): boolean {
 }
 
 type CreatePr = (repo: string, number: number) => Promise<{ ok: boolean; url?: string; msg?: string }>;
-export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: Resume, approve?: Resume, fix?: Resume, start?: Resume, stop?: Resume, createPr?: CreatePr): Promise<void> {
+export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: Resume, approve?: Resume, fix?: Resume, start?: Resume, stop?: Resume, createPr?: CreatePr, onComment?: Resume): Promise<void> {
   const port = Number(process.env.PORT?.trim() || "3000");
   // Webhook secret is read live (dashboard → env) so it can be set/rotated without a redeploy.
   const webhookSecret = (): string => getSecretSetting("github_webhook_secret") || process.env.GITHUB_WEBHOOK_SECRET?.trim() || "";
@@ -253,6 +254,9 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
                 : null,
               app: getApp(i.repo, i.number),
               review: reviews[`${i.repo}#${i.number}`] ?? null,
+              // True iff a Claude run is actually executing for this issue right now (abort registry
+              // — the precise signal). Drives the Stop button so it's reliably shown only while live.
+              running: hasActiveRun(i.repo, i.number),
               auto: {
                 resume: autoEnabled("resume", i.repo, i.number),
                 merge: autoEnabled("merge", i.repo, i.number),
@@ -668,11 +672,21 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               );
             }
           }
-          // A dashboard reply should make the agent look at the issue again — immediately and
-          // regardless of trigger-mode/mention. forceResume re-engages on the existing branch; the
-          // worker pool dedupes if a run is already in flight, so this is safe to always call.
-          if (resume) void resume(repo, number);
-          else void trigger("dashboard-comment");
+          // Make the agent act on the reply immediately (bypasses trigger-mode/mention). onComment
+          // re-engages to ADDRESS the message even if a PR already exists (unlike the plain Resume,
+          // which would just offer the merge).
+          const reengage = onComment ?? resume;
+          if (hasActiveRun(repo, number)) {
+            // STEER MID-RUN: a run is executing → abort it so the agent re-reads the thread (with this
+            // new comment) and works on your guidance instead of finishing the old direction. Committed
+            // work persists on the branch; the re-engage continues from there.
+            stopRuns(repo, number);
+            if (reengage) setTimeout(() => void reengage(repo, number), 2000); // let the aborted run drain first
+          } else if (reengage) {
+            void reengage(repo, number);
+          } else {
+            void trigger("dashboard-comment");
+          }
           return ok();
         }
         if (path === "/settings") {

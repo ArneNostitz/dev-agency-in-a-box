@@ -394,6 +394,7 @@ function Detail({ issue, activity, act, isDesktop, onClose, onOpenIssue }) {
   const needsFix = review === "changes";
   const done = isDone(issue);
   const st = issue.state || "";
+  const running = !!(issue.running || issue.active || issue.queued); // a Claude run is executing right now
 
   function send() {
     if (!reply.trim() && !atts.length) return; setBusy(true);
@@ -431,7 +432,6 @@ function Detail({ issue, activity, act, isDesktop, onClose, onOpenIssue }) {
     //               nothing runs — that must NOT show Stop.
     //  • hasPr    — a PR exists → the goal is Merge (or Fix/Resolve if blocked). Never Create PR/Close.
     //  • approved — reviewer approved but no PR yet → Create PR (token-free).
-    const running = !!(issue.active || issue.queued);
     const hasPr = !!issue.pr_number;
     const parked = !st || st === "planned" || st === "agency:planned";
     const awaiting = st === "agency:awaiting-approval";
@@ -524,7 +524,8 @@ function Detail({ issue, activity, act, isDesktop, onClose, onOpenIssue }) {
     <div class="dcompose">
       ${atts.length ? html`<div style="position:absolute;bottom:100%;left:0;padding:0 10px">${atts.map((a, idx) => html`<span class="att" key=${idx}>${a.img ? html`<img src=${a.d}/>` : html`<span><${Icon} name="paperclip" size=${12}/> ${a.name}</span>`}<button class="iconbtn" style="width:18px;height:18px;border:none" onClick=${() => setAtts((x) => x.filter((_, j) => j !== idx))}>×</button></span>`)}</div>` : null}
       <label class="iconbtn" style="cursor:pointer"><${Icon} name="paperclip"/><input type="file" multiple style="display:none" onChange=${pickFiles}/></label>
-      <textarea placeholder="Reply…  (paste an image to attach)" value=${reply} onInput=${(e) => setReply(e.target.value)} onPaste=${onPaste}></textarea>
+      <textarea placeholder=${running ? "Reply to steer the run…  (sending stops it & re-engages with your message)" : "Reply…  (paste an image to attach)"} value=${reply} onInput=${(e) => setReply(e.target.value)} onPaste=${onPaste}></textarea>
+      ${running ? html`<button class=${"btn warn" + (bz("stop") ? " busy" : "")} title="Stop the running agent" disabled=${bz("stop")} onClick=${() => act.stop(repo, number)}>${bz("stop") ? html`<${Spinner} size=${16}/>` : html`<${Icon} name="stop"/>`}</button>` : null}
       <button class="btn primary" disabled=${busy} onClick=${send}><${Icon} name="send"/></button>
     </div>
   </div>`;
