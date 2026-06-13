@@ -27,6 +27,7 @@ import { getSecretSetting, setSecretSetting, getUserSecretStatus } from "./store
 import { masterKeyConfigured } from "./crypto.js";
 import { ghBotToken, ghUserToken } from "./creds.js";
 import { testClaudeAuth } from "./agents/roleAgent.js";
+import { ALL_ROLES } from "./agents/roles.js";
 import { hasActiveRun } from "./abort.js";
 import { renderLogin, renderInvite, renderSetup, renderForgot, renderReset } from "./authpages.js";
 import { authenticate, createSession, revokeSession, getInvite, acceptInvite, createInvite, createUser, listUsers, listInvites, setUserSecret, listUserSecretKeys, countUsers, setUserPassword, getUserByName, getUserByNameOrEmail, createPasswordReset, consumePasswordReset, type User } from "./store.js";
@@ -367,7 +368,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
             roleModels: getRoleModels(),
             fallbackChain: getFallbackChain(),
             autoSwitchOnLimit: getAutoSwitchOnLimit(),
-            roles: ["planner", "architect", "developer", "reviewer", "tester", "librarian"],
+            roles: ALL_ROLES,
             // Editable presets — all expose a native Anthropic-compatible endpoint.
             presets: [
               { name: "GLM (Zhipu)", baseUrl: "https://open.bigmodel.cn/api/anthropic", models: ["glm-4.6", "glm-4.5"] },

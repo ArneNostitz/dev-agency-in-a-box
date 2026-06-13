@@ -50,7 +50,7 @@ import { decideThreadAction } from "./route.js";
 import { reconcileEpics } from "./epics.js";
 import { indexRepo } from "./gitnexus.js";
 import { pushActivity } from "./activity.js";
-import { loadHandleRoleMap, roleForText, type RoleName } from "./agents/roles.js";
+import { loadHandleRoleMap, roleForText, ALL_ROLES, type RoleName } from "./agents/roles.js";
 import { runPipeline, runPrFix, runFollowUp, runResumeBuild, runReviewFix } from "./pipeline.js";
 import { runRole } from "./agents/roleAgent.js";
 import { parseAuditProposals } from "./auditparse.js";
@@ -80,8 +80,8 @@ import {
   setAuto,
   getFallbackChain,
   getAutoSwitchOnLimit,
-  getRoleModels,
-  setRoleModels,
+  setSessionFallback,
+  clearSessionFallback,
   clearIssueModelOverride,
 } from "./store.js";
 import { parseRateLimit, nextWindowReset } from "./ratelimit.js";
@@ -146,18 +146,14 @@ async function maybeParkRateLimited(repo: string, number: number, msg: string, i
   const parsed = Boolean(rl.resetAt && rl.resetAt > Date.now());
   const resetAt = parsed ? (rl.resetAt as number) : nextResetMs();
 
-  // Auto-switch: when enabled and a fallback model is configured, swap all unassigned roles
-  // (those currently using Claude with no explicit provider) to the fallback instead of parking.
+  // Auto-switch: when enabled and a fallback model is configured, set a session-level fallback
+  // for all unassigned roles instead of permanently overwriting the DB. The session fallback is
+  // cleared in the processIssue finally block after the retry, so user assignments are untouched.
   if (!isPr && getAutoSwitchOnLimit()) {
     const chain = getFallbackChain();
     if (chain.length > 0) {
       const fallback = chain[0];
-      const rm = getRoleModels();
-      const updated: Record<string, { providerId: string; model: string }> = { ...rm };
-      for (const role of ["planner", "architect", "developer", "reviewer", "tester", "librarian", "auditor"]) {
-        if (!updated[role]?.providerId) updated[role] = fallback;
-      }
-      setRoleModels(updated);
+      setSessionFallback(fallback);
       // Still pause the global agent queue so we don't spam the exhausted Claude endpoint
       // with other issues — but this issue will retry immediately with the fallback.
       pauseAgents(resetAt, parsed);
@@ -166,7 +162,7 @@ async function maybeParkRateLimited(repo: string, number: number, msg: string, i
         number,
         `🔄 Claude usage limit hit — auto-switched to **${fallback.model}** for all unassigned roles. Retrying with the fallback model…`,
       ).catch(() => {});
-      console.log(`[agency] rate-limited ${repo} #${number}: auto-switched to fallback ${fallback.model}`);
+      console.log(`[agency] rate-limited ${repo} #${number}: auto-switched to fallback ${fallback.model} (session-only, ${ALL_ROLES.length} roles)`);
       return "switch";
     }
   }
@@ -287,6 +283,7 @@ async function processIssue(cfg: Config, repo: string, issue: Issue): Promise<vo
   } finally {
     clearActive(repo, issue.number);
     clearIssueModelOverride(repo, issue.number); // one-shot chatbox override: consume it after each run
+    clearSessionFallback(); // one-shot auto-switch: revert to user's permanent role assignments
   }
 }
 

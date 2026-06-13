@@ -592,6 +592,21 @@ export function setRoleModels(map: Record<string, { providerId: string; model: s
   setSetting("role_models", JSON.stringify(map ?? {}));
 }
 
+// ---- in-memory session-level fallback (not persisted; cleared after each auto-switch run) ----
+// When Claude hits a usage limit and auto-switch is on, this is set for the duration of the
+// retry, then cleared in the finally block — so user's permanent role assignments are untouched.
+let _sessionFallback: { providerId: string; model: string } | null = null;
+export function setSessionFallback(f: { providerId: string; model: string }): void {
+  _sessionFallback = f;
+}
+export function clearSessionFallback(): void {
+  _sessionFallback = null;
+}
+/** Returns the active session-level fallback, or null if none is set. */
+export function getSessionFallback(): { providerId: string; model: string } | null {
+  return _sessionFallback;
+}
+
 /**
  * Ordered fallback chain: when the primary model (Claude) hits a usage limit, the agency
  * tries providers in this list in order. Each entry references a configured provider + model.
