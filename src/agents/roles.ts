@@ -75,7 +75,10 @@ export const ROLES: Record<RoleName, RoleDef> = {
     defaultModel: MODELS.sonnet,
     modelEnv: "DEVELOPER_MODEL",
     tools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
-    maxTurns: 120,
+    // Each turn re-sends the whole (growing) context, so a high cap is the single biggest cost
+    // multiplier. 120 let a stuck run grind into millions of tokens; 50 is plenty for a focused
+    // change and forces the agent to commit progress rather than thrash.
+    maxTurns: 50,
   },
   reviewer: {
     name: "reviewer",

@@ -84,6 +84,17 @@ input,select,textarea{font-size:16px}
 .content{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch}
 .statusline{padding:6px 14px;color:var(--ink-2);font-size:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .buildstamp{font:11px ui-monospace,Menlo,monospace;color:var(--ink-3);cursor:default}
+.statpop{position:relative;display:inline-flex;align-items:center}
+.statlink{cursor:pointer;display:inline-flex;align-items:center;gap:5px;border-radius:6px;padding:1px 3px}
+.statlink:hover{background:var(--surface-2);color:var(--ink)}
+.statmenu{left:0;top:calc(100% + 6px);min-width:230px;padding:10px 12px;z-index:100}
+.statmenu label{display:block;font-size:11.5px;color:var(--ink-3);margin:8px 0 3px}
+.statmenu input{width:100%;border:1px solid var(--line);border-radius:8px;padding:7px 9px;font:13.5px inherit;background:var(--surface);color:var(--ink)}
+.statmenu .btn{margin-top:10px;width:100%;justify-content:center}
+/* model override selector (shared) */
+.modelsel{max-width:150px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink-2);font:12.5px inherit;padding:4px 8px;height:30px;cursor:pointer}
+.modelsel:hover{border-color:var(--line-2);color:var(--ink)}
+.modelsel.sm{max-width:120px;height:24px;padding:1px 6px;font-size:11.5px;border-radius:7px}
 .dot{width:8px;height:8px;border-radius:50%;background:var(--green);display:inline-block;animation:pulse 1.4s infinite}
 @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(29,158,117,.5)}70%{box-shadow:0 0 0 7px rgba(29,158,117,0)}100%{box-shadow:0 0 0 0 rgba(29,158,117,0)}}
 .spin{animation:dvspin .7s linear infinite;transform-origin:center}

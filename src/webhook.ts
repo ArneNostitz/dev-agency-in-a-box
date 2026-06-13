@@ -277,6 +277,12 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           const budget = sessionBudget();
           const win = sessionWindow();
           const sess = tokensSince(win.startIso);
+          // Manual calibration: the user can set "current usage = X%" to match Claude's real meter.
+          // We store an offset (extra tokens) and add it to the gauge — but only while it belongs to
+          // the current window (it's discarded after a reset so the gauge re-bases automatically).
+          const offAt = Date.parse(getSetting("usage_offset_at") ?? "");
+          const offTok = Number.isFinite(offAt) && new Date(offAt).toISOString() >= win.startIso ? Number(getSetting("usage_offset_tokens") || 0) : 0;
+          const gaugeTokens = sess.tokens + (offTok > 0 ? offTok : 0);
           res.writeHead(200, { "content-type": "application/json" });
           res.end(
             JSON.stringify({
@@ -310,7 +316,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               activity: recentActivity(400),
               spendToday: spendSince(midnight.toISOString()),
               session: {
-                tokens: sess.tokens,
+                tokens: gaugeTokens,
                 costUsd: sess.costUsd,
                 budget,
                 windowHours: winH,
@@ -381,7 +387,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
             presets: (() => {
               const pm = getModelsPresets();
               return [
-                { name: "Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", models: pm["Gemini"] || [] },
+                { name: "Gemini (via proxy)", baseUrl: "", models: pm["Gemini"] || [] },
                 { name: "GLM (Zhipu)", baseUrl: "https://open.bigmodel.cn/api/anthropic", models: pm["GLM (Zhipu)"] || [] },
                 { name: "DeepSeek", baseUrl: "https://api.deepseek.com/anthropic", models: pm["DeepSeek"] || [] },
                 { name: "Kimi (Moonshot)", baseUrl: "https://api.moonshot.cn/anthropic", models: pm["Kimi (Moonshot)"] || [] },
@@ -663,7 +669,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
       const actor = userFromReq(req);
       if (!actor) return void res.writeHead(401, { "content-type": "application/json" }).end('{"error":"auth required"}');
       void readBody(req).then(async (body) => {
-        let p: { repo?: string; number?: number; commentId?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; dataUrl?: string; name?: string; providers?: Provider[]; roleModels?: Record<string, { providerId: string; model: string }>; globalModel?: { providerId: string; model: string } | null; fallbackChain?: Array<{ providerId: string; model: string }>; autoSwitchOnLimit?: boolean; model?: { providerId: string; model: string } | null; kind?: string; value?: string; skipArchitect?: string; gitnexus?: string; maxTokensPerRun?: number; maxReviseRounds?: number; auditThreshold?: number; start?: boolean; email?: string; key?: string; ops?: Record<string, string | number | boolean>; webhookSecret?: string } = {};
+        let p: { repo?: string; number?: number; commentId?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; pctNow?: number; dataUrl?: string; name?: string; providers?: Provider[]; roleModels?: Record<string, { providerId: string; model: string }>; globalModel?: { providerId: string; model: string } | null; fallbackChain?: Array<{ providerId: string; model: string }>; autoSwitchOnLimit?: boolean; model?: { providerId: string; model: string } | null; kind?: string; value?: string; skipArchitect?: string; gitnexus?: string; maxTokensPerRun?: number; maxReviseRounds?: number; auditThreshold?: number; start?: boolean; email?: string; key?: string; ops?: Record<string, string | number | boolean>; webhookSecret?: string } = {};
         try {
           p = JSON.parse(body.toString("utf8"));
         } catch {
@@ -809,6 +815,15 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           if (p.anchor) {
             const t = Date.parse(p.anchor); // manual: "my session started at <time>"
             if (Number.isFinite(t)) setSetting("window_anchor", new Date(t).toISOString());
+          }
+          if (p.pctNow !== undefined && p.pctNow >= 0) {
+            // Calibrate the gauge to "X% right now": store the extra tokens needed to reach X% of
+            // the budget on top of what we've actually counted this window.
+            const b = sessionBudget();
+            const counted = tokensSince(sessionWindow().startIso).tokens;
+            const target = Math.round((Math.min(100, p.pctNow) / 100) * b);
+            setSetting("usage_offset_tokens", String(Math.max(0, target - counted)));
+            setSetting("usage_offset_at", new Date().toISOString());
           }
           // Pipeline knobs moved out of env — apply live, no redeploy.
           if (p.skipArchitect === "on" || p.skipArchitect === "off") setSetting("skip_architect", p.skipArchitect);

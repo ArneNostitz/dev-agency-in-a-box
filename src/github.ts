@@ -882,9 +882,14 @@ export interface BaseMergeResult {
  */
 export async function mergeBaseInto(workdir: string, base = "main"): Promise<BaseMergeResult> {
   try {
-    // Deepen history so a merge base exists, then refresh the base ref.
+    // Deepen history so a merge base exists.
     await runGitCode(workdir, ["fetch", "--unshallow", "origin"]); // no-op once the clone is complete
-    await runGitCode(workdir, ["fetch", "origin", base]);
+    // CRITICAL: force-update the remote-tracking ref. A plain `git fetch origin main` only updates
+    // FETCH_HEAD, not refs/remotes/origin/main, so a later `git merge origin/main` can merge a STALE
+    // main → reports "Already up to date / clean" while GitHub still sees the PR as conflicting →
+    // the Fix flow loops forever, burning tokens. An explicit destination refspec fixes this.
+    const f = await runGitCode(workdir, ["fetch", "-f", "origin", `${base}:refs/remotes/origin/${base}`]);
+    if (f.code !== 0) await runGitCode(workdir, ["fetch", "origin", base]);
     await runGitCode(workdir, ["merge", "--abort"]); // clear any half-finished merge from a prior try
     await runGitCode(workdir, ["config", "user.email", "bot@dev-agency.local"]);
     await runGitCode(workdir, ["config", "user.name", "dev-agency-bot"]);

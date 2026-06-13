@@ -149,6 +149,19 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
   const systemPrompt = (await buildSystemPrompt(role)) + (gn ? `\n\n${GITNEXUS_PROMPT}` : "");
   // Per-role provider routing (keeps Claude roles on your subscription; others go to e.g. GLM).
   const route = input.model ? null : resolveRoute(role, input.repo, input.issueNumber);
+  // If the human EXPLICITLY selected a model but it couldn't be routed (provider missing/has no API
+  // key/base URL), do NOT silently fall back to the Claude subscription — that masks the problem as
+  // a Claude rate-limit later. Fail loudly so the dashboard shows what's wrong.
+  if (!input.model && !route) {
+    const sel = getIssueModelOverride(input.repo, input.issueNumber) ?? getRoleModels()[role] ?? getGlobalModel();
+    if (sel?.providerId && sel.model) {
+      const p = getProviders().find((x) => x.id === sel.providerId);
+      const why = !p ? "its provider no longer exists" : !p.apiKey ? `no API key is saved for "${p.name}"` : !p.baseUrl ? `no base URL is set for "${p.name}"` : "the provider is misconfigured";
+      const msg = `Selected model "${sel.model}" can't run — ${why}. Add the provider's API key in Settings → Models (or pick a different model).`;
+      pushActivity(input.repo, input.issueNumber, role, "done", `❌ ${msg}`);
+      throw new Error(msg);
+    }
+  }
   const model = input.model ?? route?.model ?? modelFor(def);
   // Build the agent subprocess env: inject the dashboard-stored Claude token (so the SDK
   // authenticates without CLAUDE_CODE_OAUTH_TOKEN in the container env) and the GitHub bot token

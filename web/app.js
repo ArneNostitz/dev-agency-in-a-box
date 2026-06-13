@@ -186,7 +186,11 @@ function App() {
   }
   useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, []);
   useEffect(() => {
-    let es; try { es = new EventSource("/events"); es.onmessage = (ev) => { try { const a = JSON.parse(ev.data); liveRef.current = liveRef.current.concat(a).slice(-200); forceTick((x) => x + 1); } catch (e) {} }; } catch (e) {}
+    let es; try { es = new EventSource("/events"); es.onmessage = (ev) => { try { const a = JSON.parse(ev.data); liveRef.current = liveRef.current.concat(a).slice(-200);
+      // Surface run failures the user would otherwise only see on GitHub: an agent error is pushed
+      // as a "done" line starting with ❌ (e.g. a misconfigured model or a real rate-limit).
+      (Array.isArray(a) ? a : [a]).forEach((x) => { if (x && (x.kind === "error" || (x.kind === "done" && typeof x.text === "string" && x.text.trim().startsWith("❌")))) toast(String(x.text || "Run failed").replace(/^❌\s*/, ""), "error"); });
+      forceTick((x) => x + 1); } catch (e) {} }; } catch (e) {}
     return () => { try { es && es.close(); } catch (e) {} };
   }, []);
 
@@ -369,39 +373,60 @@ function RepoDropdown({ repos, repoFilter, setRepoFilter, reload, auto, autoRepo
       </div>` : null}
   </div>`;
 }
+// Format a Date for a datetime-local input ("YYYY-MM-DDTHH:MM" in local time).
+function toLocalInput(d) {
+  const p = (n) => String(n).padStart(2, "0");
+  return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + "T" + p(d.getHours()) + ":" + p(d.getMinutes());
+}
 function StatusLine({ working, session, spend, reload }) {
   const s = session || {};
-  let pct = s.budget > 0 ? Math.min(100, Math.round((100 * s.tokens) / s.budget)) : 0;
+  const pct = s.budget > 0 ? Math.min(100, Math.round((100 * s.tokens) / s.budget)) : 0;
   const col = pct >= 90 ? "var(--red)" : pct >= 70 ? "var(--amber)" : "var(--green)";
   const [ver, setVer] = useState(null);
-  const [pop, setPop] = useState(false);
-  const [win, setWin] = useState(s.windowHours || 5);
+  const [pop, setPop] = useState(null); // "usage" | "window" | null
   const [bud, setBud] = useState(s.budget || 0);
+  const [pctNow, setPctNow] = useState(pct);
+  const [win, setWin] = useState(s.windowHours || 5);
+  const [start, setStart] = useState(() => toLocalInput(s.windowStart ? new Date(s.windowStart) : new Date()));
 
   useEffect(() => { getJSON("/web/version.json").then(setVer).catch(() => setVer(null)); }, []);
   const verTitle = ver ? "Build " + (ver.version || "?") + (ver.sha ? " · " + ver.sha : "") + (ver.builtAt ? " · built " + new Date(ver.builtAt).toLocaleString() : "") : "Development build (not from a Docker image)";
   const verLabel = ver ? (ver.sha || ("v" + (ver.version || "?"))) + (ver.builtAt ? " · " + ago(ver.builtAt) : "") : "dev";
-  
-  function saveBudget() {
-    api("/settings", { windowHours: Number(win) || 5, budget: Number(bud) || 0 }).then(() => { toast("Budget saved"); setPop(false); reload(); });
-  }
+
+  function openUsage() { setBud(s.budget || 0); setPctNow(pct); setPop(pop === "usage" ? null : "usage"); }
+  function openWindow() { setWin(s.windowHours || 5); setStart(toLocalInput(s.windowStart ? new Date(s.windowStart) : new Date())); setPop(pop === "window" ? null : "window"); }
+  function saveUsage() { api("/settings", { budget: Number(bud) || 0, pctNow: Number(pctNow) || 0 }).then(() => { toast("Usage calibrated"); setPop(null); reload(); }).catch(() => toast("Couldn’t save", "error")); }
+  function saveWindow() { api("/settings", { windowHours: Number(win) || 5, anchor: new Date(start).toISOString() }).then(() => { toast("Reset window updated"); setPop(null); reload(); }).catch(() => toast("Couldn’t save", "error")); }
 
   return html`<div class="statusline">
     <span>${working ? working + " working now" : "Idle"}</span>
     ${spend && spend.costUsd > 0 ? html`<span>· $${spend.costUsd.toFixed(2)} today</span>` : null}
-    <span style="position:relative">
-      <button class="iconbtn" style="padding:0 4px;height:auto;font-size:inherit" onClick=${() => setPop(!pop)}>
-        · ${s.budget > 0 ? html`<span class="gauge"><i style=${"width:" + pct + "%;background:" + col}></i></span> ${pct}%` : "No token limit"}
-      </button>
-      ${pop ? html`<div class="dropscrim" onClick=${() => setPop(false)}></div><div class="dropmenu" style="left:0;top:100%;min-width:220px;padding:12px;z-index:100">
-        <label>Session window (hours)</label>
-        <input type="number" min="1" value=${win} onInput=${(e) => setWin(e.target.value)} style="margin-bottom:8px"/>
-        <label>Budget (tokens / window, 0=off)</label>
-        <input type="number" min="0" step="1000" value=${bud} onInput=${(e) => setBud(e.target.value)} style="margin-bottom:8px"/>
-        <button class="btn primary" onClick=${saveBudget}>Save</button>
+    <span class="statpop">
+      ${s.budget > 0
+        ? html`<span class="statlink" title="Calibrate usage %" onClick=${openUsage}>· <span class="gauge"><i style=${"width:" + pct + "%;background:" + col}></i></span> ${pct}%</span>`
+        : html`<span class="statlink" title="Set a token budget" onClick=${openUsage}>· set token limit</span>`}
+      ${pop === "usage" ? html`<div class="dropscrim" onClick=${() => setPop(null)}></div><div class="dropmenu statmenu">
+        <div class="dropmenu-h">Usage calibration</div>
+        <label>Current usage %</label>
+        <input type="number" min="0" max="100" value=${pctNow} onInput=${(e) => setPctNow(e.target.value)}/>
+        <label>Budget (tokens / window, 0 = off)</label>
+        <input type="number" min="0" step="1000" value=${bud} onInput=${(e) => setBud(e.target.value)}/>
+        <div class="dropmenu-foot">Match the gauge to Claude’s real meter; it grows from here and re-bases on reset.</div>
+        <button class="btn primary" onClick=${saveUsage}>Save</button>
       </div>` : null}
     </span>
-    ${s.resetsAt && s.budget > 0 ? html`<span>· resets ${hm(new Date(s.resetsAt))}</span>` : null}
+    <span class="statpop">
+      <span class="statlink" title="Set when the usage window resets" onClick=${openWindow}>· resets ${s.resetsAt ? hm(new Date(s.resetsAt)) : "—"}</span>
+      ${pop === "window" ? html`<div class="dropscrim" onClick=${() => setPop(null)}></div><div class="dropmenu statmenu">
+        <div class="dropmenu-h">Reset window</div>
+        <label>Window started at</label>
+        <input type="datetime-local" value=${start} onInput=${(e) => setStart(e.target.value)}/>
+        <label>Window length (hours)</label>
+        <input type="number" min="1" value=${win} onInput=${(e) => setWin(e.target.value)}/>
+        <div class="dropmenu-foot">Resets roll forward from this start in fixed steps.</div>
+        <button class="btn primary" onClick=${saveWindow}>Save</button>
+      </div>` : null}
+    </span>
     <span class="spacer"></span>
     <span class="buildstamp" title=${verTitle}>${verLabel}</span>
     <a href="/history">history</a>
@@ -512,7 +537,7 @@ function Card({ i, multi, onOpen, act, data }) {
       ${tmp ? null : quick ? html`
         <div style="display:inline-flex;gap:4px;align-items:center" onClick=${(e) => e.stopPropagation()}>
           ${modelOpts.length && quick.action !== "stop" ? html`
-            <select style="font-size:11px;max-width:110px;height:22px;border:1px solid var(--border);border-radius:3px;background:var(--bg-2);color:var(--text);cursor:pointer;padding:0 2px" value=${modelSel} onChange=${selectModel}>
+            <select class="modelsel sm" value=${modelSel} onChange=${selectModel}>
               <option value="">Default model</option>
               ${modelOpts.map((o) => html`<option key=${o.value} value=${o.value}>${o.label.split(" / ").pop()}</option>`)}
             </select>
@@ -831,7 +856,7 @@ function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIs
       ${tb}
       ${modelOpts.length ? html`
         <span style="flex:1"></span>
-        <select title="Override model for next run" style="font-size:12px;max-width:140px;height:28px;border:1px solid var(--border);border-radius:4px;background:var(--bg-2);color:var(--text);cursor:pointer;padding:0 4px" value=${modelOverride} onChange=${(e) => updateModelOverride(e.target.value)}>
+        <select title="Override model for next run" class="modelsel" value=${modelOverride} onChange=${(e) => updateModelOverride(e.target.value)}>
           <option value="">Default model</option>
           ${modelOpts.map((o) => html`<option key=${o.value} value=${o.value}>${o.label}</option>`)}
         </select>
@@ -850,7 +875,7 @@ function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIs
         <textarea ref=${taRef} rows="1" placeholder=${running ? "Message the agent…  (queued until the run finishes)" : "Reply…  (Cmd+Enter sends, paste image to embed)"} value=${reply} onInput=${(e) => { setReply(e.target.value); autosize(); }} onPaste=${onPaste} onKeyDown=${(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); send(); } }}></textarea>
         <div class="composer-row">
           <label class="composer-icon" title="Attach a file"><${Icon} name="paperclip" size=${18}/><input type="file" multiple style="display:none" onChange=${pickFiles}/></label>
-          ${modelOpts && modelOpts.length ? html`<select title="Override model for this run" style="font-size:12px;max-width:130px;border:none;background:transparent;color:inherit;cursor:pointer" value=${modelOverride} onChange=${(e) => updateModelOverride(e.target.value)}>
+          ${modelOpts && modelOpts.length ? html`<select title="Override model for this run" class="modelsel" value=${modelOverride} onChange=${(e) => updateModelOverride(e.target.value)}>
             <option value="">Default model</option>
             ${modelOpts.map((o) => html`<option key=${o.value} value=${o.value}>${o.label}</option>`)}
           </select>` : null}
@@ -1114,10 +1139,10 @@ const OB_PROVIDERS = [
     title: "Claude API key", placeholder: "sk-ant-...",
     how: "Pay-as-you-go billing instead of a subscription.\n\n1. Open platform.claude.com → API keys.\n2. Create a key.\n3. Paste it below.",
     link: "https://platform.claude.com/settings/keys", linkLabel: "Create an API key" },
-  { id: "gemini", label: "Gemini", note: "Google's models", icon: "globe", kind: "provider",
-    preset: { name: "Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", get models() { return modelsConfig["Gemini"] || []; } },
-    title: "Gemini API key", placeholder: "AIza...",
-    how: "Get an API key from Google AI Studio. Assign it to agents later in Settings → Models.",
+  { id: "gemini", label: "Gemini", note: "needs an Anthropic-compatible proxy", icon: "globe", kind: "provider",
+    preset: { name: "Gemini (via proxy)", baseUrl: "", get models() { return modelsConfig["Gemini"] || []; } },
+    title: "Gemini base URL + key", placeholder: "AIza...",
+    how: "Google has no native Anthropic-format endpoint, so the agent SDK can't call Gemini directly. Run an Anthropic-compatible gateway (e.g. LiteLLM) and paste its base URL in Settings → Models. GLM, DeepSeek and Kimi work without a proxy.",
     link: "https://aistudio.google.com/app/apikey", linkLabel: "Get a Gemini key" },
   { id: "glm", label: "GLM (Zhipu)", note: "Cheap coding model", icon: "globe", kind: "provider",
     preset: { name: "GLM (Zhipu)", baseUrl: "https://open.bigmodel.cn/api/anthropic", get models() { return modelsConfig["GLM (Zhipu)"] || []; } },
