@@ -79,6 +79,12 @@ COPY scripts ./scripts
 
 RUN npm run build
 
+# Build stamp so the dashboard can show what's actually deployed (vs what's on main). The commit
+# SHA is best-effort: Coolify can pass --build-arg BUILD_SHA=$SOURCE_COMMIT; otherwise the build
+# time alone already reveals a stale deploy.
+ARG BUILD_SHA=
+RUN BUILD_SHA="$BUILD_SHA" node -e "require('fs').writeFileSync('web/version.json', JSON.stringify({version:require('./package.json').version, builtAt:new Date().toISOString(), sha:(process.env.BUILD_SHA||'').slice(0,7)}))"
+
 # Webhook mode listens here (ignored in watch/once mode).
 EXPOSE 3000
 

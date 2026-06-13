@@ -346,12 +346,17 @@ function StatusLine({ working, session, spend }) {
   const s = session || {};
   let pct = s.budget > 0 ? Math.min(100, Math.round((100 * s.tokens) / s.budget)) : 0;
   const col = pct >= 90 ? "var(--red)" : pct >= 70 ? "var(--amber)" : "var(--green)";
+  const [ver, setVer] = useState(null);
+  useEffect(() => { getJSON("/web/version.json").then(setVer).catch(() => setVer(null)); }, []);
+  const verTitle = ver ? "Build " + (ver.version || "?") + (ver.sha ? " · " + ver.sha : "") + (ver.builtAt ? " · built " + new Date(ver.builtAt).toLocaleString() : "") : "Development build (not from a Docker image)";
+  const verLabel = ver ? (ver.sha || ("v" + (ver.version || "?"))) + (ver.builtAt ? " · " + ago(ver.builtAt) : "") : "dev";
   return html`<div class="statusline">
     <span>${working ? working + " working now" : "Idle"}</span>
     ${spend && spend.costUsd > 0 ? html`<span>· $${spend.costUsd.toFixed(2)} today</span>` : null}
     ${s.budget > 0 ? html`<span>· <span class="gauge"><i style=${"width:" + pct + "%;background:" + col}></i></span> ${pct}%</span>` : null}
     ${s.resetsAt ? html`<span>· resets ${hm(new Date(s.resetsAt))}</span>` : null}
     <span class="spacer"></span>
+    <span class="buildstamp" title=${verTitle}>${verLabel}</span>
     <a href="/history">history</a>
   </div>`;
 }
@@ -374,12 +379,11 @@ function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, onAddRepo, o
   const cols = isDesktop ? COLS : COLS.filter((c) => c.k === tab);
   return html`<div class="board">
     ${cols.map((c) => html`<div class="col" key=${c.k}>
-      <div class="colhead"><${Icon} name=${c.icon} size=${15}/> ${c.label} <span class="n">${byCol[c.k].length || ""}</span>
-        ${c.k === "planned" ? html`<span class="colhead-actions">
-          <button class="colbtn primary" onClick=${() => onAddIssue(target)}><${Icon} name="plus" size=${14}/> Add Issue</button>
-          <button class="colbtn" disabled=${!target || analyzing} title=${target ? "Analyze " + target.split("/").pop() + "'s codebase health" : "Pick a repo first"} onClick=${() => target && onAnalyze(target)}>${analyzing ? html`<${Spinner} size=${14}/>` : html`<${Icon} name="search" size=${14}/>`} Analyze Repo</button>
-        </span>` : null}
-      </div>
+      <div class="colhead"><${Icon} name=${c.icon} size=${15}/> ${c.label} <span class="n">${byCol[c.k].length || ""}</span></div>
+      ${c.k === "planned" ? html`<div class="planned-actions">
+        <button class="colbtn primary" onClick=${() => onAddIssue(target)}><${Icon} name="plus" size=${14}/> Add Issue</button>
+        <button class="colbtn" disabled=${!target || analyzing} title=${target ? "Analyze " + target.split("/").pop() + "'s codebase health" : "Pick a repo first"} onClick=${() => target && onAnalyze(target)}>${analyzing ? html`<${Spinner} size=${14}/>` : html`<${Icon} name="search" size=${14}/>`} Analyze Repo</button>
+      </div>` : null}
       <div class="cards">
         ${byCol[c.k].length ? byCol[c.k].map((i) => html`<${Card} key=${i.repo + "#" + i.number} i=${i} multi=${!repoFilter && repos.length > 1} onOpen=${onOpen} act=${act}/>`) : html`<div class="empty">—</div>`}
       </div>

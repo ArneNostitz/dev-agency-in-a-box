@@ -108,7 +108,7 @@ function serveStatic(pathname: string, res: ServerResponse): boolean {
   if (!file.startsWith(WEB_DIR) || !existsSync(file) || !statSync(file).isFile()) { res.writeHead(404).end("not found"); return true; }
   const ext = file.slice(file.lastIndexOf("."));
   // sw.js must not be long-cached; other assets are network-first in the SW anyway.
-  const cache = pathname === "/sw.js" || pathname === "/web/app.js" ? "no-cache" : "public, max-age=3600";
+  const cache = pathname === "/sw.js" || pathname === "/web/app.js" || pathname === "/web/version.json" ? "no-cache" : "public, max-age=3600";
   res.writeHead(200, { "content-type": MIME[ext] || "application/octet-stream", "cache-control": cache });
   res.end(readFileSync(file));
   return true;
