@@ -37,6 +37,7 @@ import {
   prHealth,
   prMergeStatus,
   fetchCheckout,
+  mergeBaseInto,
   mergePrForBranch,
   closeIssue,
   mentionsHandle,
@@ -337,17 +338,30 @@ async function processHealOne(
   }
   incAutofix(repo, pr.number);
 
-  const instruction =
-    health.status === "conflict"
-      ? `[system] This PR has merge conflicts. Check out the branch, merge the latest base branch (origin/main), resolve ALL conflicts, run the project's checks, commit, and push.`
-      : `[system] The PR's CI checks are failing. Run the project's checks locally, find and fix the failures (and anything blocking the tests), commit, and push.`;
-
   console.log(`[agency] auto-heal ${repo} PR#${pr.number}: ${health.detail} (attempt ${attempts + 1})`);
   await acknowledge(repo, pr.number);
   const workdir = workdirFor(repo, `pr-${pr.number}`);
   await rm(workdir, { recursive: true, force: true });
   await mkdir(join(workdir, ".."), { recursive: true });
   await cloneRepo(repo, workdir);
+
+  // For conflicts, do the base merge deterministically (the shallow clone + a weak model can't be
+  // trusted to run the right git commands) and hand the agent only the conflicted files to resolve.
+  let instruction: string;
+  if (health.status === "conflict") {
+    await fetchCheckout(workdir, pr.branch);
+    const m = await mergeBaseInto(workdir, "main");
+    if (m.status === "clean") {
+      instruction = `[system] The latest main has ALREADY been merged into this branch cleanly (staged in the working tree). Do NOT run git merge/rebase again. Run the project's checks, fix anything the merge broke, commit, and push.`;
+    } else if (m.status === "conflicts") {
+      instruction = `[system] A merge of origin/main is IN PROGRESS with conflicts in: ${m.files.map((f) => "`" + f + "`").join(", ")}. Resolve each (remove all conflict markers), \`git add\` them, run the project's checks, then commit and push. Do NOT run git merge/rebase again or \`git merge --abort\`.`;
+    } else {
+      instruction = `[system] This PR has merge conflicts and the auto-merge failed. Run \`git fetch origin main && git merge origin/main\`, resolve ALL conflicts, run the project's checks, commit, and push.`;
+    }
+  } else {
+    instruction = `[system] The PR's CI checks are failing. Run the project's checks locally, find and fix the failures (and anything blocking the tests), commit, and push.`;
+  }
+
   await indexRepo(workdir, repo, (s) => pushActivity(repo, pr.number, "developer", "tool", s));
   setActive(repo, pr.number, "pr", "developer", pr.title);
   try {

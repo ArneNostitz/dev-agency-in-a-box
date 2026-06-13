@@ -11,3 +11,6 @@ memory/agency.db-*
 
 # Cloned working copies of target repos
 .work/
+
+# Generated at Docker build (build stamp)
+web/version.json
