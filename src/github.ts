@@ -155,6 +155,30 @@ export async function removeLabel(repo: string, issue: number, label: string): P
 /** Hidden marker appended to every agency comment so we can tell our messages from a human's. */
 export const AGENCY_MARKER = "<!-- dev-agency -->";
 
+/**
+ * Pure transform: classify a raw issue detail object into typed labels and comments.
+ * Extracted so it can be unit-tested independently of the I/O path in getThreadFull.
+ */
+export function mapIssueDetail(raw: {
+  labels?: Array<{ name?: string }>;
+  comments?: Array<{ body?: string; createdAt?: string }>;
+}): {
+  labels: string[];
+  comments: Array<{ who: "agency" | "human"; body: string; createdAt: string }>;
+} {
+  const labels = (raw.labels ?? []).map((l) => l.name ?? "").filter(Boolean);
+  const comments = (raw.comments ?? []).map((c) => {
+    const body = c.body ?? "";
+    const isAgency = body.includes(AGENCY_MARKER);
+    return {
+      who: (isAgency ? "agency" : "human") as "agency" | "human",
+      body: body.replace(AGENCY_MARKER, "").trim(),
+      createdAt: c.createdAt ?? "",
+    };
+  });
+  return { labels, comments };
+}
+
 export async function commentOnIssue(repo: string, issue: number, body: string): Promise<void> {
   await gh(["issue", "comment", String(issue), "--repo", repo, "--body", `${body}\n\n${AGENCY_MARKER}`]);
 }

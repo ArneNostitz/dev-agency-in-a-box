@@ -599,9 +599,7 @@ function Detail({ issue, activity, act, isDesktop, onClose, onOpenIssue }) {
     <div class="sec">Live stream</div>
     <div class="dstream" ref=${streamRef} onScroll=${(e) => { const el = e.target; const atB = el.scrollHeight - el.scrollTop - el.clientHeight < 50; stickRef.current = atB; setStreamAtBottom(atB); }}>
       ${stream.length ? stream.map((a, idx) => html`<div key=${idx} class=${"l " + (a.kind === "tool" ? "tool" : a.kind === "start" || a.kind === "done" ? "muted" : "")}>${a.text}</div>`) : html`<div class="l muted">No live activity yet.</div>`}
-      ${!streamAtBottom ? html`<div style="position:sticky;bottom:4px;text-align:right;pointer-events:none">
-        <button class="iconbtn" style="pointer-events:auto;background:rgba(30,40,55,.85);border:1px solid #3a4a6a;border-radius:50%;width:28px;height:28px;padding:0;display:inline-flex;align-items:center;justify-content:center" title="Scroll to bottom" onClick=${() => { const el = streamRef.current; if (el) el.scrollTop = el.scrollHeight; }}><${Icon} name="chevdown" size=${14}/></button>
-      </div>` : null}
+      ${!streamAtBottom ? html`<div class="scroll-fab-wrap"><button class="iconbtn scroll-fab" title="Scroll to bottom" onClick=${() => { const el = streamRef.current; if (el) el.scrollTop = el.scrollHeight; }}><${Icon} name="chevdown" size=${14}/></button></div>` : null}
     </div>
     <${RunApp} repo=${repo} number=${number} appInfo=${appInfo} issue=${issue} done=${done}/>
   </div>`;
