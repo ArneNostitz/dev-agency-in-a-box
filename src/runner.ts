@@ -542,6 +542,12 @@ export async function forceApprove(cfg: Config, repo: string, number: number): P
 export async function forceStop(_cfg: Config, repo: string, number: number): Promise<void> {
   const aborted = stopRuns(repo, number); // abort the live SDK subprocess(es)
   clearActive(repo, number);
+  if (number === 0) {
+    // The codebase Auditor runs under the sentinel #0 — there's no GitHub issue/labels to touch.
+    pushActivity(repo, 0, "auditor", "done", `⏹ audit stopped${aborted ? ` (${aborted} run aborted)` : ""}.`);
+    console.log(`[agency] audit stop ${repo} (${aborted} aborted)`);
+    return;
+  }
   const abortedNote = aborted ? ` (${aborted} run${aborted > 1 ? "s" : ""} aborted)` : "";
   // If the work already produced a PR, stopping shouldn't bury it in Planned — keep it in Review
   // so you can just merge. Otherwise park it back in Planned.

@@ -171,6 +171,10 @@ function App() {
   const ov = overridesRef.current;
   let issues = (data.issues || []).map((i) => { const o = ov[i.repo + "#" + i.number]; return o ? Object.assign({}, i, o.patch) : i; });
   issues = issues.concat(pending.filter((p) => !issues.some((i) => i.repo === p.repo && i.number === p.number)));
+  // A running codebase audit shows as a live card (sentinel #0) so you can watch its stream.
+  const auditing = (data.active || []).filter((a) => a.role === "auditor" && a.number === 0);
+  const auditRepos = auditing.map((a) => a.repo);
+  issues = issues.concat(auditing.filter((a) => !issues.some((i) => i.repo === a.repo && i.number === 0)).map((a) => ({ repo: a.repo, number: 0, title: "🔎 Codebase audit", state: "agency:in-progress", active: true, running: true, _audit: true, updated_at: new Date(a.since || Date.now()).toISOString() })));
   const shown = issues.filter((i) => !repoFilter || i.repo === repoFilter);
   const activity = (data.activity || []).concat(liveRef.current);
 
@@ -233,8 +237,8 @@ function App() {
 
   return html`
     <div class="app">
-      <${TopBar} working=${working} env=${data.env} theme=${theme} setTheme=${setThemeP} onSettings=${() => setSheet("settings")} onNew=${() => openComposer()}/>
-      <${RepoSelector} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} onAdd=${() => setSheet("addrepo")} onAudit=${(r) => act.audit(r)} auditing=${repoFilter ? act.isBusy("audit", repoFilter, 0) : false}/>
+      <${TopBar} working=${working} env=${data.env} theme=${theme} setTheme=${setThemeP} onSettings=${() => setSheet("settings")} onNew=${() => openComposer()} repos=${repos} onAudit=${(r) => act.audit(r)} auditRepos=${auditRepos}/>
+      <${RepoSelector} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} onAdd=${() => setSheet("addrepo")}/>
       ${data.secretsHealth ? html`<${SecretBanner} h=${data.secretsHealth} onFix=${() => setSheet("settings")}/>` : null}
       <${StatusLine} working=${working} session=${data.session} spend=${data.spendToday}/>
       <div class="content">
@@ -261,21 +265,31 @@ function SecretBanner({ h, onFix }) {
   return html`<div class="secbanner"><b>⚠ Credentials need attention.</b> ${msgs.map((m, i) => html`<div key=${i} style="margin-top:3px">${m}</div>`)} <button class="btn ghost" style="margin-top:7px" onClick=${onFix}>Open Settings</button></div>`;
 }
 
-function TopBar({ working, env, theme, setTheme, onSettings, onNew }) {
+function TopBar({ working, env, theme, setTheme, onSettings, onNew, repos, onAudit, auditRepos }) {
+  const [auditOpen, setAuditOpen] = useState(false);
+  const isAuditing = (r) => (auditRepos || []).includes(r);
   return html`<div class="topbar">
     <div class="brand"><${Icon} name="crown" size=${18}/> Dev Agency ${env === "development" ? html`<span class="envbadge">DEV</span>` : null} ${working ? html`<span class="dot"></span>` : null}</div>
     <div class="spacer"></div>
+    <div class="dropwrap">
+      <button class=${"iconbtn" + (auditRepos && auditRepos.length ? " on" : "")} aria-label="Audit a codebase" title="Audit a repo's codebase health" onClick=${() => setAuditOpen((o) => !o)}>${auditRepos && auditRepos.length ? html`<${Spinner} size=${18}/>` : html`<${Icon} name="search"/>`}</button>
+      ${auditOpen ? html`<div class="dropscrim" onClick=${() => setAuditOpen(false)}></div>
+        <div class="dropmenu">
+          <div class="dropmenu-h">Audit codebase health</div>
+          ${(repos || []).length ? (repos || []).map((r) => html`<button class="dropmenu-item" key=${r} disabled=${isAuditing(r)} onClick=${() => { onAudit(r); setAuditOpen(false); }}>${isAuditing(r) ? html`<${Spinner} size=${14}/>` : html`<${Icon} name="search" size=${14}/>`} ${r.split("/").pop()}${isAuditing(r) ? html`<span class="dropmenu-sub">auditing…</span>` : null}</button>`) : html`<div class="dropmenu-empty">No repos yet</div>`}
+          <div class="dropmenu-foot">Opens scoped refactor issues in Planned.</div>
+        </div>` : null}
+    </div>
     <button class="iconbtn" aria-label="New issue" onClick=${onNew}><${Icon} name="plus"/></button>
     <button class="iconbtn" aria-label="Toggle theme" onClick=${() => setTheme(theme === "dark" ? "light" : "dark")}><${Icon} name=${theme === "dark" ? "sun" : "moon"}/></button>
     <button class="iconbtn" aria-label="Settings" onClick=${onSettings}><${Icon} name="settings"/></button>
   </div>`;
 }
-function RepoSelector({ repos, repoFilter, setRepoFilter, onAdd, onAudit, auditing }) {
+function RepoSelector({ repos, repoFilter, setRepoFilter, onAdd }) {
   return html`<div class="reposel">
     <span class=${"chip " + (repoFilter ? "" : "on")} onClick=${() => setRepoFilter(null)}>All</span>
     ${repos.map((r) => html`<span key=${r} class=${"chip " + (repoFilter === r ? "on" : "")} onClick=${() => setRepoFilter(r)}>${r.split("/").pop()}</span>`)}
     <span class="chip dash" onClick=${onAdd}><${Icon} name="plus" size=${13}/> new</span>
-    ${repoFilter ? html`<span class=${"chip dash" + (auditing ? " busy" : "")} title="Audit this repo's health — opens scoped issues in Planned" onClick=${() => !auditing && onAudit(repoFilter)}>${auditing ? html`<${Spinner} size=${12}/>` : html`<${Icon} name="search" size=${12}/>`} ${auditing ? "Auditing…" : "Audit"}</span>` : null}
   </div>`;
 }
 function StatusLine({ working, session, spend }) {
@@ -384,6 +398,7 @@ function Detail({ issue, activity, act, isDesktop, onClose, onOpenIssue }) {
   function loadThread() { getJSON("/thread?repo=" + encodeURIComponent(repo) + "&number=" + number).then(setThread).catch(() => {}); }
   useEffect(() => {
     setThread(null); setPr(null); setAppInfo(null); stickRef.current = true;
+    if (issue._audit) return; // the audit has no GitHub thread/PR — stream-only view below
     loadThread();
     if (issue.pr_number) getJSON("/pr-status?repo=" + encodeURIComponent(repo) + "&number=" + number).then(setPr).catch(() => {});
     getJSON("/app-info?repo=" + encodeURIComponent(repo) + "&number=" + number).then(setAppInfo).catch(() => setAppInfo({ kind: "unknown" }));
@@ -399,6 +414,30 @@ function Detail({ issue, activity, act, isDesktop, onClose, onOpenIssue }) {
   const done = isDone(issue);
   const st = issue.state || "";
   const running = !!(issue.running || issue.active || issue.queued); // a Claude run is executing right now
+
+  // Codebase audit (sentinel #0): no GitHub thread/PR — a stream-only detail with a Stop button.
+  if (issue._audit) {
+    const astream = activity.filter((a) => a.repo === repo && a.number === 0).slice(-200);
+    const sbusy = act.isBusy("stop", repo, 0);
+    return html`<div class="detail on">
+      <div class="dhead">
+        <button class="iconbtn" aria-label="Close" onClick=${onClose}><${Icon} name="arrowleft"/></button>
+        <div class="tt">🔎 Auditing ${repo.split("/").pop()} <span class="dmeta">· codebase health review → issues land in Planned</span></div>
+      </div>
+      <div class="dtoolbar">
+        <a class="tbtn" data-tip="Open repo on GitHub" href=${"https://github.com/" + repo} target="_blank" rel="noopener"><${Icon} name="link"/>${isDesktop ? html`<span class="tlabel">GitHub</span>` : null}</a>
+        <button class=${"tbtn warn" + (sbusy ? " busy" : "")} disabled=${sbusy} data-tip="Stop the audit" onClick=${() => act.stop(repo, 0)}>${sbusy ? html`<${Spinner} size=${18}/>` : html`<${Icon} name="stop"/>`}${isDesktop ? html`<span class="tlabel">${sbusy ? "Stopping…" : "Stop"}</span>` : null}</button>
+      </div>
+      <div class="dpanes">
+        <div class="dpane side" style="flex:1 1 auto;width:auto;max-width:none">
+          <div class="sec">Live stream — Auditor</div>
+          <div class="dstream" ref=${streamRef} onScroll=${(e) => { const el = e.target; stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 50; }}>
+            ${astream.length ? astream.map((a, idx) => html`<div key=${idx} class=${"l " + (a.kind === "tool" ? "tool" : a.kind === "start" || a.kind === "done" ? "muted" : "")}>${a.text}</div>`) : html`<div class="l muted">Starting the audit…</div>`}
+          </div>
+        </div>
+      </div>
+    </div>`;
+  }
 
   function send() {
     if (!reply.trim() && !atts.length) return; setBusy(true);
