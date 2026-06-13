@@ -5,7 +5,8 @@
  */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { writeFileSync, unlinkSync, appendFileSync } from "node:fs";
+import { writeFileSync, unlinkSync, appendFileSync, existsSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sBool } from "./settings.js";
@@ -861,6 +862,101 @@ async function runGit(cwd: string, args: string[]): Promise<string> {
   const env = token ? { ...process.env, GH_TOKEN: token, GITHUB_TOKEN: token } : process.env;
   const { stdout } = await execFileAsync("git", args, { cwd, env, maxBuffer: 10 * 1024 * 1024 });
   return stdout.trim();
+}
+
+/** Like runGit but never throws — returns the exit code + output so we can branch on git failures
+ *  (e.g. a `git merge` that exits 1 on conflicts is an expected outcome, not an error). */
+async function runGitCode(cwd: string, args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
+  const token = ghBotToken();
+  const env = token ? { ...process.env, GH_TOKEN: token, GITHUB_TOKEN: token } : process.env;
+  return new Promise((resolve) => {
+    execFile("git", args, { cwd, env, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+      resolve({
+        code: err ? ((err as NodeJS.ErrnoException & { code?: number }).code ?? 1) : 0,
+        stdout: (stdout || "").toString().trim(),
+        stderr: (stderr || "").toString().trim(),
+      });
+    });
+  });
+}
+
+export interface BaseMergeResult {
+  status: "clean" | "conflicts" | "error";
+  files: string[];
+}
+
+/**
+ * Deterministically merge the base branch (default "main") into the PR branch already checked out
+ * in `workdir`, to clear merge conflicts before we mark a PR mergeable. We do this in code rather
+ * than hoping the agent runs the right git commands: a clean auto-merge needs no agent at all, and
+ * only genuine content conflicts get handed off — with the exact file list. The shallow clone is
+ * deepened first so a merge base exists (a `--depth 50` clone often can't merge `origin/main`).
+ * On conflicts the working tree is LEFT in the conflicted state for the caller's agent to resolve;
+ * `ensureBranchPushed` then completes the merge commit and pushes.
+ */
+export async function mergeBaseInto(workdir: string, base = "main"): Promise<BaseMergeResult> {
+  try {
+    // Deepen history so a merge base exists, then refresh the base ref.
+    await runGitCode(workdir, ["fetch", "--unshallow", "origin"]); // no-op once the clone is complete
+    await runGitCode(workdir, ["fetch", "origin", base]);
+    await runGitCode(workdir, ["merge", "--abort"]); // clear any half-finished merge from a prior try
+    await runGitCode(workdir, ["config", "user.email", "bot@dev-agency.local"]);
+    await runGitCode(workdir, ["config", "user.name", "dev-agency-bot"]);
+    const m = await runGitCode(workdir, ["merge", `origin/${base}`, "--no-edit"]);
+    if (m.code === 0) return { status: "clean", files: [] };
+    const un = await runGitCode(workdir, ["diff", "--name-only", "--diff-filter=U"]);
+    const files = un.stdout.split("\n").map((s) => s.trim()).filter(Boolean);
+    if (files.length) return { status: "conflicts", files };
+    // merge failed for a non-conflict reason (e.g. unrelated histories / fetch failure)
+    return { status: "error", files: [] };
+  } catch {
+    return { status: "error", files: [] };
+  }
+}
+
+/** Current head commit SHA of a branch (cheap API read). Used to cache conflict probes per-SHA. */
+export async function branchHeadSha(repo: string, branch: string): Promise<string> {
+  const out = await gh(["api", `repos/${repo}/commits/${encodeURIComponent(branch)}`, "-q", ".sha"]).catch(() => "");
+  return out.trim();
+}
+
+// One reusable clone per repo for non-destructive conflict probes (kept warm, just re-fetched).
+const conflictProbeDirs = new Map<string, string>();
+
+/**
+ * Best-effort list of the files that conflict when merging `base` into a PR `branch`, computed
+ * WITHOUT mutating the PR: we merge in a throwaway probe checkout and immediately abort. GitHub's
+ * API only exposes a mergeable boolean (not which files), so we derive the file list locally and
+ * cache a warm clone per repo. Returns [] if it can't be determined (network/history issues) — the
+ * UI still shows the conflict box, just without per-file detail.
+ */
+export async function conflictFiles(repo: string, branch: string, base = "main"): Promise<string[]> {
+  try {
+    let dir = conflictProbeDirs.get(repo);
+    if (!dir || !existsSync(join(dir, ".git"))) {
+      dir = join(tmpdir(), "agency-conflict-" + repo.replace(/[^a-z0-9]+/gi, "_"));
+      await rm(dir, { recursive: true, force: true });
+      await cloneRepo(repo, dir);
+      conflictProbeDirs.set(repo, dir);
+    }
+    await runGitCode(dir, ["config", "user.email", "bot@dev-agency.local"]);
+    await runGitCode(dir, ["config", "user.name", "dev-agency-bot"]);
+    await runGitCode(dir, ["merge", "--abort"]); // clear any aborted probe state
+    await runGitCode(dir, ["fetch", "--unshallow", "origin"]);
+    await runGitCode(dir, ["fetch", "origin", base, branch]);
+    const co = await runGitCode(dir, ["checkout", "-f", "-B", "_conflict_probe", `origin/${branch}`]);
+    if (co.code !== 0) return [];
+    const m = await runGitCode(dir, ["merge", "--no-commit", "--no-ff", `origin/${base}`]);
+    let files: string[] = [];
+    if (m.code !== 0) {
+      const un = await runGitCode(dir, ["diff", "--name-only", "--diff-filter=U"]);
+      files = un.stdout.split("\n").map((s) => s.trim()).filter(Boolean);
+    }
+    await runGitCode(dir, ["merge", "--abort"]);
+    return files;
+  } catch {
+    return [];
+  }
 }
 
 /**

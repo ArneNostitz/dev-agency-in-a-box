@@ -16,9 +16,9 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { Config } from "./config.js";
-import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, tokensByRoleSince, tokensByDaySince, topIssuesByTokensSince, tokensByIssueAll, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, type AutoKind, type Provider } from "./store.js";
+import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, tokensByRoleSince, tokensByDaySince, topIssuesByTokensSince, tokensByIssueAll, recordConflict, getConflict, clearConflict, listConflicts, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, type AutoKind, type Provider } from "./store.js";
 import { mergeEpic, isEpic } from "./epics.js";
-import { renderDashboard, renderHistory } from "./dashboard.js";
+import { renderHistory } from "./dashboard.js";
 import { renderShell } from "./shell.js";
 import { addLabel, removeLabel } from "./github.js";
 import { authEnabled, userFromReq, setSessionCookie, clearSessionCookie, parseCookies, SESSION_COOKIE, verifyRecoveryKey } from "./auth.js";
@@ -35,7 +35,7 @@ import { subscribe, getActive } from "./activity.js";
 import { inFlightKeys } from "./pool.js";
 import { listRateLimited } from "./store.js";
 import { effectiveRepos } from "./commands.js";
-import { getThreadFull, commentAsHuman, mergePrForBranch, closeIssue, deleteIssueHard, findPrForBranch, prMergeStatus, detectReviewVerdict, createIssue, readRepoFile, putRepoBase64, listUserRepos } from "./github.js";
+import { getThreadFull, commentAsHuman, commentOnIssue, mergePrForBranch, closeIssue, deleteIssueHard, findPrForBranch, prMergeStatus, conflictFiles, branchHeadSha, detectReviewVerdict, createIssue, readRepoFile, putRepoBase64, listUserRepos } from "./github.js";
 import { listAgentFiles, readAgentFile, isSafeAgentPath } from "./memory.js";
 import { startApp, stopApp, getApp, pickWebDevScript, isTauriPackage, buildLocalCommand } from "./apprun.js";
 import { ensureRepoAccess } from "./commands.js";
@@ -182,7 +182,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         }
         sessionUser = userFromReq(req);
         if (!sessionUser) {
-          const isNav = url === "/" || url === "/classic" || url === "/history";
+          const isNav = url === "/" || url === "/history";
           if (isNav) return void res.writeHead(302, { location: "/login" }).end();
           return void res.writeHead(401, { "content-type": "text/plain" }).end("authentication required");
         }
@@ -245,12 +245,15 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           const epicCache: Record<string, ReturnType<typeof epicsByParent>> = {};
           const reviews = listReviews(); // verdict per "repo#number" — cheap, for the card badge
           const tokenMap = tokensByIssueAll(); // lifetime tokens/cost/model per "repo#number"
+          const conflictMap = listConflicts(); // conflicting files per "repo#number"
           const enriched = issues.map((i) => {
             const byParent = (epicCache[i.repo] ??= epicsByParent(i.repo));
             const kids = byParent[i.number];
+            const conflictFilesFor = conflictMap[`${i.repo}#${i.number}`];
             return {
               ...i,
               usage: tokenMap[`${i.repo}#${i.number}`] ?? null,
+              conflict: conflictFilesFor ? { files: conflictFilesFor } : null,
               previewUrl: i.pr_number ? previewUrlFor(i.repo, i.pr_number, `agency/issue-${i.number}`) : null,
               epic: kids
                 ? { total: kids.length, done: kids.filter((c) => c.closed).length, children: kids }
@@ -440,10 +443,34 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               review = { verdict: d.verdict, summary: d.summary };
             }
           }
-          const merge = repo && number ? await prMergeStatus(repo, `agency/issue-${number}`).catch(() => null) : null;
+          const branch = `agency/issue-${number}`;
+          const merge = repo && number ? await prMergeStatus(repo, branch).catch(() => null) : null;
+          let conflict: { files: string[] } | null = null;
+          if (merge?.mergeable === "conflict" && repo && number) {
+            // Surface WHICH files conflict (GitHub only exposes a boolean). Compute the file list
+            // once per head SHA, persist it, and post a one-time note into the conversation so the
+            // conflict is visible without opening GitHub.
+            const sha = await branchHeadSha(repo, branch).catch(() => "");
+            const stored = getConflict(repo, number);
+            if (stored && stored.sha === sha) {
+              conflict = { files: stored.files };
+            } else {
+              const files = await conflictFiles(repo, branch, "main").catch(() => []);
+              recordConflict(repo, number, sha, files);
+              conflict = { files };
+              const list = files.length ? files.map((f) => `- \`${f}\``).join("\n") : "_(couldn't list the exact files)_";
+              await commentOnIssue(
+                repo,
+                number,
+                `🔀 **Merge conflicts with \`main\`** — this PR can't merge until they're resolved.\n\nConflicting file${files.length === 1 ? "" : "s"}:\n${list}\n\nPress **Fix merge conflicts** on the card to have the agency resolve them automatically.`,
+              ).catch(() => {});
+            }
+          } else if (repo && number) {
+            clearConflict(repo, number); // mergeable again — drop the stale conflict box
+          }
           res
             .writeHead(200, { "content-type": "application/json" })
-            .end(JSON.stringify({ review, merge }));
+            .end(JSON.stringify({ review, merge, conflict }));
         })();
         return;
       }
@@ -522,8 +549,8 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         "content-type": "text/html; charset=utf-8",
         "cache-control": "no-store, must-revalidate",
       });
-      // New Preact UI at /; old dashboard kept at /classic as a fallback; /history unchanged.
-      res.end(url === "/history" ? renderHistory() : url === "/classic" ? renderDashboard() : renderShell());
+      // Preact UI at /; /history renders the run log.
+      res.end(url === "/history" ? renderHistory() : renderShell());
       return;
     }
     if (req.method !== "POST") {
@@ -784,6 +811,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           if (r.ok) {
             await closeIssue(repo, number, `🚀 Merged ${r.msg} from the dashboard.`).catch(() => {});
             recordIssueState(repo, number, { state: "merged" });
+            clearConflict(repo, number);
             return ok();
           }
           return res.writeHead(409).end(JSON.stringify({ error: r.msg }));

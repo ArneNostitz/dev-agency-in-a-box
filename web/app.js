@@ -140,6 +140,8 @@ function App() {
   const isDesktop = useIsDesktop();
   const [data, setData] = useState({ issues: [], repos: [], active: [], activity: [], session: {}, config: {}, auto: {}, autoRepos: {} });
   const [repoFilter, setRepoFilter] = useState(null);
+  const [query, setQuery] = useState("");
+  const [sortKey, setSortKey] = useState("updated");
   const [tab, setTab] = useState("planned");
   const [openKey, setOpenKey] = useState(null); // "repo#number"
   const [sheet, setSheet] = useState(null); // "composer" | "settings"
@@ -183,7 +185,16 @@ function App() {
   // Repos with a running audit — drives the spinner on the top-bar Audit dropdown. (The audit itself
   // is now a real GitHub tracking issue, so it shows as a normal card + detail.)
   const auditRepos = (data.active || []).filter((a) => a.role === "auditor").map((a) => a.repo);
-  const shown = issues.filter((i) => !repoFilter || i.repo === repoFilter);
+  const q = query.trim().toLowerCase();
+  const shown = issues
+    .filter((i) => !repoFilter || i.repo === repoFilter)
+    .filter((i) => !q || (i.title || "").toLowerCase().includes(q) || ("#" + i.number).includes(q) || String(i.number) === q.replace(/^#/, ""))
+    .slice()
+    .sort((a, b) =>
+      sortKey === "number" ? b.number - a.number
+        : sortKey === "title" ? (a.title || "").localeCompare(b.title || "")
+        : new Date(b.updated_at || 0) - new Date(a.updated_at || 0),
+    );
   const activity = (data.activity || []).concat(liveRef.current);
 
   function override(repo, number, patch) { ov[repo + "#" + number] = { patch, t: Date.now() }; forceTick((x) => x + 1); }
@@ -257,6 +268,7 @@ function App() {
     <div class="app">
       <${TopBar} working=${working} env=${data.env} theme=${theme} setTheme=${setThemeP} onSettings=${() => setSheet("settings")} onUsage=${() => setSheet("usage")} onNew=${() => openComposer()} repos=${repos} onAudit=${(r) => act.audit(r)} auditRepos=${auditRepos}/>
       <${RepoSelector} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} onAdd=${() => setSheet("addrepo")}/>
+      <${SearchBar} query=${query} setQuery=${setQuery} sortKey=${sortKey} setSortKey=${setSortKey}/>
       ${data.secretsHealth ? html`<${SecretBanner} h=${data.secretsHealth} onFix=${() => setSheet("settings")}/>` : null}
       <${StatusLine} working=${working} session=${data.session} spend=${data.spendToday}/>
       <div class="content">
@@ -312,6 +324,20 @@ function RepoSelector({ repos, repoFilter, setRepoFilter, onAdd }) {
     <span class="chip dash" onClick=${onAdd}><${Icon} name="plus" size=${13}/> new</span>
   </div>`;
 }
+function SearchBar({ query, setQuery, sortKey, setSortKey }) {
+  return html`<div class="searchbar">
+    <div class="searchfield">
+      <${Icon} name="search" size=${15}/>
+      <input value=${query} placeholder="Search title or #number…" autocomplete="off" oninput=${(e) => setQuery(e.target.value)}/>
+      ${query ? html`<button class="searchclear" aria-label="Clear" onClick=${() => setQuery("")}><${Icon} name="x" size=${14}/></button>` : null}
+    </div>
+    <select class="sortsel" value=${sortKey} onChange=${(e) => setSortKey(e.target.value)} aria-label="Sort issues">
+      <option value="updated">Newest</option>
+      <option value="number">By number</option>
+      <option value="title">By name</option>
+    </select>
+  </div>`;
+}
 function StatusLine({ working, session, spend }) {
   const s = session || {};
   let pct = s.budget > 0 ? Math.min(100, Math.round((100 * s.tokens) / s.budget)) : 0;
@@ -322,7 +348,7 @@ function StatusLine({ working, session, spend }) {
     ${s.budget > 0 ? html`<span>· <span class="gauge"><i style=${"width:" + pct + "%;background:" + col}></i></span> ${pct}%</span>` : null}
     ${s.resetsAt ? html`<span>· resets ${hm(new Date(s.resetsAt))}</span>` : null}
     <span class="spacer"></span>
-    <a href="/classic">classic</a>
+    <a href="/history">history</a>
   </div>`;
 }
 
@@ -373,6 +399,7 @@ function Card({ i, multi, onOpen, act }) {
         : html`<span class=${"statuschip " + st.cls}><${Icon} name=${st.icon} size=${12}/> ${st.label}</span>`}
       ${i.active && !tmp ? html`<span class="dot"></span>` : null}
       ${autoOn ? html`<span class="statuschip s-auto"><${Icon} name=${i.auto.merge ? "merge" : "refresh"} size=${12}/> auto</span>` : null}
+      ${i.conflict ? html`<span class="statuschip s-conflict" title=${(i.conflict.files || []).join(", ") || "Merge conflicts with main"}><${Icon} name="merge" size=${12}/> conflict</span>` : null}
       ${i.pr_number ? html`<a class="tagk" href=${i.pr_url || ghUrl(i.repo, i.pr_number)} target="_blank" rel="noopener" onClick=${(e) => e.stopPropagation()}><${Icon} name="pr" size=${11}/> #${i.pr_number}</a>` : null}
       ${i.usage && i.usage.tokens ? html`<span class="tagk" title=${usageTitle(i.usage)}><${Icon} name="chart" size=${11}/> ${fmtTok(i.usage.tokens)}${i.usage.model ? " · " + shortModel(i.usage.model) : ""}</span>` : null}
       ${multi ? html`<span class="tagk">${i.repo.split("/").pop()}</span>` : null}
@@ -435,7 +462,10 @@ function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIs
   useEffect(() => { const el = streamRef.current; if (el && stickRef.current) el.scrollTop = el.scrollHeight; });
 
   const review = (pr && pr.review && pr.review.verdict) || issue.review || null;
-  const conflict = pr && pr.merge && pr.merge.mergeable === "conflict";
+  // Live conflict signal once /pr-status loads; before that, fall back to the stored flag from /data
+  // so the box shows immediately on open.
+  const conflict = pr ? Boolean(pr.merge && pr.merge.mergeable === "conflict") : Boolean(issue.conflict);
+  const conflictFiles = (pr && pr.conflict && pr.conflict.files) || (issue.conflict && issue.conflict.files) || [];
   const needsFix = review === "changes";
   const done = isDone(issue);
   const st = issue.state || "";
@@ -550,8 +580,16 @@ function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIs
       ${!conflict ? html`<button class=${"btn green" + (mb ? " busy" : "")} disabled=${mb} onClick=${() => confirmAct("merge", () => act.merge(repo, number).then(onClose))}>${mb ? html`<${Spinner} size=${14}/> Merging…` : html`<${Icon} name="merge" size=${14}/> ${ma ? "Confirm merge" : review === "changes" ? "Merge anyway" : "Merge"}`}</button>` : null}
     </div>`;
   })() : null;
+  const conflictBox = conflict ? html`<div class="conflictbox">
+    <div class="conflictbox-h"><${Icon} name="merge" size=${15}/> Merge conflicts with main</div>
+    <div class="conflictbox-b">This PR can't be merged until the conflicts are resolved.${conflictFiles.length ? html` ${conflictFiles.length} conflicting file${conflictFiles.length > 1 ? "s" : ""}:` : ""}</div>
+    ${conflictFiles.length ? html`<ul class="conflictbox-files">${conflictFiles.map((f) => html`<li key=${f}><a href=${"https://github.com/" + repo + "/blob/agency/issue-" + number + "/" + f} target="_blank" rel="noopener"><${Icon} name="link" size=${11}/> ${f}</a></li>`)}</ul>` : null}
+    <button class=${"btn primary" + (bz("fix") ? " busy" : "")} disabled=${bz("fix")} onClick=${() => act.fix(repo, number)}>${bz("fix") ? html`<${Spinner} size=${14}/> Resolving…` : html`<${Icon} name="wrench" size=${14}/> Fix merge conflicts`}</button>
+  </div>` : null;
+
   const chatPane = html`<div class="dpane chat" ref=${chatRef}>
     ${issue.epic ? html`<${EpicChecklist} epic=${issue.epic} repo=${repo} onOpen=${onOpenIssue} onClose=${() => act.close(repo, number).then(onClose)} closing=${act.isBusy("close", repo, number)}/>` : null}
+    ${conflictBox}
     <div class="sec">Conversation</div>
     ${thread ? html`<div>
       ${thread.body ? html`<${Comment} author=${thread.author} createdAt=${thread.createdAt} body=${thread.body} isAgency=${false}/>` : null}
@@ -704,8 +742,6 @@ function Settings({ data, theme, setTheme, onClose, setAuto, reload }) {
     <label>Max tokens per run (0 = off)</label><input type="number" min="0" step="50000" value=${maxTok} onInput=${(e) => setMaxTok(e.target.value)}/>
     <label>Reviewer revise rounds before it asks you</label><input type="number" min="0" max="3" value=${revRounds} onInput=${(e) => setRevRounds(e.target.value)}/>
     ${(!data.user || data.user.role === "admin") && data.opsMeta ? html`<${Operations} meta=${data.opsMeta} values=${data.ops || {}} reload=${reload}/>` : null}
-    <div class="sec">Advanced</div>
-    <a class="btn ghost" href="/classic" style="justify-content:flex-start"><${Icon} name="settings" size=${15}/> Models &amp; agents (classic editor)</a>
   <//>`;
 }
 function Operations({ meta, values, reload }) {
@@ -910,8 +946,7 @@ const CRED_FIELDS = [
 function Credentials({ secretKeys, reload }) {
   return html`<div class="sec">Your credentials</div>
     <div class="muted" style="font-size:12px;margin-bottom:4px">Stored encrypted (AES-256-GCM). The agency uses them to run on your behalf. Write-only — never shown back.</div>
-    ${CRED_FIELDS.map((f) => html`<${SecretField} key=${f.key} field=${f} isSet=${secretKeys.includes(f.key)} reload=${reload}/>`)}
-    <div class="muted" style="font-size:12px;margin-top:6px">Other LLM providers (GLM, DeepSeek…) are managed in <a href="/classic">models</a> for now.</div>`;
+    ${CRED_FIELDS.map((f) => html`<${SecretField} key=${f.key} field=${f} isSet=${secretKeys.includes(f.key)} reload=${reload}/>`)}`;
 }
 function SecretField({ field, isSet, reload }) {
   const [v, setV] = useState("");
