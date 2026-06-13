@@ -595,6 +595,9 @@ export function setRoleModels(map: Record<string, { providerId: string; model: s
 // ---- in-memory session-level fallback (not persisted; cleared after each auto-switch run) ----
 // When Claude hits a usage limit and auto-switch is on, this is set for the duration of the
 // retry, then cleared in the finally block — so user's permanent role assignments are untouched.
+// NOTE: not concurrent-safe — if two issues auto-switch simultaneously the second
+// clearSessionFallback() call in finally will reset the first issue's fallback mid-retry.
+// Self-healing: the affected issue will re-park and retry on the next run.
 let _sessionFallback: { providerId: string; model: string } | null = null;
 export function setSessionFallback(f: { providerId: string; model: string }): void {
   _sessionFallback = f;
