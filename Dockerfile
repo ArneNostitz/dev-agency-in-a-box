@@ -42,6 +42,23 @@ RUN corepack enable || true
 RUN GITNEXUS_SKIP_OPTIONAL_GRAMMARS=1 npm install -g gitnexus@latest \
     || echo "gitnexus not installed (optional) — set GITNEXUS=true only if this succeeds"
 
+# Pre-install LadybugDB's FTS (full-text search) extension at BUILD time. GitNexus runs LadybugDB
+# "load-only" during analyze — it won't download the extension itself — so at runtime full-text
+# search is silently disabled with "FTS extension unavailable". The maintainer confirms a one-time
+# `analyze` WITH network installs it. The build has full network, and GitNexus caches the extension
+# under the node user's home (~/.gitnexus / ~/.ladybug), which lives in the IMAGE (only ~/.claude is
+# on the data volume) — so installing it once here makes it persist for every run. Best-effort:
+# never fails the build; if it can't install, runtime falls back to structural-graph-only.
+RUN set -eux; \
+    d=/tmp/gnwarm; rm -rf "$d"; mkdir -p "$d"; cd "$d"; \
+    git init -q; printf 'def hello():\n    return "hi"\n' > app.py; \
+    git -c user.email=build@local -c user.name=build add -A; \
+    git -c user.email=build@local -c user.name=build commit -qm init; \
+    HOME=/home/node GITNEXUS_SKIP_OPTIONAL_GRAMMARS=1 gitnexus analyze --skip-embeddings 2>&1 | tail -25 \
+      || echo "gitnexus FTS warm: best-effort (failed; runtime falls back to structural-only search)"; \
+    cd /; rm -rf "$d"; \
+    chown -R node:node /home/node/.gitnexus /home/node/.ladybug /home/node/.kuzu /home/node/.cache 2>/dev/null || true
+
 # Install dependencies first for better layer caching.
 COPY package.json package-lock.json* ./
 RUN npm install
