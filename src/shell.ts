@@ -195,8 +195,17 @@ textarea{resize:vertical;min-height:64px}
 .cmt .b pre{background:var(--bg);padding:8px 10px;border-radius:8px;overflow:auto;font-size:12px}
 .cmt .b code{background:var(--bg);padding:1px 5px;border-radius:5px;font-size:.9em}
 .cmt .b img{max-width:100%;border-radius:8px}
-.dcompose{position:sticky;bottom:0;background:var(--surface);border-top:1px solid var(--line);padding:8px 10px calc(8px + var(--safe-b));display:flex;gap:8px;align-items:flex-end}
-.dcompose textarea{min-height:42px;max-height:140px;border-radius:20px;padding:9px 14px}
+.dcompose{position:sticky;bottom:0;background:var(--bg);border-top:1px solid var(--line);padding:10px 12px calc(10px + var(--safe-b))}
+.composer{display:flex;flex-direction:column;gap:8px;background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:11px 13px;box-shadow:0 1px 3px rgba(0,0,0,.05);transition:border-color .15s,box-shadow .15s}
+.composer:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-weak,rgba(47,109,246,.12))}
+.composer textarea{border:none;background:transparent;resize:none;outline:none;width:100%;font:inherit;font-size:14.5px;line-height:1.5;color:var(--ink);min-height:22px;max-height:200px;padding:0;overflow-y:auto}
+.composer textarea::placeholder{color:var(--ink-3)}
+.composer-row{display:flex;align-items:center;gap:8px}
+.composer-row .spacer{flex:1}
+.composer-icon{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:9px;color:var(--ink-2);cursor:pointer;flex:0 0 auto}
+.composer-icon:hover{background:var(--surface-2)}
+.composer-atts{display:flex;flex-wrap:wrap;gap:4px}
+.composer .btn{padding:7px 13px;font-size:13.5px}
 .autorow{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .apill{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);border-radius:999px;padding:5px 11px;font-size:13px;cursor:pointer}
 .apill.on{background:var(--green-weak);border-color:var(--green);color:var(--green)}

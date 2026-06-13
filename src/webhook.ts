@@ -27,7 +27,7 @@ import { getSecretSetting, setSecretSetting, getUserSecretStatus } from "./store
 import { masterKeyConfigured } from "./crypto.js";
 import { ghBotToken, ghUserToken } from "./creds.js";
 import { testClaudeAuth } from "./agents/roleAgent.js";
-import { hasActiveRun, stopRuns } from "./abort.js";
+import { hasActiveRun } from "./abort.js";
 import { renderLogin, renderInvite, renderSetup, renderForgot, renderReset } from "./authpages.js";
 import { authenticate, createSession, revokeSession, getInvite, acceptInvite, createInvite, createUser, listUsers, listInvites, setUserSecret, listUserSecretKeys, countUsers, setUserPassword, getUserByName, getUserByNameOrEmail, createPasswordReset, consumePasswordReset, type User } from "./store.js";
 import { emailEnabled, sendPasswordReset } from "./email.js";
@@ -672,16 +672,20 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               );
             }
           }
-          // Make the agent act on the reply immediately (bypasses trigger-mode/mention). onComment
-          // re-engages to ADDRESS the message even if a PR already exists (unlike the plain Resume,
-          // which would just offer the merge).
+          // Make the agent act on the reply (bypasses trigger-mode/mention). onComment re-engages to
+          // ADDRESS the message even if a PR exists (unlike plain Resume, which just offers the merge).
           const reengage = onComment ?? resume;
-          if (hasActiveRun(repo, number)) {
-            // STEER MID-RUN: a run is executing → abort it so the agent re-reads the thread (with this
-            // new comment) and works on your guidance instead of finishing the old direction. Committed
-            // work persists on the branch; the re-engage continues from there.
-            stopRuns(repo, number);
-            if (reengage) setTimeout(() => void reengage(repo, number), 2000); // let the aborted run drain first
+          if (hasActiveRun(repo, number) && reengage) {
+            // QUEUE: don't interrupt the current run. The comment is already posted; re-engage once the
+            // issue goes idle so the agent re-reads the thread (with this message) and acts on it.
+            const waitThenReengage = (): void => {
+              if (hasActiveRun(repo, number)) {
+                setTimeout(waitThenReengage, 5000);
+                return;
+              }
+              void reengage(repo, number);
+            };
+            setTimeout(waitThenReengage, 5000);
           } else if (reengage) {
             void reengage(repo, number);
           } else {
