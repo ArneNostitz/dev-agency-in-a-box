@@ -37,6 +37,9 @@ const ICONS = {
   history: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>',
   search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
   lock: '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+  chevup: '<path d="m18 15-6-6-6 6"/>',
+  chevdown: '<path d="m6 9 6 6 6-6"/>',
+  edit: '<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>',
 };
 const Icon = ({ name, size = 18, cls }) => html`<svg class=${"lic " + (cls || "")} width=${size} height=${size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{ __html: ICONS[name] || "" }}></svg>`;
 // Spinning loader to show an action is in flight (blocks "did my click register?" ambiguity).
@@ -376,6 +379,9 @@ function Detail({ issue, activity, act, isDesktop, onClose, onOpenIssue }) {
   const [atts, setAtts] = useState([]);
   const [busy, setBusy] = useState(false);
   const [armed, setArmed] = useState(""); // two-tap confirm: which destructive action is armed
+  const [pendingComments, setPendingComments] = useState([]); // optimistic skeleton comments
+  const [chatAtBottom, setChatAtBottom] = useState(true);
+  const [chatAtTop, setChatAtTop] = useState(true);
   const armRef = useRef(null);
   const streamRef = useRef(null);
   const stickRef = useRef(true);
@@ -394,10 +400,22 @@ function Detail({ issue, activity, act, isDesktop, onClose, onOpenIssue }) {
     if (armed === key) { clearTimeout(armRef.current); setArmed(""); fn(); return; }
     setArmed(key); clearTimeout(armRef.current); armRef.current = setTimeout(() => setArmed(""), 3000);
   }
+  function onChatScroll(e) {
+    const el = e.target;
+    setChatAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 60);
+    setChatAtTop(el.scrollTop < 60);
+  }
 
-  function loadThread() { getJSON("/thread?repo=" + encodeURIComponent(repo) + "&number=" + number).then(setThread).catch(() => {}); }
+  function loadThread() {
+    getJSON("/thread?repo=" + encodeURIComponent(repo) + "&number=" + number)
+      .then((t) => {
+        if (t && Array.isArray(t.comments)) setThread(t);
+        else setThread({ _err: "No thread data received from GitHub — the issue may not exist yet or the token lacks access." });
+      })
+      .catch(() => setThread((prev) => prev || { _err: "Couldn't load thread. Check network and GitHub token." }));
+  }
   useEffect(() => {
-    setThread(null); setPr(null); setAppInfo(null); stickRef.current = true;
+    setThread(null); setPr(null); setAppInfo(null); setAtts([]); setPendingComments([]); stickRef.current = true;
     if (issue._audit) return; // the audit has no GitHub thread/PR — stream-only view below
     loadThread();
     if (issue.pr_number) getJSON("/pr-status?repo=" + encodeURIComponent(repo) + "&number=" + number).then(setPr).catch(() => {});
@@ -440,14 +458,67 @@ function Detail({ issue, activity, act, isDesktop, onClose, onOpenIssue }) {
   }
 
   function send() {
-    if (!reply.trim() && !atts.length) return; setBusy(true);
-    Promise.all(atts.map((a) => api("/upload-file", { repo, number, dataUrl: a.d, name: a.name }).then((j) => j && j.md).catch(() => null)))
-      .then((mds) => { const full = [reply].concat(mds.filter(Boolean)).filter(Boolean).join("\n\n"); return api("/comment", { repo, number, body: full }); })
-      .then(() => { setReply(""); setAtts([]); if (taRef.current) taRef.current.style.height = "auto"; toast(running ? "Queued — the agent will pick it up when the run finishes" : "Sent"); setTimeout(loadThread, 800); })
-      .catch((e) => toast((e && e.message) || "Couldn’t send")).then(() => setBusy(false));
+    if (!reply.trim() && !atts.length) return;
+    setBusy(true);
+    // Optimistic skeleton: show the comment immediately before the server confirms
+    const skelId = Date.now();
+    setPendingComments((ps) => ps.concat({ _skel: true, id: skelId, author: "you", createdAt: new Date().toISOString(), body: reply }));
+    // Scroll to bottom so the skeleton is visible
+    requestAnimationFrame(() => { if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight; });
+    Promise.all(atts.map((a) =>
+      api("/upload-file", { repo, number, dataUrl: a.d, name: a.name })
+        .then((j) => ({ md: j && j.md, refId: a.refId }))
+        .catch(() => null)
+    ))
+      .then((results) => {
+        // Replace inline [image N] references with their uploaded markdown
+        let full = reply;
+        const appended = [];
+        for (const r of results.filter(Boolean)) {
+          if (r.refId && r.md) full = full.split("[" + r.refId + "]").join(r.md);
+          else if (r.md) appended.push(r.md);
+        }
+        if (appended.length) full = [full].concat(appended).filter(Boolean).join("\n\n");
+        return api("/comment", { repo, number, body: full });
+      })
+      .then(() => {
+        setReply(""); setAtts([]);
+        if (taRef.current) taRef.current.style.height = "auto";
+        toast(running ? "Queued — the agent will pick it up when the run finishes" : "Sent");
+        setTimeout(() => { setPendingComments((ps) => ps.filter((p) => p.id !== skelId)); loadThread(); }, 800);
+      })
+      .catch((e) => { toast((e && e.message) || "Couldn’t send"); setPendingComments((ps) => ps.filter((p) => p.id !== skelId)); })
+      .finally(() => setBusy(false));
+  }
+  function editComment(id, body) {
+    return api("/comment-edit", { repo, number, commentId: id, body })
+      .then(() => { toast("Comment updated"); setTimeout(loadThread, 400); });
   }
   function pickFiles(e) { const fs = e.target.files || []; for (let i = 0; i < fs.length; i++) readAttach(fs[i], (a) => setAtts((x) => x.concat(a))); e.target.value = ""; }
-  function onPaste(e) { const items = (e.clipboardData || {}).items || []; for (let i = 0; i < items.length; i++) if (items[i].kind === "file") readAttach(items[i].getAsFile(), (a) => setAtts((x) => x.concat(a))); }
+  function onPaste(e) {
+    const items = (e.clipboardData || {}).items || [];
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].kind !== "file") continue;
+      const file = items[i].getAsFile();
+      if (!file) continue;
+      if (/^image\//.test(file.type)) {
+        // Inline image: insert a reference token at the caret so the image lands in context
+        const imgNum = atts.filter((a) => a.img).length + 1;
+        const refId = "image " + imgNum;
+        const ta = taRef.current;
+        if (ta) {
+          const start = ta.selectionStart || 0, end = ta.selectionEnd || 0;
+          const token = "[" + refId + "]";
+          setReply((prev) => prev.slice(0, start) + token + prev.slice(end));
+          // Restore caret after the inserted token
+          requestAnimationFrame(() => { if (ta) { const pos = start + token.length; ta.selectionStart = ta.selectionEnd = pos; ta.focus(); } });
+        }
+        readAttach(file, (a) => setAtts((x) => x.concat(Object.assign({}, a, { name: refId, refId }))));
+      } else {
+        readAttach(file, (a) => setAtts((x) => x.concat(a)));
+      }
+    }
+  }
 
   // toolbar actions. Text labels show on desktop (and on a confirm-armed destructive button).
   const lbl = (t) => isDesktop ? html`<span class="tlabel">${t}</span>` : null;
@@ -523,10 +594,14 @@ function Detail({ issue, activity, act, isDesktop, onClose, onOpenIssue }) {
   tb.push(html`<span class="tbsep"></span>`);
   tb.push(html`<button class=${"tbtn danger" + (da ? " armed" : "") + (db ? " busy" : "")} disabled=${db} data-tip=${da ? "Tap again to delete" : "Delete"} onClick=${() => confirmAct("del", () => act.del(repo, number))}>${db ? html`<${Spinner} size=${18}/>` : html`<${Icon} name="trash"/>`}${(isDesktop || da) ? html`<span class="tlabel">${db ? "Deleting…" : da ? "Confirm delete" : "Delete"}</span>` : null}</button>`);
 
+  const [streamAtBottom, setStreamAtBottom] = useState(true);
   const streamPane = html`<div class="dpane side">
     <div class="sec">Live stream</div>
-    <div class="dstream" ref=${streamRef} onScroll=${(e) => { const el = e.target; stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 50; }}>
+    <div class="dstream" ref=${streamRef} onScroll=${(e) => { const el = e.target; const atB = el.scrollHeight - el.scrollTop - el.clientHeight < 50; stickRef.current = atB; setStreamAtBottom(atB); }}>
       ${stream.length ? stream.map((a, idx) => html`<div key=${idx} class=${"l " + (a.kind === "tool" ? "tool" : a.kind === "start" || a.kind === "done" ? "muted" : "")}>${a.text}</div>`) : html`<div class="l muted">No live activity yet.</div>`}
+      ${!streamAtBottom ? html`<div style="position:sticky;bottom:4px;text-align:right;pointer-events:none">
+        <button class="iconbtn" style="pointer-events:auto;background:rgba(30,40,55,.85);border:1px solid #3a4a6a;border-radius:50%;width:28px;height:28px;padding:0;display:inline-flex;align-items:center;justify-content:center" title="Scroll to bottom" onClick=${() => { const el = streamRef.current; if (el) el.scrollTop = el.scrollHeight; }}><${Icon} name="chevdown" size=${14}/></button>
+      </div>` : null}
     </div>
     <${RunApp} repo=${repo} number=${number} appInfo=${appInfo} issue=${issue} done=${done}/>
   </div>`;
@@ -541,14 +616,19 @@ function Detail({ issue, activity, act, isDesktop, onClose, onOpenIssue }) {
       ${!conflict ? html`<button class=${"btn green" + (mb ? " busy" : "")} disabled=${mb} onClick=${() => confirmAct("merge", () => act.merge(repo, number).then(onClose))}>${mb ? html`<${Spinner} size=${14}/> Merging…` : html`<${Icon} name="merge" size=${14}/> ${ma ? "Confirm merge" : review === "changes" ? "Merge anyway" : "Merge"}`}</button>` : null}
     </div>`;
   })() : null;
-  const chatPane = html`<div class="dpane chat" ref=${chatRef}>
+  const chatPane = html`<div class="dpane chat" ref=${chatRef} onScroll=${onChatScroll}>
+    ${!chatAtTop ? html`<div class="scroll-fab-wrap top"><button class="iconbtn scroll-fab" title="Scroll to top" onClick=${() => { chatRef.current.scrollTop = 0; }}><${Icon} name="chevup" size=${16}/></button></div>` : null}
     ${issue.epic ? html`<${EpicChecklist} epic=${issue.epic} repo=${repo} onOpen=${onOpenIssue} onClose=${() => act.close(repo, number).then(onClose)} closing=${act.isBusy("close", repo, number)}/>` : null}
     ${prBar}
     <div class="sec">Conversation</div>
-    ${thread ? html`<div>
-      ${thread.body ? html`<${Comment} author=${thread.author} createdAt=${thread.createdAt} body=${thread.body} isAgency=${false}/>` : null}
-      ${(thread.comments || []).map((c, idx) => html`<${Comment} key=${idx} author=${c.author} createdAt=${c.createdAt} body=${c.body} isAgency=${c.isAgency}/>`)}
-    </div>` : html`<div class="muted">Loading…</div>`}
+    ${thread === null ? html`<div class="muted">Loading…</div>`
+      : thread._err ? html`<div class="muted" style="color:var(--red);display:flex;align-items:center;gap:8px">${thread._err} <button class="btn" onClick=${loadThread}>Retry</button></div>`
+      : html`<div>
+        ${thread.body ? html`<${Comment} author=${thread.author} createdAt=${thread.createdAt} body=${thread.body} isAgency=${false}/>` : null}
+        ${(thread.comments || []).map((c) => html`<${Comment} key=${c.id || c.createdAt} id=${c.id} author=${c.author} createdAt=${c.createdAt} body=${c.body} isAgency=${c.isAgency} onEdit=${editComment}/>`)}
+        ${pendingComments.map((p) => html`<${Comment} key=${"skel-" + p.id} author=${p.author} createdAt=${p.createdAt} body=${p.body} isAgency=${false} isSkel=${true}/>`)}
+      </div>`}
+    ${!chatAtBottom ? html`<div class="scroll-fab-wrap"><button class="iconbtn scroll-fab" title="Scroll to bottom" onClick=${() => { chatRef.current.scrollTop = chatRef.current.scrollHeight; }}><${Icon} name="chevdown" size=${16}/></button></div>` : null}
   </div>`;
 
   return html`<div class="detail on">
@@ -567,7 +647,7 @@ function Detail({ issue, activity, act, isDesktop, onClose, onOpenIssue }) {
     <div class="dcompose">
       <div class="composer">
         ${atts.length ? html`<div class="composer-atts">${atts.map((a, idx) => html`<span class="att" key=${idx}>${a.img ? html`<img src=${a.d}/>` : html`<span><${Icon} name="paperclip" size=${12}/> ${a.name}</span>`}<button class="iconbtn" style="width:18px;height:18px;border:none" onClick=${() => setAtts((x) => x.filter((_, j) => j !== idx))}>×</button></span>`)}</div>` : null}
-        <textarea ref=${taRef} rows="1" placeholder=${running ? "Message the agent…  (queued until the run finishes)" : "Reply…  (paste an image to attach)"} value=${reply} onInput=${(e) => { setReply(e.target.value); autosize(); }} onPaste=${onPaste}></textarea>
+        <textarea ref=${taRef} rows="1" placeholder=${running ? "Message the agent…  (queued until the run finishes)" : "Reply…  (Cmd+Enter sends, paste image to embed)"} value=${reply} onInput=${(e) => { setReply(e.target.value); autosize(); }} onPaste=${onPaste} onKeyDown=${(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); send(); } }}></textarea>
         <div class="composer-row">
           <label class="composer-icon" title="Attach a file"><${Icon} name="paperclip" size=${18}/><input type="file" multiple style="display:none" onChange=${pickFiles}/></label>
           <span class="spacer"></span>
@@ -578,7 +658,31 @@ function Detail({ issue, activity, act, isDesktop, onClose, onOpenIssue }) {
     </div>
   </div>`;
 }
-function Comment(c) { return html`<div class=${"cmt " + (c.isAgency ? "ag" : "")}><div class="h">${c.isAgency ? "🤖 " : ""}${c.author || ""} · ${ago(c.createdAt)}</div><div class="b" dangerouslySetInnerHTML=${{ __html: md(c.body) }}></div></div>`; }
+function Comment({ id, author, createdAt, body, isAgency, isSkel, onEdit }) {
+  const [editing, setEditing] = useState(false);
+  const [editVal, setEditVal] = useState(body || "");
+  const [saving, setSaving] = useState(false);
+  function startEdit() { setEditVal(body || ""); setEditing(true); }
+  function cancelEdit() { setEditing(false); }
+  function save() {
+    if (!onEdit || !editVal.trim() || saving) return;
+    setSaving(true);
+    onEdit(id, editVal.trim()).then(() => { setEditing(false); setSaving(false); }).catch(() => setSaving(false));
+  }
+  return html`<div class=${"cmt " + (isAgency ? "ag" : "") + (isSkel ? " skel" : "")}>
+    <div class="h">
+      <span>${isAgency ? "🤖 " : ""}${author || ""} · ${isSkel ? "just now" : ago(createdAt)}</span>
+      ${id && onEdit && !isSkel ? html`<button class="iconbtn cmt-edit-btn" title="Edit comment" onClick=${startEdit}><${Icon} name="edit" size=${13}/></button>` : null}
+    </div>
+    ${editing ? html`
+      <textarea class="cmt-edit-ta" value=${editVal} onInput=${(e) => setEditVal(e.target.value)}></textarea>
+      <div class="cmt-edit-row">
+        <button class="btn" onClick=${cancelEdit}>Cancel</button>
+        <button class="btn primary" disabled=${saving} onClick=${save}>${saving ? html`<${Spinner} size=${13}/>` : "Save"}</button>
+      </div>
+    ` : html`<div class="b" dangerouslySetInnerHTML=${{ __html: md(body) }}></div>`}
+  </div>`;
+}
 
 // Epic parent: a checklist of every sub-issue (✓ done / ○ open), each a link to its detail page,
 // plus a one-click "Complete & close" once they're all done.

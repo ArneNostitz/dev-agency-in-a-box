@@ -16,7 +16,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { Config } from "./config.js";
-import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, type AutoKind, type Provider } from "./store.js";
+import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, getIssueRow, type AutoKind, type Provider } from "./store.js";
 import { mergeEpic, isEpic } from "./epics.js";
 import { renderDashboard, renderHistory } from "./dashboard.js";
 import { renderShell } from "./shell.js";
@@ -35,7 +35,7 @@ import { subscribe, getActive } from "./activity.js";
 import { inFlightKeys } from "./pool.js";
 import { listRateLimited } from "./store.js";
 import { effectiveRepos } from "./commands.js";
-import { getThreadFull, commentAsHuman, mergePrForBranch, closeIssue, deleteIssueHard, findPrForBranch, prMergeStatus, detectReviewVerdict, createIssue, readRepoFile, putRepoBase64, listUserRepos } from "./github.js";
+import { getThreadFull, commentAsHuman, editCommentAsHuman, mergePrForBranch, closeIssue, deleteIssueHard, findPrForBranch, prMergeStatus, detectReviewVerdict, createIssue, readRepoFile, putRepoBase64, listUserRepos } from "./github.js";
 import { listAgentFiles, readAgentFile, isSafeAgentPath } from "./memory.js";
 import { startApp, stopApp, getApp, pickWebDevScript, isTauriPackage, buildLocalCommand } from "./apprun.js";
 import { ensureRepoAccess } from "./commands.js";
@@ -587,11 +587,11 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
     }
 
     // Dashboard actions (auth required), not GitHub webhooks.
-    if (["/archive", "/comment", "/run-checks", "/merge", "/close", "/create-pr", "/delete", "/resume", "/stop", "/fix", "/auto", "/start", "/new-issue", "/approve", "/audit", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude"].includes(path)) {
+    if (["/archive", "/comment", "/comment-edit", "/run-checks", "/merge", "/close", "/create-pr", "/delete", "/resume", "/stop", "/fix", "/auto", "/start", "/new-issue", "/approve", "/audit", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude"].includes(path)) {
       const actor = userFromReq(req);
       if (!actor) return void res.writeHead(401, { "content-type": "application/json" }).end('{"error":"auth required"}');
       void readBody(req).then(async (body) => {
-        let p: { repo?: string; number?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; dataUrl?: string; name?: string; providers?: Provider[]; roleModels?: Record<string, { providerId: string; model: string }>; kind?: string; value?: string; skipArchitect?: string; gitnexus?: string; maxTokensPerRun?: number; maxReviseRounds?: number; start?: boolean; email?: string; key?: string; ops?: Record<string, string | number | boolean>; webhookSecret?: string } = {};
+        let p: { repo?: string; number?: number; commentId?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; dataUrl?: string; name?: string; providers?: Provider[]; roleModels?: Record<string, { providerId: string; model: string }>; kind?: string; value?: string; skipArchitect?: string; gitnexus?: string; maxTokensPerRun?: number; maxReviseRounds?: number; start?: boolean; email?: string; key?: string; ops?: Record<string, string | number | boolean>; webhookSecret?: string } = {};
         try {
           p = JSON.parse(body.toString("utf8"));
         } catch {
@@ -675,7 +675,12 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           }
           // Make the agent act on the reply (bypasses trigger-mode/mention). onComment re-engages to
           // ADDRESS the message even if a PR exists (unlike plain Resume, which just offers the merge).
-          const reengage = onComment ?? resume;
+          // Exception: planned / awaiting-approval issues have no branch yet — posting a comment should
+          // NOT kick off a run automatically. The human will start it explicitly when ready.
+          const issueRow = getIssueRow(repo, number);
+          const issueState = issueRow?.state ?? "";
+          const isPlanned = issueState === "planned" || issueState === "agency:planned" || issueState === "agency:awaiting-approval";
+          const reengage = isPlanned ? null : (onComment ?? resume);
           if (hasActiveRun(repo, number) && reengage) {
             // QUEUE: don't interrupt the current run. The comment is already posted; re-engage once the
             // issue goes idle so the agent re-reads the thread (with this message) and acts on it.
@@ -691,6 +696,27 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
             void reengage(repo, number);
           } else {
             void trigger("dashboard-comment");
+          }
+          return ok();
+        }
+        if (path === "/comment-edit") {
+          // Edit an existing comment by its id (from getThreadFull). Attempts owner token first,
+          // falls back to bot token — so you can edit both your own comments and agency comments.
+          if (!repo || !number || !p.commentId || !p.body?.trim()) return res.writeHead(400).end("{}");
+          const text = p.body.trim();
+          try {
+            await editCommentAsHuman(repo, p.commentId, text, ownerToken);
+          } catch (errOwner) {
+            const bot = ghBotToken();
+            if (bot && bot !== ownerToken) {
+              try {
+                await editCommentAsHuman(repo, p.commentId, text, bot);
+              } catch (errBot) {
+                return res.writeHead(500).end(JSON.stringify({ error: `Couldn't edit comment: ${(errBot as Error).message.slice(0, 200)}` }));
+              }
+            } else {
+              return res.writeHead(500).end(JSON.stringify({ error: `Couldn't edit comment: ${(errOwner as Error).message.slice(0, 200)}` }));
+            }
           }
           return ok();
         }

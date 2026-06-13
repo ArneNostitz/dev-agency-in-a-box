@@ -201,11 +201,19 @@ textarea{resize:vertical;min-height:64px}
 .sec{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-3);margin:14px 2px 7px}
 .cmt{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:9px 11px;margin-bottom:8px}
 .cmt.ag{background:var(--surface-2)}
-.cmt .h{font-size:12px;color:var(--ink-2);margin-bottom:4px}
+.cmt.skel{opacity:.55}
+.cmt .h{font-size:12px;color:var(--ink-2);margin-bottom:4px;display:flex;align-items:center;gap:6px}
+.cmt .h .cmt-edit-btn{margin-left:auto;opacity:0;transition:opacity .15s;padding:2px}
+.cmt:hover .h .cmt-edit-btn{opacity:1}
 .cmt .b{font-size:14px}
 .cmt .b pre{background:var(--bg);padding:8px 10px;border-radius:8px;overflow:auto;font-size:12px}
 .cmt .b code{background:var(--bg);padding:1px 5px;border-radius:5px;font-size:.9em}
 .cmt .b img{max-width:100%;border-radius:8px}
+.cmt-edit-ta{width:100%;border:1px solid var(--line);border-radius:9px;background:var(--bg);color:var(--ink);font:inherit;font-size:14px;padding:8px 10px;resize:vertical;min-height:80px;box-sizing:border-box}
+.cmt-edit-row{display:flex;gap:6px;margin-top:6px;justify-content:flex-end}
+.scroll-fab-wrap{position:sticky;bottom:8px;display:flex;justify-content:flex-end;pointer-events:none;margin-top:4px}
+.scroll-fab-wrap.top{bottom:auto;top:8px;justify-content:flex-start;margin-top:0;margin-bottom:4px}
+.scroll-fab{pointer-events:auto;background:var(--surface)!important;border:1px solid var(--line)!important;box-shadow:0 2px 8px rgba(0,0,0,.12);border-radius:50%!important;width:32px!important;height:32px!important;display:flex;align-items:center;justify-content:center}
 .dcompose{position:sticky;bottom:0;background:var(--bg);border-top:1px solid var(--line);padding:10px 12px calc(10px + var(--safe-b))}
 .composer{display:flex;flex-direction:column;gap:8px;background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:11px 13px;box-shadow:0 1px 3px rgba(0,0,0,.05);transition:border-color .15s,box-shadow .15s}
 .composer:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-weak,rgba(47,109,246,.12))}
