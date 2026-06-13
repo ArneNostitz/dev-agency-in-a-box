@@ -248,6 +248,12 @@ test("parseRateLimit detects usage walls and reads a reset time", () => {
   const s = parseRateLimit("Claude Code returned an error result: You've hit your session limit · resets 12:40am (UTC)");
   assert.equal(s.limited, true);
   assert.ok(s.resetAt && s.resetAt > 0);
+  // NOT a Claude usage limit — must not pause all agents:
+  assert.equal(parseRateLimit("gh: API rate limit exceeded for user ArneNostitz").limited, false, "GitHub API rate limit");
+  assert.equal(parseRateLimit("You have exceeded a secondary rate limit").limited, false, "GitHub secondary rate limit");
+  assert.equal(parseRateLimit("error: disk quota exceeded").limited, false, "generic quota");
+  assert.equal(parseRateLimit("overloaded_error: server is busy").limited, false, "transient overload, not a usage wall");
+  assert.equal(parseRateLimit("the cache resets at midnight").limited, false, "incidental 'resets at' text");
 });
 
 test("parseResetClock reads 'resets 12:40am (UTC)' to the next occurrence", () => {

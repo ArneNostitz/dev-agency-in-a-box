@@ -91,7 +91,7 @@ function isDone(i) { const s = i.state || ""; return s === "merged" || s === "ag
 function classify(i) {
   const s = i.state || "";
   if (isDone(i)) return "done";
-  if (i.active || i.queued) return "working"; // actually executing right now
+  if (i.active || i.queued || i.running) return "working"; // actually executing right now (i.running = live hasActiveRun from server)
   if (i.pr_number) return "review"; // a PR exists → it's waiting on you, even if a restart left a stale "in-progress" label
   if (s === "agency:in-progress" || s === "agency:rate-limited") return "working";
   if (s === "agency:epic") return i.epic && i.epic.done >= i.epic.total ? "review" : "working";
@@ -181,10 +181,9 @@ function App() {
   const ov = overridesRef.current;
   let issues = (data.issues || []).map((i) => { const o = ov[i.repo + "#" + i.number]; return o ? Object.assign({}, i, o.patch) : i; });
   issues = issues.concat(pending.filter((p) => !issues.some((i) => i.repo === p.repo && i.number === p.number)));
-  // A running codebase audit shows as a live card (sentinel #0) so you can watch its stream.
-  const auditing = (data.active || []).filter((a) => a.role === "auditor" && a.number === 0);
-  const auditRepos = auditing.map((a) => a.repo);
-  issues = issues.concat(auditing.filter((a) => !issues.some((i) => i.repo === a.repo && i.number === 0)).map((a) => ({ repo: a.repo, number: 0, title: "🔎 Codebase audit", state: "agency:in-progress", active: true, running: true, _audit: true, updated_at: new Date(a.since || Date.now()).toISOString() })));
+  // Repos with a running audit — drives the spinner on the top-bar Audit dropdown. (The audit itself
+  // is now a real GitHub tracking issue, so it shows as a normal card + detail.)
+  const auditRepos = (data.active || []).filter((a) => a.role === "auditor").map((a) => a.repo);
   const shown = issues.filter((i) => !repoFilter || i.repo === repoFilter);
   const activity = (data.activity || []).concat(liveRef.current);
 
@@ -208,7 +207,7 @@ function App() {
     approve(repo, number) { return guard("approve", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/approve", { repo, number }).then(() => toast("Approved — building")).catch(() => toast("Couldn’t approve")).then(load); }); },
     resume(repo, number) { return guard("resume", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/resume", { repo, number }).then(() => toast("Resuming")).catch(() => toast("Couldn’t resume")).then(load); }); },
     stop(repo, number) { return guard("stop", repo, number, () => { override(repo, number, { state: "planned" }); return api("/stop", { repo, number }).then(() => toast("Stopped — moved to Planned")).catch(() => toast("Couldn’t stop")).then(load); }); },
-    fix(repo, number) { return guard("fix", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/fix", { repo, number }).then(() => toast("Fixing the review")).catch(() => toast("Couldn’t fix")).then(load); }); },
+    fix(repo, number) { return guard("fix", repo, number, () => { override(repo, number, { state: "agency:in-progress", active: true }); return api("/fix", { repo, number }).then(() => toast("Fixing the review")).catch(() => toast("Couldn’t fix")).then(load); }); },
     merge(repo, number) { return guard("merge", repo, number, () => api("/merge", { repo, number }).then((r) => { toast("Merged"); load(); return r; }).catch(() => toast("Couldn’t merge — conflicts?"))); },
     close(repo, number) { return guard("close", repo, number, () => { override(repo, number, { state: "merged" }); return api("/close", { repo, number }).then(() => { toast("Closed"); setOpenKey(null); }).catch((e) => toast((e && e.message) || "Couldn’t close")).then(load); }); },
     createPr(repo, number) { return guard("createPr", repo, number, () => { override(repo, number, { state: "agency:ready" }); return api("/create-pr", { repo, number }).then((r) => toast(r && r.url ? "PR opened" : "PR opened")).catch((e) => toast((e && e.message) || "Couldn’t open PR")).then(load); }); },
@@ -440,30 +439,6 @@ function Detail({ issue, activity, act, isDesktop, onClose, onOpenIssue }) {
   const done = isDone(issue);
   const st = issue.state || "";
   const running = !!(issue.running || issue.active || issue.queued); // a Claude run is executing right now
-
-  // Codebase audit (sentinel #0): no GitHub thread/PR — a stream-only detail with a Stop button.
-  if (issue._audit) {
-    const astream = activity.filter((a) => a.repo === repo && a.number === 0).slice(-200);
-    const sbusy = act.isBusy("stop", repo, 0);
-    return html`<div class="detail on">
-      <div class="dhead">
-        <button class="iconbtn" aria-label="Close" onClick=${onClose}><${Icon} name="arrowleft"/></button>
-        <div class="tt">🔎 Auditing ${repo.split("/").pop()} <span class="dmeta">· codebase health review → issues land in Planned</span></div>
-      </div>
-      <div class="dtoolbar">
-        <a class="tbtn" data-tip="Open repo on GitHub" href=${"https://github.com/" + repo} target="_blank" rel="noopener"><${Icon} name="link"/>${isDesktop ? html`<span class="tlabel">GitHub</span>` : null}</a>
-        <button class=${"tbtn warn" + (sbusy ? " busy" : "")} disabled=${sbusy} data-tip="Stop the audit" onClick=${() => act.stop(repo, 0)}>${sbusy ? html`<${Spinner} size=${18}/>` : html`<${Icon} name="stop"/>`}${isDesktop ? html`<span class="tlabel">${sbusy ? "Stopping…" : "Stop"}</span>` : null}</button>
-      </div>
-      <div class="dpanes">
-        <div class="dpane side" style="flex:1 1 auto;width:auto;max-width:none">
-          <div class="sec">Live stream — Auditor</div>
-          <div class="dstream" ref=${streamRef} onScroll=${(e) => { const el = e.target; stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 50; }}>
-            ${astream.length ? astream.map((a, idx) => html`<div key=${idx} class=${"l " + (a.kind === "tool" ? "tool" : a.kind === "start" || a.kind === "done" ? "muted" : "")}>${a.text}</div>`) : html`<div class="l muted">Starting the audit…</div>`}
-          </div>
-        </div>
-      </div>
-    </div>`;
-  }
 
   function send() {
     if (!reply.trim() && !atts.length) return;
