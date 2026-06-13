@@ -48,6 +48,9 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
     issues: [
       { repo: "acme/app", number: 1, title: "A planned task", state: "planned", updated_at: new Date().toISOString(), auto: {} },
       { repo: "acme/app", number: 2, title: "Ready PR", state: "agency:ready", pr_number: 5, review: "approved", updated_at: new Date().toISOString(), auto: {} },
+      // Issue 3 simulates the "fix" flow: has a PR (was in Review) but is now actively being fixed.
+      // classify() must put it in Working (via i.running), not keep it in Review (via i.pr_number).
+      { repo: "acme/app", number: 3, title: "Fix running now", state: "agency:in-progress", pr_number: 7, running: true, updated_at: new Date().toISOString(), auto: {} },
     ],
   };
   const route = (u) => {
@@ -81,6 +84,15 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
   await new Promise((r) => setTimeout(r, 150));
   const root = window.document.getElementById("root");
   assert.match(root.innerHTML, /A planned task/, "planned issue card renders from /data");
+
+  // Verify lane placement for the fix flow: an issue with pr_number AND running:true must go to
+  // Working, not Review. The mobile TabBar shows counts per column, so "Working · 1" confirms
+  // classify() put the fix-running card in Working rather than Review.
+  const html2 = root.innerHTML;
+  assert.match(html2, /Working.*?·.*?1|Working\s*·\s*1/, "Working tab shows 1 issue (the fix-running card)");
+  // Review should have 1 card (the approved PR), not 2 — the fix-running card must NOT be there.
+  assert.match(html2, /Review.*?·.*?1|Review\s*·\s*1/, "Review tab shows only 1 issue (not the fix-running card)");
+
   // onboarding wizard renders (onboarded:false) — exercises its hook components
   assert.match(root.innerHTML, /Welcome to your Dev Agency/, "onboarding wizard renders");
   assert.match(root.innerHTML, /Which models|Get started/, "onboarding has the model/get-started step");

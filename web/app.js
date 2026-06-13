@@ -88,7 +88,7 @@ function isDone(i) { const s = i.state || ""; return s === "merged" || s === "ag
 function classify(i) {
   const s = i.state || "";
   if (isDone(i)) return "done";
-  if (i.active || i.queued) return "working"; // actually executing right now
+  if (i.active || i.queued || i.running) return "working"; // actually executing right now (i.running = live hasActiveRun from server)
   if (i.pr_number) return "review"; // a PR exists → it's waiting on you, even if a restart left a stale "in-progress" label
   if (s === "agency:in-progress" || s === "agency:rate-limited") return "working";
   if (s === "agency:epic") return i.epic && i.epic.done >= i.epic.total ? "review" : "working";
@@ -205,7 +205,7 @@ function App() {
     approve(repo, number) { return guard("approve", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/approve", { repo, number }).then(() => toast("Approved — building")).catch(() => toast("Couldn’t approve")).then(load); }); },
     resume(repo, number) { return guard("resume", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/resume", { repo, number }).then(() => toast("Resuming")).catch(() => toast("Couldn’t resume")).then(load); }); },
     stop(repo, number) { return guard("stop", repo, number, () => { override(repo, number, { state: "planned" }); return api("/stop", { repo, number }).then(() => toast("Stopped — moved to Planned")).catch(() => toast("Couldn’t stop")).then(load); }); },
-    fix(repo, number) { return guard("fix", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/fix", { repo, number }).then(() => toast("Fixing the review")).catch(() => toast("Couldn’t fix")).then(load); }); },
+    fix(repo, number) { return guard("fix", repo, number, () => { override(repo, number, { state: "agency:in-progress", active: true }); return api("/fix", { repo, number }).then(() => toast("Fixing the review")).catch(() => toast("Couldn’t fix")).then(load); }); },
     merge(repo, number) { return guard("merge", repo, number, () => api("/merge", { repo, number }).then((r) => { toast("Merged"); load(); return r; }).catch(() => toast("Couldn’t merge — conflicts?"))); },
     close(repo, number) { return guard("close", repo, number, () => { override(repo, number, { state: "merged" }); return api("/close", { repo, number }).then(() => { toast("Closed"); setOpenKey(null); }).catch((e) => toast((e && e.message) || "Couldn’t close")).then(load); }); },
     createPr(repo, number) { return guard("createPr", repo, number, () => { override(repo, number, { state: "agency:ready" }); return api("/create-pr", { repo, number }).then((r) => toast(r && r.url ? "PR opened" : "PR opened")).catch((e) => toast((e && e.message) || "Couldn’t open PR")).then(load); }); },
