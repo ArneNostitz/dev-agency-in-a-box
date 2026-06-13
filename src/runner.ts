@@ -109,8 +109,14 @@ function pausedUntil(): number {
 function agentsArePaused(): boolean {
   return Date.now() < pausedUntil();
 }
-function pauseAgents(untilMs: number): void {
-  setSetting("agents_paused_until", new Date(Math.max(pausedUntil(), untilMs)).toISOString());
+/**
+ * Pause new dispatch until untilMs. A `parsed` reset (read straight from Claude's "resets …" error)
+ * is AUTHORITATIVE — set it exactly, even if it's EARLIER than a previously-set time (so a stale
+ * fallback guess can't make us over-wait). A fallback/guessed time only ever EXTENDS the pause.
+ */
+function pauseAgents(untilMs: number, parsed = false): void {
+  const next = parsed ? untilMs : Math.max(pausedUntil(), untilMs);
+  setSetting("agents_paused_until", new Date(next).toISOString());
 }
 /** Next usage-window reset, honoring a manually-set/just-set anchor. */
 function nextResetMs(): number {
@@ -126,8 +132,9 @@ function nextResetMs(): number {
 async function maybeParkRateLimited(repo: string, number: number, msg: string, isPr = false): Promise<boolean> {
   const rl = parseRateLimit(msg);
   if (!rl.limited) return false;
-  const resetAt = rl.resetAt && rl.resetAt > Date.now() ? rl.resetAt : nextResetMs();
-  pauseAgents(resetAt);
+  const parsed = Boolean(rl.resetAt && rl.resetAt > Date.now());
+  const resetAt = parsed ? (rl.resetAt as number) : nextResetMs();
+  pauseAgents(resetAt, parsed); // a reset time read from Claude's error is authoritative
   const when = new Date(resetAt).toLocaleString();
   if (isPr) {
     await commentOnPr(repo, number, `⏳ Hit the Claude usage limit — I'll retry automatically after the window resets (~${when}).`).catch(() => {});

@@ -7,11 +7,20 @@
  * agent work until then, and a script-driven timer re-runs the parked work after the reset.
  */
 
-/** Does this error message look like a usage/rate limit, and when does it reset (ms epoch)? */
+/**
+ * Does this error look like a genuine CLAUDE/Anthropic usage-or-rate limit (and when does it reset)?
+ *
+ * Strict on purpose: we only pause ALL agents for a real LLM usage limit. We must NOT trip on
+ * GitHub's API rate limit, a generic "limit"/"quota"/"resets at" appearing in agent output or some
+ * unrelated error, or a transient "overloaded" (529, retry soon — not a usage wall). Match only the
+ * signatures Claude Code / the Anthropic API actually return for usage/rate limits.
+ */
 export function parseRateLimit(msg: string): { limited: boolean; resetAt?: number } {
   const text = msg || "";
+  // GitHub's own rate limit (from the agent's `gh`/git calls) is NOT a Claude usage limit.
+  if (/api rate limit exceeded|secondary rate limit|x-ratelimit|api\.github\.com/i.test(text)) return { limited: false };
   const limited =
-    /(usage limit|session limit|rate[ _-]?limit|rate_limit_error|\b429\b|too many requests|quota|overloaded_error|limit reached|hit your [\w ]*limit|limit (will )?reset|resets?\s+(at|\d))/i.test(
+    /(claude (ai |code )?usage limit|usage limit reached|reached your usage limit|session limit|rate_limit_error|hit your (usage|session|[\w ]*?) ?limit|\b429\b|too many requests)/i.test(
       text,
     );
   if (!limited) return { limited: false };
