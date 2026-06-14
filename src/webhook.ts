@@ -16,7 +16,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { Config } from "./config.js";
-import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, tokensByRoleSince, tokensByDaySince, topIssuesByTokensSince, tokensByIssueAll, recordConflict, getConflict, clearConflict, listConflicts, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getGlobalModel, setGlobalModel, getFallbackChain, setFallbackChain, getAutoSwitchOnLimit, setIssueModelOverride, getIssueModelOverride, clearIssueModelOverride, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, getIssueRow, getModelsPresets, listAgentDefs, upsertAgentDef, deleteAgentDef, listSkills, upsertSkill, deleteSkill, listHooks, upsertHook, deleteHook, type AutoKind, type Provider, type AgentDef, type Skill, type Hook } from "./store.js";
+import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, tokensByRoleSince, tokensByDaySince, topIssuesByTokensSince, tokensByIssueAll, toolStatsSince, runStepCountSince, recentLessons, recordConflict, getConflict, clearConflict, listConflicts, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getGlobalModel, setGlobalModel, getFallbackChain, setFallbackChain, getAutoSwitchOnLimit, setIssueModelOverride, getIssueModelOverride, clearIssueModelOverride, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, getIssueRow, getModelsPresets, listAgentDefs, upsertAgentDef, deleteAgentDef, listSkills, upsertSkill, deleteSkill, listHooks, upsertHook, deleteHook, type AutoKind, type Provider, type AgentDef, type Skill, type Hook } from "./store.js";
 import { mergeEpic, isEpic } from "./epics.js";
 import { renderHistory } from "./dashboard.js";
 import { renderShell } from "./shell.js";
@@ -158,6 +158,28 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
       // PWA static assets (service worker, manifest, app bundle, icons) — no auth so the
       // installed app can boot and the SW can cache them. They contain no secrets.
       if (serveStatic(url, res)) return;
+
+      // ── Read-only telemetry API for the standalone analyzer (separate Bearer auth, NOT the session
+      // cookie). Least-privilege by design: aggregate metrics only — no secrets, no issue bodies, no
+      // write path. Disabled (503) unless ANALYZER_API_KEY is set; constant-time token compare.
+      if (url === "/telemetry") {
+        const key = (process.env.ANALYZER_API_KEY || getSetting("analyzer_api_key") || "").trim();
+        if (!key || key.length < 16) return void res.writeHead(503, { "content-type": "application/json" }).end(JSON.stringify({ error: "telemetry disabled (set a strong ANALYZER_API_KEY)" }));
+        const hdr = (req.headers["authorization"] || "").toString();
+        const got = hdr.startsWith("Bearer ") ? hdr.slice(7).trim() : "";
+        const a = Buffer.from(got), b = Buffer.from(key);
+        const okAuth = a.length === b.length && timingSafeEqual(a, b);
+        if (!okAuth) return void res.writeHead(401, { "content-type": "application/json" }).end(JSON.stringify({ error: "unauthorized" }));
+        if (req.method !== "GET") return void res.writeHead(405).end();
+        const since = new URLSearchParams((req.url ?? "").split("?")[1] ?? "").get("since") || new Date(0).toISOString();
+        return void res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" }).end(JSON.stringify({
+          since,
+          runStepCount: runStepCountSince(since),
+          toolStats: toolStatsSince(since),
+          tokensByRole: tokensByRoleSince(since),
+          lessons: recentLessons(10),
+        }));
+      }
 
       // Auth gate — always multi-user (session cookies). First visitor creates the admin.
       let sessionUser: User | null = null;
