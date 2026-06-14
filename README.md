@@ -85,6 +85,19 @@ Use that same value for the analyzer's `AGENCY_API_KEY` and the agency's `ANALYZ
 
 ---
 
+## What it runs on
+
+You don't install any of this yourself — the container ships with the whole toolbox so the agents have everything they need:
+
+- **[Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-typescript)** (`@anthropic-ai/claude-agent-sdk`) — the engine. Each agent runs as its own Claude session.
+- **Node.js, git, and the [GitHub CLI](https://cli.github.com) (`gh`)** — for cloning repos, branching, committing, and opening pull requests.
+- **[GitNexus](https://www.npmjs.com/package/gitnexus)** — optional code intelligence that maps a repo's structure so agents can research the code using far fewer tokens (turns on with `GITNEXUS=true`).
+- **[Graphify](https://github.com/safishamsi/graphify)** — a knowledge-graph engine the Auditor uses to spot architectural hot spots and dead code. Optional; the audit gracefully falls back without it.
+- **SQLite** (built into Node) — stores your settings, run history, and encrypted keys on the data volume.
+- **[Preact](https://preactjs.com) + htm** — the dashboard UI, served with no build step.
+
+The analyzer stays deliberately lean: just Node and one AI key.
+
 ## Environment variables
 
 ### Agency
