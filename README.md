@@ -132,6 +132,10 @@ cd agency && npm install && npm run build && npm start   # dashboard on http://l
 cd analyzer && npm install && npm start                  # needs AGENCY_URL + AGENCY_API_KEY
 ```
 
+## License
+
+Open and free to use, self-host, modify, and contribute to — under the **MIT License with the [Commons Clause](https://commonsclause.com/)**. The one limit: you may not **sell** it (no reselling the software or offering it as a paid product/hosted service). Everything else is fair game. See [`LICENSE`](LICENSE).
+
 ## A note on safety
 
 The analyzer is deliberately powerless: it can only read aggregate stats over an authenticated link, and it can only *suggest* changes by opening issues. Applying anything always goes through your approval in the dashboard. The connection stays off entirely until you set a strong `ANALYZER_API_KEY`.
