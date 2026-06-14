@@ -21,6 +21,10 @@ services:
       SMTP_PASS: ${SMTP_PASS:-}
       SMTP_FROM: ${SMTP_FROM:-}           # e.g. "Dev Agency <no-reply@yourdomain.com>"
       SMTP_SECURE: ${SMTP_SECURE:-}       # true|false to override (defaults: true on 465, else false)
+      # Enables the read-only /telemetry API for the standalone analyzer (dev-agency-analyzer).
+      # Set a strong shared secret (openssl rand -hex 32) here AND as AGENCY_API_KEY on the analyzer.
+      # Left blank, /telemetry stays disabled (503).
+      ANALYZER_API_KEY: ${ANALYZER_API_KEY:-}
       # Other optional overrides — uncomment only to pin a value:
       # MASTER_KEY: ${MASTER_KEY:-}       # pin the secrets-encryption key (else auto-generated +
       #                                   # persisted at /app/data/.masterkey — keep the volume!)
