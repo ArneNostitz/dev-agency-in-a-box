@@ -1036,7 +1036,7 @@ function Settings({ data, onClose, reload, openGithubTokens, openModels }) {
     <label>Reviewer revise rounds before it asks you</label><input type="number" min="0" max="3" value=${revRounds} onInput=${(e) => setRevRounds(e.target.value)}/>
     ${(!data.user || data.user.role === "admin") && data.opsMeta ? html`<${Operations} meta=${data.opsMeta} values=${data.ops || {}} reload=${reload}/>` : null}
     <div class="sec">Advanced</div>
-    <a class="btn ghost" href="/classic" style="justify-content:flex-start"><${Icon} name="settings" size=${15}/> Models &amp; agents (classic editor)</a>
+    <a class="btn ghost" href="/classic" style="justify-content:flex-start"><${Icon} name="settings" size=${15}/> Models & agents (classic editor)</a>
   <//>`;
 }
 /**
@@ -1076,7 +1076,7 @@ function ModelsPanel() {
     api("/models", { fallbackChain: chain, autoSwitchOnLimit: autoSwitch, globalModel })
       .then(() => toast("Saved")).catch(() => toast("Couldn't save")).then(() => setBusy(false));
   }
-  return html`<div class="sec">Models &amp; rate limit</div>
+  return html`<div class="sec">Models & rate limit</div>
     <label style="margin-top:6px;display:block">Global Default Model</label>
     <select style="width:100%;margin-bottom:12px" value=${globalModel ? globalModel.providerId + "/" + globalModel.model : ""} onChange=${(e) => {
       const val = e.target.value;
@@ -1099,7 +1099,7 @@ function ModelsPanel() {
       </select>
       <button class="iconbtn" title="Remove" onClick=${() => removeFallback(idx)}><${Icon} name="trash" size=${15}/></button>
     </div>`)}
-    ${modelOpts.length ? html`<button class="btn ghost" style="margin-bottom:4px" onClick=${addFallback}><${Icon} name="plus" size=${14}/> Add fallback</button>` : html`<div class="muted" style="font-size:12px">No alternative providers configured — add one in <a href="/classic">Models &amp; agents</a> first.</div>`}
+    ${modelOpts.length ? html`<button class="btn ghost" style="margin-bottom:4px" onClick=${addFallback}><${Icon} name="plus" size=${14}/> Add fallback</button>` : html`<div class="muted" style="font-size:12px">No alternative providers configured — add one in <a href="/classic">Models & agents</a> first.</div>`}
     <button class="btn primary" style="margin-top:8px" disabled=${busy} onClick=${save}>${busy ? html`<${Spinner} size=${14}/> Saving…` : "Save model settings"}</button>`;
 }
 function Operations({ meta, values, reload }) {
@@ -1179,8 +1179,10 @@ function ObTokenStep({ def, existing, onDone, onBack }) {
   const isClaude = def.secretKey === "claude_token" || def.secretKey === "anthropic_api_key";
   const v = val.trim();
   // Catch the most common 401 cause: pasting the wrong token TYPE into the wrong option.
-  const shapeWarn = def.secretKey === "claude_token" && /^sk-ant-/.test(v)
-    ? "That looks like an API key (sk-ant-…). Use the “Claude — API key” option instead, or it will 401."
+  const shapeWarn = def.secretKey === "claude_token" && /^sk-ant-api/.test(v)
+    ? "That looks like an API key (sk-ant-api…). Use the “Claude — API key” option instead, or it will 401."
+    : def.secretKey === "anthropic_api_key" && /^sk-ant-oat/.test(v)
+    ? "That looks like a subscription token (sk-ant-oat…). Use the “Claude — subscription” option instead."
     : def.secretKey === "anthropic_api_key" && v && !/^sk-ant-/.test(v)
     ? "An Anthropic API key usually starts with “sk-ant-”. If this is a subscription token, use the “Claude — subscription” option."
     : "";
@@ -1215,7 +1217,7 @@ function ObTokenStep({ def, existing, onDone, onBack }) {
       <button class="btn" onClick=${onBack}>Back</button>
       ${def.optional ? html`<button class="btn ghost" onClick=${onDone}>Skip</button>` : null}
       ${isClaude ? html`<button class="btn ghost" disabled=${test === "testing"} onClick=${saveTest}>${test === "testing" ? html`<${Spinner} size=${15}/> Testing…` : "Save & test"}</button>` : null}
-      <button class="btn primary" disabled=${busy} onClick=${save}>Save &amp; continue</button>
+      <button class="btn primary" disabled=${busy} onClick=${save}>Save & continue</button>
     </div>`;
 }
 

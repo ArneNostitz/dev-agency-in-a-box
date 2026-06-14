@@ -4,6 +4,9 @@
  * configured tools and model. This is the single entry point every specialist uses.
  */
 import { query } from "@anthropic-ai/claude-agent-sdk";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join as pathJoin } from "node:path";
 import { ROLES, modelFor, type RoleName } from "./roles.js";
 import { loadConstitution, loadPersona, loadPlaybooks, loadLearned } from "../memory.js";
 import { pushActivity } from "../activity.js";
@@ -378,6 +381,11 @@ export async function testClaudeAuth(): Promise<{ ok: boolean; via: string; erro
     delete runEnv.ANTHROPIC_AUTH_TOKEN;
     delete runEnv.ANTHROPIC_BASE_URL;
   }
+  // Isolate the test in a throwaway config dir so the CLI authenticates with THIS token only — not a
+  // stale ~/.claude credential cached on the (possibly shared) data volume. Makes the test a true
+  // check of the token itself; if it passes here but agents still 401, the shared cache is the cause.
+  const cfgDir = mkdtempSync(pathJoin(tmpdir(), "claude-test-"));
+  runEnv.CLAUDE_CONFIG_DIR = cfgDir;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 30_000);
   let errText = "";
@@ -404,6 +412,7 @@ export async function testClaudeAuth(): Promise<{ ok: boolean; via: string; erro
     errText = (err as Error).message || String(err);
   } finally {
     clearTimeout(timer);
+    try { rmSync(cfgDir, { recursive: true, force: true }); } catch { /* noop */ }
   }
   if (errText) return { ok: false, via, error: errText.slice(0, 300) };
   return { ok: true, via };
