@@ -314,7 +314,7 @@ function SecretBanner({ h, onFix }) {
 
 function TopBar({ working, env, theme, setTheme, onSettings, onUsage, onAgents, repos, repoFilter, setRepoFilter, reload, auto, autoRepos, setAuto }) {
   return html`<div class="topbar">
-    <div class="brand"><${Icon} name="crown" size=${18}/> <span class="brandname">Dev Agency</span> ${env === "development" ? html`<span class="envbadge">DEV</span>` : null} ${working ? html`<span class="dot"></span>` : null}</div>
+    <div class="brand"><${Icon} name="crown" size=${18}/> <span class="brandname">Dev Agency in a Box</span> ${env === "development" ? html`<span class="envbadge">DEV</span>` : null} ${working ? html`<span class="dot"></span>` : null}</div>
     <div class="spacer"></div>
     <${RepoDropdown} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${reload} auto=${auto} autoRepos=${autoRepos} setAuto=${setAuto}/>
     <div class="spacer"></div>
@@ -467,7 +467,6 @@ function StatusLine({ working, session, spend, analyzer, reload }) {
     </span>` : null}
     <span class="spacer"></span>
     <span class="buildstamp" title=${verTitle}>${verLabel}</span>
-    <a href="/history">history</a>
   </div>`;
 }
 
@@ -1280,7 +1279,7 @@ function Onboarding({ repos, reload }) {
   let body;
   if (step === "welcome") body = html`
     <div class="obki"><${Icon} name="crown" size=${26}/></div>
-    <div class="obh">Welcome to your Dev Agency</div>
+    <div class="obh">Welcome to Dev Agency in a Box</div>
     <div class="obsub">Three quick things and your AI team is ready: pick your models, give it GitHub access, and add a repo. Takes about 2 minutes — you can change anything later in Settings.</div>
     <div class="obnav"><button class="btn primary" onClick=${next}>Get started</button></div>`;
   else if (step === "providers") body = html`
