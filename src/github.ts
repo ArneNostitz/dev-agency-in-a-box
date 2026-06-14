@@ -512,14 +512,22 @@ export async function deleteIssueHard(
 }
 
 /** The full thread as readable text, each comment tagged [human] or [agency]. */
-export async function commentThread(repo: string, issue: number): Promise<string> {
+/** Recent comment thread, capped so we don't re-feed a snowballing history to every agent every
+ *  run. Older context is intentionally dropped — agents can pull it back via the `recall` tool. */
+export async function commentThread(repo: string, issue: number, lastN = 8, perComment = 1500): Promise<string> {
   const comments = await listComments(repo, issue);
-  return comments
+  const recent = comments.slice(-lastN);
+  const dropped = comments.length - recent.length;
+  const body = recent
     .map((c) => {
       const who = c.body.includes(AGENCY_MARKER) ? "[agency]" : "[human]";
-      return `${who} ${c.body.replace(AGENCY_MARKER, "").trim()}`;
+      const text = c.body.replace(AGENCY_MARKER, "").trim().slice(0, perComment);
+      return `${who} ${text}`;
     })
     .join("\n\n---\n\n");
+  return dropped > 0
+    ? `_(${dropped} earlier comment(s) omitted — use the recall tool if you need them)_\n\n---\n\n${body}`
+    : body;
 }
 
 /** Configure git to authenticate through gh, then clone `repo` to `dest`. */

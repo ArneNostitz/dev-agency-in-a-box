@@ -10,6 +10,7 @@ import { pushActivity } from "../activity.js";
 import { recentLessons, recordTokens, getProviders, getRoleModels, getSessionFallback, setSession, getIssueModelOverride, getGlobalModel } from "../store.js";
 import { loadBudget } from "../budget.js";
 import { gitnexusWiring, GITNEXUS_PROMPT } from "../gitnexus.js";
+import { recallWiring, RECALL_PROMPT } from "./recall.js";
 import { claudeToken, anthropicApiKey, ghBotToken } from "../creds.js";
 import { registerRun } from "../abort.js";
 
@@ -146,7 +147,10 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
   // Hand the agent the GitNexus code-intelligence tools if this clone is indexed (cuts the
   // tokens spent reading files to research the codebase).
   const gn = gitnexusWiring(input.workdir);
-  const systemPrompt = (await buildSystemPrompt(role)) + (gn ? `\n\n${GITNEXUS_PROMPT}` : "");
+  // The agency's own memory (past plans/lessons/reviews/issues) as an on-demand tool — so the agent
+  // can PULL context when stuck instead of us pushing the whole thread into every prompt.
+  const rc = recallWiring(input.repo);
+  const systemPrompt = (await buildSystemPrompt(role)) + (gn ? `\n\n${GITNEXUS_PROMPT}` : "") + `\n\n${RECALL_PROMPT}`;
   // Per-role provider routing (keeps Claude roles on your subscription; others go to e.g. GLM).
   const route = input.model ? null : resolveRoute(role, input.repo, input.issueNumber);
   // If the human EXPLICITLY selected a model but it couldn't be routed (provider missing/has no API
@@ -255,8 +259,8 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
           cwd: input.workdir,
           systemPrompt,
           model,
-          allowedTools: [...def.tools, ...(gn?.tools ?? [])],
-          ...(gn ? { mcpServers: gn.servers } : {}),
+          allowedTools: [...def.tools, ...(gn?.tools ?? []), ...rc.tools],
+          mcpServers: { ...(gn?.servers ?? {}), ...rc.servers },
           ...(runEnv ? { env: runEnv } : {}),
           ...(resumeId ? { resume: resumeId } : {}),
           // Fully autonomous. Requires the container to run as a NON-root user (Claude Code
