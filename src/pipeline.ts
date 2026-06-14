@@ -311,10 +311,17 @@ async function build(
       repo,
       issueNumber: issue.number,
       task:
-        `Review the changes on branch \`${branch}\` for issue #${issue.number} against the harness. ` +
-        `Inspect the diff vs main (e.g. \`git diff main...HEAD\`). ` +
-        `Start your reply with exactly "APPROVE" or "REQUEST CHANGES" on the first line, then notes.\n\n` +
-        `Test results were:\n${test.text}`,
+        round === 0
+          ? `Review the changes on branch \`${branch}\` for issue #${issue.number} against the harness. ` +
+            `Inspect the diff vs main (e.g. \`git diff main...HEAD\`). ` +
+            `Start your reply with exactly "APPROVE" or "REQUEST CHANGES" on the first line, then notes.\n\n` +
+            `Test results were:\n${test.text}`
+          : `The developer addressed your previous requested changes on branch \`${branch}\`. Re-check ONLY ` +
+            `whether each point you raised is now resolved (inspect \`git diff main...HEAD\`). Start with exactly ` +
+            `"APPROVE" or "REQUEST CHANGES" on the first line.\n\nLatest tests:\n${test.text}`,
+      // First review is a cold, independent fresh look; re-reviews resume so the reviewer remembers
+      // exactly what it asked for instead of re-deriving (warm across its own rounds).
+      ...(round > 0 ? { resumeSessionId: getSession(repo, issue.number, "reviewer") ?? undefined } : {}),
     });
     recordRun(repo, issue.number, "reviewer", review.model, review.turns, "review", review.costUsd);
     lastReview = review.text;
@@ -329,6 +336,8 @@ async function build(
       task:
         `The reviewer requested changes on branch \`${branch}\`. Address each point, commit, and push. ` +
         `Keep the diff focused.\n\n### Review\n${review.text}`,
+      // Warm: the developer that wrote the code resumes to fix it (has the context already).
+      ...(getSession(repo, issue.number, "developer") ? { resumeSessionId: getSession(repo, issue.number, "developer") ?? undefined } : {}),
     });
     recordRun(repo, issue.number, "developer", revise.model, revise.turns, "revise", revise.costUsd);
   }
@@ -545,6 +554,7 @@ export async function runPrFix(
     task:
       `Re-review branch \`${branch}\` after the latest changes. Inspect \`git diff main...HEAD\`. ` +
       `Start your reply with exactly "APPROVE" or "REQUEST CHANGES" on the first line, then notes.\n\nLatest tests:\n${test.text}`,
+    ...(getSession(repo, pr, "reviewer") ? { resumeSessionId: getSession(repo, pr, "reviewer") ?? undefined } : {}),
   });
   recordRun(repo, issueNumber, "reviewer", review.model, review.turns, "review", review.costUsd);
   await commentOnIssue(repo, issueNumber, say("reviewer", `**Review (after fix)**\n\n${review.text}`));
@@ -696,6 +706,7 @@ export async function runReviewFix(repo: string, issue: Issue, workdir: string, 
     task:
       `Re-review branch \`${branch}\` for issue #${issue.number} after the fixes. Inspect \`git diff main...HEAD\`. ` +
       `Start your reply with exactly "APPROVE" or "REQUEST CHANGES" on the first line, then notes.\n\nLatest tests:\n${test.text}`,
+    ...(getSession(repo, issue.number, "reviewer") ? { resumeSessionId: getSession(repo, issue.number, "reviewer") ?? undefined } : {}),
   });
   recordRun(repo, issue.number, "reviewer", review2.model, review2.turns, "review", review2.costUsd);
   await commentOnIssue(repo, issue.number, say("reviewer", `**Review (after fix)**\n\n${review2.text}`));
