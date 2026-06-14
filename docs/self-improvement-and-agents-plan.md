@@ -14,8 +14,9 @@ Three capabilities, designed so each ships independently and the data/decisions 
 - **Code structure → GitNexus / Graphify.** These answer "how is the code shaped" (callers, impact,
   god-nodes). They are NOT process telemetry. The analyzer uses them only when a proposed change
   touches code.
-- **Conversation / artifacts → the DB (local-first, Phase 4).** Chat-only agents (spec-creator,
-  grill-me) keep their interaction + result in the DB, never GitHub.
+- **Conversation → the DB (local-first, Phase 4); result → GitHub.** Chat agents (spec-creator,
+  grill-me) keep the back-and-forth *interaction* local (not pushed turn-by-turn), but their final
+  **result + summary IS posted to GitHub** (an issue/comment) so it lives with the work.
 
 So: **DB = process + conversation memory; GitNexus/Graphify = code memory.** The analyzer is a DB
 consumer first, code-graph consumer second.
@@ -72,6 +73,12 @@ needs different permissions (skill/hook/deploy authority) than a normal coding a
 
 ---
 
+**Skills follow the Claude Code Agent Skill format.** A skill is a directory with a `SKILL.md`:
+YAML front-matter (`name`, `description` — the description is what triggers it) + a markdown body,
+plus optional supporting files/scripts. So skills the analyzer writes are real, portable Agent
+Skills (installable in Claude Code too), not a bespoke format. The `agent_def.skills[]` list
+references skills by name; the runtime injects matching `SKILL.md`s into the agent's context.
+
 ## 3. Pluggable agents + agent editor
 
 **Goal:** add new agent types from the frontend, including **interactive, non-GitHub** agents.
@@ -83,9 +90,10 @@ hardcoded set as defaults).
 
 **Two agent modes:**
 - **repo** (today's agents): clone, branch, PR/merge.
-- **chat** (new): interactive in the dashboard, **no clone / no GitHub**. Conversation + result live
-  in the DB (local-first). Output is a document/summary the user reads. The agent can call `recall`
-  and read-only tools, but never pushes.
+- **chat** (new): interactive in the dashboard, **no clone, no mid-conversation GitHub noise**. The
+  back-and-forth lives in the DB (local-first); when done, the **final result + summary is posted to
+  GitHub** (issue/comment) so it's captured with the work. The agent can call `recall` and read-only
+  tools; it doesn't open PRs/branches.
 
 **First chat agents:**
 - **spec-creator** — long interactive chat to shape a spec; emits a clean spec + summary (local).
@@ -112,9 +120,9 @@ Versioned (we already keep agent revisions).
 Dependencies: 6 needs 2 (telemetry) + 5 (skills/hooks to write into). 4 needs 3 (registry). 1 is
 independent and lands first.
 
-## Open decisions
-- **Analyzer authority:** advisory PRs only (recommended) vs. allowed to auto-merge low-risk
-  deterministic replacements behind a flag.
-- **Chat-agent results:** keep purely in the DB, or optionally export to a file/GitHub on request.
-- **Skill format:** markdown instruction modules (like personas) vs. a structured schema. Recommend
-  markdown for authorability, with optional front-matter for targeting.
+## Decisions (locked)
+- **Analyzer authority:** **advisory-first** — it opens PRs/proposals you approve; no auto-merge.
+- **Chat-agent results:** interaction stays local; the **final result + summary is posted to
+  GitHub** (issue/comment).
+- **Skill format:** the **Claude Code Agent Skill schema** — a skill dir with `SKILL.md`
+  (`name`/`description` front-matter + markdown body, optional scripts). Portable + installable.
