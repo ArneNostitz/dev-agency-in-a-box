@@ -148,6 +148,52 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
   }
 
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
+    // ── Analyzer API for the standalone watchdog (handled before the GET/POST split so the issue
+    // POST is reachable). Separate Bearer auth (ANALYZER_API_KEY), NOT the session cookie. The
+    // analyzer needs almost no config of its own: it reads aggregate telemetry + tuning here, and the
+    // agency opens the advisory issue on its behalf (so the analyzer carries no GitHub token/repo).
+    // Least-privilege: aggregate metrics only (no secrets/bodies) + a rate-limited advisory issue the
+    // agency never acts on without approval. Disabled (503) unless a strong key is set.
+    {
+      const aurl = (req.url ?? "/").split("?")[0];
+      if (aurl === "/telemetry" || aurl === "/analyzer-issue") {
+        const key = (process.env.ANALYZER_API_KEY || getSetting("analyzer_api_key") || "").trim();
+        if (!key || key.length < 16) return void res.writeHead(503, { "content-type": "application/json" }).end(JSON.stringify({ error: "analyzer API disabled (set a strong ANALYZER_API_KEY)" }));
+        const hdr = (req.headers["authorization"] || "").toString();
+        const got = hdr.startsWith("Bearer ") ? hdr.slice(7).trim() : "";
+        const a = Buffer.from(got), b = Buffer.from(key);
+        if (!(a.length === b.length && timingSafeEqual(a, b))) return void res.writeHead(401, { "content-type": "application/json" }).end(JSON.stringify({ error: "unauthorized" }));
+        if (aurl === "/telemetry") {
+          if (req.method !== "GET") return void res.writeHead(405).end();
+          const since = new URLSearchParams((req.url ?? "").split("?")[1] ?? "").get("since") || new Date(0).toISOString();
+          return void res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" }).end(JSON.stringify({
+            since,
+            runStepCount: runStepCountSince(since),
+            toolStats: toolStatsSince(since),
+            tokensByRole: tokensByRoleSince(since),
+            lessons: recentLessons(10),
+            config: { minSteps: Number(getSetting("analyzer_min_steps")) || 50, intervalHours: Number(getSetting("analyzer_interval_hours")) || 6 },
+          }));
+        }
+        // POST /analyzer-issue — the agency opens the advisory issue for the analyzer. Rate-limited.
+        if (req.method !== "POST") return void res.writeHead(405).end();
+        const lastTs = Date.parse(getSetting("analyzer_last_issue_ts") || "");
+        if (Number.isFinite(lastTs) && Date.now() - lastTs < 10 * 60_000) return void res.writeHead(429, { "content-type": "application/json" }).end(JSON.stringify({ error: "rate limited" }));
+        void (async () => {
+          let pp: { title?: string; body?: string } = {};
+          try { pp = JSON.parse((await readBody(req)).toString("utf8")); } catch { /* ignore */ }
+          const title = (pp.title || "Process Analyzer: proposals").slice(0, 200);
+          const ibody = (pp.body || "").slice(0, 60000);
+          if (!ibody.trim()) return void res.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({ error: "empty body" }));
+          const repoT = (getSetting("analyzer_repo") || effectiveRepos(cfg)[0] || "").trim();
+          if (!repoT) return void res.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({ error: "no analyzer_repo / watched repo configured" }));
+          const r = await createIssue(repoT, title, ibody).catch(() => ({ number: 0 }));
+          if (r.number) { await addLabel(repoT, r.number, "agency:analyzer").catch(() => {}); await addLabel(repoT, r.number, "agency:ignore").catch(() => {}); setSetting("analyzer_last_issue_ts", new Date().toISOString()); }
+          res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ number: r.number }));
+        })();
+        return;
+      }
+    }
     if (req.method === "GET") {
       const url = (req.url ?? "/").split("?")[0];
       if (url === "/health") {
@@ -158,28 +204,6 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
       // PWA static assets (service worker, manifest, app bundle, icons) — no auth so the
       // installed app can boot and the SW can cache them. They contain no secrets.
       if (serveStatic(url, res)) return;
-
-      // ── Read-only telemetry API for the standalone analyzer (separate Bearer auth, NOT the session
-      // cookie). Least-privilege by design: aggregate metrics only — no secrets, no issue bodies, no
-      // write path. Disabled (503) unless ANALYZER_API_KEY is set; constant-time token compare.
-      if (url === "/telemetry") {
-        const key = (process.env.ANALYZER_API_KEY || getSetting("analyzer_api_key") || "").trim();
-        if (!key || key.length < 16) return void res.writeHead(503, { "content-type": "application/json" }).end(JSON.stringify({ error: "telemetry disabled (set a strong ANALYZER_API_KEY)" }));
-        const hdr = (req.headers["authorization"] || "").toString();
-        const got = hdr.startsWith("Bearer ") ? hdr.slice(7).trim() : "";
-        const a = Buffer.from(got), b = Buffer.from(key);
-        const okAuth = a.length === b.length && timingSafeEqual(a, b);
-        if (!okAuth) return void res.writeHead(401, { "content-type": "application/json" }).end(JSON.stringify({ error: "unauthorized" }));
-        if (req.method !== "GET") return void res.writeHead(405).end();
-        const since = new URLSearchParams((req.url ?? "").split("?")[1] ?? "").get("since") || new Date(0).toISOString();
-        return void res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" }).end(JSON.stringify({
-          since,
-          runStepCount: runStepCountSince(since),
-          toolStats: toolStatsSince(since),
-          tokensByRole: tokensByRoleSince(since),
-          lessons: recentLessons(10),
-        }));
-      }
 
       // Auth gate — always multi-user (session cookies). First visitor creates the admin.
       let sessionUser: User | null = null;
