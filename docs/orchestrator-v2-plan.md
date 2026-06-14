@@ -145,9 +145,10 @@ different host can be dropped in.
 2. **Two-way sync, no conflicts by design.** Issues and comments can originate from *either* end
    (GitHub or dashboard), so the agency can still be triggered from GitHub but ultimately lives in
    the dashboard. The dashboard **pushes out immediately** on every change, so there's nothing to
-   conflict with. **Once an issue exists in the dashboard DB, the DB is the source of truth.** A
-   periodic **sync-in check** pulls anything that changed on GitHub (new issues/comments) into the
-   DB. Genuine merge/PR conflicts are still resolved **case by case** (the deterministic merge +
+   conflict with. **Once an issue exists in the dashboard DB, the DB is the source of truth.**
+   Inbound changes from GitHub (new issues, human comments) arrive via a **GitHub webhook** that
+   syncs them straight into the DB in real time (a periodic poll is only a dropped-delivery safety
+   net). Genuine merge/PR conflicts are still resolved **case by case** (the deterministic merge +
    single-agent-turn flow already shipped) — never blindly.
 3. **Build it.** Fix/strengthen the agency by hand first, then let it run on its own.
 4. **Keep git as the code host.** Still put a thin `CodeHost` port around git so an alternative VCS
@@ -159,6 +160,8 @@ different host can be dropped in.
 - **Adoption:** the moment an issue is represented in the DB, the **DB is authoritative**.
 - **Outbound:** every dashboard change is pushed to GitHub **immediately** (so the two stay in step
   and there's no window for a conflicting concurrent edit).
-- **Inbound:** a lightweight poller/webhook detects new GitHub activity (issues opened, human
-  comments) and **syncs it in** to the DB, attributed to the human.
+- **Inbound:** a **GitHub webhook** is the primary channel — new GitHub activity (issues opened,
+  human comments) is pushed to the app and **synced in** to the DB in real time, attributed to the
+  human. A periodic poll runs only as a safety net for dropped webhook deliveries. (Webhook mode
+  already exists in the app — `RUN_MODE=webhook` — so this extends an existing path.)
 - **Code conflicts** (branch/PR merge) are unaffected by this and stay case-by-case.

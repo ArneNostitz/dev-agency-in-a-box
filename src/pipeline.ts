@@ -33,10 +33,51 @@ import { runRole } from "./agents/roleAgent.js";
 import type { RoleName } from "./agents/roles.js";
 import { recordRun, recordPlan, lastPlan, recordIssueState, recordPr, addEpicChild, listEpicChildren, getSession, issueActivity, recordReview, getReview, recordConflict, clearConflict, getSetting } from "./store.js";
 import { runReflection } from "./reflect.js";
+import { runChecks, parseDiscoveredChecks, rememberChecks } from "./checks.js";
 
 const IN_PROGRESS = "agency:in-progress";
 const READY = "agency:ready";
 const NEEDS_ATTENTION = "agency:needs-attention";
+
+/**
+ * Run the project's checks the cheap way: deterministic command runner first (zero tokens), and only
+ * fall back to the cheap LLM tester when the stack is unknown / its toolchain isn't available here.
+ * The LLM is asked to emit a `CHECKS_JSON:` block describing the commands it ran, which we cache so
+ * the SAME repo is token-free next time — the tester self-adjusts to any language once.
+ */
+async function runTests(
+  repo: string,
+  issueNumber: number,
+  workdir: string,
+  branch: string,
+): Promise<{ text: string; pass: boolean }> {
+  const checks = await runChecks(workdir, repo);
+  if (checks.ran) {
+    recordRun(repo, issueNumber, "tester", "code", 0, "test", 0); // deterministic, token-free
+    return { text: checks.summary, pass: checks.pass };
+  }
+  // Unknown stack or toolchain missing → let the cheap tester discover the commands, then cache them.
+  const t = await runRole("tester", {
+    workdir,
+    repo,
+    issueNumber,
+    task:
+      `You are in the repository on branch \`${branch}\`. Detect the project's stack and run its checks ` +
+      `(install deps if needed, then typecheck/lint/test/build using the documented or conventional commands ` +
+      `for THIS language — Node/TS, Python, Swift/SPM, Go, Rust, etc.). Report each check's status and the ` +
+      `first actionable error if any failed. If a required toolchain isn't installed here, say so clearly ` +
+      `(it may need to run on the user's machine).\n\n` +
+      `IMPORTANT: end your reply with a single machine-readable line so the system can run these checks ` +
+      `without an LLM next time:\nCHECKS_JSON: {"requires":"<binary or omit>","install":"<install cmd or omit>",` +
+      `"checks":[{"name":"test","cmd":"<exact command>"}]}`,
+  });
+  recordRun(repo, issueNumber, "tester", t.model, t.turns, "test", t.costUsd);
+  const discovered = parseDiscoveredChecks(t.text);
+  if (discovered) rememberChecks(repo, discovered);
+  // Strip the machine line from what humans read.
+  const text = t.text.replace(/CHECKS_JSON:\s*\{[\s\S]*$/m, "").trim();
+  return { text, pass: !/❌|\bFAIL\b|\bfailed\b/i.test(text) };
+}
 // Dashboard-tunable (setting wins over env wins over default), so no redeploy to change behaviour.
 function maxReviseRounds(): number {
   const s = Number(getSetting("max_revise_rounds"));
@@ -260,16 +301,7 @@ async function build(
   });
   recordRun(repo, issue.number, "developer", dev.model, dev.turns, "implement", dev.costUsd);
 
-  const test = await runRole("tester", {
-    workdir,
-    repo,
-    issueNumber: issue.number,
-    task:
-      `You are in the repository on branch \`${branch}\`. Run the project's checks (install if needed, then ` +
-      `typecheck, lint, test, build via \`npm run --if-present <script>\` or documented commands). ` +
-      `Report each check's status and the first actionable errors if any failed.`,
-  });
-  recordRun(repo, issue.number, "tester", test.model, test.turns, "test", test.costUsd);
+  const test = await runTests(repo, issue.number, workdir, branch);
   await commentOnIssue(repo, issue.number, say("tester", `**Test results**\n\n${test.text}`));
 
   let lastReview = "";
@@ -502,13 +534,7 @@ export async function runPrFix(
   });
   recordRun(repo, issueNumber, "developer", dev.model, dev.turns, "pr-fix", dev.costUsd);
 
-  const test = await runRole("tester", {
-    workdir,
-    repo,
-    issueNumber: pr,
-    task: `On branch \`${branch}\`, run the project's checks and report briefly (pass/fail + first error only).`,
-  });
-  recordRun(repo, issueNumber, "tester", test.model, test.turns, "test", test.costUsd);
+  const test = await runTests(repo, pr, workdir, branch);
   await commentOnPr(repo, pr, say("developer", `**Pushed fixes.**\n\n${test.text}`));
 
   // Re-review so the verdict (and the card's ⚠ badge) reflects the new state of the PR.
@@ -660,13 +686,7 @@ export async function runReviewFix(repo: string, issue: Issue, workdir: string, 
     return;
   }
 
-  const test = await runRole("tester", {
-    workdir,
-    repo,
-    issueNumber: issue.number,
-    task: `On branch \`${branch}\`, run the project's checks (typecheck, lint, test, build) and report pass/fail + first error only.`,
-  });
-  recordRun(repo, issue.number, "tester", test.model, test.turns, "test", test.costUsd);
+  const test = await runTests(repo, issue.number, workdir, branch);
   await commentOnIssue(repo, issue.number, say("tester", `**Re-test after fixes**\n\n${test.text}`));
 
   const review2 = await runRole("reviewer", {
