@@ -1,110 +1,124 @@
-# Dev Agency in a Box
+# Dev Agency in a Box 📦
 
-A two-component monorepo for deploying autonomous agents that work your GitHub issues 24/7. The **Dev Agency** is a long-lived dashboard that plans, builds, reviews, and opens PRs — powered by the Anthropic Claude Agent SDK. The optional **Process Analyzer** is an independent watchdog that reads telemetry and proposes self-improvements, staying active even when the agency redeploys.
+A supercharger for GitHub issues. It sits on top of the issues and pull requests you already use and turns them into a self-driving development workflow — powered by AI, run from a clean dashboard that works just as well on your phone as on your laptop.
 
-## What's inside
+Think of it as a power layer over GitHub: you describe what you want in an issue, and a small AI team plans it, writes the code, reviews itself, and opens a pull request for you to approve. Everything stays in your repo — real issues, real branches, real PRs.
 
-- **`agency/`** — the Dev Agency: a containerized Node service (port 3000) that serves a browser dashboard and runs agents on GitHub issues. Zero-config deployment; everything is configured in-browser on first visit.
-- **`analyzer/`** — (optional) the Process Analyzer: a separate small service that polls the agency's telemetry endpoint and opens advisory GitHub issues with optimization proposals. Deploys independently for resilience.
+## How it works
 
-## Quick start (Coolify)
+Two ways to kick off work:
 
-### The agency
+- **From GitHub** — open or comment on an issue and mention `@dev`. The agency picks it up automatically.
+- **From the dashboard** — drop a card on the kanban board and development starts on its own.
 
-1. In Coolify, create a new **Docker Compose** resource pointing at this repository on the `main` branch.
-2. **Critical:** set the resource's **Base Directory** to `/agency` so Coolify finds `agency/docker-compose.yml`.
-3. Set your domain and confirm it routes to **container port `3000`** (wrong port = HTTP 502). The app only listens on 3000.
-4. Keep the named volume `agency-data` mounted at `/app/data` — it holds the encrypted database and the auto-generated encryption key, so logins and tokens survive redeploys. If you run staging, give it a separate volume.
-5. Deploy and wait for logs to show it's listening on `:3000`.
-6. Open your domain → create the admin account (first-run screen).
-7. Complete the onboarding wizard: pick your LLM, paste a token (Claude subscription via `claude setup-token`, or an `sk-ant-…` API key), and click **"Save & test"** to verify it works instantly.
-8. Add your first GitHub repo and start pinning `@dev` on issues.
+Either way, you watch it happen live — plan → build → review → PR — from the web or your phone, and approve the pull request when it's ready.
 
-For full details, see [`agency/COOLIFY.md`](agency/COOLIFY.md).
+Drop it on a server, open it in your browser, paste a couple of keys, and you're off. No config files to wrestle with.
 
-### The analyzer (optional)
+## What's in the box
 
-If you want advisory proposals:
+- **`agency/`** — the main act. One container that runs the dashboard and does the actual work on your repos.
+- **`analyzer/`** — an optional sidekick. A tiny watchdog that quietly watches how the agency is doing and opens friendly "here's how to improve" suggestions. It runs on its own, so it keeps working even if the agency is mid-redeploy.
 
-1. Create a second Coolify resource pointing at the same repository on `main`, but set **Base Directory** to `/analyzer`.
-2. Set three environment variables:
-   - `AGENCY_URL`: the agency's base URL (e.g. `https://devagency.example.com`)
-   - `AGENCY_API_KEY`: a strong shared secret (≥16 chars; generate with `openssl rand -hex 32`)
-   - One LLM credential: `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`, or `ANTHROPIC_BASE_URL`+`ANTHROPIC_AUTH_TOKEN`
-3. On the agency side, set `ANALYZER_API_KEY` in Coolify's environment (same value as the analyzer's `AGENCY_API_KEY`) and optionally set `ANALYZER_REPO` in the agency's Settings to choose where advisory issues are opened.
-4. Deploy. The agency dashboard footer shows analyzer health and a "Run now" button.
+You can run just the agency and add the analyzer later — it's completely optional.
 
-For full details, see [`analyzer/README.md`](analyzer/README.md).
+---
+
+## Get the agency running (Coolify)
+
+About 10 minutes, start to finish.
+
+1. **Add it.** In Coolify: **+ New → Resource → Docker Compose**. Point it at this repo on the **`main`** branch, and set the resource's **Base Directory** to **`/agency`** so it finds the right compose file.
+2. **Give it a web address.** Add your domain to the resource and make sure it routes to **port `3000`** (that's the only port the app uses).
+3. **Leave the storage alone.** The compose file mounts a data volume at `/app/data` — keep it. That's where your logins and saved keys live, so they survive every redeploy.
+4. **Deploy.** Hit deploy and wait for the logs to say it's listening on `:3000`.
+5. **Make your account.** Open your domain in a browser — the first screen lets you create your admin login.
+6. **Follow the wizard.** It walks you through pasting your keys (next section). That's it.
+
+Need the long version with troubleshooting? See [`agency/COOLIFY.md`](agency/COOLIFY.md).
+
+## The two keys you'll paste
+
+The wizard asks for these in the browser — you don't put them in any config file.
+
+**1. A GitHub token** (so the agency can read issues, push code, and open PRs)
+
+Use a GitHub account you want the work to come from (many people make a dedicated "bot" account). On that account go to **Settings → Developer settings → Fine-grained tokens → Generate new token**, give it access to the repos you want, and set these permissions:
+
+- **Contents, Issues, Pull requests, Workflows** → Read & write
+- **Metadata** → Read
+
+Copy the token and paste it into the wizard.
+
+**2. A way to run the AI** — pick one:
+
+- **Claude subscription (recommended).** On your computer run `npm i -g @anthropic-ai/claude-code`, then `claude setup-token`. It opens a browser, you log in with your Claude plan, and it prints a token. Copy that. *(This is not an `sk-ant-…` key.)*
+- **A Claude API key.** Grab an `sk-ant-…` key from [platform.claude.com](https://platform.claude.com).
+- **Another provider.** Paste a provider base URL + token (e.g. GLM) if that's what you use.
+
+After pasting the Claude key, click **Save & test** — it makes a real call and tells you right away if it's good. ✅
+
+Now add a repo, open an issue, mention `@dev`, and watch it go.
+
+---
+
+## Add the analyzer (optional)
+
+Want the agency to suggest its own improvements? Deploy the analyzer as a **second** Coolify resource.
+
+1. **+ New → Resource → Docker Compose**, same repo and **`main`** branch, but set **Base Directory** to **`/analyzer`**.
+2. Set its three environment variables (see the table below): the agency's URL, a shared password, and one AI key.
+3. Back on the **agency**, add one environment variable — `ANALYZER_API_KEY` — set to the **same shared password** you gave the analyzer. That's what lets the two talk.
+4. Deploy. The agency dashboard footer now shows the analyzer's status and a **Run now** button.
+
+The analyzer never touches your code or secrets directly — it just reads stats and opens suggestion issues for you to approve. Full details in [`analyzer/README.md`](analyzer/README.md).
+
+### Make the shared password
+
+Any long random string works. An easy way:
+
+```
+openssl rand -hex 32
+```
+
+Use that same value for the analyzer's `AGENCY_API_KEY` and the agency's `ANALYZER_API_KEY`.
+
+---
 
 ## Environment variables
 
-### Agency (`agency/`)
-
-All environment variables are optional. The agency auto-generates a `MASTER_KEY` on first boot and persists it on the `/app/data` volume; every operational setting and credential is configured in the dashboard (onboarding wizard + Settings).
-
-| Variable | Required? | Default | What it does |
-|----------|-----------|---------|--------------|
-| `MASTER_KEY` | No | auto-generated | 32-byte hex encryption key for stored secrets (GitHub tokens, Claude credentials). Must stay stable; changing it makes all stored secrets undecryptable. |
-| `RUN_MODE` | No | `watch` | Agent polling mode: `watch` (polls GitHub), `webhook` (event-driven), or `once` (one-shot). |
-| `ADMIN_USERNAME` | No | `admin` | Username for the first admin account seeded on startup (used once). |
-| `ADMIN_PASSWORD` | No | none | Password for the first admin account (used once). |
-| `ADMIN_EMAIL` | No | none | Email for the first admin account (optional). |
-| `RESET_ADMIN_PASSWORD` | No | none | Set a temporary password to regain access if you forgot the admin password. Remove it after logging in. |
-| `AGENCY_ENV` | No | `production` | Set to `development` on staging to show a yellow **DEV** badge. |
-| `GITHUB_WEBHOOK_SECRET` | No | none | (webhook mode only) Shared secret for verifying GitHub webhook signatures. |
-| `SMTP_HOST` | No | none | Email password-reset feature: SMTP server hostname. Omit to disable. |
-| `SMTP_PORT` | No | `587` | SMTP port (`465` = implicit TLS, `587`/`25` = STARTTLS). |
-| `SMTP_USER` | No | none | SMTP username. |
-| `SMTP_PASS` | No | none | SMTP password. |
-| `SMTP_FROM` | No | none | Email sender address, e.g. `"Dev Agency <no-reply@example.com>"`. |
-| `SMTP_SECURE` | No | auto | `true` or `false` to override TLS detection (defaults: `true` on 465, else `false`). |
-| `DB_PATH` | No | `/app/data/agency.db` | SQLite database location (Docker default shown; local dev uses `./data/agency.db`). |
-| `ANALYZER_API_KEY` | No | none | Enable the `/telemetry` endpoint for the analyzer (set to the same value as the analyzer's `AGENCY_API_KEY`). If omitted, `/telemetry` returns 503. |
-
-**Note:** `ANALYZER_REPO` (which repo to post analyzer proposals to) is configured in Settings, not via environment variable.
-
-### Analyzer (`analyzer/`)
-
-Required variables: `AGENCY_URL`, `AGENCY_API_KEY`, and **one** LLM credential.
-
-| Variable | Required? | Default | What it does |
-|----------|-----------|---------|--------------|
-| `AGENCY_URL` | Yes | none | Base URL of the Dev Agency, e.g. `https://devagency.example.com`. |
-| `AGENCY_API_KEY` | Yes | none | Shared secret matching the agency's `ANALYZER_API_KEY` (≥16 chars). Generated with `openssl rand -hex 32`. |
-| `CLAUDE_CODE_OAUTH_TOKEN` | No* | none | Claude subscription token from `claude setup-token`. *Use this OR `ANTHROPIC_API_KEY` OR (`ANTHROPIC_BASE_URL`+`ANTHROPIC_AUTH_TOKEN`). |
-| `ANTHROPIC_API_KEY` | No* | none | API key from https://platform.claude.com (`sk-ant-…`). *Use this OR `CLAUDE_CODE_OAUTH_TOKEN` OR (`ANTHROPIC_BASE_URL`+`ANTHROPIC_AUTH_TOKEN`). |
-| `ANTHROPIC_BASE_URL` | No* | none | Base URL for alternative LLM providers (GLM, etc.). *Requires `ANTHROPIC_AUTH_TOKEN`. Use this pair OR `CLAUDE_CODE_OAUTH_TOKEN` OR `ANTHROPIC_API_KEY`. |
-| `ANTHROPIC_AUTH_TOKEN` | No* | none | Auth token for alternative LLM provider. *Requires `ANTHROPIC_BASE_URL`. Use this pair OR `CLAUDE_CODE_OAUTH_TOKEN` OR `ANTHROPIC_API_KEY`. |
-| `ANALYZER_MODEL` | No | `claude-sonnet-4-6` | Model name for LLM calls (e.g. `claude-opus-4-1`, or your provider's model name). |
-| `PORT` | No | `3000` | Port the analyzer listens on. |
-| `ANALYZER_MIN_STEPS` | No | `50` | Minimum telemetry steps accrued before triggering an analysis run (excludes manual `/run` requests). |
-| `ANALYZER_INTERVAL_HOURS` | No | `6` | Minimum hours between automatic analysis runs. |
-
-## Local development
-
-Each component is independent.
-
 ### Agency
 
-```bash
-cd agency
-npm install
-npm run build      # TypeScript → JavaScript
-npm run dev        # or: npm start for production build
-```
+**None are required** — the agency configures itself in the browser. The only ones you might add:
 
-The agency listens on port 3000 and uses SQLite at `./data/agency.db`.
+| Variable | What it does |
+|----------|--------------|
+| `ANALYZER_API_KEY` | Turns on the analyzer connection. Set it to the shared password (same value as the analyzer's `AGENCY_API_KEY`). |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` | Optional — enables "email me a reset link" on the login page. Skip them and password reset still works via your recovery key. |
 
 ### Analyzer
 
+Three things to set, plus a couple of optional knobs.
+
+| Variable | Required? | Default | What it does |
+|----------|-----------|---------|--------------|
+| `AGENCY_URL` | Yes | — | Your agency's web address, e.g. `https://agency.yourdomain.com`. |
+| `AGENCY_API_KEY` | Yes | — | The shared password — must match the agency's `ANALYZER_API_KEY`. |
+| one AI key | Yes | — | `CLAUDE_CODE_OAUTH_TOKEN`, or `ANTHROPIC_API_KEY`, or `ANTHROPIC_BASE_URL` + `ANTHROPIC_AUTH_TOKEN`. |
+| `ANALYZER_MODEL` | No | `claude-sonnet-4-6` | Which model the analyzer uses. |
+| `ANALYZER_INTERVAL_HOURS` | No | `6` | How often it checks in. |
+
+---
+
+## Run it on your own machine
+
+Each folder stands alone:
+
 ```bash
-cd analyzer
-npm install
-npm start          # Node ESM; no build step
+cd agency && npm install && npm run build && npm start   # dashboard on http://localhost:3000
+cd analyzer && npm install && npm start                  # needs AGENCY_URL + AGENCY_API_KEY
 ```
 
-The analyzer listens on port 3000 by default. Set `AGENCY_URL` and `AGENCY_API_KEY` in a `.env` file to point at a running agency.
+## A note on safety
 
-## Security model
-
-The analyzer is **read-only, least-privilege**. It has no write access to the agency database, no filesystem coupling, and no secrets of its own. It pulls only aggregate telemetry (tool usage counts, token metrics, lessons — no credential values) over an authenticated HTTPS endpoint (`GET /telemetry`, constant-time token comparison). When it detects improvement opportunities, it opens an **advisory GitHub issue** with proposals; applying any change requires the agency admin to review and approve it in the dashboard. Even if the analyzer's deployment is compromised, an attacker gains read access to metrics only. The telemetry endpoint is disabled unless `ANALYZER_API_KEY` is set to a strong value, preventing enumeration.
+The analyzer is deliberately powerless: it can only read aggregate stats over an authenticated link, and it can only *suggest* changes by opening issues. Applying anything always goes through your approval in the dashboard. The connection stays off entirely until you set a strong `ANALYZER_API_KEY`.

@@ -1,6 +1,6 @@
 {
-  "name": "Dev Agency",
-  "short_name": "Dev Agency",
+  "name": "Dev Agency in a Box",
+  "short_name": "Agency Box",
   "description": "Your autonomous AI dev agency — kanban, review, merge, on the go.",
   "start_url": "/",
   "scope": "/",

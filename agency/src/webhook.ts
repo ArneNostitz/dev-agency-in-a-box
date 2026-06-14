@@ -18,7 +18,6 @@ import { fileURLToPath } from "node:url";
 import type { Config } from "./config.js";
 import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, tokensByRoleSince, tokensByDaySince, topIssuesByTokensSince, tokensByIssueAll, toolStatsSince, runStepCountSince, recentLessons, recordConflict, getConflict, clearConflict, listConflicts, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getGlobalModel, setGlobalModel, getFallbackChain, setFallbackChain, getAutoSwitchOnLimit, setIssueModelOverride, getIssueModelOverride, clearIssueModelOverride, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, getIssueRow, getModelsPresets, listAgentDefs, upsertAgentDef, deleteAgentDef, listSkills, upsertSkill, deleteSkill, listHooks, upsertHook, deleteHook, type AutoKind, type Provider, type AgentDef, type Skill, type Hook } from "./store.js";
 import { mergeEpic, isEpic } from "./epics.js";
-import { renderHistory } from "./dashboard.js";
 import { renderShell } from "./shell.js";
 import { addLabel, removeLabel } from "./github.js";
 import { authEnabled, userFromReq, setSessionCookie, clearSessionCookie, parseCookies, SESSION_COOKIE, verifyRecoveryKey } from "./auth.js";
@@ -232,7 +231,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         }
         sessionUser = userFromReq(req);
         if (!sessionUser) {
-          const isNav = url === "/" || url === "/history";
+          const isNav = url === "/";
           if (isNav) return void res.writeHead(302, { location: "/login" }).end();
           return void res.writeHead(401, { "content-type": "text/plain" }).end("authentication required");
         }
@@ -625,8 +624,8 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         "content-type": "text/html; charset=utf-8",
         "cache-control": "no-store, must-revalidate",
       });
-      // Preact UI at /; /history renders the run log.
-      res.end(url === "/history" ? renderHistory() : renderShell());
+      // Preact UI at /.
+      res.end(renderShell());
       return;
     }
     if (req.method !== "POST") {

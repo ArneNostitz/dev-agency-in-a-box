@@ -94,7 +94,7 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
   assert.match(html2, /Review.*?·.*?1|Review\s*·\s*1/, "Review tab shows only 1 issue (not the fix-running card)");
 
   // onboarding wizard renders (onboarded:false) — exercises its hook components
-  assert.match(root.innerHTML, /Welcome to your Dev Agency/, "onboarding wizard renders");
+  assert.match(root.innerHTML, /Welcome to Dev Agency in a Box/, "onboarding wizard renders");
   assert.match(root.innerHTML, /Which models|Get started/, "onboarding has the model/get-started step");
 
   const tick = (ms) => new Promise((r) => setTimeout(r, ms));

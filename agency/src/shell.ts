@@ -1,8 +1,7 @@
 /**
  * The v2 dashboard shell: a tiny HTML page with the design-token stylesheet (light + dark),
  * PWA wiring (manifest + service worker), and a Preact app loaded as an ES module from /web/app.js.
- * All the UI lives in /web/app.js (Preact + htm, no build step). A read-only run log lives at
- * /history.
+ * All the UI lives in /web/app.js (Preact + htm, no build step).
  */
 export function renderShell(): string {
   return `<!doctype html><html lang="en"><head>
@@ -12,11 +11,11 @@ export function renderShell(): string {
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="apple-mobile-web-app-title" content="Dev Agency">
+<meta name="apple-mobile-web-app-title" content="Dev Agency in a Box">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/web/icons/icon-192.png">
 <link rel="icon" href="/web/icons/icon.svg" type="image/svg+xml">
-<title>Dev Agency</title>
+<title>Dev Agency in a Box</title>
 <style>
 :root{
   --bg:#f5f6f8;--surface:#ffffff;--surface-2:#eef0f3;--ink:#1c1e22;--ink-2:#5a6069;--ink-3:#9aa0a8;

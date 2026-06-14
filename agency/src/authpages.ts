@@ -1,5 +1,5 @@
 /** Minimal server-rendered auth pages (setup + login + invite + reset). Token-light, no client JS. */
-const BRAND = `<div class="brand"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M11.56 3.27a.5.5 0 0 1 .88 0l2.95 5.6a1 1 0 0 0 1.52.3L21.18 5.5a.5.5 0 0 1 .8.52l-2.83 10.25a1 1 0 0 1-.96.73H5.81a1 1 0 0 1-.95-.73L2.02 6.02a.5.5 0 0 1 .8-.52l4.27 3.66a1 1 0 0 0 1.52-.29z"/></svg> Dev Agency</div>`;
+const BRAND = `<div class="brand"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M11.56 3.27a.5.5 0 0 1 .88 0l2.95 5.6a1 1 0 0 0 1.52.3L21.18 5.5a.5.5 0 0 1 .8.52l-2.83 10.25a1 1 0 0 1-.96.73H5.81a1 1 0 0 1-.95-.73L2.02 6.02a.5.5 0 0 1 .8-.52l4.27 3.66a1 1 0 0 0 1.52-.29z"/></svg> Dev Agency in a Box</div>`;
 
 /** Wrap inner HTML in the page chrome. `inner` supplies its own <form> element(s). */
 function page(title: string, inner: string): string {
@@ -31,7 +31,7 @@ form{margin:0}
 
 export function renderLogin(error?: string, notice?: string): string {
   return page(
-    "Sign in · Dev Agency",
+    "Sign in · Dev Agency in a Box",
     `<form method="post" action="/login">
        <label>Username</label><input name="username" autocomplete="username" autofocus required>
        <label>Password</label><input name="password" type="password" autocomplete="current-password" required>
@@ -58,7 +58,7 @@ export function renderForgot(opts: { error?: string; notice?: string; emailOn?: 
        <div class="or">or use your recovery key</div>`
     : "";
   return page(
-    "Reset password · Dev Agency",
+    "Reset password · Dev Agency in a Box",
     `${emailForm}
      <form method="post" action="/forgot">
        <div class="muted" style="text-align:left;margin:0 2px 2px">Reset using your server's recovery key.</div>
@@ -77,7 +77,7 @@ export function renderForgot(opts: { error?: string; notice?: string; emailOn?: 
 /** Set a new password from a one-time email link (?token=…). */
 export function renderReset(token: string, error?: string): string {
   return page(
-    "Set a new password · Dev Agency",
+    "Set a new password · Dev Agency in a Box",
     `<form method="post" action="/reset">
        <input type="hidden" name="token" value="${token.replace(/"/g, "&quot;")}">
        <div class="muted" style="text-align:left;margin:0 2px 2px">Choose a new password for your account.</div>
@@ -92,9 +92,9 @@ export function renderReset(token: string, error?: string): string {
 /** First-run: no users exist yet → create the admin account in-browser (no env password needed). */
 export function renderSetup(error?: string): string {
   return page(
-    "Set up · Dev Agency",
+    "Set up · Dev Agency in a Box",
     `<form method="post" action="/setup">
-       <div class="muted" style="text-align:left;margin:0 2px 2px">Welcome. Create the admin account for this Dev Agency.</div>
+       <div class="muted" style="text-align:left;margin:0 2px 2px">Welcome. Create the admin account for this Dev Agency in a Box.</div>
        <label>Username</label><input name="username" autocomplete="username" autofocus required>
        <label>Email (optional)</label><input name="email" type="email" autocomplete="email">
        <label>Password</label><input name="password" type="password" autocomplete="new-password" minlength="8" required>
@@ -106,11 +106,11 @@ export function renderSetup(error?: string): string {
 
 export function renderInvite(token: string, email: string | null, error?: string): string {
   return page(
-    "Accept invite · Dev Agency",
+    "Accept invite · Dev Agency in a Box",
     `<form method="post" action="/invite">
        <input type="hidden" name="_form" value="invite">
        <input type="hidden" name="token" value="${token}">
-       <div class="muted" style="text-align:left;margin:0 2px">You've been invited to Dev Agency. Pick a username and password.</div>
+       <div class="muted" style="text-align:left;margin:0 2px">You've been invited to Dev Agency in a Box. Pick a username and password.</div>
        <label>Username</label><input name="username" autocomplete="username" autofocus required>
        <label>Email</label><input name="email" type="email" autocomplete="email" value="${email ? email.replace(/"/g, "&quot;") : ""}">
        <label>Password</label><input name="password" type="password" autocomplete="new-password" minlength="8" required>
