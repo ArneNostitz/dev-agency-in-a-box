@@ -22,15 +22,13 @@ Drop it on a server, open it in your browser, paste a couple of keys, and you're
 
 You can run just the agency and add the analyzer later — it's completely optional.
 
-> **Deploying?** This `main` branch holds the docs and full source. For Coolify, point each resource at the matching deploy branch — **`agency`** or **`analyzer`** — where the `docker-compose.yml` lives at the root.
-
 ---
 
 ## Get the agency running (Coolify)
 
 About 10 minutes, start to finish.
 
-1. **Add it.** In Coolify: **+ New → Resource → Docker Compose**. Point it at this repo and select the **`agency`** branch — its `docker-compose.yml` sits at the root, so there's nothing else to configure.
+1. **Add it.** In Coolify: **+ New → Resource → Docker Compose**. Point it at this repo on the **`main`** branch, and set the resource's **Base Directory** to **`/agency`** so it finds the right compose file.
 2. **Give it a web address.** Add your domain to the resource and make sure it routes to **port `3000`** (that's the only port the app uses).
 3. **Leave the storage alone.** The compose file mounts a data volume at `/app/data` — keep it. That's where your logins and saved keys live, so they survive every redeploy.
 4. **Deploy.** Hit deploy and wait for the logs to say it's listening on `:3000`.
@@ -68,7 +66,7 @@ Now add a repo, open an issue, mention `@dev`, and watch it go.
 
 Want the agency to suggest its own improvements? Deploy the analyzer as a **second** Coolify resource.
 
-1. **+ New → Resource → Docker Compose**, same repo, but select the **`analyzer`** branch.
+1. **+ New → Resource → Docker Compose**, same repo and **`main`** branch, but set **Base Directory** to **`/analyzer`**.
 2. Set its three environment variables (see the table below): the agency's URL, a shared password, and one AI key.
 3. Back on the **agency**, add one environment variable — `ANALYZER_API_KEY` — set to the **same shared password** you gave the analyzer. That's what lets the two talk.
 4. Deploy. The agency dashboard footer now shows the analyzer's status and a **Run now** button.
