@@ -295,7 +295,8 @@ function App() {
       ${sheet === "models" && html`<${ModelsModal} onClose=${() => setSheet("settings")} reload=${load}/>`}
       ${sheet === "addrepo" && html`<${AddRepo} repos=${repos} onClose=${() => setSheet(null)} reload=${load}/>`}
       ${sheet === "usage" && html`<${Usage} onClose=${() => setSheet(null)} onOpenIssue=${openIssue}/>`}
-      ${sheet === "agents" && html`<${AgentEditor} data=${data} onClose=${() => setSheet(null)} reload=${load}/>`}
+      ${sheet === "agents" && html`<${AgentEditor} data=${data} onClose=${() => setSheet(null)} onSkills=${() => setSheet("skills")} reload=${load}/>`}
+      ${sheet === "skills" && html`<${SkillEditor} data=${data} onClose=${() => setSheet("agents")} reload=${load}/>`}
       ${data.user && data.onboarded === false && html`<${Onboarding} repos=${repos} reload=${load}/>`}
       <${Toasts} toasts=${toasts} onDismiss=${dismissToast}/>
     </div>`;
@@ -1493,7 +1494,7 @@ function Usage({ onClose, onOpenIssue }) {
 }
 
 const AGENT_TOOLS = ["Read", "Glob", "Grep", "Bash", "Write", "Edit"];
-function AgentEditor({ data, onClose, reload }) {
+function AgentEditor({ data, onClose, onSkills, reload }) {
   const defs = data.agentDefs || [];
   const blank = { name: "", handle: "", mode: "chat", model: "", tools: ["Read", "Glob", "Grep"], pushesGithub: true, persona: "", builtin: false };
   const [sel, setSel] = useState(null); // null = list, "__new__" or a name = edit
@@ -1514,7 +1515,10 @@ function AgentEditor({ data, onClose, reload }) {
       ${defs.map((d) => html`<button class="agentrow" key=${d.name} onClick=${() => { setSel(d.name); setForm(Object.assign({}, blank, d)); }}>
         <span><b>${d.name}</b> <span class="tagk">${d.handle}</span> <span class="tagk">${d.mode}</span>${d.builtin ? html` <span class="tagk">built-in</span>` : null}</span>
       </button>`)}
-      <button class="btn primary" style="margin-top:10px" onClick=${() => { setSel("__new__"); setForm(blank); }}><${Icon} name="plus" size=${14}/> New agent</button>
+      <div class="row" style="margin-top:10px">
+        <button class="btn primary" onClick=${() => { setSel("__new__"); setForm(blank); }}><${Icon} name="plus" size=${14}/> New agent</button>
+        <button class="btn ghost" onClick=${onSkills}>Manage skills</button>
+      </div>
     ` : html`
       <button class="btn ghost" style="margin-bottom:8px" onClick=${() => setSel(null)}><${Icon} name="arrowleft" size=${14}/> Back</button>
       <label>Name</label><input value=${form.name} disabled=${sel !== "__new__"} onInput=${(e) => set("name", e.target.value.replace(/[^\w-]/g, ""))}/>
@@ -1525,12 +1529,37 @@ function AgentEditor({ data, onClose, reload }) {
       <label>Tools</label>
       <div class="toolchips">${AGENT_TOOLS.map((t) => html`<label class="toolchip" key=${t}><input type="checkbox" checked=${form.tools.includes(t)} onChange=${() => toggleTool(t)}/> ${t}</label>`)}</div>
       <label class="ckline"><input type="checkbox" checked=${form.pushesGithub} onChange=${(e) => set("pushesGithub", e.target.checked)}/> Post the result to GitHub</label>
+      ${(data.skills || []).length ? html`<label>Skills</label>
+        <div class="toolchips">${(data.skills || []).map((sk) => html`<label class="toolchip" key=${sk.name} title=${sk.description}><input type="checkbox" checked=${(form.skills || []).includes(sk.name)} onChange=${() => set("skills", (form.skills || []).includes(sk.name) ? (form.skills || []).filter((x) => x !== sk.name) : (form.skills || []).concat(sk.name))}/> ${sk.name}</label>`)}</div>` : null}
       <label>Persona (markdown)</label>
       <textarea rows="10" style="width:100%;font:13px ui-monospace,Menlo,monospace" value=${form.persona} onInput=${(e) => set("persona", e.target.value)}></textarea>
       <div class="row">
         <button class="btn primary" disabled=${busy} onClick=${save}>Save</button>
         ${form.builtin ? null : html`<button class="btn danger" disabled=${busy} onClick=${del}>Delete</button>`}
       </div>
+    `}
+  <//>`;
+}
+function SkillEditor({ data, onClose, reload }) {
+  const skills = data.skills || [];
+  const blank = { name: "", description: "", body: "" };
+  const [sel, setSel] = useState(null);
+  const [form, setForm] = useState(blank);
+  const [busy, setBusy] = useState(false);
+  const set = (k, v) => setForm((f) => Object.assign({}, f, { [k]: v }));
+  function save() { if (!form.name) { toast("Name required"); return; } setBusy(true); api("/skill-save", { skill: form }).then(() => { toast("Saved"); setSel(null); reload(); }).catch(() => toast("Couldn’t save", "error")).then(() => setBusy(false)); }
+  function del() { setBusy(true); api("/skill-delete", { skillName: form.name }).then(() => { toast("Deleted"); setSel(null); reload(); }).catch(() => toast("Couldn’t delete", "error")).then(() => setBusy(false)); }
+  return html`<${Sheet} title="Skills" onClose=${onClose}>
+    ${sel === null ? html`
+      <div class="muted" style="font-size:12px;margin-bottom:8px">Reusable skills (Claude Code Agent Skill format: name + description + markdown body). Attach them to agents; the description decides when they apply. The Process Analyzer can author these automatically.</div>
+      ${skills.map((sk) => html`<button class="agentrow" key=${sk.name} onClick=${() => { setSel(sk.name); setForm(Object.assign({}, blank, sk)); }}><span><b>${sk.name}</b> <span class="muted" style="font-size:12px">${(sk.description || "").slice(0, 60)}</span></span></button>`)}
+      <button class="btn primary" style="margin-top:10px" onClick=${() => { setSel("__new__"); setForm(blank); }}><${Icon} name="plus" size=${14}/> New skill</button>
+    ` : html`
+      <button class="btn ghost" style="margin-bottom:8px" onClick=${() => setSel(null)}><${Icon} name="arrowleft" size=${14}/> Back</button>
+      <label>Name</label><input value=${form.name} disabled=${sel !== "__new__"} onInput=${(e) => set("name", e.target.value.replace(/[^\w-]/g, ""))}/>
+      <label>Description (when to use it)</label><input value=${form.description} onInput=${(e) => set("description", e.target.value)}/>
+      <label>Body (markdown)</label><textarea rows="12" style="width:100%;font:13px ui-monospace,Menlo,monospace" value=${form.body} onInput=${(e) => set("body", e.target.value)}></textarea>
+      <div class="row"><button class="btn primary" disabled=${busy} onClick=${save}>Save</button><button class="btn danger" disabled=${busy} onClick=${del}>Delete</button></div>
     `}
   <//>`;
 }

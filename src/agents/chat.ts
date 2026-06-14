@@ -9,7 +9,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentDef } from "../store.js";
-import { getGlobalModel, getProviders, setSession, getSession, recordRun, recordRunStep } from "../store.js";
+import { getGlobalModel, getProviders, setSession, getSession, recordRun, recordRunStep, skillsPrompt } from "../store.js";
 import { claudeToken, anthropicApiKey, ghBotToken } from "../creds.js";
 import { pushActivity, setActive, clearActive } from "../activity.js";
 import { commentOnIssue } from "../github.js";
@@ -50,7 +50,8 @@ export async function runChatAgent(def: AgentDef, repo: string, number: number, 
   const workdir = mkdtempSync(join(tmpdir(), "chat-wd-"));
   env.CLAUDE_CONFIG_DIR = cfgDir;
   const rc = recallWiring(repo);
-  const systemPrompt = `${def.persona}\n\nYou are an INTERACTIVE chat agent: no code changes, no branches, no PRs. Hold a focused conversation. ${RECALL_PROMPT}`;
+  const skills = skillsPrompt(def.skills);
+  const systemPrompt = `${def.persona}\n\nYou are an INTERACTIVE chat agent: no code changes, no branches, no PRs. Hold a focused conversation. ${RECALL_PROMPT}${skills ? "\n\n" + skills : ""}`;
   const abortRun = registerRun(repo, number);
   setActive(repo, number, "issue", "chat", def.name);
   pushActivity(repo, number, "chat", "start", `started ${def.name} (${model})`);

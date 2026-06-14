@@ -98,6 +98,13 @@ function getDb(): DatabaseSync | null {
         mode TEXT, pushes_github INTEGER NOT NULL DEFAULT 1, skills TEXT, builtin INTEGER NOT NULL DEFAULT 0,
         updated_at TEXT
       );
+      -- Skills (v3, Claude Code Agent Skill schema): name + description (triggers it) + markdown body.
+      CREATE TABLE IF NOT EXISTS skill (name TEXT PRIMARY KEY, description TEXT, body TEXT, updated_at TEXT);
+      -- Deterministic pre/post hooks the orchestrator runs around an agent (the analyzer writes these).
+      CREATE TABLE IF NOT EXISTS hook (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        target TEXT, phase TEXT, command TEXT, enabled INTEGER NOT NULL DEFAULT 1, updated_at TEXT
+      );
       -- Local-first tracking (Phase 4): the DB as source of truth, GitHub as a synced adapter.
       CREATE TABLE IF NOT EXISTS local_issue (
         repo TEXT NOT NULL, number INTEGER NOT NULL, title TEXT, body TEXT, labels TEXT,
@@ -1279,6 +1286,52 @@ export function seedChatAgents(): void {
     });
   }
 }
+
+// ---- skills (Claude Code Agent Skill schema) + hooks (v3) ----
+
+export interface Skill { name: string; description: string; body: string; updatedAt: string }
+export function upsertSkill(s: { name: string; description?: string; body?: string }): void {
+  const d = getDb(); if (!d) return;
+  try { d.prepare(`INSERT INTO skill (name, description, body, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET description=excluded.description, body=excluded.body, updated_at=excluded.updated_at`).run(s.name, s.description ?? "", s.body ?? "", now()); } catch { /* best effort */ }
+}
+export function getSkill(name: string): Skill | null {
+  const d = getDb(); if (!d) return null;
+  try { const r = d.prepare(`SELECT * FROM skill WHERE name = ?`).get(name) as { name: string; description: string | null; body: string | null; updated_at: string | null } | undefined; return r ? { name: r.name, description: r.description ?? "", body: r.body ?? "", updatedAt: r.updated_at ?? "" } : null; } catch { return null; }
+}
+export function listSkills(): Skill[] {
+  const d = getDb(); if (!d) return [];
+  try { return (d.prepare(`SELECT * FROM skill ORDER BY name`).all() as Array<{ name: string; description: string | null; body: string | null; updated_at: string | null }>).map((r) => ({ name: r.name, description: r.description ?? "", body: r.body ?? "", updatedAt: r.updated_at ?? "" })); } catch { return []; }
+}
+export function deleteSkill(name: string): void { const d = getDb(); if (!d) return; try { d.prepare(`DELETE FROM skill WHERE name = ?`).run(name); } catch { /* best effort */ } }
+
+/** Render attached skills as SKILL.md blocks for injection into an agent's context. */
+export function skillsPrompt(names: string[]): string {
+  if (!names?.length) return "";
+  const blocks = names.map((n) => getSkill(n)).filter((s): s is Skill => !!s)
+    .map((s) => `--- SKILL: ${s.name} ---\n${s.description ? s.description + "\n\n" : ""}${s.body}`);
+  if (!blocks.length) return "";
+  return `=== SKILLS (apply when relevant) ===\n${blocks.join("\n\n")}`;
+}
+
+export interface Hook { id: number; target: string; phase: "pre" | "post"; command: string; enabled: boolean; updatedAt: string }
+export function upsertHook(h: { id?: number; target: string; phase: "pre" | "post"; command: string; enabled?: boolean }): void {
+  const d = getDb(); if (!d) return;
+  try {
+    if (h.id) d.prepare(`UPDATE hook SET target=?, phase=?, command=?, enabled=?, updated_at=? WHERE id=?`).run(h.target, h.phase, h.command, h.enabled === false ? 0 : 1, now(), h.id);
+    else d.prepare(`INSERT INTO hook (target, phase, command, enabled, updated_at) VALUES (?, ?, ?, ?, ?)`).run(h.target, h.phase, h.command, h.enabled === false ? 0 : 1, now());
+  } catch { /* best effort */ }
+}
+export function listHooks(target?: string, phase?: "pre" | "post"): Hook[] {
+  const d = getDb(); if (!d) return [];
+  try {
+    let sql = `SELECT * FROM hook WHERE enabled = 1`; const args: string[] = [];
+    if (target) { sql += ` AND target = ?`; args.push(target); }
+    if (phase) { sql += ` AND phase = ?`; args.push(phase); }
+    sql += ` ORDER BY id`;
+    return (d.prepare(sql).all(...args) as Array<{ id: number; target: string; phase: string; command: string; enabled: number; updated_at: string | null }>).map((r) => ({ id: r.id, target: r.target, phase: r.phase === "post" ? "post" : "pre", command: r.command, enabled: !!r.enabled, updatedAt: r.updated_at ?? "" }));
+  } catch { return []; }
+}
+export function deleteHook(id: number): void { const d = getDb(); if (!d) return; try { d.prepare(`DELETE FROM hook WHERE id = ?`).run(id); } catch { /* best effort */ } }
 
 // ---- run_step telemetry (v3): tool-call log for the Process Analyzer ----
 

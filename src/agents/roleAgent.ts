@@ -16,6 +16,7 @@ import { gitnexusWiring, GITNEXUS_PROMPT } from "../gitnexus.js";
 import { recallWiring, RECALL_PROMPT } from "./recall.js";
 import { claudeToken, anthropicApiKey, ghBotToken } from "../creds.js";
 import { registerRun } from "../abort.js";
+import { runHooks } from "../hooks.js";
 
 /**
  * Per-role model routing. Checks (in order):
@@ -309,6 +310,9 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
   /** User pressed Stop: the SDK throws an AbortError — return cleanly, never retry. */
   const wasAborted = (): boolean => abortRun.controller.signal.aborted;
 
+  // Pre-hook: deterministic steps the orchestrator runs before the agent (zero tokens).
+  await runHooks(role, "pre", input.workdir, (s) => pushActivity(repo, issueNumber, role, "tool", s)).catch(() => {});
+
   let r: { text: string; turns: number; costUsd: number; tokens: number; stopped: string };
   try {
     try {
@@ -345,6 +349,8 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
   }
 
   const { text, turns, costUsd, tokens, stopped } = r;
+  // Post-hook: deterministic steps after the agent (zero tokens).
+  await runHooks(role, "post", input.workdir, (s) => pushActivity(repo, issueNumber, role, "tool", s)).catch(() => {});
   if (sessionId) setSession(repo, issueNumber, role, sessionId); // for resume after an interruption
   recordTokens(tokens, costUsd, model, repo, issueNumber, role);
   const tok = tokens ? `, ${Math.round(tokens / 1000)}k tok` : "";
