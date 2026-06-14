@@ -5,6 +5,7 @@
  * changes — ADVISORY ONLY: it opens a GitHub issue you approve, never auto-merges. It also verifies
  * the deployment so a change that needs a redeploy/tool-install is caught.
  */
+import { createServer } from "node:http";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -115,12 +116,23 @@ export async function verifyDeploy(): Promise<{ ok: boolean; version?: string; e
 
 /** RUN_MODE=analyzer loop: periodic, gated, advisory. */
 export function startAnalyzer(cfg: Config): void {
+  // A tiny health endpoint so Coolify (and any uptime check) sees a healthy worker — the analyzer is
+  // otherwise headless. Reports the last analysis time + deploy check, nothing sensitive.
+  const port = Number(process.env.PORT) || 3000;
+  let lastIssue = 0;
+  let lastDeploy: { ok: boolean; version?: string; error?: string } = { ok: false };
+  createServer((_req, res) => {
+    res.writeHead(200, { "content-type": "application/json" }).end(
+      JSON.stringify({ mode: "analyzer", lastProposalsIssue: lastIssue, lastRun: getSetting(LAST_KEY) || null, deploy: lastDeploy }),
+    );
+  }).listen(port, () => console.log(`[analyzer] health on :${port}`));
+
   const tick = async (): Promise<void> => {
     try {
       const n = await runAnalysis(cfg);
-      if (n) console.log(`[analyzer] opened advisory proposals issue #${n}`);
-      const d = await verifyDeploy();
-      console.log(`[analyzer] deploy ${d.ok ? `ok (v${d.version})` : `DOWN: ${d.error}`}`);
+      if (n) { lastIssue = n; console.log(`[analyzer] opened advisory proposals issue #${n}`); }
+      lastDeploy = await verifyDeploy();
+      console.log(`[analyzer] deploy ${lastDeploy.ok ? `ok (v${lastDeploy.version})` : `DOWN: ${lastDeploy.error}`}`);
     } catch (err) {
       console.error("[analyzer] pass failed:", (err as Error).message);
     }
