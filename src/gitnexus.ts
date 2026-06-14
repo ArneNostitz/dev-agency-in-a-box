@@ -17,8 +17,10 @@ import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { existsSync, appendFileSync, mkdirSync, readFileSync, writeFileSync, rmSync, cpSync } from "node:fs";
 import { join, dirname } from "node:path";
+import { tmpdir } from "node:os";
 import { getSetting } from "./store.js";
 import { sStr, sNum } from "./settings.js";
+import { cloneRepo } from "./github.js";
 
 const exec = promisify(execFile);
 
@@ -129,56 +131,53 @@ export async function indexRepo(workdir: string, repo: string, log: (s: string) 
     log("🧭 reusing cached GitNexus index (codebase unchanged)");
     return true;
   }
-  log(restored ? "🧭 refreshing GitNexus index (codebase changed)…" : "🧭 indexing codebase with GitNexus (no tokens)…");
-  const argStr = sStr("gitnexus_analyze_args", "GITNEXUS_ANALYZE_ARGS", "");
-  const args = argStr ? argStr.split(/\s+/) : ["analyze"];
-  // On a refresh, drop the stale restored index first so a *failed* analyze can't leave a stale or
-  // half-written index that the MCP then rejects ("not indexed"); we re-restore from cache below if
-  // analyze produces nothing usable.
-  if (restored) rmSync(join(workdir, ".gitnexus"), { recursive: true, force: true });
-  let analyzeErr: Error | null = null;
-  try {
-    await runGitnexusStreaming(
-      args,
-      workdir,
-      { ...process.env, GITNEXUS_SKIP_OPTIONAL_GRAMMARS: "1" },
-      sNum("gitnexus_index_timeout_ms", "GITNEXUS_INDEX_TIMEOUT_MS", 300_000),
-      log,
-    );
-  } catch (err) {
-    analyzeErr = err as Error;
-  }
-  // The tree was pristine before indexing, so restore any tracked files GitNexus touched.
-  await exec("git", ["checkout", "--", "."], { cwd: workdir }).catch(() => {});
-
-  // Keep the index if analyze actually produced one — even on a non-zero exit (e.g. the harmless
-  // "FTS extension unavailable" warning makes gitnexus exit 1 while still writing a usable index).
-  if (isIndexed(workdir)) {
-    if (analyzeErr) log("🧭 GitNexus finished with warnings but produced an index — using it.");
-    try {
-      mkdirSync(cache, { recursive: true });
-      rmSync(cacheIndex, { recursive: true, force: true });
-      cpSync(join(workdir, ".gitnexus"), cacheIndex, { recursive: true });
-      if (curHead) writeFileSync(headFile, curHead);
-    } catch {
-      /* cache write best-effort */
-    }
+  // CRITICAL: never block the agent on `gitnexus analyze` (20–30s on a first index). Build/refresh
+  // the cache in the BACKGROUND (in a separate clone, so it can't touch the agent's working files),
+  // and let this run proceed immediately. A stale cached index is usable now; if there's none, this
+  // run falls back to file search and the index is ready for the next run.
+  backgroundRebuild(repo, log);
+  if (restored) {
+    log("🧭 using cached GitNexus index (refreshing in the background)");
     return true;
   }
-
-  // No usable index produced. Surface the REAL error (not truncated), and fall back to the cached
-  // index if we had one.
-  log(`GitNexus indexing failed — ${(analyzeErr?.message ?? "no index produced").slice(0, 600)}`);
-  if (restored && existsSync(cacheIndex)) {
-    try {
-      cpSync(cacheIndex, join(workdir, ".gitnexus"), { recursive: true });
-      log("🧭 fell back to the previous cached index.");
-      return true;
-    } catch {
-      /* ignore */
-    }
-  }
+  log("🧭 indexing in the background (first run uses file search; the graph is ready next time)");
   return false;
+}
+
+// One background index per repo at a time (concurrent runs shouldn't pile up duplicate analyses).
+const buildingCache = new Set<string>();
+
+/** Build/refresh a repo's GitNexus cache in a throwaway clone, off the agent's critical path. */
+function backgroundRebuild(repo: string, log: (s: string) => void): void {
+  if (!gitnexusEnabled() || buildingCache.has(repo)) return;
+  buildingCache.add(repo);
+  void (async () => {
+    const dir = join(tmpdir(), "gnidx-" + repo.replace(/[^a-z0-9]+/gi, "_") + "-" + Date.now().toString(36));
+    try {
+      await cloneRepo(repo, dir);
+      let head = "";
+      try { head = (await exec("git", ["rev-parse", "HEAD"], { cwd: dir })).stdout.trim(); } catch { /* ignore */ }
+      try { appendFileSync(join(dir, ".git", "info", "exclude"), "\n.gitnexus/\n.gnhome/\n.gncache/\n"); } catch { /* ignore */ }
+      const argStr = sStr("gitnexus_analyze_args", "GITNEXUS_ANALYZE_ARGS", "");
+      const args = argStr ? argStr.split(/\s+/) : ["analyze"];
+      await runGitnexusStreaming(args, dir, { ...process.env, GITNEXUS_SKIP_OPTIONAL_GRAMMARS: "1" }, sNum("gitnexus_index_timeout_ms", "GITNEXUS_INDEX_TIMEOUT_MS", 300_000), () => {});
+      if (existsSync(join(dir, ".gitnexus"))) {
+        const cache = cacheDirFor(repo);
+        const cacheIndex = join(cache, ".gitnexus");
+        const headFile = join(cache, "HEAD");
+        mkdirSync(cache, { recursive: true });
+        rmSync(cacheIndex, { recursive: true, force: true });
+        cpSync(join(dir, ".gitnexus"), cacheIndex, { recursive: true });
+        if (head) writeFileSync(headFile, head);
+        log("🧭 GitNexus index ready (cached for the next run).");
+      }
+    } catch {
+      /* best-effort: the agent already ran fine with file search */
+    } finally {
+      try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+      buildingCache.delete(repo);
+    }
+  })();
 }
 
 export interface GitnexusWiring {

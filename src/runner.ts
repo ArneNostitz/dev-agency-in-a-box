@@ -247,13 +247,15 @@ async function processIssue(cfg: Config, repo: string, issue: Issue): Promise<vo
 
   const thread = await commentThread(repo, issue.number);
   const workdir = workdirFor(repo, `${issue.number}`);
-  await rm(workdir, { recursive: true, force: true });
-  await mkdir(join(workdir, ".."), { recursive: true });
-  await cloneRepo(repo, workdir);
-  await indexRepo(workdir, repo, (s) => pushActivity(repo, issue.number, role, "tool", s));
-
+  // Mark active + show progress BEFORE the slow prep so the card spins and the live stream isn't
+  // silent while we clone (and the GitNexus index now builds in the background, off this path).
   setActive(repo, issue.number, "issue", role, issue.title);
   try {
+    pushActivity(repo, issue.number, role, "tool", `📥 cloning ${repo}…`);
+    await rm(workdir, { recursive: true, force: true });
+    await mkdir(join(workdir, ".."), { recursive: true });
+    await cloneRepo(repo, workdir);
+    await indexRepo(workdir, repo, (s) => pushActivity(repo, issue.number, role, "tool", s));
     await runPipeline(cfg, repo, issue, role, workdir, thread);
   } catch (err) {
     const msg = (err as Error).message ?? String(err);
