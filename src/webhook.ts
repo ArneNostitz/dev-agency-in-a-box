@@ -386,6 +386,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
                 enabled: Boolean((process.env.ANALYZER_API_KEY || getSetting("analyzer_api_key") || "").trim()),
                 lastPull: getSetting("analyzer_last_pull") || null,
                 lastIssueAt: getSetting("analyzer_last_issue_ts") || null,
+                url: getSetting("analyzer_url") || null,
               },
               config: {
                 skipArchitect: (getSetting("skip_architect") ?? "") || (process.env.SKIP_ARCHITECT?.trim().toLowerCase() === "false" ? "off" : "on"),
@@ -722,11 +723,11 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
     }
 
     // Dashboard actions (auth required), not GitHub webhooks.
-    if (["/archive", "/comment", "/comment-edit", "/run-checks", "/merge", "/close", "/create-pr", "/delete", "/resume", "/stop", "/fix", "/auto", "/start", "/new-issue", "/approve", "/audit", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude", "/model-override", "/agent-def-save", "/agent-def-delete", "/skill-save", "/skill-delete", "/hook-save", "/hook-delete"].includes(path)) {
+    if (["/archive", "/comment", "/comment-edit", "/run-checks", "/merge", "/close", "/create-pr", "/delete", "/resume", "/stop", "/fix", "/auto", "/start", "/new-issue", "/approve", "/audit", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude", "/model-override", "/agent-def-save", "/agent-def-delete", "/skill-save", "/skill-delete", "/hook-save", "/hook-delete", "/analyzer-run"].includes(path)) {
       const actor = userFromReq(req);
       if (!actor) return void res.writeHead(401, { "content-type": "application/json" }).end('{"error":"auth required"}');
       void readBody(req).then(async (body) => {
-        let p: { repo?: string; number?: number; commentId?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; pctNow?: number; tracker?: string; agentDef?: Partial<AgentDef> & { name: string }; agentName?: string; skill?: Partial<Skill> & { name: string }; skillName?: string; hook?: { id?: number; target: string; phase: "pre" | "post"; command: string; enabled?: boolean }; hookId?: number; dataUrl?: string; name?: string; providers?: Provider[]; roleModels?: Record<string, { providerId: string; model: string }>; globalModel?: { providerId: string; model: string } | null; fallbackChain?: Array<{ providerId: string; model: string }>; autoSwitchOnLimit?: boolean; model?: { providerId: string; model: string } | null; kind?: string; value?: string; skipArchitect?: string; gitnexus?: string; maxTokensPerRun?: number; maxReviseRounds?: number; auditThreshold?: number; start?: boolean; email?: string; key?: string; ops?: Record<string, string | number | boolean>; webhookSecret?: string } = {};
+        let p: { repo?: string; number?: number; commentId?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; pctNow?: number; tracker?: string; agentDef?: Partial<AgentDef> & { name: string }; agentName?: string; skill?: Partial<Skill> & { name: string }; skillName?: string; hook?: { id?: number; target: string; phase: "pre" | "post"; command: string; enabled?: boolean }; hookId?: number; dataUrl?: string; name?: string; providers?: Provider[]; roleModels?: Record<string, { providerId: string; model: string }>; globalModel?: { providerId: string; model: string } | null; fallbackChain?: Array<{ providerId: string; model: string }>; autoSwitchOnLimit?: boolean; model?: { providerId: string; model: string } | null; kind?: string; value?: string; skipArchitect?: string; gitnexus?: string; maxTokensPerRun?: number; maxReviseRounds?: number; auditThreshold?: number; start?: boolean; email?: string; key?: string; ops?: Record<string, string | number | boolean>; webhookSecret?: string; analyzerUrl?: string } = {};
         try {
           p = JSON.parse(body.toString("utf8"));
         } catch {
@@ -898,6 +899,10 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           // Encrypted GitHub webhook secret (admin, write-only).
           if (p.webhookSecret !== undefined && actor.role === "admin") {
             setSecretSetting("github_webhook_secret", p.webhookSecret.trim());
+          }
+          // Analyzer base URL — lets the dashboard's "Run now" button reach the standalone watchdog.
+          if (p.analyzerUrl !== undefined && actor.role === "admin") {
+            setSetting("analyzer_url", p.analyzerUrl.trim().replace(/\/+$/, ""));
           }
           return ok();
         }
@@ -1087,6 +1092,24 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           return ok();
         }
         if (path === "/hook-delete") { if (p.hookId) deleteHook(p.hookId); return ok(); }
+        if (path === "/analyzer-run") {
+          // Manually kick the standalone watchdog: proxy a forced POST /run so the shared key never
+          // leaves the server. Admin-only.
+          if (actor.role !== "admin") return res.writeHead(403).end('{"error":"admin only"}');
+          const base = (getSetting("analyzer_url") || "").trim().replace(/\/+$/, "");
+          const key = (process.env.ANALYZER_API_KEY || getSetting("analyzer_api_key") || "").trim();
+          if (!base) return res.writeHead(400).end(JSON.stringify({ error: "Set the analyzer URL in Settings first" }));
+          if (!key || key.length < 16) return res.writeHead(400).end(JSON.stringify({ error: "Set a strong ANALYZER_API_KEY first" }));
+          try {
+            const r = await fetch(`${base}/run`, { method: "POST", headers: { authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(8000) });
+            if (r.status === 202) return ok(JSON.stringify({ ok: true, started: true }));
+            if (r.status === 409) return res.writeHead(409).end(JSON.stringify({ error: "Analyzer is already running a pass" }));
+            const txt = await r.text().catch(() => "");
+            return res.writeHead(502).end(JSON.stringify({ error: `Analyzer responded ${r.status}`, detail: txt.slice(0, 200) }));
+          } catch (e) {
+            return res.writeHead(502).end(JSON.stringify({ error: `Could not reach analyzer: ${(e as Error).message}` }));
+          }
+        }
         if (path === "/add-repo") {
           // Add a repo to the watch list + invite the bot + register the webhook — live, no redeploy.
           // Require a full owner/name so malformed entries (just an owner) can't be added.

@@ -402,6 +402,8 @@ function StatusLine({ working, session, spend, analyzer, reload }) {
   const [pctNow, setPctNow] = useState(pct);
   const [win, setWin] = useState(s.windowHours || 5);
   const [start, setStart] = useState(() => toLocalInput(s.windowStart ? new Date(s.windowStart) : new Date()));
+  const [anUrl, setAnUrl] = useState((analyzer && analyzer.url) || "");
+  const [anBusy, setAnBusy] = useState(false);
 
   useEffect(() => { getJSON("/web/version.json").then(setVer).catch(() => setVer(null)); }, []);
   const verTitle = ver ? "Build " + (ver.version || "?") + (ver.sha ? " · commit " + ver.sha : "") + (ver.builtAt ? " · built " + new Date(ver.builtAt).toLocaleString() : "") : "Development build (not from a Docker image)";
@@ -411,6 +413,15 @@ function StatusLine({ working, session, spend, analyzer, reload }) {
   function openWindow() { setWin(s.windowHours || 5); setStart(toLocalInput(s.windowStart ? new Date(s.windowStart) : new Date())); setPop(pop === "window" ? null : "window"); }
   function saveUsage() { api("/settings", { budget: Number(bud) || 0, pctNow: Number(pctNow) || 0 }).then(() => { toast("Usage calibrated"); setPop(null); reload(); }).catch(() => toast("Couldn’t save", "error")); }
   function saveWindow() { api("/settings", { windowHours: Number(win) || 5, anchor: new Date(start).toISOString() }).then(() => { toast("Reset window updated"); setPop(null); reload(); }).catch(() => toast("Couldn’t save", "error")); }
+  function openAnalyzer() { setAnUrl((analyzer && analyzer.url) || ""); setPop(pop === "analyzer" ? null : "analyzer"); }
+  function saveAnUrl() { api("/settings", { analyzerUrl: anUrl.trim() }).then(() => { toast("Analyzer URL saved"); reload(); }).catch(() => toast("Couldn’t save", "error")); }
+  function runAnalyzer() {
+    setAnBusy(true);
+    api("/analyzer-run", {})
+      .then(() => { toast("Analyzer pass started — a proposal issue will appear if it has suggestions"); setPop(null); })
+      .catch((e) => toast((e && e.message) || "Couldn’t start the analyzer", "error"))
+      .finally(() => setAnBusy(false));
+  }
 
   return html`<div class="statusline">
     <span>${working ? working + " working now" : "Idle"}</span>
@@ -441,7 +452,19 @@ function StatusLine({ working, session, spend, analyzer, reload }) {
         <button class="btn primary" onClick=${saveWindow}>Save</button>
       </div>` : null}
     </span>
-    ${an ? html`<span class="anstat" title=${an.title}>· <span class=${"andot " + an.cls}></span> ${an.text}</span>` : null}
+    ${an ? html`<span class="statpop">
+      <span class="statlink anstat" title=${an.title + "\n\nClick to run a pass now or set the analyzer URL"} onClick=${openAnalyzer}>· <span class=${"andot " + an.cls}></span> ${an.text}</span>
+      ${pop === "analyzer" ? html`<div class="dropscrim" onClick=${() => setPop(null)}></div><div class="dropmenu statmenu">
+        <div class="dropmenu-h">Process Analyzer</div>
+        <label>Analyzer URL</label>
+        <input type="text" placeholder="https://analyzer.example.com" value=${anUrl} onInput=${(e) => setAnUrl(e.target.value)}/>
+        <div class="dropmenu-foot">Needed so “Run now” can reach the standalone watchdog. The shared key stays on the server.</div>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button class="btn" onClick=${saveAnUrl}>Save URL</button>
+          <button class="btn primary" disabled=${anBusy || !(analyzer && analyzer.url)} onClick=${runAnalyzer}>${anBusy ? "Starting…" : "Run now"}</button>
+        </div>
+      </div>` : null}
+    </span>` : null}
     <span class="spacer"></span>
     <span class="buildstamp" title=${verTitle}>${verLabel}</span>
     <a href="/history">history</a>
