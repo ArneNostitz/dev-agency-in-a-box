@@ -42,6 +42,7 @@ import {
   closeIssue,
   mentionsHandle,
   AWAITING_LABELS,
+  AWAITING_LABEL,
   type Issue,
 } from "./github.js";
 import { seedAdmin, resetAdminPassword } from "./auth.js";
@@ -54,6 +55,7 @@ import { pushActivity } from "./activity.js";
 import { loadHandleRoleMap, roleForText, ALL_ROLES, type RoleName } from "./agents/roles.js";
 import { runPipeline, runPrFix, runFollowUp, runResumeBuild, runReviewFix } from "./pipeline.js";
 import { runRole } from "./agents/roleAgent.js";
+import { runChatAgent } from "./agents/chat.js";
 import { parseAuditProposals } from "./auditparse.js";
 import {
   recordIssueState,
@@ -83,6 +85,8 @@ import {
   getAutoSwitchOnLimit,
   setSessionFallback,
   clearSessionFallback,
+  chatAgentForText,
+  seedChatAgents,
   clearIssueModelOverride,
 } from "./store.js";
 import { parseRateLimit, nextWindowReset } from "./ratelimit.js";
@@ -212,6 +216,25 @@ function workdirFor(repo: string, key: string): string {
 
 /** Process one actionable issue end to end. */
 async function processIssue(cfg: Config, repo: string, issue: Issue): Promise<void> {
+  // Chat agents (v3): interactive, non-repo. Route here and skip the clone/branch/PR machinery.
+  const chatDef = chatAgentForText(`${issue.title}\n${issue.body}`);
+  if (chatDef) {
+    void cfg;
+    await addLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
+    for (const l of AWAITING_LABELS) await removeLabel(repo, issue.number, l).catch(() => {});
+    recordIssueState(repo, issue.number, { title: issue.title, role: chatDef.name, state: IN_PROGRESS });
+    try {
+      await runChatAgent(chatDef, repo, issue.number, await commentThread(repo, issue.number));
+    } catch (err) {
+      await commentOnIssue(repo, issue.number, `❌ ${chatDef.name} failed: ${(err as Error).message.slice(0, 200)}`).catch(() => {});
+    }
+    // Interactive: park as awaiting so the next human reply re-engages (resumes the session).
+    await removeLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
+    await addLabel(repo, issue.number, AWAITING_LABEL).catch(() => {});
+    recordIssueState(repo, issue.number, { state: AWAITING_LABEL });
+    return;
+  }
+
   const resuming = issue.labels.some((l) => AWAITING_LABELS.includes(l));
   const role: RoleName = resuming
     ? ((getIssueRole(repo, issue.number) as RoleName) ?? "developer")
@@ -1146,6 +1169,7 @@ async function backgroundInit(cfg: Config): Promise<void> {
 async function main(): Promise<void> {
   const cfg = loadConfig();
   seedAdmin(); // multi-user: create the admin from env on first boot (no-op if MASTER_KEY unset)
+  seedChatAgents(); // v3: register the starter chat agents (spec-creator, grill-me) once
   resetAdminPassword(); // forgot-password recovery via RESET_ADMIN_PASSWORD env (no-op if unset)
   startAutoResume(cfg);
   startAutoMode(cfg);
