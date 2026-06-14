@@ -42,6 +42,7 @@ import { startApp, stopApp, getApp, pickWebDevScript, isTauriPackage, buildLocal
 import { ensureRepoAccess } from "./commands.js";
 import { previewUrlFor, runChecksNow } from "./preview.js";
 import { dispatch } from "./pool.js";
+import { trackerMode, syncInIssue, syncInComment } from "./tracker.js";
 
 type ProcessAll = (cfg: Config) => Promise<number>;
 type Resume = (repo: string, number: number) => Promise<void>;
@@ -669,7 +670,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
       const actor = userFromReq(req);
       if (!actor) return void res.writeHead(401, { "content-type": "application/json" }).end('{"error":"auth required"}');
       void readBody(req).then(async (body) => {
-        let p: { repo?: string; number?: number; commentId?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; pctNow?: number; dataUrl?: string; name?: string; providers?: Provider[]; roleModels?: Record<string, { providerId: string; model: string }>; globalModel?: { providerId: string; model: string } | null; fallbackChain?: Array<{ providerId: string; model: string }>; autoSwitchOnLimit?: boolean; model?: { providerId: string; model: string } | null; kind?: string; value?: string; skipArchitect?: string; gitnexus?: string; maxTokensPerRun?: number; maxReviseRounds?: number; auditThreshold?: number; start?: boolean; email?: string; key?: string; ops?: Record<string, string | number | boolean>; webhookSecret?: string } = {};
+        let p: { repo?: string; number?: number; commentId?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; pctNow?: number; tracker?: string; dataUrl?: string; name?: string; providers?: Provider[]; roleModels?: Record<string, { providerId: string; model: string }>; globalModel?: { providerId: string; model: string } | null; fallbackChain?: Array<{ providerId: string; model: string }>; autoSwitchOnLimit?: boolean; model?: { providerId: string; model: string } | null; kind?: string; value?: string; skipArchitect?: string; gitnexus?: string; maxTokensPerRun?: number; maxReviseRounds?: number; auditThreshold?: number; start?: boolean; email?: string; key?: string; ops?: Record<string, string | number | boolean>; webhookSecret?: string } = {};
         try {
           p = JSON.parse(body.toString("utf8"));
         } catch {
@@ -826,6 +827,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
             setSetting("usage_offset_at", new Date().toISOString());
           }
           // Pipeline knobs moved out of env — apply live, no redeploy.
+          if (p.tracker === "local" || p.tracker === "github") setSetting("tracker", p.tracker); // DB-authoritative vs GitHub-authoritative tracking (Phase 4)
           if (p.skipArchitect === "on" || p.skipArchitect === "off") setSetting("skip_architect", p.skipArchitect);
           if (p.gitnexus === "on" || p.gitnexus === "off") setSetting("gitnexus", p.gitnexus);
           if (p.maxTokensPerRun !== undefined && p.maxTokensPerRun >= 0) setSetting("max_tokens_per_run", String(Math.round(p.maxTokensPerRun)));
@@ -1106,6 +1108,9 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         action?: string;
         pull_request?: { merged?: boolean; head?: { ref?: string } };
         repository?: { full_name?: string };
+        issue?: { number?: number; title?: string; body?: string; labels?: Array<{ name?: string }> };
+        comment?: { id?: number; body?: string; user?: { login?: string } };
+        sender?: { type?: string };
       } = {};
       try {
         payload = JSON.parse(body.toString("utf8"));
@@ -1115,6 +1120,20 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
       const action = payload.action ?? "";
       // Respond immediately; process in the background.
       res.writeHead(202).end("accepted");
+
+      // Inbound sync (Phase 4): when DB-authoritative tracking is on, fold GitHub activity into the
+      // DB in real time so the dashboard's local source of truth stays current. No-op in github mode.
+      const syncRepo = payload.repository?.full_name ?? "";
+      if (trackerMode() === "local" && syncRepo) {
+        try {
+          if (event === "issues" && payload.issue?.number) {
+            syncInIssue(syncRepo, payload.issue.number, payload.issue.title ?? "", payload.issue.body ?? "", (payload.issue.labels ?? []).map((l) => l.name ?? "").filter(Boolean));
+          } else if (event === "issue_comment" && action === "created" && payload.issue?.number && payload.comment?.id) {
+            const isAgency = (payload.comment.body ?? "").includes("<!-- dev-agency -->");
+            syncInComment(syncRepo, payload.issue.number, payload.comment.id, payload.comment.user?.login ?? "user", payload.comment.body ?? "", isAgency);
+          }
+        } catch { /* best effort */ }
+      }
 
       if (event === "ping") {
         console.log("[agency] webhook ping ok");

@@ -85,6 +85,17 @@ function getDb(): DatabaseSync | null {
       CREATE TABLE IF NOT EXISTS rate_limited (repo TEXT NOT NULL, number INTEGER NOT NULL, resume_at TEXT, PRIMARY KEY (repo, number));
       CREATE TABLE IF NOT EXISTS pr_review (repo TEXT NOT NULL, number INTEGER NOT NULL, verdict TEXT, summary TEXT, updated_at TEXT, PRIMARY KEY (repo, number));
       CREATE TABLE IF NOT EXISTS pr_conflict (repo TEXT NOT NULL, number INTEGER NOT NULL, sha TEXT, files TEXT, updated_at TEXT, PRIMARY KEY (repo, number));
+      -- Local-first tracking (Phase 4): the DB as source of truth, GitHub as a synced adapter.
+      CREATE TABLE IF NOT EXISTS local_issue (
+        repo TEXT NOT NULL, number INTEGER NOT NULL, title TEXT, body TEXT, labels TEXT,
+        state TEXT, origin TEXT, closed INTEGER NOT NULL DEFAULT 0, updated_at TEXT,
+        PRIMARY KEY (repo, number)
+      );
+      CREATE TABLE IF NOT EXISTS local_comment (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        repo TEXT NOT NULL, number INTEGER NOT NULL, author TEXT, body TEXT,
+        source TEXT, gh_id INTEGER, created_at TEXT
+      );
       CREATE TABLE IF NOT EXISTS agent_sessions (
         repo TEXT NOT NULL, number INTEGER NOT NULL, role TEXT NOT NULL,
         session_id TEXT, updated_at TEXT, PRIMARY KEY (repo, number, role)
@@ -1194,6 +1205,88 @@ export function searchMemory(query: string, opts: { repo?: string; limit?: numbe
     .filter((x) => x.s > 0);
   scored.sort((a, b) => b.s - a.s || (new Date(b.r.at || 0).getTime() - new Date(a.r.at || 0).getTime()));
   return scored.slice(0, limit).map((x) => ({ ...x.r, text: x.r.text.slice(0, 800) }));
+}
+
+// ---- local-first tracking (Phase 4): DB as source of truth, GitHub as a synced adapter ----
+
+export interface LocalIssue { repo: string; number: number; title: string; body: string; labels: string[]; state: string; origin: string; closed: boolean; updated_at: string }
+export interface LocalComment { id: number; repo: string; number: number; author: string; body: string; source: string; gh_id: number | null; created_at: string }
+
+/** Insert/update a local issue (the authoritative record once an issue is adopted into the DB). */
+export function upsertLocalIssue(i: { repo: string; number: number; title?: string; body?: string; labels?: string[]; state?: string; origin?: string; closed?: boolean }): void {
+  const d = getDb();
+  if (!d) return;
+  try {
+    d.prepare(
+      `INSERT INTO local_issue (repo, number, title, body, labels, state, origin, closed, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(repo, number) DO UPDATE SET
+         title = COALESCE(excluded.title, local_issue.title),
+         body  = COALESCE(excluded.body,  local_issue.body),
+         labels = COALESCE(excluded.labels, local_issue.labels),
+         state = COALESCE(excluded.state, local_issue.state),
+         origin = COALESCE(excluded.origin, local_issue.origin),
+         closed = excluded.closed,
+         updated_at = excluded.updated_at`,
+    ).run(i.repo, i.number, i.title ?? null, i.body ?? null, i.labels ? JSON.stringify(i.labels) : null, i.state ?? null, i.origin ?? null, i.closed ? 1 : 0, now());
+  } catch { /* best effort */ }
+}
+
+export function getLocalIssue(repo: string, number: number): LocalIssue | null {
+  const d = getDb();
+  if (!d) return null;
+  try {
+    const r = d.prepare(`SELECT * FROM local_issue WHERE repo = ? AND number = ?`).get(repo, number) as
+      | { repo: string; number: number; title: string | null; body: string | null; labels: string | null; state: string | null; origin: string | null; closed: number; updated_at: string }
+      | undefined;
+    if (!r) return null;
+    let labels: string[] = [];
+    try { labels = r.labels ? JSON.parse(r.labels) : []; } catch { labels = []; }
+    return { repo: r.repo, number: r.number, title: r.title ?? "", body: r.body ?? "", labels, state: r.state ?? "", origin: r.origin ?? "", closed: !!r.closed, updated_at: r.updated_at };
+  } catch { return null; }
+}
+
+export function listLocalOpenIssues(repo: string): LocalIssue[] {
+  const d = getDb();
+  if (!d) return [];
+  try {
+    const rows = d.prepare(`SELECT * FROM local_issue WHERE repo = ? AND closed = 0 ORDER BY number`).all(repo) as Array<{ repo: string; number: number; title: string | null; body: string | null; labels: string | null; state: string | null; origin: string | null; closed: number; updated_at: string }>;
+    return rows.map((r) => { let labels: string[] = []; try { labels = r.labels ? JSON.parse(r.labels) : []; } catch { labels = []; } return { repo: r.repo, number: r.number, title: r.title ?? "", body: r.body ?? "", labels, state: r.state ?? "", origin: r.origin ?? "", closed: !!r.closed, updated_at: r.updated_at }; });
+  } catch { return []; }
+}
+
+/** Next number for a dashboard-originated issue (negative space avoids colliding with GitHub numbers
+ *  until it's pushed out and assigned a real one). */
+export function nextLocalIssueNumber(repo: string): number {
+  const d = getDb();
+  if (!d) return -1;
+  try {
+    const r = d.prepare(`SELECT MIN(number) AS m FROM local_issue WHERE repo = ?`).get(repo) as { m: number | null } | undefined;
+    const min = r?.m ?? 0;
+    return Math.min(min, 0) - 1;
+  } catch { return -1; }
+}
+
+/** Append a comment. `source` = "github" | "dashboard" | "agency"; gh_id dedupes synced GitHub rows. */
+export function addLocalComment(c: { repo: string; number: number; author: string; body: string; source: string; gh_id?: number }): void {
+  const d = getDb();
+  if (!d) return;
+  try {
+    if (c.gh_id) {
+      const dup = d.prepare(`SELECT 1 FROM local_comment WHERE repo = ? AND number = ? AND gh_id = ?`).get(c.repo, c.number, c.gh_id);
+      if (dup) return; // already synced this GitHub comment
+    }
+    d.prepare(`INSERT INTO local_comment (repo, number, author, body, source, gh_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run(c.repo, c.number, c.author, c.body, c.source, c.gh_id ?? null, now());
+  } catch { /* best effort */ }
+}
+
+export function getLocalComments(repo: string, number: number): LocalComment[] {
+  const d = getDb();
+  if (!d) return [];
+  try {
+    return d.prepare(`SELECT id, repo, number, author, body, source, gh_id, created_at FROM local_comment WHERE repo = ? AND number = ? ORDER BY id`).all(repo, number) as unknown as LocalComment[];
+  } catch { return []; }
 }
 
 /** Lessons not yet folded into the playbooks (drives the self-improvement PR). */

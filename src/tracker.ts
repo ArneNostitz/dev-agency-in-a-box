@@ -19,7 +19,15 @@ import {
   createIssue,
   type ActionableOptions,
 } from "./github.js";
-import { recordIssueState } from "./store.js";
+import {
+  recordIssueState,
+  getSetting,
+  listLocalOpenIssues,
+  getLocalIssue,
+  upsertLocalIssue,
+  addLocalComment,
+  getLocalComments,
+} from "./store.js";
 
 export interface TrackerIssue {
   repo: string;
@@ -87,7 +95,66 @@ export class GitHubTracker implements Tracker {
   }
 }
 
-/** The active tracker. For now always GitHub; the local-first swap flips this behind a flag. */
+/**
+ * DB-authoritative Tracker (the v2 inversion). Reads come from the local DB (fast, no rate limits);
+ * writes update the DB AND push to GitHub immediately so the two stay in step (no conflict window).
+ * Inbound GitHub changes are folded in by `syncInComment` (called from the webhook handler).
+ */
+export class LocalTracker implements Tracker {
+  readonly kind = "local";
+
+  async listOpenIssues(repo: string, _opts: ActionableOptions): Promise<TrackerIssue[]> {
+    void _opts; // trigger-mode filtering is the dashboard's job once issues are DB-authoritative
+    return listLocalOpenIssues(repo).map((i) => ({ repo: i.repo, number: i.number, title: i.title, body: i.body, labels: i.labels }));
+  }
+
+  async getThread(repo: string, number: number): Promise<TrackerComment[]> {
+    const issue = getLocalIssue(repo, number);
+    const head: TrackerComment[] = issue?.body ? [{ author: "human", body: issue.body }] : [];
+    const comments = getLocalComments(repo, number).map((c) => ({
+      author: (c.author === "agency" ? "agency" : "human") as "agency" | "human",
+      body: c.body,
+      ...(c.created_at ? { createdAt: c.created_at } : {}),
+    }));
+    return [...head, ...comments];
+  }
+
+  async postComment(repo: string, number: number, body: string): Promise<void> {
+    addLocalComment({ repo, number, author: "agency", body, source: "agency" });
+    if (number > 0) await commentOnIssue(repo, number, body).catch(() => {}); // push out immediately
+  }
+
+  async setState(repo: string, number: number, state: string): Promise<void> {
+    upsertLocalIssue({ repo, number, state });
+    recordIssueState(repo, number, { state });
+    if (number > 0) await addLabel(repo, number, state).catch(() => {});
+  }
+
+  async createIssue(repo: string, title: string, body: string): Promise<{ number: number }> {
+    // Dashboard-originated: create on GitHub to get a real number, then mirror as authoritative.
+    const r = await createIssue(repo, title, body);
+    upsertLocalIssue({ repo, number: r.number, title, body, state: "planned", origin: "dashboard" });
+    return { number: r.number };
+  }
+}
+
+/** Inbound sync: fold a GitHub comment into the DB (dedup by GitHub id). Webhook calls this. */
+export function syncInComment(repo: string, number: number, ghId: number, author: string, body: string, isAgency: boolean): void {
+  addLocalComment({ repo, number, author: isAgency ? "agency" : "human", body, source: "github", gh_id: ghId });
+}
+
+/** Inbound sync: fold a GitHub issue (opened/edited) into the DB as the adopted record. */
+export function syncInIssue(repo: string, number: number, title: string, body: string, labels: string[]): void {
+  upsertLocalIssue({ repo, number, title, body, labels, origin: "github" });
+}
+
+/** Local-first mode is opt-in (default GitHub) so the inversion can be enabled deliberately. */
+export function trackerMode(): "local" | "github" {
+  const s = (getSetting("tracker") || process.env.TRACKER || "").trim().toLowerCase();
+  return s === "local" ? "local" : "github";
+}
+
+/** The active tracker — GitHub by default; LocalTracker (DB-authoritative) when enabled. */
 export function getTracker(): Tracker {
-  return new GitHubTracker();
+  return trackerMode() === "local" ? new LocalTracker() : new GitHubTracker();
 }
