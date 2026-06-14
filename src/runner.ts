@@ -56,7 +56,6 @@ import { loadHandleRoleMap, roleForText, ALL_ROLES, type RoleName } from "./agen
 import { runPipeline, runPrFix, runFollowUp, runResumeBuild, runReviewFix } from "./pipeline.js";
 import { runRole } from "./agents/roleAgent.js";
 import { runChatAgent } from "./agents/chat.js";
-import { startAnalyzer } from "./analyzer.js";
 import { parseAuditProposals } from "./auditparse.js";
 import {
   recordIssueState,
@@ -1172,12 +1171,6 @@ async function main(): Promise<void> {
   seedAdmin(); // multi-user: create the admin from env on first boot (no-op if MASTER_KEY unset)
   seedChatAgents(); // v3: register the starter chat agents (spec-creator, grill-me) once
   resetAdminPassword(); // forgot-password recovery via RESET_ADMIN_PASSWORD env (no-op if unset)
-  // Analyzer instance (its OWN deployment): just the self-improvement loop, no agency work.
-  if ((process.env.RUN_MODE || "").trim().toLowerCase() === "analyzer") {
-    console.log("[agency] mode: analyzer (self-improvement, advisory)");
-    startAnalyzer(cfg);
-    return;
-  }
   startAutoResume(cfg);
   startAutoMode(cfg);
   startPreviewSweeper();
