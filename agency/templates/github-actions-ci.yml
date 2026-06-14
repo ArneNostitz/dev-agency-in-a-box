@@ -1,0 +1,38 @@
+# Cloud CI for agency-managed projects.
+# The agency drops this into a target repo as .github/workflows/ci.yml so that
+# tests/builds run on GitHub's runners (the cloud) instead of the old Mac.
+# It runs whichever scripts exist in package.json and skips the rest, so it works
+# across most Node projects without editing. Adapt for non-Node stacks as needed.
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+
+      - name: Typecheck
+        run: npm run --if-present typecheck
+
+      - name: Lint
+        run: npm run --if-present lint
+
+      - name: Test
+        run: npm run --if-present test
+
+      - name: Build
+        run: npm run --if-present build

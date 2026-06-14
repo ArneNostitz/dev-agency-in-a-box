@@ -1,0 +1,5 @@
+# Per-project memory lives here, one folder per repo:
+#   memory/projects/<repo-name>/overview.md
+#   memory/projects/<repo-name>/decisions/
+#   memory/projects/<repo-name>/status.md
+# Created automatically the first time the agency works on a repo.

@@ -1,0 +1,8 @@
+# Repositories the agency watches. One per line.
+# Use "owner/name" or just "name" (resolved under GITHUB_OWNER).
+# Lines starting with '#' are comments.
+#
+# Preferred: leave this file empty and add repos from GitHub by filing a
+# `/add-repo <name>` issue in any watched repo (or set TARGET_REPOS in the env
+# for the first one). Entries added that way live in the database volume.
+# You can also list repos here and `git push` (Coolify auto-redeploys).

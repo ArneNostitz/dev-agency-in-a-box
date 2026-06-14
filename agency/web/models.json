@@ -1,0 +1,23 @@
+{
+  "Gemini": [
+    "gemini-3.5-flash",
+    "gemini-3.5-pro",
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
+    "gemini-1.5-pro",
+    "gemini-1.5-flash"
+  ],
+  "GLM (Zhipu)": [
+    "glm-5.2",
+    "glm-5.1",
+    "glm-4.6",
+    "glm-4.5"
+  ],
+  "DeepSeek": [
+    "deepseek-chat",
+    "deepseek-reasoner"
+  ],
+  "Kimi (Moonshot)": [
+    "kimi-k2-0905-preview"
+  ]
+}
