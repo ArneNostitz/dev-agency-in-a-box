@@ -147,6 +147,15 @@ export async function indexRepo(workdir: string, repo: string, log: (s: string) 
 // One background index per repo at a time (concurrent runs shouldn't pile up duplicate analyses).
 const buildingCache = new Set<string>();
 
+/**
+ * Repo-event entry point (Phase v3-P1): keep a repo's index cache warm OUTSIDE any agent run —
+ * called on GitHub push, on add-repo, and by the periodic sweep. Agent runs then only restore the
+ * cache, never build it. No-op if disabled or already building.
+ */
+export function ensureRepoIndex(repo: string): void {
+  backgroundRebuild(repo, () => {});
+}
+
 /** Build/refresh a repo's GitNexus cache in a throwaway clone, off the agent's critical path. */
 function backgroundRebuild(repo: string, log: (s: string) => void): void {
   if (!gitnexusEnabled() || buildingCache.has(repo)) return;

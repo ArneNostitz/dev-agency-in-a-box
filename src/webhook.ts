@@ -43,6 +43,7 @@ import { ensureRepoAccess } from "./commands.js";
 import { previewUrlFor, runChecksNow } from "./preview.js";
 import { dispatch } from "./pool.js";
 import { trackerMode, syncInIssue, syncInComment } from "./tracker.js";
+import { ensureRepoIndex } from "./gitnexus.js";
 
 type ProcessAll = (cfg: Config) => Promise<number>;
 type Resume = (repo: string, number: number) => Promise<void>;
@@ -1014,6 +1015,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           const full = repo.trim();
           if (!/^[\w.-]+\/[\w.-]+$/.test(full)) return res.writeHead(400).end(JSON.stringify({ error: "Use owner/name, e.g. acme/app" }));
           addWatchedRepo(full);
+          ensureRepoIndex(full); // warm the code-graph cache now, so the first run isn't slowed by it
           let note = "";
           try {
             note = await ensureRepoAccess(cfg, full);
@@ -1161,6 +1163,9 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
       } else if (event === "push") {
         // Base-branch (or any) push can create/clear merge conflicts.
         void trigger("push");
+        // Keep the code-graph cache warm OUTSIDE agent runs: a push changed the code, so refresh the
+        // index now (in the background) — future runs just restore it instead of indexing inline.
+        if (syncRepo) ensureRepoIndex(syncRepo);
       }
     });
   });
