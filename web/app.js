@@ -41,6 +41,7 @@ const ICONS = {
   chevdown: '<path d="m6 9 6 6 6-6"/>',
   edit: '<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>',
   chart: '<path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/>',
+  users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
 };
 const Icon = ({ name, size = 18, cls }) => html`<svg class=${"lic " + (cls || "")} width=${size} height=${size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{ __html: ICONS[name] || "" }}></svg>`;
 // Spinning loader to show an action is in flight (blocks "did my click register?" ambiguity).
@@ -279,7 +280,7 @@ function App() {
 
   return html`
     <div class="app">
-      <${TopBar} working=${working} env=${data.env} theme=${theme} setTheme=${setThemeP} onSettings=${() => setSheet("settings")} onUsage=${() => setSheet("usage")} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${load} auto=${data.auto || {}} autoRepos=${data.autoRepos || {}} setAuto=${act.setAuto}/>
+      <${TopBar} working=${working} env=${data.env} theme=${theme} setTheme=${setThemeP} onSettings=${() => setSheet("settings")} onUsage=${() => setSheet("usage")} onAgents=${() => setSheet("agents")} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${load} auto=${data.auto || {}} autoRepos=${data.autoRepos || {}} setAuto=${act.setAuto}/>
       ${data.secretsHealth ? html`<${SecretBanner} h=${data.secretsHealth} onFix=${() => setSheet("settings")}/>` : null}
       <${StatusLine} working=${working} session=${data.session} spend=${data.spendToday} reload=${load}/>
       <div class="content">
@@ -294,6 +295,7 @@ function App() {
       ${sheet === "models" && html`<${ModelsModal} onClose=${() => setSheet("settings")} reload=${load}/>`}
       ${sheet === "addrepo" && html`<${AddRepo} repos=${repos} onClose=${() => setSheet(null)} reload=${load}/>`}
       ${sheet === "usage" && html`<${Usage} onClose=${() => setSheet(null)} onOpenIssue=${openIssue}/>`}
+      ${sheet === "agents" && html`<${AgentEditor} data=${data} onClose=${() => setSheet(null)} reload=${load}/>`}
       ${data.user && data.onboarded === false && html`<${Onboarding} repos=${repos} reload=${load}/>`}
       <${Toasts} toasts=${toasts} onDismiss=${dismissToast}/>
     </div>`;
@@ -309,12 +311,13 @@ function SecretBanner({ h, onFix }) {
   return html`<div class="secbanner"><b>⚠ Credentials need attention.</b> ${msgs.map((m, i) => html`<div key=${i} style="margin-top:3px">${m}</div>`)} <button class="btn ghost" style="margin-top:7px" onClick=${onFix}>Open Settings</button></div>`;
 }
 
-function TopBar({ working, env, theme, setTheme, onSettings, onUsage, repos, repoFilter, setRepoFilter, reload, auto, autoRepos, setAuto }) {
+function TopBar({ working, env, theme, setTheme, onSettings, onUsage, onAgents, repos, repoFilter, setRepoFilter, reload, auto, autoRepos, setAuto }) {
   return html`<div class="topbar">
     <div class="brand"><${Icon} name="crown" size=${18}/> <span class="brandname">Dev Agency</span> ${env === "development" ? html`<span class="envbadge">DEV</span>` : null} ${working ? html`<span class="dot"></span>` : null}</div>
     <div class="spacer"></div>
     <${RepoDropdown} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${reload} auto=${auto} autoRepos=${autoRepos} setAuto=${setAuto}/>
     <div class="spacer"></div>
+    <button class="iconbtn" aria-label="Agents" title="Agents editor" onClick=${onAgents}><${Icon} name="users"/></button>
     <button class="iconbtn" aria-label="Token usage" title="Token usage statistics" onClick=${onUsage}><${Icon} name="chart"/></button>
     <button class="iconbtn" aria-label="Toggle theme" onClick=${() => setTheme(theme === "dark" ? "light" : "dark")}><${Icon} name=${theme === "dark" ? "sun" : "moon"}/></button>
     <button class="iconbtn" aria-label="Settings" onClick=${onSettings}><${Icon} name="settings"/></button>
@@ -1489,6 +1492,48 @@ function Usage({ onClose, onOpenIssue }) {
   <//>`;
 }
 
+const AGENT_TOOLS = ["Read", "Glob", "Grep", "Bash", "Write", "Edit"];
+function AgentEditor({ data, onClose, reload }) {
+  const defs = data.agentDefs || [];
+  const blank = { name: "", handle: "", mode: "chat", model: "", tools: ["Read", "Glob", "Grep"], pushesGithub: true, persona: "", builtin: false };
+  const [sel, setSel] = useState(null); // null = list, "__new__" or a name = edit
+  const [form, setForm] = useState(blank);
+  const [busy, setBusy] = useState(false);
+  const set = (k, v) => setForm((f) => Object.assign({}, f, { [k]: v }));
+  const toggleTool = (t) => setForm((f) => Object.assign({}, f, { tools: f.tools.includes(t) ? f.tools.filter((x) => x !== t) : f.tools.concat(t) }));
+  function save() {
+    if (!form.name) { toast("Name required"); return; }
+    setBusy(true);
+    api("/agent-def-save", { agentDef: { name: form.name, handle: form.handle || "@" + form.name, mode: form.mode, model: form.model, tools: form.tools, pushesGithub: form.pushesGithub, persona: form.persona } })
+      .then(() => { toast("Saved"); setSel(null); reload(); }).catch(() => toast("Couldn’t save", "error")).then(() => setBusy(false));
+  }
+  function del() { setBusy(true); api("/agent-def-delete", { agentName: form.name }).then(() => { toast("Deleted"); setSel(null); reload(); }).catch(() => toast("Couldn’t delete", "error")).then(() => setBusy(false)); }
+  return html`<${Sheet} title="Agents" onClose=${onClose}>
+    ${sel === null ? html`
+      <div class="muted" style="font-size:12px;margin-bottom:8px">Chat agents are interactive — mention their @handle in an issue and they hold a conversation without touching code; the result is posted back to GitHub.</div>
+      ${defs.map((d) => html`<button class="agentrow" key=${d.name} onClick=${() => { setSel(d.name); setForm(Object.assign({}, blank, d)); }}>
+        <span><b>${d.name}</b> <span class="tagk">${d.handle}</span> <span class="tagk">${d.mode}</span>${d.builtin ? html` <span class="tagk">built-in</span>` : null}</span>
+      </button>`)}
+      <button class="btn primary" style="margin-top:10px" onClick=${() => { setSel("__new__"); setForm(blank); }}><${Icon} name="plus" size=${14}/> New agent</button>
+    ` : html`
+      <button class="btn ghost" style="margin-bottom:8px" onClick=${() => setSel(null)}><${Icon} name="arrowleft" size=${14}/> Back</button>
+      <label>Name</label><input value=${form.name} disabled=${sel !== "__new__"} onInput=${(e) => set("name", e.target.value.replace(/[^\w-]/g, ""))}/>
+      <label>Handle</label><input value=${form.handle} placeholder=${"@" + (form.name || "agent")} onInput=${(e) => set("handle", e.target.value)}/>
+      <label>Mode</label>
+      <select class="modelsel" style="max-width:none;width:100%" value=${form.mode} onChange=${(e) => set("mode", e.target.value)}><option value="chat">chat — interactive, no code changes</option><option value="repo">repo — writes code (advanced)</option></select>
+      <label>Model (blank = default / global)</label><input value=${form.model} placeholder="e.g. glm-5.1, or blank" onInput=${(e) => set("model", e.target.value)}/>
+      <label>Tools</label>
+      <div class="toolchips">${AGENT_TOOLS.map((t) => html`<label class="toolchip" key=${t}><input type="checkbox" checked=${form.tools.includes(t)} onChange=${() => toggleTool(t)}/> ${t}</label>`)}</div>
+      <label class="ckline"><input type="checkbox" checked=${form.pushesGithub} onChange=${(e) => set("pushesGithub", e.target.checked)}/> Post the result to GitHub</label>
+      <label>Persona (markdown)</label>
+      <textarea rows="10" style="width:100%;font:13px ui-monospace,Menlo,monospace" value=${form.persona} onInput=${(e) => set("persona", e.target.value)}></textarea>
+      <div class="row">
+        <button class="btn primary" disabled=${busy} onClick=${save}>Save</button>
+        ${form.builtin ? null : html`<button class="btn danger" disabled=${busy} onClick=${del}>Delete</button>`}
+      </div>
+    `}
+  <//>`;
+}
 function Sheet({ title, onClose, footer, children }) {
   return html`<div><div class="scrim on" onClick=${onClose}></div>
     <div class="sheet bottom on">

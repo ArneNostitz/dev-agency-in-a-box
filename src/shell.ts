@@ -95,6 +95,11 @@ input,select,textarea{font-size:16px}
 .modelsel{max-width:150px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink-2);font:12.5px inherit;padding:4px 8px;height:30px;cursor:pointer}
 .modelsel:hover{border-color:var(--line-2);color:var(--ink)}
 .modelsel.sm{max-width:120px;height:24px;padding:1px 6px;font-size:11.5px;border-radius:7px}
+/* agent editor */
+.agentrow{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;text-align:left;border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:10px;padding:10px 12px;margin-bottom:6px;cursor:pointer;font-size:14px}
+.agentrow:hover{border-color:var(--line-2);background:var(--surface-2)}
+.toolchips{display:flex;flex-wrap:wrap;gap:8px;margin:4px 0 2px}
+.toolchip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);border-radius:8px;padding:4px 9px;font-size:12.5px;cursor:pointer}
 .dot{width:8px;height:8px;border-radius:50%;background:var(--green);display:inline-block;animation:pulse 1.4s infinite}
 @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(29,158,117,.5)}70%{box-shadow:0 0 0 7px rgba(29,158,117,0)}100%{box-shadow:0 0 0 0 rgba(29,158,117,0)}}
 .spin{animation:dvspin .7s linear infinite;transform-origin:center}

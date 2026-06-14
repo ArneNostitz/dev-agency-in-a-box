@@ -16,7 +16,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { Config } from "./config.js";
-import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, tokensByRoleSince, tokensByDaySince, topIssuesByTokensSince, tokensByIssueAll, recordConflict, getConflict, clearConflict, listConflicts, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getGlobalModel, setGlobalModel, getFallbackChain, setFallbackChain, getAutoSwitchOnLimit, setIssueModelOverride, getIssueModelOverride, clearIssueModelOverride, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, getIssueRow, getModelsPresets, type AutoKind, type Provider } from "./store.js";
+import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, tokensByRoleSince, tokensByDaySince, topIssuesByTokensSince, tokensByIssueAll, recordConflict, getConflict, clearConflict, listConflicts, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getGlobalModel, setGlobalModel, getFallbackChain, setFallbackChain, getAutoSwitchOnLimit, setIssueModelOverride, getIssueModelOverride, clearIssueModelOverride, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, getIssueRow, getModelsPresets, listAgentDefs, upsertAgentDef, deleteAgentDef, type AutoKind, type Provider, type AgentDef } from "./store.js";
 import { mergeEpic, isEpic } from "./epics.js";
 import { renderHistory } from "./dashboard.js";
 import { renderShell } from "./shell.js";
@@ -332,6 +332,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               providers: getProviders(),
               roleModels: getRoleModels(),
               globalModel: getGlobalModel(),
+              agentDefs: listAgentDefs(),
               config: {
                 skipArchitect: (getSetting("skip_architect") ?? "") || (process.env.SKIP_ARCHITECT?.trim().toLowerCase() === "false" ? "off" : "on"),
                 gitnexus: (getSetting("gitnexus") ?? "") || (process.env.GITNEXUS?.trim().toLowerCase() === "true" ? "on" : "off"),
@@ -667,11 +668,11 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
     }
 
     // Dashboard actions (auth required), not GitHub webhooks.
-    if (["/archive", "/comment", "/comment-edit", "/run-checks", "/merge", "/close", "/create-pr", "/delete", "/resume", "/stop", "/fix", "/auto", "/start", "/new-issue", "/approve", "/audit", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude", "/model-override"].includes(path)) {
+    if (["/archive", "/comment", "/comment-edit", "/run-checks", "/merge", "/close", "/create-pr", "/delete", "/resume", "/stop", "/fix", "/auto", "/start", "/new-issue", "/approve", "/audit", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude", "/model-override", "/agent-def-save", "/agent-def-delete"].includes(path)) {
       const actor = userFromReq(req);
       if (!actor) return void res.writeHead(401, { "content-type": "application/json" }).end('{"error":"auth required"}');
       void readBody(req).then(async (body) => {
-        let p: { repo?: string; number?: number; commentId?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; pctNow?: number; tracker?: string; dataUrl?: string; name?: string; providers?: Provider[]; roleModels?: Record<string, { providerId: string; model: string }>; globalModel?: { providerId: string; model: string } | null; fallbackChain?: Array<{ providerId: string; model: string }>; autoSwitchOnLimit?: boolean; model?: { providerId: string; model: string } | null; kind?: string; value?: string; skipArchitect?: string; gitnexus?: string; maxTokensPerRun?: number; maxReviseRounds?: number; auditThreshold?: number; start?: boolean; email?: string; key?: string; ops?: Record<string, string | number | boolean>; webhookSecret?: string } = {};
+        let p: { repo?: string; number?: number; commentId?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; pctNow?: number; tracker?: string; agentDef?: Partial<AgentDef> & { name: string }; agentName?: string; dataUrl?: string; name?: string; providers?: Provider[]; roleModels?: Record<string, { providerId: string; model: string }>; globalModel?: { providerId: string; model: string } | null; fallbackChain?: Array<{ providerId: string; model: string }>; autoSwitchOnLimit?: boolean; model?: { providerId: string; model: string } | null; kind?: string; value?: string; skipArchitect?: string; gitnexus?: string; maxTokensPerRun?: number; maxReviseRounds?: number; auditThreshold?: number; start?: boolean; email?: string; key?: string; ops?: Record<string, string | number | boolean>; webhookSecret?: string } = {};
         try {
           p = JSON.parse(body.toString("utf8"));
         } catch {
@@ -1007,6 +1008,17 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           if (p.hasOwnProperty("globalModel")) setGlobalModel(p.globalModel ?? null);
           if (Array.isArray(p.fallbackChain)) setFallbackChain(p.fallbackChain);
           if (typeof p.autoSwitchOnLimit === "boolean") setSetting("auto_switch_on_limit", p.autoSwitchOnLimit ? "on" : "off");
+          return ok();
+        }
+        if (path === "/agent-def-save") {
+          // Create/edit a custom agent (v3 agent editor).
+          if (!p.agentDef?.name || !/^[\w-]+$/.test(p.agentDef.name)) return res.writeHead(400).end(JSON.stringify({ error: "Name must be letters/numbers/-/_" }));
+          upsertAgentDef(p.agentDef);
+          return ok();
+        }
+        if (path === "/agent-def-delete") {
+          if (!p.agentName) return res.writeHead(400).end("{}");
+          deleteAgentDef(p.agentName);
           return ok();
         }
         if (path === "/add-repo") {
