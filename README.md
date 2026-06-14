@@ -97,7 +97,6 @@ You don't install any of this yourself — the container ships with the whole to
 - **[Graphify](https://github.com/safishamsi/graphify)** — a knowledge-graph engine the Auditor uses to spot architectural hot spots and dead code. Optional; the audit gracefully falls back without it.
 - **SQLite** (built into Node) — stores your settings, run history, and encrypted keys on the data volume.
 - **[Preact](https://preactjs.com) + htm** — the dashboard UI, served with no build step.
-  _Thanks to all the amazing people that build these tools_
 
 The analyzer stays deliberately lean: just Node and one AI key.
 
