@@ -18,7 +18,7 @@ import { recallWiring, RECALL_PROMPT } from "./recall.js";
 import { MODELS } from "./roles.js";
 
 /** Resolve model + subprocess env for a chat agent (global provider route, else Claude default). */
-function resolveChatExec(modelOverride: string): { model: string; env: Record<string, string> } {
+export function resolveChatExec(modelOverride: string): { model: string; env: Record<string, string> } {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) if (typeof v === "string") env[k] = v;
   const g = getGlobalModel();
