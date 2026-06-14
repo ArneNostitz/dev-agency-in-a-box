@@ -165,6 +165,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         if (!(a.length === b.length && timingSafeEqual(a, b))) return void res.writeHead(401, { "content-type": "application/json" }).end(JSON.stringify({ error: "unauthorized" }));
         if (aurl === "/telemetry") {
           if (req.method !== "GET") return void res.writeHead(405).end();
+          setSetting("analyzer_last_pull", new Date().toISOString()); // heartbeat — surfaced in the dashboard
           const since = new URLSearchParams((req.url ?? "").split("?")[1] ?? "").get("since") || new Date(0).toISOString();
           return void res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" }).end(JSON.stringify({
             since,
@@ -381,6 +382,11 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               agentDefs: listAgentDefs(),
               skills: listSkills(),
               hooks: listHooks(),
+              analyzer: {
+                enabled: Boolean((process.env.ANALYZER_API_KEY || getSetting("analyzer_api_key") || "").trim()),
+                lastPull: getSetting("analyzer_last_pull") || null,
+                lastIssueAt: getSetting("analyzer_last_issue_ts") || null,
+              },
               config: {
                 skipArchitect: (getSetting("skip_architect") ?? "") || (process.env.SKIP_ARCHITECT?.trim().toLowerCase() === "false" ? "off" : "on"),
                 gitnexus: (getSetting("gitnexus") ?? "") || (process.env.GITNEXUS?.trim().toLowerCase() === "true" ? "on" : "off"),

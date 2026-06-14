@@ -282,7 +282,7 @@ function App() {
     <div class="app">
       <${TopBar} working=${working} env=${data.env} theme=${theme} setTheme=${setThemeP} onSettings=${() => setSheet("settings")} onUsage=${() => setSheet("usage")} onAgents=${() => setSheet("agents")} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${load} auto=${data.auto || {}} autoRepos=${data.autoRepos || {}} setAuto=${act.setAuto}/>
       ${data.secretsHealth ? html`<${SecretBanner} h=${data.secretsHealth} onFix=${() => setSheet("settings")}/>` : null}
-      <${StatusLine} working=${working} session=${data.session} spend=${data.spendToday} reload=${load}/>
+      <${StatusLine} working=${working} session=${data.session} spend=${data.spendToday} analyzer=${data.analyzer} reload=${load}/>
       <div class="content">
         <${Board} issues=${shown} repos=${repos} repoFilter=${repoFilter} tab=${tab} isDesktop=${isDesktop} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onAddRepo=${() => setSheet("addrepo")} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data}/>
       </div>
@@ -382,7 +382,17 @@ function toLocalInput(d) {
   const p = (n) => String(n).padStart(2, "0");
   return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) + "T" + p(d.getHours()) + ":" + p(d.getMinutes());
 }
-function StatusLine({ working, session, spend, reload }) {
+function analyzerStatus(an) {
+  if (!an || !an.enabled) return null;
+  if (!an.lastPull) return { cls: "amber", text: "analyzer connecting…", title: "Telemetry API is enabled but the analyzer hasn't checked in yet." };
+  const mins = (Date.now() - new Date(an.lastPull).getTime()) / 60000;
+  const seen = "analyzer " + ago(an.lastPull) + " ago";
+  // It polls on its own interval (hours); "stale" only if we haven't heard from it in ~half a day.
+  const stale = mins > 12 * 60;
+  return { cls: stale ? "amber" : "green", text: seen, title: "Analyzer last pulled telemetry " + new Date(an.lastPull).toLocaleString() + (an.lastIssueAt ? "\nLast proposal: " + new Date(an.lastIssueAt).toLocaleString() : "") };
+}
+function StatusLine({ working, session, spend, analyzer, reload }) {
+  const an = analyzerStatus(analyzer);
   const s = session || {};
   const pct = s.budget > 0 ? Math.min(100, Math.round((100 * s.tokens) / s.budget)) : 0;
   const col = pct >= 90 ? "var(--red)" : pct >= 70 ? "var(--amber)" : "var(--green)";
@@ -431,6 +441,7 @@ function StatusLine({ working, session, spend, reload }) {
         <button class="btn primary" onClick=${saveWindow}>Save</button>
       </div>` : null}
     </span>
+    ${an ? html`<span class="anstat" title=${an.title}>· <span class=${"andot " + an.cls}></span> ${an.text}</span>` : null}
     <span class="spacer"></span>
     <span class="buildstamp" title=${verTitle}>${verLabel}</span>
     <a href="/history">history</a>

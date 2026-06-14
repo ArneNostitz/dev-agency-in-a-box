@@ -84,6 +84,10 @@ input,select,textarea{font-size:16px}
 .content{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch}
 .statusline{padding:6px 14px;color:var(--ink-2);font-size:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .buildstamp{font:11px ui-monospace,Menlo,monospace;color:var(--ink-3);cursor:default}
+.anstat{display:inline-flex;align-items:center;gap:5px;color:var(--ink-3);cursor:default}
+.andot{width:7px;height:7px;border-radius:50%;display:inline-block}
+.andot.green{background:var(--green)}
+.andot.amber{background:var(--amber)}
 .statpop{position:relative;display:inline-flex;align-items:center}
 .statlink{cursor:pointer;display:inline-flex;align-items:center;gap:5px;border-radius:6px;padding:1px 3px}
 .statlink:hover{background:var(--surface-2);color:var(--ink)}
