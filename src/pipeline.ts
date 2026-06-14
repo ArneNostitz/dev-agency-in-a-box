@@ -34,6 +34,7 @@ import type { RoleName } from "./agents/roles.js";
 import { recordRun, recordPlan, lastPlan, recordIssueState, recordPr, addEpicChild, listEpicChildren, getSession, issueActivity, recordReview, getReview, recordConflict, clearConflict, getSetting } from "./store.js";
 import { runReflection } from "./reflect.js";
 import { runChecks, parseDiscoveredChecks, rememberChecks } from "./checks.js";
+import { decideNext } from "./orchestrator.js";
 
 const IN_PROGRESS = "agency:in-progress";
 const READY = "agency:ready";
@@ -304,42 +305,63 @@ async function build(
   const test = await runTests(repo, issue.number, workdir, branch);
   await commentOnIssue(repo, issue.number, say("tester", `**Test results**\n\n${test.text}`));
 
-  let lastReview = "";
-  for (let round = 0; ; round++) {
-    const review = await runRole("reviewer", {
-      workdir,
-      repo,
-      issueNumber: issue.number,
-      task:
-        round === 0
-          ? `Review the changes on branch \`${branch}\` for issue #${issue.number} against the harness. ` +
-            `Inspect the diff vs main (e.g. \`git diff main...HEAD\`). ` +
-            `Start your reply with exactly "APPROVE" or "REQUEST CHANGES" on the first line, then notes.\n\n` +
-            `Test results were:\n${test.text}`
-          : `The developer addressed your previous requested changes on branch \`${branch}\`. Re-check ONLY ` +
-            `whether each point you raised is now resolved (inspect \`git diff main...HEAD\`). Start with exactly ` +
-            `"APPROVE" or "REQUEST CHANGES" on the first line.\n\nLatest tests:\n${test.text}`,
-      // First review is a cold, independent fresh look; re-reviews resume so the reviewer remembers
-      // exactly what it asked for instead of re-deriving (warm across its own rounds).
-      ...(round > 0 ? { resumeSessionId: getSession(repo, issue.number, "reviewer") ?? undefined } : {}),
-    });
-    recordRun(repo, issue.number, "reviewer", review.model, review.turns, "review", review.costUsd);
-    lastReview = review.text;
-    await commentOnIssue(repo, issue.number, say("reviewer", `**Review (round ${round + 1})**\n\n${review.text}`));
-
-    if (!changesRequested(review.text) || round >= maxReviseRounds()) break;
-
+  // Orchestrated loop (decideNext is the single source of "what next"): keep tests green BEFORE
+  // reviewing broken code, re-test after every revise, and warm the reviewer across its own rounds.
+  let testText = test.text, testPass = test.pass, lastReview = "", round = 0, reviews = 0;
+  const maxR = maxReviseRounds();
+  const reviseDev = async (task: string): Promise<boolean> => {
+    const before = await localHeadSha(workdir);
     const revise = await runRole("developer", {
-      workdir,
-      repo,
-      issueNumber: issue.number,
-      task:
-        `The reviewer requested changes on branch \`${branch}\`. Address each point, commit, and push. ` +
-        `Keep the diff focused.\n\n### Review\n${review.text}`,
-      // Warm: the developer that wrote the code resumes to fix it (has the context already).
+      workdir, repo, issueNumber: issue.number, task,
+      // Warm: the developer that wrote the code resumes to fix it.
       ...(getSession(repo, issue.number, "developer") ? { resumeSessionId: getSession(repo, issue.number, "developer") ?? undefined } : {}),
     });
     recordRun(repo, issue.number, "developer", revise.model, revise.turns, "revise", revise.costUsd);
+    return (await localHeadSha(workdir)) !== before || (await workdirDirty(workdir));
+  };
+  const retest = async (label: string): Promise<void> => {
+    const t = await runTests(repo, issue.number, workdir, branch);
+    testText = t.text; testPass = t.pass;
+    await commentOnIssue(repo, issue.number, say("tester", `**${label}**\n\n${t.text}`));
+  };
+
+  for (;;) {
+    // 1) Tests failing → fix them (errors only) and re-test before spending a review on broken code.
+    if (!testPass) {
+      const d = decideNext({ phase: "tested", devChanged: true, testPass: false, round, maxRounds: maxR });
+      if (d.action !== "revise") { lastReview = "REQUEST CHANGES — tests still failing (out of revise rounds)."; break; }
+      round++;
+      const changed = await reviseDev(`Tests are FAILING on branch \`${branch}\`. Fix only what's needed to make them pass, commit and push. Keep the diff focused.\n\n### Failing checks\n${testText}`);
+      if (!changed) { lastReview = "REQUEST CHANGES — tests failing and the developer produced no change."; break; }
+      await retest("Re-test after fix");
+      continue;
+    }
+    // 2) Tests pass → review (first review cold/independent, re-reviews resume = warm).
+    const review = await runRole("reviewer", {
+      workdir, repo, issueNumber: issue.number,
+      task:
+        reviews === 0
+          ? `Review the changes on branch \`${branch}\` for issue #${issue.number} against the harness. ` +
+            `Inspect the diff vs main (e.g. \`git diff main...HEAD\`). Start your reply with exactly ` +
+            `"APPROVE" or "REQUEST CHANGES" on the first line, then notes.\n\nTest results were:\n${testText}`
+          : `The developer addressed your previous requested changes on branch \`${branch}\`. Re-check ONLY ` +
+            `whether each point you raised is now resolved (inspect \`git diff main...HEAD\`). Start with exactly ` +
+            `"APPROVE" or "REQUEST CHANGES" on the first line.\n\nLatest tests:\n${testText}`,
+      ...(reviews > 0 ? { resumeSessionId: getSession(repo, issue.number, "reviewer") ?? undefined } : {}),
+    });
+    recordRun(repo, issue.number, "reviewer", review.model, review.turns, "review", review.costUsd);
+    lastReview = review.text; reviews++;
+    await commentOnIssue(repo, issue.number, say("reviewer", `**Review (round ${reviews})**\n\n${review.text}`));
+
+    const verdict: "approved" | "changes" = changesRequested(review.text) ? "changes" : "approved";
+    const d = decideNext({ phase: "reviewed", devChanged: true, reviewVerdict: verdict, round, maxRounds: maxR });
+    if (d.action === "finalize") break;
+
+    // 3) Changes requested + rounds left → warm dev addresses them, then re-test and loop.
+    round++;
+    const changed = await reviseDev(`The reviewer requested changes on branch \`${branch}\`. Address each point, commit and push. Keep the diff focused.\n\n### Review\n${review.text}`);
+    if (!changed) break; // no-op → stop (don't re-review identical code)
+    await retest("Re-test after fixes");
   }
 
   // Record the FINAL verdict so the dashboard knows whether this PR still has requested changes
@@ -354,7 +376,7 @@ async function build(
       repo,
       issue.number,
       workdir,
-      `Issue: ${issue.title}\n\nPlan (gist):\n${planText.slice(0, 1500)}\n\nTest results:\n${test.text.slice(0, 1500)}\n\nLast review:\n${lastReview.slice(0, 1500)}`,
+      `Issue: ${issue.title}\n\nPlan (gist):\n${planText.slice(0, 1500)}\n\nTest results:\n${testText.slice(0, 1500)}\n\nLast review:\n${lastReview.slice(0, 1500)}`,
     );
   }
 }
