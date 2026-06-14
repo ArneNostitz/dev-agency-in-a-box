@@ -141,3 +141,7 @@ Open and free to use, self-host, modify, and contribute to — under the **MIT L
 ## A note on safety
 
 The analyzer is deliberately powerless: it can only read aggregate stats over an authenticated link, and it can only *suggest* changes by opening issues. Applying anything always goes through your approval in the dashboard. The connection stays off entirely until you set a strong `ANALYZER_API_KEY`.
+
+## Acknowledgments
+
+Dev Agency in a Box stands on the shoulders of some wonderful open-source projects — the [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-typescript), [GitNexus](https://www.npmjs.com/package/gitnexus), [Graphify](https://github.com/safishamsi/graphify), [Preact](https://preactjs.com), the [GitHub CLI](https://cli.github.com), and Node.js. Thank you to all the people who build and maintain these tools. 🙏
