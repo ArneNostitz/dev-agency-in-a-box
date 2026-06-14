@@ -10,7 +10,7 @@ import { join as pathJoin } from "node:path";
 import { ROLES, modelFor, type RoleName } from "./roles.js";
 import { loadConstitution, loadPersona, loadPlaybooks, loadLearned } from "../memory.js";
 import { pushActivity } from "../activity.js";
-import { recentLessons, recordTokens, getProviders, getRoleModels, getSessionFallback, setSession, getIssueModelOverride, getGlobalModel } from "../store.js";
+import { recentLessons, recordTokens, recordRunStep, getProviders, getRoleModels, getSessionFallback, setSession, getIssueModelOverride, getGlobalModel } from "../store.js";
 import { loadBudget } from "../budget.js";
 import { gitnexusWiring, GITNEXUS_PROMPT } from "../gitnexus.js";
 import { recallWiring, RECALL_PROMPT } from "./recall.js";
@@ -83,6 +83,7 @@ function emitAssistant(repo: string, number: number, role: RoleName, message: un
       pushActivity(repo, number, role, "text", block.text.trim().slice(0, 1200));
     } else if (block.type === "tool_use" && block.name) {
       pushActivity(repo, number, role, "tool", summarizeTool(block.name, block.input));
+      recordRunStep(repo, number, role, block.name, summarizeTool(block.name, block.input)); // v3 telemetry
     }
   }
 }

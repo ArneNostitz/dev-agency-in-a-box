@@ -85,6 +85,12 @@ function getDb(): DatabaseSync | null {
       CREATE TABLE IF NOT EXISTS rate_limited (repo TEXT NOT NULL, number INTEGER NOT NULL, resume_at TEXT, PRIMARY KEY (repo, number));
       CREATE TABLE IF NOT EXISTS pr_review (repo TEXT NOT NULL, number INTEGER NOT NULL, verdict TEXT, summary TEXT, updated_at TEXT, PRIMARY KEY (repo, number));
       CREATE TABLE IF NOT EXISTS pr_conflict (repo TEXT NOT NULL, number INTEGER NOT NULL, sha TEXT, files TEXT, updated_at TEXT, PRIMARY KEY (repo, number));
+      -- Per-run tool-call telemetry (v3): the raw material the Process Analyzer mines for repeating
+      -- tasks → skills/hooks/deterministic code.
+      CREATE TABLE IF NOT EXISTS run_step (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        repo TEXT, number INTEGER, role TEXT, tool TEXT, detail TEXT, ok INTEGER, ts TEXT
+      );
       -- Local-first tracking (Phase 4): the DB as source of truth, GitHub as a synced adapter.
       CREATE TABLE IF NOT EXISTS local_issue (
         repo TEXT NOT NULL, number INTEGER NOT NULL, title TEXT, body TEXT, labels TEXT,
@@ -1163,6 +1169,41 @@ export function recentLessons(limit = 12): string[] {
   } catch {
     return [];
   }
+}
+
+// ---- run_step telemetry (v3): tool-call log for the Process Analyzer ----
+
+/** Record one tool call from an agent run. Best-effort; never breaks a run. */
+export function recordRunStep(repo: string, number: number, role: string, tool: string, detail: string, ok = true): void {
+  const d = getDb();
+  if (!d) return;
+  try {
+    d.prepare(`INSERT INTO run_step (repo, number, role, tool, detail, ok, ts) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run(repo, number, role, tool, (detail || "").slice(0, 200), ok ? 1 : 0, now());
+  } catch { /* best effort */ }
+}
+
+export interface ToolStat { role: string; tool: string; uses: number; fails: number }
+/** How often each (role, tool) is used since an ISO time — surfaces repeating mechanical work. */
+export function toolStatsSince(sinceIso: string): ToolStat[] {
+  const d = getDb();
+  if (!d) return [];
+  try {
+    return d.prepare(
+      `SELECT role, tool, COUNT(*) AS uses, SUM(CASE WHEN ok=0 THEN 1 ELSE 0 END) AS fails
+       FROM run_step WHERE ts >= ? GROUP BY role, tool ORDER BY uses DESC`,
+    ).all(sinceIso) as unknown as ToolStat[];
+  } catch { return []; }
+}
+
+/** Count of run_step rows since an ISO time — the "enough new data?" gate for the analyzer. */
+export function runStepCountSince(sinceIso: string): number {
+  const d = getDb();
+  if (!d) return 0;
+  try {
+    const r = d.prepare(`SELECT COUNT(*) AS n FROM run_step WHERE ts >= ?`).get(sinceIso) as { n?: number } | undefined;
+    return r?.n ?? 0;
+  } catch { return 0; }
 }
 
 export interface MemoryHit { kind: "lesson" | "plan" | "review" | "issue"; repo: string; number: number; text: string; at: string }
