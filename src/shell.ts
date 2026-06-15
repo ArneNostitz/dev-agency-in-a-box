@@ -159,6 +159,10 @@ input,select,textarea{font-size:16px}
 .testres.ok{color:var(--green)}
 .testres.bad{color:var(--red)}
 .empty{color:var(--ink-3);font-size:13px;padding:10px;text-align:center}
+/* epic parent pin + sub-issue parent bar */
+.col-sect-div{display:flex;align-items:center;gap:6px;margin:6px 0 2px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-3)}
+.col-sect-div::after{content:"";flex:1;height:1px;background:var(--line)}
+.card-parent-bar{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--purple);background:var(--purple-weak);border-radius:calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0 0;padding:3px 10px;margin:-11px -13px 8px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 
 /* mobile bottom column tabs */
 .tabbar{position:sticky;bottom:0;z-index:25;display:grid;grid-template-columns:repeat(4,1fr);background:var(--surface);border-top:1px solid var(--line);padding-bottom:var(--safe-b)}

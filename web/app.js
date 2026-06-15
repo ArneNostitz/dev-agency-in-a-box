@@ -514,16 +514,27 @@ function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, onAddRepo, o
   issues.slice().sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0)).forEach((i) => byCol[classify(i)].push(i));
   const cols = isDesktop ? COLS : COLS.filter((c) => c.k === tab);
   return html`<div class="board">
-    ${cols.map((c) => html`<div class="col" key=${c.k}>
-      <div class="colhead"><${Icon} name=${c.icon} size=${15}/> ${c.label} <span class="n">${byCol[c.k].length || ""}</span></div>
-      ${c.k === "planned" ? html`<div class="planned-actions">
-        <button class="colbtn primary" onClick=${() => onAddIssue(target)}><${Icon} name="plus" size=${14}/> Add Issue</button>
-        <button class="colbtn" disabled=${!target || analyzing} title=${target ? "Analyze " + target.split("/").pop() + "'s codebase health" : "Pick a repo first"} onClick=${() => target && onAnalyze(target)}>${analyzing ? html`<${Spinner} size=${14}/>` : html`<${Icon} name="search" size=${14}/>`} Analyze Repo</button>
-      </div>` : null}
-      <div class="cards">
-        ${byCol[c.k].length ? byCol[c.k].map((i) => html`<${Card} key=${i.repo + "#" + i.number} i=${i} multi=${!repoFilter && repos.length > 1} onOpen=${onOpen} act=${act} data=${data}/>`) : html`<div class="empty">—</div>`}
-      </div>
-    </div>`)}
+    ${cols.map((c) => {
+      const allItems = byCol[c.k];
+      // Working column: pin epic parents at the top; sub-issues + regular cards go below
+      const epicPins = c.k === "working" ? allItems.filter((i) => i.state === "agency:epic") : [];
+      const workingRest = c.k === "working" ? allItems.filter((i) => i.state !== "agency:epic") : allItems;
+      const renderCard = (i) => html`<${Card} key=${i.repo + "#" + i.number} i=${i} multi=${!repoFilter && repos.length > 1} onOpen=${onOpen} act=${act} data=${data}/>`;
+      return html`<div class="col" key=${c.k}>
+        <div class="colhead"><${Icon} name=${c.icon} size=${15}/> ${c.label} <span class="n">${allItems.length || ""}</span></div>
+        ${c.k === "planned" ? html`<div class="planned-actions">
+          <button class="colbtn primary" onClick=${() => onAddIssue(target)}><${Icon} name="plus" size=${14}/> Add Issue</button>
+          <button class="colbtn" disabled=${!target || analyzing} title=${target ? "Analyze " + target.split("/").pop() + "'s codebase health" : "Pick a repo first"} onClick=${() => target && onAnalyze(target)}>${analyzing ? html`<${Spinner} size=${14}/>` : html`<${Icon} name="search" size=${14}/>`} Analyze Repo</button>
+        </div>` : null}
+        <div class="cards">
+          ${epicPins.length ? html`
+            ${epicPins.map(renderCard)}
+            ${workingRest.length ? html`<div class="col-sect-div">sub-issues &amp; tasks</div>` : null}
+          ` : null}
+          ${workingRest.length ? workingRest.map(renderCard) : (!epicPins.length ? html`<div class="empty">—</div>` : null)}
+        </div>
+      </div>`;
+    })}
   </div>`;
 }
 
@@ -588,6 +599,7 @@ function Card({ i, multi, onOpen, act, data }) {
   const engaged = !tmp && (i.active || ["agency:in-progress", "agency:rate-limited", "agency:awaiting-answer", "agency:awaiting-approval", "agency:needs-attention"].includes(i.state) || i.review === "changes");
   const avatarsOn = (data && data.config && data.config.avatars) !== "off";
   return html`<div class=${"card" + (tmp ? " busy" : "") + (i.active ? " active-now" : "")} title=${usageTitle(i.usage)} onClick=${tmp ? null : () => onOpen(i)}>
+    ${i.parentEpic ? html`<div class="card-parent-bar"><${Icon} name="layers" size=${11}/> #${i.parentEpic.number} · ${i.parentEpic.title}</div>` : null}
     <div class="card-h">
       <span class="card-repo">${i.repo.split("/").pop()}</span>
       <span class="spacer" style="margin-left:auto"></span>
