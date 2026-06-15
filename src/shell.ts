@@ -281,7 +281,7 @@ textarea{resize:vertical;min-height:64px}
 .cmt .h{font-size:12px;color:var(--ink-2);margin-bottom:4px;display:flex;align-items:center;gap:6px}
 .avi{display:inline-block;flex:0 0 auto;overflow:hidden;vertical-align:middle;line-height:0}
 .avi img{width:100%;height:100%;display:block}
-.avi.head img{object-fit:cover;object-position:center top}
+.avi.head img{object-fit:contain;object-position:center}
 .avi.full img{object-fit:contain;object-position:center top}
 .cmt.incoming{border-left:3px solid var(--accent)}
 .cmt .h .cmt-in{display:inline-flex;align-items:center;color:var(--accent);vertical-align:middle}

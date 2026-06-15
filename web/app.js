@@ -52,14 +52,15 @@ const Spinner = ({ size = 18 }) => html`<svg class="lic spin" width=${size} heig
 // One avatar file per role (a mixed-gender team). Swap a value to change who represents a role.
 const ROLE_AVATAR = { planner: "planner-f", architect: "architect", developer: "developer-f", reviewer: "reviewer", tester: "tester", librarian: "librarian-f", auditor: "auditor" };
 const ROLE_WORDS = ["planner", "architect", "developer", "reviewer", "tester", "librarian", "auditor"];
-function avatarFile(role) { return "/web/avatars/" + (ROLE_AVATAR[role] || "agent") + ".svg"; }
+// crop="head" → the dedicated head-only SVG (dashboard); "full" → the whole figure (detail comments).
+function avatarFile(role, crop) { const n = ROLE_AVATAR[role] || "agent"; return crop === "head" ? "/web/avatars/heads/" + n + ".svg" : "/web/avatars/" + n + ".svg"; }
 // The author role of an agency comment, read from its leading badge ("🧠 **Planner**", "role: **developer**", …).
 function roleFromComment(body) { const head = (body || "").slice(0, 90).toLowerCase(); for (const r of ROLE_WORDS) if (head.includes(r)) return r; return null; }
-// Persona avatar. crop="head" (dashboard: head only, body/arms cut off) | "full" (detail: whole figure).
+// Persona avatar. crop="head" (dashboard: pre-cropped head) | "full" (detail: whole figure).
 const Avatar = ({ role, size = 24, crop = "head" }) => {
   const w = crop === "full" ? Math.round(size * 0.82) : size;
-  const h = crop === "full" ? size : Math.round(size * 0.8);
-  return html`<span class=${"avi " + crop} style=${"width:" + w + "px;height:" + h + "px"} title=${(role || "agent") + " agent"}><img src=${avatarFile(role)} alt=${(role || "agent") + " avatar"} loading="lazy"/></span>`;
+  const h = size;
+  return html`<span class=${"avi " + crop} style=${"width:" + w + "px;height:" + h + "px"} title=${(role || "agent") + " agent"}><img src=${avatarFile(role, crop)} alt=${(role || "agent") + " avatar"} loading="lazy"/></span>`;
 };
 
 // ---------- helpers ----------
