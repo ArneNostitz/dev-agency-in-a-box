@@ -975,20 +975,6 @@ export async function mergeBaseInto(workdir: string, base = "main"): Promise<Bas
   }
 }
 
-/**
- * Deterministic "is this branch mergeable into base now?" check — does HEAD already contain the
- * LATEST base? Used instead of GitHub's `mergeable` flag right after a push, which is stale (GitHub
- * recomputes mergeability asynchronously and briefly keeps returning the old CONFLICTING value).
- * If the freshly-fetched base is an ancestor of HEAD, the PR will merge cleanly — guaranteed.
- */
-export async function branchContainsBase(workdir: string, base = "main"): Promise<boolean> {
-  await runGitCode(workdir, ["fetch", "-f", "origin", `${base}:refs/remotes/origin/${base}`]).catch(() => {});
-  const fh = await runGitCode(workdir, ["fetch", "origin", base]).catch(() => ({ code: 1 } as { code: number }));
-  const ref = fh.code === 0 ? "FETCH_HEAD" : `origin/${base}`;
-  const r = await runGitCode(workdir, ["merge-base", "--is-ancestor", ref, "HEAD"]);
-  return r.code === 0;
-}
-
 /** Local HEAD sha of a checkout — lets the orchestrator tell whether an agent actually committed. */
 export async function localHeadSha(workdir: string): Promise<string> {
   return runGit(workdir, ["rev-parse", "HEAD"]).catch(() => "");
@@ -1016,6 +1002,16 @@ const conflictProbeDirs = new Map<string, string>();
  * UI still shows the conflict box, just without per-file detail.
  */
 export async function conflictFiles(repo: string, branch: string, base = "main"): Promise<string[]> {
+  return (await mergeProbe(repo, branch, base)).files;
+}
+
+/**
+ * Probe the FRESH remote state for a real branch→base merge (the same check GitHub runs). Returns
+ * `ok:false` when the probe couldn't run (network/history) — callers must NOT treat that as "clean".
+ * Used both to list conflicting files AND to verify a conflict is genuinely resolved on the REMOTE
+ * (the local workdir or GitHub's cached `mergeable` flag both lie right after a push).
+ */
+export async function mergeProbe(repo: string, branch: string, base = "main"): Promise<{ ok: boolean; files: string[] }> {
   try {
     let dir = conflictProbeDirs.get(repo);
     if (!dir || !existsSync(join(dir, ".git"))) {
@@ -1029,9 +1025,10 @@ export async function conflictFiles(repo: string, branch: string, base = "main")
     await runGitCode(dir, ["merge", "--abort"]); // clear any aborted probe state
     await runGitCode(dir, ["fetch", "--unshallow", "origin"]);
     // Force-update BOTH tracking refs (plain fetch only moves FETCH_HEAD → stale checkout/merge → []).
-    await runGitCode(dir, ["fetch", "-f", "origin", `${base}:refs/remotes/origin/${base}`, `${branch}:refs/remotes/origin/${branch}`]);
+    const f = await runGitCode(dir, ["fetch", "-f", "origin", `${base}:refs/remotes/origin/${base}`, `${branch}:refs/remotes/origin/${branch}`]);
+    if (f.code !== 0) return { ok: false, files: [] };
     const co = await runGitCode(dir, ["checkout", "-f", "-B", "_conflict_probe", `origin/${branch}`]);
-    if (co.code !== 0) return [];
+    if (co.code !== 0) return { ok: false, files: [] };
     const m = await runGitCode(dir, ["merge", "--no-commit", "--no-ff", `origin/${base}`]);
     let files: string[] = [];
     if (m.code !== 0) {
@@ -1039,9 +1036,9 @@ export async function conflictFiles(repo: string, branch: string, base = "main")
       files = un.stdout.split("\n").map((s) => s.trim()).filter(Boolean);
     }
     await runGitCode(dir, ["merge", "--abort"]);
-    return files;
+    return { ok: true, files };
   } catch {
-    return [];
+    return { ok: false, files: [] };
   }
 }
 
@@ -1080,9 +1077,12 @@ export async function ensureBranchPushed(workdir: string, branch: string): Promi
 
 /** Deterministically put the workdir on an existing remote branch (for Fix/resume on a PR). */
 export async function fetchCheckout(workdir: string, branch: string): Promise<void> {
-  await runGit(workdir, ["fetch", "origin", branch]).catch(() => {});
-  const ok = await runGit(workdir, ["checkout", branch]).then(() => true).catch(() => false);
-  if (!ok) await runGit(workdir, ["checkout", "-B", branch, `origin/${branch}`]).catch(() => {});
+  // Force-update the tracking ref and RESET the local branch to it. A plain `git checkout <branch>`
+  // in a reused workdir switches to a STALE local branch (behind origin), so the conflict-resolution
+  // merge then runs against the wrong tree and reports "clean" while GitHub still conflicts.
+  await runGit(workdir, ["fetch", "-f", "origin", `${branch}:refs/remotes/origin/${branch}`]).catch(() => {});
+  const ok = await runGit(workdir, ["checkout", "-f", "-B", branch, `origin/${branch}`]).then(() => true).catch(() => false);
+  if (!ok) await runGit(workdir, ["checkout", branch]).catch(() => {}); // brand-new local branch
 }
 
 /** Open a draft PR for the branch if none exists; returns the PR (or null). */
