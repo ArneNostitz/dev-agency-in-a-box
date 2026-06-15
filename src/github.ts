@@ -954,12 +954,16 @@ export async function mergeBaseInto(workdir: string, base = "main"): Promise<Bas
     // FETCH_HEAD, not refs/remotes/origin/main, so a later `git merge origin/main` can merge a STALE
     // main → reports "Already up to date / clean" while GitHub still sees the PR as conflicting →
     // the Fix flow loops forever, burning tokens. An explicit destination refspec fixes this.
-    const f = await runGitCode(workdir, ["fetch", "-f", "origin", `${base}:refs/remotes/origin/${base}`]);
-    if (f.code !== 0) await runGitCode(workdir, ["fetch", "origin", base]);
+    await runGitCode(workdir, ["fetch", "-f", "origin", `${base}:refs/remotes/origin/${base}`]);
+    // Always grab the freshest base into FETCH_HEAD and MERGE THAT — never the (possibly stale)
+    // tracking ref. Merging a stale `origin/main` is what made the agent report "clean" while GitHub
+    // still saw the PR as conflicting, looping the Fix flow forever.
+    const fh = await runGitCode(workdir, ["fetch", "origin", base]);
+    const target = fh.code === 0 ? "FETCH_HEAD" : `origin/${base}`;
     await runGitCode(workdir, ["merge", "--abort"]); // clear any half-finished merge from a prior try
     await runGitCode(workdir, ["config", "user.email", "bot@dev-agency.local"]);
     await runGitCode(workdir, ["config", "user.name", "dev-agency-bot"]);
-    const m = await runGitCode(workdir, ["merge", `origin/${base}`, "--no-edit"]);
+    const m = await runGitCode(workdir, ["merge", target, "--no-edit"]);
     if (m.code === 0) return { status: "clean", files: [] };
     const un = await runGitCode(workdir, ["diff", "--name-only", "--diff-filter=U"]);
     const files = un.stdout.split("\n").map((s) => s.trim()).filter(Boolean);
@@ -969,6 +973,20 @@ export async function mergeBaseInto(workdir: string, base = "main"): Promise<Bas
   } catch {
     return { status: "error", files: [] };
   }
+}
+
+/**
+ * Deterministic "is this branch mergeable into base now?" check — does HEAD already contain the
+ * LATEST base? Used instead of GitHub's `mergeable` flag right after a push, which is stale (GitHub
+ * recomputes mergeability asynchronously and briefly keeps returning the old CONFLICTING value).
+ * If the freshly-fetched base is an ancestor of HEAD, the PR will merge cleanly — guaranteed.
+ */
+export async function branchContainsBase(workdir: string, base = "main"): Promise<boolean> {
+  await runGitCode(workdir, ["fetch", "-f", "origin", `${base}:refs/remotes/origin/${base}`]).catch(() => {});
+  const fh = await runGitCode(workdir, ["fetch", "origin", base]).catch(() => ({ code: 1 } as { code: number }));
+  const ref = fh.code === 0 ? "FETCH_HEAD" : `origin/${base}`;
+  const r = await runGitCode(workdir, ["merge-base", "--is-ancestor", ref, "HEAD"]);
+  return r.code === 0;
 }
 
 /** Local HEAD sha of a checkout — lets the orchestrator tell whether an agent actually committed. */
@@ -1010,7 +1028,8 @@ export async function conflictFiles(repo: string, branch: string, base = "main")
     await runGitCode(dir, ["config", "user.name", "dev-agency-bot"]);
     await runGitCode(dir, ["merge", "--abort"]); // clear any aborted probe state
     await runGitCode(dir, ["fetch", "--unshallow", "origin"]);
-    await runGitCode(dir, ["fetch", "origin", base, branch]);
+    // Force-update BOTH tracking refs (plain fetch only moves FETCH_HEAD → stale checkout/merge → []).
+    await runGitCode(dir, ["fetch", "-f", "origin", `${base}:refs/remotes/origin/${base}`, `${branch}:refs/remotes/origin/${branch}`]);
     const co = await runGitCode(dir, ["checkout", "-f", "-B", "_conflict_probe", `origin/${branch}`]);
     if (co.code !== 0) return [];
     const m = await runGitCode(dir, ["merge", "--no-commit", "--no-ff", `origin/${base}`]);
