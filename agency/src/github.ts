@@ -323,6 +323,35 @@ export interface ThreadFull {
   comments: ThreadComment[];
 }
 
+/**
+ * Normalize `gh api --paginate` output into a flat array of raw comment objects. With --paginate,
+ * gh concatenates each page's JSON array as "[...][...]" (invalid as a whole), so we join them.
+ * Tolerant of empty output and of an NDJSON stream (one object/array per line) as a fallback.
+ */
+export function parseGhCommentsJson(
+  out: string,
+): Array<{ id?: number; user?: { login?: string }; body?: string; created_at?: string }> {
+  const s = (out || "").trim();
+  if (!s) return [];
+  try {
+    return JSON.parse(s.replace(/\]\s*\[/g, ","));
+  } catch {
+    const acc: Array<{ id?: number; user?: { login?: string }; body?: string; created_at?: string }> = [];
+    for (const line of s.split("\n")) {
+      const l = line.trim();
+      if (!l) continue;
+      try {
+        const v = JSON.parse(l);
+        if (Array.isArray(v)) acc.push(...v);
+        else acc.push(v);
+      } catch {
+        /* skip malformed line */
+      }
+    }
+    return acc;
+  }
+}
+
 /** The full structured conversation for the dashboard side panel (issue or PR). */
 export async function getThreadFull(repo: string, number: number): Promise<ThreadFull> {
   const head = await gh([
@@ -335,25 +364,22 @@ export async function getThreadFull(repo: string, number: number): Promise<Threa
   } catch {
     /* ignore */
   }
-  // --paginate with an array jq expression produces one JSON array per page, which concatenates
-  // to invalid JSON ("[...][...]"). Use NDJSON (one object per line) and parse line-by-line.
+  // Fetch the raw comment objects (no server-side jq — that combo with --paginate proved fragile
+  // and silently dropped the agency's comments). Up to 100/page, paginated, parsed robustly.
   const out = await gh([
-    "api", `repos/${repo}/issues/${number}/comments`, "--paginate",
-    "--jq", ".[]|{id:.id, author:.user.login, body:.body, createdAt:.created_at}",
+    "api", `repos/${repo}/issues/${number}/comments`, "--paginate", "-f", "per_page=100",
   ]).catch(() => "");
-  const raw: Array<{ id?: number; author?: string; body?: string; createdAt?: string }> = [];
-  for (const line of out.split("\n")) {
-    const l = line.trim();
-    if (!l) continue;
-    try { raw.push(JSON.parse(l)); } catch { /* skip malformed line */ }
-  }
-  const comments: ThreadComment[] = raw.map((c) => ({
-    id: c.id ?? 0,
-    author: c.author ?? "?",
-    body: (c.body ?? "").replace(AGENCY_MARKER, "").trim(),
-    createdAt: c.createdAt ?? "",
-    isAgency: (c.body ?? "").includes(AGENCY_MARKER),
-  }));
+  const raw = parseGhCommentsJson(out);
+  const comments: ThreadComment[] = raw.map((c) => {
+    const body = c.body ?? "";
+    return {
+      id: c.id ?? 0,
+      author: c.user?.login ?? "?",
+      body: body.replace(AGENCY_MARKER, "").trim(),
+      createdAt: c.created_at ?? "",
+      isAgency: body.includes(AGENCY_MARKER),
+    };
+  });
   return {
     title: h.title ?? `#${number}`,
     body: h.body ?? "",
