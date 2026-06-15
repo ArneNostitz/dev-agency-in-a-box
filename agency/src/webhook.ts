@@ -36,7 +36,7 @@ import { inFlightKeys } from "./pool.js";
 import { listRateLimited } from "./store.js";
 import { getConversation, conversationCount, foldInGitHubComment, recordOutgoingComment, setCommentGhId, updateCommentBody } from "./store.js";
 import { effectiveRepos } from "./commands.js";
-import { getThreadFull, commentAsHuman, editCommentAsHuman, commentOnIssue, mergePrForBranch, closeIssue, deleteIssueHard, findPrForBranch, prMergeStatus, conflictFiles, branchHeadSha, detectReviewVerdict, createIssue, readRepoFile, putRepoBase64, listUserRepos } from "./github.js";
+import { getThreadFull, commentAsHuman, editCommentAsHuman, commentOnIssue, mergePrForBranch, closeIssue, deleteIssueHard, findPrForBranch, prMergeStatus, mergeProbe, branchHeadSha, detectReviewVerdict, createIssue, readRepoFile, putRepoBase64, listUserRepos } from "./github.js";
 import { listAgentFiles, readAgentFile, isSafeAgentPath } from "./memory.js";
 import { startApp, stopApp, getApp, pickWebDevScript, isTauriPackage, buildLocalCommand } from "./apprun.js";
 import { ensureRepoAccess } from "./commands.js";
@@ -524,30 +524,36 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           const branch = `agency/issue-${number}`;
           const merge = repo && number ? await prMergeStatus(repo, branch).catch(() => null) : null;
           let conflict: { files: string[] } | null = null;
-          if (merge?.mergeable === "conflict" && repo && number) {
-            // Surface WHICH files conflict (GitHub only exposes a boolean). Compute the file list
-            // once per head SHA, persist it, and post a one-time note into the conversation so the
-            // conflict is visible without opening GitHub.
-            const sha = await branchHeadSha(repo, branch).catch(() => "");
-            const stored = getConflict(repo, number);
-            if (stored && stored.sha === sha) {
-              conflict = { files: stored.files };
-            } else {
-              const files = await conflictFiles(repo, branch, "main").catch(() => []);
-              const firstTime = !stored; // only announce a conflict ONCE — each Fix attempt changes the
-              recordConflict(repo, number, sha, files); // branch SHA, which must NOT re-spam the thread.
-              conflict = { files };
-              if (firstTime) {
-                const list = files.length ? files.map((f) => `- \`${f}\``).join("\n") : "_(GitHub doesn't expose the file list; open the PR to see them)_";
-                await commentOnIssue(
-                  repo,
-                  number,
-                  `🔀 **Merge conflicts with \`main\`** — this PR can't merge until they're resolved.\n\nConflicting file${files.length === 1 ? "" : "s"}:\n${list}\n\nPress **Fix merge conflicts** on the card to have the agency resolve them automatically.`,
-                ).catch(() => {});
+          if (repo && number) {
+            // GROUND TRUTH: a real branch→main merge test on the fresh remote, NOT GitHub's `mergeable`
+            // flag (it lags badly after a push — both false "conflict" and false "clean"). The action
+            // bar's mergeable is overridden from this so Fix/Merge reflect reality.
+            const probe = await mergeProbe(repo, branch, "main").catch(() => ({ ok: false, files: [] as string[] }));
+            if (probe.ok && merge) merge.mergeable = probe.files.length ? "conflict" : "clean";
+            if (probe.ok && probe.files.length) {
+              const sha = await branchHeadSha(repo, branch).catch(() => "");
+              const stored = getConflict(repo, number);
+              if (stored && stored.sha === sha) {
+                conflict = { files: stored.files };
+              } else {
+                const firstTime = !stored; // only announce a conflict ONCE — each Fix changes the SHA.
+                recordConflict(repo, number, sha, probe.files);
+                conflict = { files: probe.files };
+                if (firstTime) {
+                  const list = probe.files.length ? probe.files.map((f) => `- \`${f}\``).join("\n") : "_(open the PR to see them)_";
+                  await commentOnIssue(
+                    repo,
+                    number,
+                    `🔀 **Merge conflicts with \`main\`** — this PR can't merge until they're resolved.\n\nConflicting file${probe.files.length === 1 ? "" : "s"}:\n${list}\n\nPress **Fix merge conflicts** on the card to have the agency resolve them automatically.`,
+                  ).catch(() => {});
+                }
               }
+            } else if (probe.ok) {
+              clearConflict(repo, number); // truly mergeable now — drop the stale conflict box
+            } else {
+              const stored = getConflict(repo, number); // probe failed — keep last known, don't flip-flop
+              if (stored) conflict = { files: stored.files };
             }
-          } else if (repo && number) {
-            clearConflict(repo, number); // mergeable again — drop the stale conflict box
           }
           res
             .writeHead(200, { "content-type": "application/json" })

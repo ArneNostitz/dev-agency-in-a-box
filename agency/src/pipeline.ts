@@ -166,6 +166,10 @@ async function finalizeWithPr(repo: string, issue: Issue, workdir: string, branc
     await addLabel(repo, issue.number, READY);
     recordIssueState(repo, issue.number, { state: READY });
     recordPr(repo, issue.number, pr.number, pr.url);
+    // Reconcile the conflict box against reality — a normal finalize (not just the conflict-only Fix
+    // path) can make a branch mergeable, and a stale "resolve first" must not stick on the card/PR bar.
+    const cf = await mergeProbe(repo, branch, "main");
+    if (cf.ok) { if (cf.files.length) recordConflict(repo, issue.number, "", cf.files); else clearConflict(repo, issue.number); }
     const head = changesRequested
       ? `**⚠️ PR opened, but the reviewer still wants changes.** ${pr.url}\n\nPress **Fix** on the card to address them, or **Merge anyway** to ship as-is.`
       : `**✅ Work complete.** Opened ${pr.isDraft ? "draft " : ""}PR ${pr.url}`;
