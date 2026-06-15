@@ -116,7 +116,8 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
   await tick(40);
   assert.match(root.innerHTML, /Settings/, "settings opens");
   assert.match(root.innerHTML, /Pipeline/, "settings shows pipeline knobs");
-  assert.match(root.innerHTML, /Integrations &amp; Credentials/, "credentials section renders for a signed-in user");
+  assert.match(root.innerHTML, /Connections/, "connections section renders for a signed-in user");
+  assert.match(root.innerHTML, /Show agent avatars/, "appearance section has the avatars toggle");
   assert.match(root.innerHTML, /Team \(admin\)/, "admin team section renders");
   assert.match(root.innerHTML, /Operations/, "operations panel renders");
   assert.match(root.innerHTML, /arne/, "signed-in user shown");

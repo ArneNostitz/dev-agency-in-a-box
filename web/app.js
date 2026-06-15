@@ -55,8 +55,12 @@ const ROLE_WORDS = ["planner", "architect", "developer", "reviewer", "tester", "
 function avatarFile(role) { return "/web/avatars/" + (ROLE_AVATAR[role] || "agent") + ".svg"; }
 // The author role of an agency comment, read from its leading badge ("🧠 **Planner**", "role: **developer**", …).
 function roleFromComment(body) { const head = (body || "").slice(0, 90).toLowerCase(); for (const r of ROLE_WORDS) if (head.includes(r)) return r; return null; }
-// Circular head-crop of the (full-body) persona SVG.
-const Avatar = ({ role, size = 24 }) => html`<span class="avi" style=${"width:" + size + "px;height:" + size + "px"} title=${(role || "agent") + " agent"}><img src=${avatarFile(role)} alt=${(role || "agent") + " avatar"} loading="lazy"/></span>`;
+// Persona avatar. crop="head" (dashboard: head only, body/arms cut off) | "full" (detail: whole figure).
+const Avatar = ({ role, size = 24, crop = "head" }) => {
+  const w = crop === "full" ? Math.round(size * 0.82) : size;
+  const h = crop === "full" ? size : Math.round(size * 0.8);
+  return html`<span class=${"avi " + crop} style=${"width:" + w + "px;height:" + h + "px"} title=${(role || "agent") + " agent"}><img src=${avatarFile(role)} alt=${(role || "agent") + " avatar"} loading="lazy"/></span>`;
+};
 
 // ---------- helpers ----------
 const ROLE_ICON = { planner: "layers", developer: "laptop", reviewer: "flask", tester: "flask", architect: "settings", librarian: "history" };
@@ -571,9 +575,15 @@ function Card({ i, multi, onOpen, act, data }) {
   };
 
   const engaged = !tmp && (i.active || ["agency:in-progress", "agency:rate-limited", "agency:awaiting-answer", "agency:awaiting-approval", "agency:needs-attention"].includes(i.state) || i.review === "changes");
+  const avatarsOn = (data && data.config && data.config.avatars) !== "off";
   return html`<div class=${"card" + (tmp ? " busy" : "") + (i.active ? " active-now" : "")} title=${usageTitle(i.usage)} onClick=${tmp ? null : () => onOpen(i)}>
-    <div class="t">${engaged && i.role ? html`<${Avatar} role=${i.role} size=${20}/> ` : null}${(i.active || tmp) ? html`<${Spinner} size=${13}/> ` : null}${i.title || "#" + i.number}</div>
-    <div class="meta">
+    <div class="card-h">
+      <span class="card-repo">${i.repo.split("/").pop()}</span>
+      <span class="spacer" style="margin-left:auto"></span>
+      ${engaged && i.role && avatarsOn ? html`<${Avatar} role=${i.role} size=${28} crop="head"/>` : null}
+    </div>
+    <div class="card-title">${(i.active || tmp) ? html`<${Spinner} size=${13}/> ` : null}${i.title || "#" + i.number}</div>
+    <div class="card-chips">
       ${tmp
         ? html`<span class="statuschip s-working"><${Spinner} size=${12}/> ${i.state === "agency:in-progress" ? "creating & starting…" : "creating…"}</span>`
         : html`<span class=${"statuschip " + st.cls}><${Icon} name=${st.icon} size=${12}/> ${st.label}</span>`}
@@ -582,21 +592,19 @@ function Card({ i, multi, onOpen, act, data }) {
       ${i.conflict ? html`<span class="statuschip s-conflict" title=${(i.conflict.files || []).join(", ") || "Merge conflicts with main"}><${Icon} name="merge" size=${12}/> conflict</span>` : null}
       ${i.pr_number ? html`<a class="tagk" href=${i.pr_url || ghUrl(i.repo, i.pr_number)} target="_blank" rel="noopener" onClick=${(e) => e.stopPropagation()}><${Icon} name="pr" size=${11}/> #${i.pr_number}</a>` : null}
       ${i.usage && i.usage.tokens ? html`<span class="tagk" title=${usageTitle(i.usage)}><${Icon} name="chart" size=${11}/> ${fmtTok(i.usage.tokens)}${i.usage.model ? " · " + shortModel(i.usage.model) : ""}</span>` : null}
-      ${multi ? html`<span class="tagk">${i.repo.split("/").pop()}</span>` : null}
-      <span class="spacer" style="margin-left:auto"></span>
-      ${tmp ? null : quick ? html`
-        <div style="display:inline-flex;gap:4px;align-items:center" onClick=${(e) => e.stopPropagation()}>
-          ${i.state === "planned" ? html`<button class="cardbtn" title="Close as not planned" disabled=${act.isBusy("close-not-planned", i.repo, i.number)} onClick=${(e) => { e.stopPropagation(); act.closeNotPlanned(i.repo, i.number); }}>${act.isBusy("close-not-planned", i.repo, i.number) ? html`<${Spinner} size=${13}/>` : html`<${Icon} name="x" size=${13}/>`} not planned</button>` : null}
-          ${modelOpts.length && quick.action !== "stop" ? html`
-            <select class="modelsel sm" value=${modelSel} onChange=${selectModel}>
-              <option value="">Default model</option>
-              ${modelOpts.map((o) => html`<option key=${o.value} value=${o.value}>${o.label.split(" / ").pop()}</option>`)}
-            </select>
-          ` : null}
-          <button class=${"cardbtn " + quick.cls + (qBusy ? " busy" : "")} disabled=${qBusy} onClick=${runQuick}>${qBusy ? html`<${Spinner} size=${13}/>` : html`<${Icon} name=${quick.icon} size=${13}/>`} ${qBusy ? "working…" : quick.label}</button>
-        </div>
-      ` : html`<span style="color:var(--ink-3);font-size:12px">${ago(i.updated_at)}</span>`}
     </div>
+    ${tmp ? null : html`<div class="card-f" onClick=${(e) => e.stopPropagation()}>
+      ${quick ? html`
+        ${i.state === "planned" ? html`<button class="cardbtn" title="Close as not planned" disabled=${act.isBusy("close-not-planned", i.repo, i.number)} onClick=${(e) => { e.stopPropagation(); act.closeNotPlanned(i.repo, i.number); }}>${act.isBusy("close-not-planned", i.repo, i.number) ? html`<${Spinner} size=${13}/>` : html`<${Icon} name="x" size=${13}/>`} not planned</button>` : null}
+        ${modelOpts.length && quick.action !== "stop" ? html`
+          <select class="modelsel sm" value=${modelSel} onChange=${selectModel}>
+            <option value="">Default model</option>
+            ${modelOpts.map((o) => html`<option key=${o.value} value=${o.value}>${o.label.split(" / ").pop()}</option>`)}
+          </select>
+        ` : null}
+        <button class=${"cardbtn " + quick.cls + (qBusy ? " busy" : "")} disabled=${qBusy} onClick=${runQuick}>${qBusy ? html`<${Spinner} size=${13}/>` : html`<${Icon} name=${quick.icon} size=${13}/>`} ${qBusy ? "working…" : quick.label}</button>
+      ` : html`<span style="color:var(--ink-3);font-size:12px">${ago(i.updated_at)}</span>`}
+    </div>`}
   </div>`;
 }
 
@@ -891,7 +899,7 @@ function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIs
       : thread._err ? html`<div class="muted" style="color:var(--red);display:flex;align-items:center;gap:8px">${thread._err} <button class="btn" onClick=${loadThread}>Retry</button></div>`
       : html`<div>
         ${thread.body ? html`<${Comment} author=${thread.author} createdAt=${thread.createdAt} body=${thread.body} isAgency=${false}/>` : null}
-        ${(thread.comments || []).map((c) => html`<${Comment} key=${c.localId || c.id || c.createdAt} id=${c.id} author=${c.author} createdAt=${c.createdAt} body=${c.body} isAgency=${c.isAgency} incoming=${c.incoming} onEdit=${editComment}/>`)}
+        ${(thread.comments || []).map((c) => html`<${Comment} key=${c.localId || c.id || c.createdAt} id=${c.id} author=${c.author} createdAt=${c.createdAt} body=${c.body} isAgency=${c.isAgency} incoming=${c.incoming} avatars=${(data && data.config && data.config.avatars) !== "off"} onEdit=${editComment}/>`)}
         ${pendingComments.map((p) => html`<${Comment} key=${"skel-" + p.id} author=${p.author} createdAt=${p.createdAt} body=${p.body} isAgency=${false} isSkel=${true}/>`)}
       </div>`}
     ${!chatAtBottom ? html`<div class="scroll-fab-wrap"><button class="iconbtn scroll-fab" title="Scroll to bottom" onClick=${() => { chatRef.current.scrollTop = chatRef.current.scrollHeight; }}><${Icon} name="chevdown" size=${16}/></button></div>` : null}
@@ -938,7 +946,7 @@ function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIs
     </div>
   </div>`;
 }
-function Comment({ id, author, createdAt, body, isAgency, isSkel, incoming, onEdit }) {
+function Comment({ id, author, createdAt, body, isAgency, isSkel, incoming, avatars = true, onEdit }) {
   const [editing, setEditing] = useState(false);
   const [editVal, setEditVal] = useState(body || "");
   const [saving, setSaving] = useState(false);
@@ -951,7 +959,7 @@ function Comment({ id, author, createdAt, body, isAgency, isSkel, incoming, onEd
   }
   return html`<div class=${"cmt " + (isAgency ? "ag" : "") + (isSkel ? " skel" : "") + (incoming ? " incoming" : "")}>
     <div class="h">
-      ${isAgency ? html`<${Avatar} role=${roleFromComment(body)} size=${26}/>` : null}
+      ${isAgency && avatars ? html`<${Avatar} role=${roleFromComment(body)} size=${44} crop="full"/>` : null}
       <span>${incoming ? html`<span class="cmt-in" title="Incoming — posted on GitHub"><${Icon} name="incoming" size=${12}/></span> ` : ""}${author || ""} · ${isSkel ? "just now" : ago(createdAt)}</span>
       ${id && onEdit && !isSkel ? html`<button class="iconbtn cmt-edit-btn" title="Edit comment" onClick=${startEdit}><${Icon} name="edit" size=${13}/></button>` : null}
     </div>
@@ -1055,40 +1063,59 @@ function Composer({ repos, repo, setRepo, onClose, onCreate, data }) {
 
 // ---------- Settings ----------
 function Settings({ data, onClose, reload, openGithubTokens, openModels }) {
-  const s = data.session || {}, cfg = data.config || {};
+  const cfg = data.config || {};
+  const admin = Boolean(data.user && data.user.role === "admin");
   const [skipArch, setSkipArch] = useState(cfg.skipArchitect !== "off");
   const [gitnexus, setGitnexus] = useState(cfg.gitnexus === "on");
   const [maxTok, setMaxTok] = useState(cfg.maxTokensPerRun || 600000);
   const [revRounds, setRevRounds] = useState(cfg.maxReviseRounds != null ? cfg.maxReviseRounds : 1);
-  function save() { api("/settings", { skipArchitect: skipArch ? "on" : "off", gitnexus: gitnexus ? "on" : "off", maxTokensPerRun: Number(maxTok) || 0, maxReviseRounds: Number(revRounds) || 0 }).then(() => { toast("Saved"); onClose(); reload(); }); }
+  const [avatarsOn, setAvatarsOn] = useState(cfg.avatars !== "off");
+  function save() { api("/settings", { skipArchitect: skipArch ? "on" : "off", gitnexus: gitnexus ? "on" : "off", maxTokensPerRun: Number(maxTok) || 0, maxReviseRounds: Number(revRounds) || 0, avatars: avatarsOn ? "on" : "off" }).then(() => { toast("Saved"); onClose(); reload(); }); }
+  function changePw() { const np = window.prompt("New password (8+ characters)"); if (np == null) return; if (np.length < 8) { toast("8+ characters"); return; } api("/set-password", { value: np }).then(() => toast("Password changed")).catch((e) => toast((e && e.message) || "Couldn’t change", "error")); }
   return html`<${Sheet} title="Settings" onClose=${onClose} footer=${html`<button class="btn" onClick=${onClose}>Cancel</button><button class="btn primary" onClick=${save}>Save</button>`}>
-    ${data.user ? html`<div class="sec">Account</div>
-      <div class="muted">Signed in as <b>${data.user.username}</b> · ${data.user.role}</div>
-      <div style="display:flex;gap:8px;margin-top:8px">
-        <button class="btn ghost" onClick=${() => { const np = window.prompt("New password (8+ characters)"); if (np == null) return; if (np.length < 8) { toast("8+ characters"); return; } api("/set-password", { value: np }).then(() => toast("Password changed")).catch((e) => toast((e && e.message) || "Couldn’t change", "error")); }}><${Icon} name="lock" size=${15}/> Change password</button>
-        <a class="btn ghost" href="/logout" style="flex:1;justify-content:center"><${Icon} name="arrowleft" size=${15}/> Sign out</a>
+
+    ${data.user ? html`
+      <div class="setgrp">
+        <div class="sec">Account</div>
+        <div class="muted" style="margin-bottom:8px">Signed in as <b>${data.user.username}</b> · ${data.user.role}</div>
+        <div style="display:flex;gap:8px">
+          <button class="btn ghost" style="flex:1;justify-content:center" onClick=${changePw}><${Icon} name="lock" size=${15}/> Change password</button>
+          <a class="btn ghost" href="/logout" style="flex:1;justify-content:center"><${Icon} name="arrowleft" size=${15}/> Sign out</a>
+        </div>
       </div>
 
-      <div class="sec">Integrations & Credentials</div>
-      <div style="display:flex;gap:8px;margin-top:8px">
-        <button class="btn" style="flex:1;justify-content:center" onClick=${openGithubTokens}><${Icon} name="link" size=${15}/> GitHub Tokens</button>
-        <button class="btn" style="flex:1;justify-content:center" onClick=${openModels}><${Icon} name="flask" size=${15}/> Models & API Keys</button>
+      <div class="setgrp">
+        <div class="sec">Connections</div>
+        <div style="display:flex;gap:8px">
+          <button class="btn" style="flex:1;justify-content:center" onClick=${openGithubTokens}><${Icon} name="link" size=${15}/> GitHub tokens</button>
+          <button class="btn" style="flex:1;justify-content:center" onClick=${openModels}><${Icon} name="flask" size=${15}/> Models & API keys</button>
+        </div>
       </div>
+    ` : null}
 
-      <div class="sec">Setup wizard</div>
-      <div class="muted" style="font-size:12px;margin-bottom:7px">Re-run the guided walkthrough to add or update your tokens, models, and first repo.</div>
-      <button class="btn primary" style="width:100%" onClick=${() => api("/onboarded", { value: "0" }).then(() => { onClose(); reload(); })}><${Icon} name="play" size=${15}/> Run the setup wizard</button>
+    <div class="setgrp">
+      <div class="sec">Appearance</div>
+      <label class="ckline"><input type="checkbox" checked=${avatarsOn} onChange=${(e) => setAvatarsOn(e.target.checked)}/> Show agent avatars (cards & comments)</label>
+    </div>
 
-      ${data.user.role === "admin" ? html`<${Admin} users=${data.users || []} invites=${data.invites || []} webhookSecretSet=${data.webhookSecretSet} reload=${reload}/>` : null}` : null}
-    
-    <div class="sec">Pipeline</div>
-    <label class="ckline"><input type="checkbox" checked=${skipArch} onChange=${(e) => setSkipArch(e.target.checked)}/> Skip the architect step (faster, fewer tokens)</label>
-    <label class="ckline"><input type="checkbox" checked=${gitnexus} onChange=${(e) => setGitnexus(e.target.checked)}/> Use GitNexus code index</label>
-    <label>Max tokens per run (0 = off)</label><input type="number" min="0" step="50000" value=${maxTok} onInput=${(e) => setMaxTok(e.target.value)}/>
-    <label>Reviewer revise rounds before it asks you</label><input type="number" min="0" max="3" value=${revRounds} onInput=${(e) => setRevRounds(e.target.value)}/>
-    ${(!data.user || data.user.role === "admin") && data.opsMeta ? html`<${Operations} meta=${data.opsMeta} values=${data.ops || {}} reload=${reload}/>` : null}
-    <div class="sec">Advanced</div>
-    <a class="btn ghost" href="/classic" style="justify-content:flex-start"><${Icon} name="settings" size=${15}/> Models & agents (classic editor)</a>
+    <div class="setgrp">
+      <div class="sec">Pipeline</div>
+      <label class="ckline"><input type="checkbox" checked=${skipArch} onChange=${(e) => setSkipArch(e.target.checked)}/> Skip the architect step (faster, fewer tokens)</label>
+      <label class="ckline"><input type="checkbox" checked=${gitnexus} onChange=${(e) => setGitnexus(e.target.checked)}/> Use the GitNexus code index</label>
+      <label>Max tokens per run (0 = off)</label><input type="number" min="0" step="50000" value=${maxTok} onInput=${(e) => setMaxTok(e.target.value)}/>
+      <label>Reviewer revise rounds before it asks you</label><input type="number" min="0" max="3" value=${revRounds} onInput=${(e) => setRevRounds(e.target.value)}/>
+    </div>
+
+    ${admin && data.opsMeta ? html`<div class="setgrp"><${Operations} meta=${data.opsMeta} values=${data.ops || {}} reload=${reload}/></div>` : null}
+
+    ${data.user ? html`
+      <div class="setgrp">
+        <div class="sec">Setup</div>
+        <div class="muted" style="font-size:12px;margin-bottom:7px">Re-run the guided walkthrough to add or update tokens, models, and repos.</div>
+        <button class="btn primary" style="width:100%" onClick=${() => api("/onboarded", { value: "0" }).then(() => { onClose(); reload(); })}><${Icon} name="play" size=${15}/> Run the setup wizard</button>
+      </div>
+      ${admin ? html`<div class="setgrp"><${Admin} users=${data.users || []} invites=${data.invites || []} webhookSecretSet=${data.webhookSecretSet} reload=${reload}/></div>` : null}
+    ` : null}
   <//>`;
 }
 /**
@@ -1151,7 +1178,7 @@ function ModelsPanel() {
       </select>
       <button class="iconbtn" title="Remove" onClick=${() => removeFallback(idx)}><${Icon} name="trash" size=${15}/></button>
     </div>`)}
-    ${modelOpts.length ? html`<button class="btn ghost" style="margin-bottom:4px" onClick=${addFallback}><${Icon} name="plus" size=${14}/> Add fallback</button>` : html`<div class="muted" style="font-size:12px">No alternative providers configured — add one in <a href="/classic">Models & agents</a> first.</div>`}
+    ${modelOpts.length ? html`<button class="btn ghost" style="margin-bottom:4px" onClick=${addFallback}><${Icon} name="plus" size=${14}/> Add fallback</button>` : html`<div class="muted" style="font-size:12px">No alternative providers configured — add one under <b>Models & API keys</b> first.</div>`}
     <button class="btn primary" style="margin-top:8px" disabled=${busy} onClick=${save}>${busy ? html`<${Spinner} size=${14}/> Saving…` : "Save model settings"}</button>`;
 }
 function Operations({ meta, values, reload }) {
