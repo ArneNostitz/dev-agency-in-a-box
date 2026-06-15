@@ -34,6 +34,7 @@ import { emailEnabled, sendPasswordReset } from "./email.js";
 import { subscribe, getActive } from "./activity.js";
 import { inFlightKeys } from "./pool.js";
 import { listRateLimited } from "./store.js";
+import { getConversation, conversationCount, foldInGitHubComment, recordOutgoingComment, setCommentGhId, updateCommentBody } from "./store.js";
 import { effectiveRepos } from "./commands.js";
 import { getThreadFull, commentAsHuman, editCommentAsHuman, commentOnIssue, mergePrForBranch, closeIssue, deleteIssueHard, findPrForBranch, prMergeStatus, conflictFiles, branchHeadSha, detectReviewVerdict, createIssue, readRepoFile, putRepoBase64, listUserRepos } from "./github.js";
 import { listAgentFiles, readAgentFile, isSafeAgentPath } from "./memory.js";
@@ -603,7 +604,8 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         return;
       }
 
-      // Side-panel: the full GitHub conversation for one issue/PR.
+      // Side-panel conversation. The DB is the source of truth: we serve the cached, time-sorted
+      // thread instantly (resilient if GitHub is slow/down) and reconcile GitHub in the background.
       if (url === "/thread") {
         const q = new URLSearchParams((req.url ?? "").split("?")[1] ?? "");
         const repo = q.get("repo") ?? "";
@@ -612,9 +614,37 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           res.writeHead(400).end("{}");
           return;
         }
-        void getThreadFull(repo, number)
-          .then((t) => res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(t)))
-          .catch((err) => res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ error: (err as Error).message || "Internal Server Error" })));
+        const headKey = `head:${repo}#${number}`;
+        // Pull GitHub's thread and fold it into the DB (incoming comments + a cached issue head).
+        const reconcile = async (): Promise<void> => {
+          const t = await getThreadFull(repo, number);
+          for (const c of t.comments) {
+            if (c.id) foldInGitHubComment({ repo, number, gh_id: c.id, author: c.author, body: c.body, created_at: c.createdAt, isAgency: c.isAgency });
+          }
+          setSetting(headKey, JSON.stringify({ title: t.title, body: t.body, author: t.author, createdAt: t.createdAt, state: t.state }));
+        };
+        const respond = (): void => {
+          let head: { title?: string; body?: string; author?: string; createdAt?: string; state?: string } = {};
+          try { head = JSON.parse(getSetting(headKey) || "{}"); } catch { /* none cached yet */ }
+          const comments = getConversation(repo, number);
+          res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
+            title: head.title ?? `#${number}`,
+            body: head.body ?? "",
+            author: head.author ?? "?",
+            createdAt: head.createdAt ?? "",
+            state: head.state ?? "open",
+            comments,
+          }));
+        };
+        // First time we've ever seen this issue (nothing cached) → reconcile synchronously so the
+        // panel isn't empty. Otherwise serve the DB immediately and refresh in the background.
+        const cold = conversationCount(repo, number) === 0 && !getSetting(headKey);
+        if (cold) {
+          reconcile().then(respond).catch(respond);
+        } else {
+          respond();
+          void reconcile().catch(() => {});
+        }
         return;
       }
 
@@ -788,16 +818,20 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
             }
           }
           const text = p.body.trim();
+          // DB-first: record the reply locally now so the dashboard shows it instantly, then mirror.
+          const localId = recordOutgoingComment({ repo, number, author: actor?.username || "you", body: text, source: "human" });
           try {
             // Post under the owner's account (your token) so it shows your name, not the bot's.
-            await commentAsHuman(repo, number, text, ownerToken);
+            const res = await commentAsHuman(repo, number, text, ownerToken);
+            if (res?.id) setCommentGhId(localId, res.id, res.created_at);
           } catch (errOwner) {
             // The "acts as you" token often lacks Issues:write on this repo (or isn't scoped to it).
             // Rather than fail, fall back to the bot identity (which already works the repo).
             const bot = ghBotToken();
             if (bot && bot !== ownerToken) {
               try {
-                await commentAsHuman(repo, number, text, bot);
+                const res = await commentAsHuman(repo, number, text, bot);
+                if (res?.id) setCommentGhId(localId, res.id, res.created_at);
               } catch (errBot) {
                 return res.writeHead(500).end(
                   JSON.stringify({
@@ -862,6 +896,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               return res.writeHead(500).end(JSON.stringify({ error: `Couldn't edit comment: ${(errOwner as Error).message.slice(0, 200)}` }));
             }
           }
+          updateCommentBody(Number(p.commentId), text); // keep the DB copy in step
           return ok();
         }
         if (path === "/settings") {
@@ -1211,7 +1246,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         pull_request?: { merged?: boolean; head?: { ref?: string } };
         repository?: { full_name?: string };
         issue?: { number?: number; title?: string; body?: string; labels?: Array<{ name?: string }> };
-        comment?: { id?: number; body?: string; user?: { login?: string } };
+        comment?: { id?: number; body?: string; created_at?: string; user?: { login?: string } };
         sender?: { type?: string };
       } = {};
       try {
@@ -1226,13 +1261,16 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
       // Inbound sync (Phase 4): when DB-authoritative tracking is on, fold GitHub activity into the
       // DB in real time so the dashboard's local source of truth stays current. No-op in github mode.
       const syncRepo = payload.repository?.full_name ?? "";
-      if (trackerMode() === "local" && syncRepo) {
+      if (syncRepo) {
         try {
-          if (event === "issues" && payload.issue?.number) {
-            syncInIssue(syncRepo, payload.issue.number, payload.issue.title ?? "", payload.issue.body ?? "", (payload.issue.labels ?? []).map((l) => l.name ?? "").filter(Boolean));
-          } else if (event === "issue_comment" && action === "created" && payload.issue?.number && payload.comment?.id) {
+          // Comments always fold into the DB conversation cache (dashboard = source of truth), so a
+          // comment made directly on GitHub shows up in the dashboard in real time.
+          if (event === "issue_comment" && action === "created" && payload.issue?.number && payload.comment?.id) {
             const isAgency = (payload.comment.body ?? "").includes("<!-- dev-agency -->");
-            syncInComment(syncRepo, payload.issue.number, payload.comment.id, payload.comment.user?.login ?? "user", payload.comment.body ?? "", isAgency);
+            syncInComment(syncRepo, payload.issue.number, payload.comment.id, payload.comment.user?.login ?? "user", payload.comment.body ?? "", isAgency, payload.comment.created_at ?? "");
+          } else if (trackerMode() === "local" && event === "issues" && payload.issue?.number) {
+            // Issue body/labels only adopt into the DB when DB-authoritative tracking is enabled.
+            syncInIssue(syncRepo, payload.issue.number, payload.issue.title ?? "", payload.issue.body ?? "", (payload.issue.labels ?? []).map((l) => l.name ?? "").filter(Boolean));
           }
         } catch { /* best effort */ }
       }

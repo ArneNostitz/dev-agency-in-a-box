@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sBool } from "./settings.js";
 import { ghBotToken, ghUserToken } from "./creds.js";
+import { recordOutgoingComment, setCommentGhId } from "./store.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -159,7 +160,15 @@ export const AGENCY_MARKER = "<!-- dev-agency -->";
 
 
 export async function commentOnIssue(repo: string, issue: number, body: string): Promise<void> {
-  await gh(["issue", "comment", String(issue), "--repo", repo, "--body", `${body}\n\n${AGENCY_MARKER}`]);
+  // DB-first: record the agency comment immediately so the dashboard renders it without waiting on
+  // GitHub. Then mirror to GitHub and link the returned comment id back to the local row.
+  const localId = recordOutgoingComment({ repo, number: issue, author: "dev-agency", body, source: "agency" });
+  if (issue <= 0) return; // dashboard-only issue (no GitHub number yet) — DB is enough
+  const out = await gh(["api", "-X", "POST", `repos/${repo}/issues/${issue}/comments`, "-f", `body=${body}\n\n${AGENCY_MARKER}`]);
+  try {
+    const j = JSON.parse(out);
+    if (j?.id) setCommentGhId(localId, j.id, j.created_at);
+  } catch { /* the comment is on GitHub; reconcile will link it on the next thread read */ }
 }
 
 export async function listComments(repo: string, issue: number): Promise<Array<{ body: string }>> {
@@ -398,10 +407,15 @@ export async function getThreadFull(repo: string, number: number): Promise<Threa
  * If `asToken` is given (the owner's token), the comment is authored by THAT account — so
  * dashboard replies appear under your own name, not the bot's. Falls back to the bot token.
  */
-export async function commentAsHuman(repo: string, number: number, body: string, asToken?: string): Promise<void> {
+export async function commentAsHuman(repo: string, number: number, body: string, asToken?: string): Promise<{ id?: number; created_at?: string }> {
   const args = ["api", "-X", "POST", `repos/${repo}/issues/${number}/comments`, "-f", `body=${body}`];
-  if (asToken) await ghAs(asToken, args);
-  else await gh(args);
+  const out = asToken ? await ghAs(asToken, args) : await gh(args);
+  try {
+    const j = JSON.parse(out);
+    return { id: j?.id, created_at: j?.created_at };
+  } catch {
+    return {};
+  }
 }
 
 /**
