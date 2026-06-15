@@ -17,6 +17,7 @@ import {
   commentOnIssue,
   addLabel,
   createIssue,
+  AGENCY_MARKER,
   type ActionableOptions,
 } from "./github.js";
 import {
@@ -25,7 +26,7 @@ import {
   listLocalOpenIssues,
   getLocalIssue,
   upsertLocalIssue,
-  addLocalComment,
+  foldInGitHubComment,
   getLocalComments,
 } from "./store.js";
 
@@ -120,8 +121,8 @@ export class LocalTracker implements Tracker {
   }
 
   async postComment(repo: string, number: number, body: string): Promise<void> {
-    addLocalComment({ repo, number, author: "agency", body, source: "agency" });
-    if (number > 0) await commentOnIssue(repo, number, body).catch(() => {}); // push out immediately
+    // commentOnIssue is DB-first (records locally, then mirrors to GitHub when number > 0).
+    await commentOnIssue(repo, number, body).catch(() => {});
   }
 
   async setState(repo: string, number: number, state: string): Promise<void> {
@@ -138,9 +139,11 @@ export class LocalTracker implements Tracker {
   }
 }
 
-/** Inbound sync: fold a GitHub comment into the DB (dedup by GitHub id). Webhook calls this. */
-export function syncInComment(repo: string, number: number, ghId: number, author: string, body: string, isAgency: boolean): void {
-  addLocalComment({ repo, number, author: isAgency ? "agency" : "human", body, source: "github", gh_id: ghId });
+/** Inbound sync: fold a GitHub comment into the DB (dedup by GitHub id, echo-collapse our own posts,
+ *  preserve GitHub's timestamp for correct time-sorting). Webhook calls this. */
+export function syncInComment(repo: string, number: number, ghId: number, author: string, body: string, isAgency: boolean, createdAt?: string): void {
+  const clean = (body || "").replace(AGENCY_MARKER, "").trim();
+  foldInGitHubComment({ repo, number, gh_id: ghId, author, body: clean, created_at: createdAt || "", isAgency });
 }
 
 /** Inbound sync: fold a GitHub issue (opened/edited) into the DB as the adopted record. */

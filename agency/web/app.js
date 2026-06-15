@@ -42,6 +42,7 @@ const ICONS = {
   edit: '<path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>',
   chart: '<path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/>',
   users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+  incoming: '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/>',
 };
 const Icon = ({ name, size = 18, cls }) => html`<svg class=${"lic " + (cls || "")} width=${size} height=${size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{ __html: ICONS[name] || "" }}></svg>`;
 // Spinning loader to show an action is in flight (blocks "did my click register?" ambiguity).
@@ -877,7 +878,7 @@ function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIs
       : thread._err ? html`<div class="muted" style="color:var(--red);display:flex;align-items:center;gap:8px">${thread._err} <button class="btn" onClick=${loadThread}>Retry</button></div>`
       : html`<div>
         ${thread.body ? html`<${Comment} author=${thread.author} createdAt=${thread.createdAt} body=${thread.body} isAgency=${false}/>` : null}
-        ${(thread.comments || []).map((c) => html`<${Comment} key=${c.id || c.createdAt} id=${c.id} author=${c.author} createdAt=${c.createdAt} body=${c.body} isAgency=${c.isAgency} onEdit=${editComment}/>`)}
+        ${(thread.comments || []).map((c) => html`<${Comment} key=${c.localId || c.id || c.createdAt} id=${c.id} author=${c.author} createdAt=${c.createdAt} body=${c.body} isAgency=${c.isAgency} incoming=${c.incoming} onEdit=${editComment}/>`)}
         ${pendingComments.map((p) => html`<${Comment} key=${"skel-" + p.id} author=${p.author} createdAt=${p.createdAt} body=${p.body} isAgency=${false} isSkel=${true}/>`)}
       </div>`}
     ${!chatAtBottom ? html`<div class="scroll-fab-wrap"><button class="iconbtn scroll-fab" title="Scroll to bottom" onClick=${() => { chatRef.current.scrollTop = chatRef.current.scrollHeight; }}><${Icon} name="chevdown" size=${16}/></button></div>` : null}
@@ -924,7 +925,7 @@ function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIs
     </div>
   </div>`;
 }
-function Comment({ id, author, createdAt, body, isAgency, isSkel, onEdit }) {
+function Comment({ id, author, createdAt, body, isAgency, isSkel, incoming, onEdit }) {
   const [editing, setEditing] = useState(false);
   const [editVal, setEditVal] = useState(body || "");
   const [saving, setSaving] = useState(false);
@@ -935,9 +936,9 @@ function Comment({ id, author, createdAt, body, isAgency, isSkel, onEdit }) {
     setSaving(true);
     onEdit(id, editVal.trim()).then(() => { setEditing(false); setSaving(false); }).catch(() => setSaving(false));
   }
-  return html`<div class=${"cmt " + (isAgency ? "ag" : "") + (isSkel ? " skel" : "")}>
+  return html`<div class=${"cmt " + (isAgency ? "ag" : "") + (isSkel ? " skel" : "") + (incoming ? " incoming" : "")}>
     <div class="h">
-      <span>${isAgency ? "🤖 " : ""}${author || ""} · ${isSkel ? "just now" : ago(createdAt)}</span>
+      <span>${incoming ? html`<span class="cmt-in" title="Incoming — posted on GitHub"><${Icon} name="incoming" size=${12}/></span> ` : ""}${isAgency ? "🤖 " : ""}${author || ""} · ${isSkel ? "just now" : ago(createdAt)}</span>
       ${id && onEdit && !isSkel ? html`<button class="iconbtn cmt-edit-btn" title="Edit comment" onClick=${startEdit}><${Icon} name="edit" size=${13}/></button>` : null}
     </div>
     ${editing ? html`

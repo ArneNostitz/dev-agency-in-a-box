@@ -273,6 +273,8 @@ textarea{resize:vertical;min-height:64px}
 .cmt.ag{background:var(--surface-2)}
 .cmt.skel{opacity:.55}
 .cmt .h{font-size:12px;color:var(--ink-2);margin-bottom:4px;display:flex;align-items:center;gap:6px}
+.cmt.incoming{border-left:3px solid var(--accent)}
+.cmt .h .cmt-in{display:inline-flex;align-items:center;color:var(--accent);vertical-align:middle}
 .cmt .h .cmt-edit-btn{margin-left:auto;opacity:0;transition:opacity .15s;padding:2px}
 .cmt:hover .h .cmt-edit-btn{opacity:1}
 .cmt .b{font-size:14px}

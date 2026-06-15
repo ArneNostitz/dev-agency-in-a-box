@@ -1492,6 +1492,92 @@ export function getLocalComments(repo: string, number: number): LocalComment[] {
   } catch { return []; }
 }
 
+// ---- DB-first conversation (the dashboard is the source of truth; GitHub is mirrored) ----
+
+/**
+ * Record a comment authored locally (by the agency or a dashboard reply) the instant it's created,
+ * BEFORE it's mirrored to GitHub — so the dashboard shows it immediately. Returns the row id so the
+ * caller can attach the GitHub id once the mirror succeeds. `source`: "agency" | "human".
+ */
+export function recordOutgoingComment(c: { repo: string; number: number; author: string; body: string; source: string }): number {
+  const d = getDb();
+  if (!d) return 0;
+  try {
+    const r = d.prepare(`INSERT INTO local_comment (repo, number, author, body, source, gh_id, created_at) VALUES (?, ?, ?, ?, ?, NULL, ?)`)
+      .run(c.repo, c.number, c.author, c.body.trim(), c.source, now());
+    return Number(r.lastInsertRowid) || 0;
+  } catch { return 0; }
+}
+
+/** Attach a GitHub comment id (and its authoritative timestamp) to a locally-recorded comment. */
+export function setCommentGhId(id: number, ghId: number, createdAt?: string): void {
+  const d = getDb();
+  if (!d || !id || !ghId) return;
+  try {
+    if (createdAt) d.prepare(`UPDATE local_comment SET gh_id = ?, created_at = ? WHERE id = ?`).run(ghId, createdAt, id);
+    else d.prepare(`UPDATE local_comment SET gh_id = ? WHERE id = ?`).run(ghId, id);
+  } catch { /* best effort */ }
+}
+
+/**
+ * Fold a comment observed on GitHub into the DB. Deduped by GitHub id; if it's the echo of a comment
+ * we just posted locally (same body, gh_id not yet linked), it adopts that row instead of inserting a
+ * duplicate. `body` must already have the agency marker stripped. New external comments are stored
+ * with source "github" so the UI can flag them as incoming.
+ */
+export function foldInGitHubComment(c: { repo: string; number: number; gh_id: number; author: string; body: string; created_at: string; isAgency: boolean }): void {
+  const d = getDb();
+  if (!d || !c.gh_id) return;
+  const body = (c.body || "").trim();
+  try {
+    if (d.prepare(`SELECT 1 FROM local_comment WHERE repo = ? AND number = ? AND gh_id = ?`).get(c.repo, c.number, c.gh_id)) return;
+    const echo = d.prepare(`SELECT id FROM local_comment WHERE repo = ? AND number = ? AND gh_id IS NULL AND body = ? ORDER BY id LIMIT 1`).get(c.repo, c.number, body) as { id?: number } | undefined;
+    if (echo?.id) {
+      d.prepare(`UPDATE local_comment SET gh_id = ?, created_at = ? WHERE id = ?`).run(c.gh_id, c.created_at || now(), echo.id);
+      return;
+    }
+    d.prepare(`INSERT INTO local_comment (repo, number, author, body, source, gh_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run(c.repo, c.number, c.author || "?", body, c.isAgency ? "agency" : "github", c.gh_id, c.created_at || now());
+  } catch { /* best effort */ }
+}
+
+/** Update a comment body by its GitHub id (after an edit). */
+export function updateCommentBody(ghId: number, body: string): void {
+  const d = getDb();
+  if (!d || !ghId) return;
+  try { d.prepare(`UPDATE local_comment SET body = ? WHERE gh_id = ?`).run(body.trim(), ghId); } catch { /* best effort */ }
+}
+
+export interface ConversationComment { id: number; localId: number; author: string; body: string; createdAt: string; isAgency: boolean; incoming: boolean }
+
+/** The conversation for an issue, sorted by time (then insertion order) — the dashboard's truth. */
+export function getConversation(repo: string, number: number): ConversationComment[] {
+  const d = getDb();
+  if (!d) return [];
+  try {
+    const rows = d.prepare(`SELECT id, author, body, source, gh_id, created_at FROM local_comment WHERE repo = ? AND number = ? ORDER BY created_at, id`).all(repo, number) as Array<{ id: number; author: string; body: string; source: string; gh_id: number | null; created_at: string }>;
+    return rows.map((r) => ({
+      id: r.gh_id ?? 0,
+      localId: r.id,
+      author: r.author || "?",
+      body: r.body || "",
+      createdAt: r.created_at || "",
+      isAgency: r.source === "agency",
+      incoming: r.source === "github",
+    }));
+  } catch { return []; }
+}
+
+/** How many cached comments we already have for an issue (decides sync vs. background reconcile). */
+export function conversationCount(repo: string, number: number): number {
+  const d = getDb();
+  if (!d) return 0;
+  try {
+    const r = d.prepare(`SELECT COUNT(*) AS n FROM local_comment WHERE repo = ? AND number = ?`).get(repo, number) as { n: number } | undefined;
+    return r?.n ?? 0;
+  } catch { return 0; }
+}
+
 /** Lessons not yet folded into the playbooks (drives the self-improvement PR). */
 export function unprocessedLessons(): LessonRow[] {
   const d = getDb();
