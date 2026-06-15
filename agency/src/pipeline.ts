@@ -22,7 +22,7 @@ import {
   commentOnPr,
   upsertTrackerComment,
   mergeBaseInto,
-  prMergeStatus,
+  branchContainsBase,
   localHeadSha,
   workdirDirty,
   AWAITING_LABEL,
@@ -672,9 +672,11 @@ export async function runReviewFix(repo: string, issue: Issue, workdir: string, 
 
     // Commit the merge (if not already) and push it. This is the step the loop was missing.
     await ensureBranchPushed(workdir, branch);
-    const after = await prMergeStatus(repo, branch).catch(() => null);
-    if (after?.mergeable === "conflict") {
-      await conflictUnresolved(repo, issue, branch, "The merge conflict with `main` is still unresolved after this pass, so the PR can't merge yet.", m.files);
+    // Verify LOCALLY that the branch now contains the latest main (deterministic). GitHub's mergeable
+    // flag is stale for several seconds after a push, which used to give a false "still unresolved".
+    const contained = await branchContainsBase(workdir, "main");
+    if (!contained) {
+      await conflictUnresolved(repo, issue, branch, "The merge with `main` didn't fully land (main may have moved again during the run), so the PR isn't mergeable yet.", m.files);
       return; // STOP — no automatic retry, no token bleed
     }
 

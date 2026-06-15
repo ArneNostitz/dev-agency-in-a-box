@@ -534,14 +534,17 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               conflict = { files: stored.files };
             } else {
               const files = await conflictFiles(repo, branch, "main").catch(() => []);
-              recordConflict(repo, number, sha, files);
+              const firstTime = !stored; // only announce a conflict ONCE — each Fix attempt changes the
+              recordConflict(repo, number, sha, files); // branch SHA, which must NOT re-spam the thread.
               conflict = { files };
-              const list = files.length ? files.map((f) => `- \`${f}\``).join("\n") : "_(couldn't list the exact files)_";
-              await commentOnIssue(
-                repo,
-                number,
-                `🔀 **Merge conflicts with \`main\`** — this PR can't merge until they're resolved.\n\nConflicting file${files.length === 1 ? "" : "s"}:\n${list}\n\nPress **Fix merge conflicts** on the card to have the agency resolve them automatically.`,
-              ).catch(() => {});
+              if (firstTime) {
+                const list = files.length ? files.map((f) => `- \`${f}\``).join("\n") : "_(GitHub doesn't expose the file list; open the PR to see them)_";
+                await commentOnIssue(
+                  repo,
+                  number,
+                  `🔀 **Merge conflicts with \`main\`** — this PR can't merge until they're resolved.\n\nConflicting file${files.length === 1 ? "" : "s"}:\n${list}\n\nPress **Fix merge conflicts** on the card to have the agency resolve them automatically.`,
+                ).catch(() => {});
+              }
             }
           } else if (repo && number) {
             clearConflict(repo, number); // mergeable again — drop the stale conflict box

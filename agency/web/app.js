@@ -334,9 +334,11 @@ function SecretBanner({ h, onFix }) {
 
 function TopBar({ working, scanning, env, theme, setTheme, onSettings, onUsage, onAgents, repos, repoFilter, setRepoFilter, reload, auto, autoRepos, setAuto }) {
   const [refreshing, setRefreshing] = useState(false);
-  useEffect(() => { if (!refreshing) return; const t = setTimeout(() => setRefreshing(false), 7000); return () => clearTimeout(t); }, [refreshing]);
-  const reloadBusy = refreshing || scanning;
-  function reloadGithub() { setRefreshing(true); api("/refresh", {}).then(() => toast("Reloading from GitHub…")).catch(() => toast("Couldn’t reach the server", "error")); setTimeout(reload, 1500); setTimeout(reload, 4000); }
+  // Spin only while this manual refresh is in flight, and ALWAYS time out — never tie the spinner to
+  // the global scan flag (a long/continuous background scan would make it spin forever).
+  useEffect(() => { if (!refreshing) return; const t = setTimeout(() => setRefreshing(false), 8000); return () => clearTimeout(t); }, [refreshing]);
+  const reloadBusy = refreshing;
+  function reloadGithub() { if (refreshing) return; setRefreshing(true); api("/refresh", {}).then(() => toast("Reloading from GitHub…")).catch(() => toast("Couldn’t reach the server", "error")); setTimeout(reload, 1500); setTimeout(reload, 4000); }
   return html`<div class="topbar">
     <div class="brand"><${Icon} name="crown" size=${18}/> <span class="brandname">Dev Agency in a Box</span> ${env === "development" ? html`<span class="envbadge">DEV</span>` : null} ${working ? html`<span class="dot"></span>` : null}</div>
     <div class="spacer"></div>
