@@ -41,6 +41,8 @@ import {
   mergePrForBranch,
   closeIssue,
   mentionsHandle,
+  canTrigger,
+  issueAuthorAssoc,
   AWAITING_LABELS,
   AWAITING_LABEL,
   type Issue,
@@ -820,7 +822,7 @@ async function scanRepo(cfg: Config, repo: string): Promise<void> {
   // Pass 1 — issues (any state). One rule: once the agency has touched a thread, a new comment
   // re-engages it (open or closed, no re-tag); untouched issues need the configured trigger.
   const LIVE_LABELS = [IN_PROGRESS, READY, NEEDS_ATTENTION, ...AWAITING_LABELS];
-  const threads = await listRecentThreads(repo);
+  const threads = await listRecentThreads(repo, 100);
   const threadMap = new Map(threads.map((t) => [t.number, t]));
   for (const t of threads) {
     if (t.labels.includes(cfg.ignoreLabel)) continue;
@@ -842,12 +844,14 @@ async function scanRepo(cfg: Config, repo: string): Promise<void> {
 
     const ownedByLabel = t.labels.some((l) => l.startsWith("agency:"));
     const awaiting = t.labels.some((l) => AWAITING_LABELS.includes(l));
-    const triggerMatch =
-      cfg.triggerMode === "label"
-        ? t.labels.includes(cfg.queueLabel)
-        : cfg.triggerMode === "any"
-          ? !t.closed
-          : mentionsHandle(`${t.title}\n${t.body}`, cfg.handles);
+    // The dashboard is the control plane. The ONLY thing that auto-starts a fresh run from GitHub is
+    // an @mention by a repo member (owner/member/collaborator) — labels never trigger anymore; they
+    // are an informative mirror. Untagged issues (and mentions from non-members) just surface as
+    // Planned and are started from the dashboard. The author check is one API call, only on a match.
+    let triggerMatch = false;
+    if (!t.closed && mentionsHandle(`${t.title}\n${t.body}`, cfg.handles)) {
+      triggerMatch = canTrigger(await issueAuthorAssoc(repo, t.number));
+    }
 
     // Only inspect comments when it can matter (owned, has comments, or paused).
     let owned = ownedByLabel;
@@ -858,7 +862,8 @@ async function scanRepo(cfg: Config, repo: string): Promise<void> {
       const sig = await threadSignals(repo, t.number);
       owned = owned || sig.agencyEverCommented;
       lastCommentId = sig.lastCommentId;
-      newHumanComment = sig.lastIsHuman && sig.lastCommentId > getThreadCursor(repo, t.number);
+      // Re-engage on a new comment only when it's from a repo member (owner/member/collaborator).
+      newHumanComment = sig.lastIsHuman && sig.lastCommentId > getThreadCursor(repo, t.number) && canTrigger(sig.lastAuthorAssoc);
       if (awaiting && !newHumanComment) approvedReaction = await approvedByReaction(repo, t.number);
     }
 
@@ -882,9 +887,9 @@ async function scanRepo(cfg: Config, repo: string): Promise<void> {
       triggerMatch,
     });
     if (action === "skip") {
-      // Surface untouched, still-open issues on the board as "Planned" (a play button starts them);
-      // never auto-start them. Touched/owned threads keep their real state.
-      if (!owned && !t.closed && recentEnough(t.updatedAt)) {
+      // Surface EVERY untouched, still-open issue on the board as "Planned" (a play button starts
+      // them) — tagged or not. GitHub is just an input here; nothing auto-starts.
+      if (!owned && !t.closed) {
         recordIssueState(repo, t.number, { title: t.title, state: "planned" });
       }
       continue;

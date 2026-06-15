@@ -752,7 +752,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
     }
 
     // Dashboard actions (auth required), not GitHub webhooks.
-    if (["/archive", "/comment", "/comment-edit", "/run-checks", "/merge", "/close", "/create-pr", "/delete", "/resume", "/stop", "/fix", "/auto", "/start", "/new-issue", "/approve", "/audit", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude", "/model-override", "/agent-def-save", "/agent-def-delete", "/skill-save", "/skill-delete", "/hook-save", "/hook-delete", "/analyzer-run"].includes(path)) {
+    if (["/archive", "/comment", "/comment-edit", "/run-checks", "/merge", "/close", "/close-not-planned", "/create-pr", "/delete", "/resume", "/stop", "/fix", "/auto", "/start", "/new-issue", "/approve", "/audit", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude", "/model-override", "/agent-def-save", "/agent-def-delete", "/skill-save", "/skill-delete", "/hook-save", "/hook-delete", "/analyzer-run"].includes(path)) {
       const actor = userFromReq(req);
       if (!actor) return void res.writeHead(401, { "content-type": "application/json" }).end('{"error":"auth required"}');
       void readBody(req).then(async (body) => {
@@ -1010,6 +1010,15 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           } catch (err) {
             return res.writeHead(500).end(JSON.stringify({ error: (err as Error).message }));
           }
+        }
+        if (path === "/close-not-planned") {
+          // Dismiss a Planned issue we won't do: close it on GitHub as "not planned" (informative)
+          // and hide it from the board. No PR/merge logic — it was never started.
+          if (!repo || !number) return res.writeHead(400).end("{}");
+          await closeIssue(repo, number, "🗂 Closed as **not planned** from the dashboard.", "not planned").catch(() => {});
+          recordIssueState(repo, number, { state: "closed" });
+          archiveIssue(repo, number);
+          return ok();
         }
         if (path === "/delete") {
           // Try a real delete (owner-only); otherwise close + hide from the board.

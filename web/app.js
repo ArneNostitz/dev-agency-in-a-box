@@ -232,6 +232,7 @@ function App() {
     fix(repo, number, model) { return guard("fix", repo, number, () => { override(repo, number, { state: "agency:in-progress", active: true }); return api("/fix", { repo, number, ...(model ? { model } : {}) }).then(() => toast("Fixing the review" + (model ? ` with model ${model.model}` : "") + "…")).catch(() => toast("Couldn’t fix", "error")).then(load); }); },
     merge(repo, number) { return guard("merge", repo, number, () => api("/merge", { repo, number }).then((r) => { toast("Merged"); load(); return r; }).catch(() => toast("Couldn’t merge — conflicts?", "error"))); },
     close(repo, number) { return guard("close", repo, number, () => { override(repo, number, { state: "merged" }); return api("/close", { repo, number }).then(() => { toast("Closed"); setOpenKey(null); }).catch((e) => toast((e && e.message) || "Couldn’t close", "error")).then(load); }); },
+    closeNotPlanned(repo, number) { return guard("close-not-planned", repo, number, () => { override(repo, number, { state: "done" }); return api("/close-not-planned", { repo, number }).then(() => { toast("Closed as not planned"); setOpenKey(null); }).catch((e) => toast((e && e.message) || "Couldn’t close", "error")).then(load); }); },
     createPr(repo, number) { return guard("createPr", repo, number, () => { override(repo, number, { state: "agency:ready" }); return api("/create-pr", { repo, number }).then((r) => toast(r && r.url ? "PR opened" : "PR opened")).catch((e) => toast((e && e.message) || "Couldn’t open PR", "error")).then(load); }); },
     del(repo, number) { return guard("del", repo, number, () => { override(repo, number, { state: "done" }); return api("/delete", { repo, number }).then(() => { toast("Deleted"); setOpenKey(null); }).catch(() => toast("Couldn’t delete", "error")).then(load); }); },
     runChecks(repo, number, title) { return guard("runChecks", repo, number, () => api("/run-checks", { repo, number, title }).then(() => toast("Running checks…")).catch(() => toast("Couldn’t run checks", "error"))); },
@@ -574,6 +575,7 @@ function Card({ i, multi, onOpen, act, data }) {
       <span class="spacer" style="margin-left:auto"></span>
       ${tmp ? null : quick ? html`
         <div style="display:inline-flex;gap:4px;align-items:center" onClick=${(e) => e.stopPropagation()}>
+          ${i.state === "planned" ? html`<button class="cardbtn" title="Close as not planned" disabled=${act.isBusy("close-not-planned", i.repo, i.number)} onClick=${(e) => { e.stopPropagation(); act.closeNotPlanned(i.repo, i.number); }}>${act.isBusy("close-not-planned", i.repo, i.number) ? html`<${Spinner} size=${13}/>` : html`<${Icon} name="x" size=${13}/>`} not planned</button>` : null}
           ${modelOpts.length && quick.action !== "stop" ? html`
             <select class="modelsel sm" value=${modelSel} onChange=${selectModel}>
               <option value="">Default model</option>

@@ -215,14 +215,29 @@ export interface ThreadInspect {
   lastCommentId: number;
   /** body of the latest comment if it's a human's, else "". */
   lastHumanBody: string;
+  /** GitHub author_association of the latest comment (OWNER/MEMBER/COLLABORATOR/…). */
+  lastAuthorAssoc: string;
+}
+
+/** GitHub author_association values that may DRIVE the agency (a workspace member of the repo). */
+const TRIGGER_ASSOC = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
+/** True if an issue/comment author (by their GitHub author_association) is allowed to trigger runs. */
+export function canTrigger(assoc: string): boolean {
+  return TRIGGER_ASSOC.has((assoc || "").trim().toUpperCase());
+}
+
+/** The opening author's association for an issue — used to gate auto-start to repo members. */
+export async function issueAuthorAssoc(repo: string, number: number): Promise<string> {
+  const out = await gh(["api", `repos/${repo}/issues/${number}`, "--jq", ".author_association"]).catch(() => "");
+  return (out || "").trim();
 }
 
 /** One API call that tells us everything the router needs about a thread's comments. */
 export async function threadSignals(repo: string, number: number): Promise<ThreadInspect> {
   const out = await gh([
-    "api", `repos/${repo}/issues/${number}/comments`, "--paginate", "--jq", "[.[]|{id,body}]",
+    "api", `repos/${repo}/issues/${number}/comments`, "--paginate", "--jq", "[.[]|{id,body,assoc:.author_association}]",
   ]).catch(() => "[]");
-  let arr: Array<{ id: number; body: string }> = [];
+  let arr: Array<{ id: number; body: string; assoc?: string }> = [];
   try {
     arr = JSON.parse(out);
   } catch {
@@ -236,6 +251,7 @@ export async function threadSignals(repo: string, number: number): Promise<Threa
     lastIsHuman,
     lastCommentId: last?.id ?? 0,
     lastHumanBody: lastIsHuman ? last.body : "",
+    lastAuthorAssoc: last?.assoc ?? "",
   };
 }
 
@@ -755,9 +771,11 @@ export async function commentOnPr(repo: string, pr: number, body: string): Promi
   await gh(["pr", "comment", String(pr), "--repo", repo, "--body", `${body}\n\n${AGENCY_MARKER}`]).catch(() => {});
 }
 
-export async function closeIssue(repo: string, issue: number, comment?: string): Promise<void> {
+export async function closeIssue(repo: string, issue: number, comment?: string, reason?: "completed" | "not planned"): Promise<void> {
   if (comment) await commentOnIssue(repo, issue, comment);
-  await gh(["issue", "close", String(issue), "--repo", repo]).catch(() => {});
+  const args = ["issue", "close", String(issue), "--repo", repo];
+  if (reason) args.push("--reason", reason);
+  await gh(args).catch(() => {});
 }
 
 /** Fetch a single issue (any state) as an Issue, or null if it can't be read. */
