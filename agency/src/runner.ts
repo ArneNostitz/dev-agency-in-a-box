@@ -826,6 +826,9 @@ async function scanRepo(cfg: Config, repo: string): Promise<void> {
   const threadMap = new Map(threads.map((t) => [t.number, t]));
   for (const t of threads) {
     if (t.labels.includes(cfg.ignoreLabel)) continue;
+    // Keep the DB's title fresh for every open issue (cheap title-only upsert) so cards never show
+    // blank/stale — this is what a manual "reload from GitHub" relies on to repopulate the board.
+    if (!t.closed && t.title) recordIssueState(repo, t.number, { title: t.title });
     if (t.labels.includes("agency:planned")) continue; // parked in Planned — waits for the play button
 
     // Backstop for PRs merged/closed on GitHub directly: a closed thread that still carries a

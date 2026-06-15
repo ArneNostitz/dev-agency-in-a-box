@@ -334,6 +334,7 @@ function TopBar({ working, env, theme, setTheme, onSettings, onUsage, onAgents, 
     <div class="spacer"></div>
     <${RepoDropdown} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${reload} auto=${auto} autoRepos=${autoRepos} setAuto=${setAuto}/>
     <div class="spacer"></div>
+    <button class="iconbtn" aria-label="Reload from GitHub" title="Reload issues from GitHub" onClick=${() => { api("/refresh", {}).then(() => toast("Reloading from GitHub…")).catch(() => toast("Couldn’t reach the server", "error")); setTimeout(reload, 2500); setTimeout(reload, 6000); }}><${Icon} name="refresh"/></button>
     <button class="iconbtn" aria-label="Agents" title="Agents editor" onClick=${onAgents}><${Icon} name="users"/></button>
     <button class="iconbtn" aria-label="Token usage" title="Token usage statistics" onClick=${onUsage}><${Icon} name="chart"/></button>
     <button class="iconbtn" aria-label="Toggle theme" onClick=${() => setTheme(theme === "dark" ? "light" : "dark")}><${Icon} name=${theme === "dark" ? "sun" : "moon"}/></button>

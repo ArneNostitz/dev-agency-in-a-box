@@ -753,7 +753,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
     }
 
     // Dashboard actions (auth required), not GitHub webhooks.
-    if (["/archive", "/comment", "/comment-edit", "/run-checks", "/merge", "/close", "/close-not-planned", "/create-pr", "/delete", "/resume", "/stop", "/fix", "/auto", "/start", "/new-issue", "/approve", "/audit", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude", "/model-override", "/agent-def-save", "/agent-def-delete", "/skill-save", "/skill-delete", "/hook-save", "/hook-delete", "/analyzer-run"].includes(path)) {
+    if (["/archive", "/comment", "/comment-edit", "/run-checks", "/merge", "/close", "/close-not-planned", "/create-pr", "/delete", "/resume", "/stop", "/fix", "/auto", "/start", "/new-issue", "/approve", "/audit", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude", "/model-override", "/agent-def-save", "/agent-def-delete", "/skill-save", "/skill-delete", "/hook-save", "/hook-delete", "/analyzer-run", "/refresh"].includes(path)) {
       const actor = userFromReq(req);
       if (!actor) return void res.writeHead(401, { "content-type": "application/json" }).end('{"error":"auth required"}');
       void readBody(req).then(async (body) => {
@@ -1012,6 +1012,13 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           } catch (err) {
             return res.writeHead(500).end(JSON.stringify({ error: (err as Error).message }));
           }
+        }
+        if (path === "/refresh") {
+          // Manual "reload from GitHub": re-scan the watched repos so every open issue's title/state
+          // is re-pulled into the DB and any new issues are ingested. Returns immediately; the scan
+          // updates the DB in the background and the board picks it up on its next poll.
+          void trigger("dashboard-refresh");
+          return ok();
         }
         if (path === "/close-not-planned") {
           // Dismiss a Planned issue we won't do: close it on GitHub as "not planned" (informative)
