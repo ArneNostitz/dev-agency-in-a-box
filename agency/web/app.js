@@ -48,6 +48,16 @@ const Icon = ({ name, size = 18, cls }) => html`<svg class=${"lic " + (cls || ""
 // Spinning loader to show an action is in flight (blocks "did my click register?" ambiguity).
 const Spinner = ({ size = 18 }) => html`<svg class="lic spin" width=${size} height=${size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9" opacity="0.25"/><path d="M21 12a9 9 0 0 0-9-9"/></svg>`;
 
+// ---------- agent persona avatars ----------
+// One avatar file per role (a mixed-gender team). Swap a value to change who represents a role.
+const ROLE_AVATAR = { planner: "planner-f", architect: "architect", developer: "developer-f", reviewer: "reviewer", tester: "tester", librarian: "librarian-f", auditor: "auditor" };
+const ROLE_WORDS = ["planner", "architect", "developer", "reviewer", "tester", "librarian", "auditor"];
+function avatarFile(role) { return "/web/avatars/" + (ROLE_AVATAR[role] || "agent") + ".svg"; }
+// The author role of an agency comment, read from its leading badge ("🧠 **Planner**", "role: **developer**", …).
+function roleFromComment(body) { const head = (body || "").slice(0, 90).toLowerCase(); for (const r of ROLE_WORDS) if (head.includes(r)) return r; return null; }
+// Circular head-crop of the (full-body) persona SVG.
+const Avatar = ({ role, size = 24 }) => html`<span class="avi" style=${"width:" + size + "px;height:" + size + "px"} title=${(role || "agent") + " agent"}><img src=${avatarFile(role)} alt=${(role || "agent") + " avatar"} loading="lazy"/></span>`;
+
 // ---------- helpers ----------
 const ROLE_ICON = { planner: "layers", developer: "laptop", reviewer: "flask", tester: "flask", architect: "settings", librarian: "history" };
 function ago(iso) { if (!iso) return ""; let s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000); if (s < 60) return Math.floor(s) + "s"; if (s < 3600) return Math.floor(s / 60) + "m"; if (s < 86400) return Math.floor(s / 3600) + "h"; return Math.floor(s / 86400) + "d"; }
@@ -560,8 +570,9 @@ function Card({ i, multi, onOpen, act, data }) {
     else quick.fn();
   };
 
+  const engaged = !tmp && (i.active || ["agency:in-progress", "agency:rate-limited", "agency:awaiting-answer", "agency:awaiting-approval", "agency:needs-attention"].includes(i.state) || i.review === "changes");
   return html`<div class=${"card" + (tmp ? " busy" : "") + (i.active ? " active-now" : "")} title=${usageTitle(i.usage)} onClick=${tmp ? null : () => onOpen(i)}>
-    <div class="t">${(i.active || tmp) ? html`<${Spinner} size=${13}/> ` : null}${i.title || "#" + i.number}</div>
+    <div class="t">${engaged && i.role ? html`<${Avatar} role=${i.role} size=${20}/> ` : null}${(i.active || tmp) ? html`<${Spinner} size=${13}/> ` : null}${i.title || "#" + i.number}</div>
     <div class="meta">
       ${tmp
         ? html`<span class="statuschip s-working"><${Spinner} size=${12}/> ${i.state === "agency:in-progress" ? "creating & starting…" : "creating…"}</span>`
@@ -940,7 +951,8 @@ function Comment({ id, author, createdAt, body, isAgency, isSkel, incoming, onEd
   }
   return html`<div class=${"cmt " + (isAgency ? "ag" : "") + (isSkel ? " skel" : "") + (incoming ? " incoming" : "")}>
     <div class="h">
-      <span>${incoming ? html`<span class="cmt-in" title="Incoming — posted on GitHub"><${Icon} name="incoming" size=${12}/></span> ` : ""}${isAgency ? "🤖 " : ""}${author || ""} · ${isSkel ? "just now" : ago(createdAt)}</span>
+      ${isAgency ? html`<${Avatar} role=${roleFromComment(body)} size=${26}/>` : null}
+      <span>${incoming ? html`<span class="cmt-in" title="Incoming — posted on GitHub"><${Icon} name="incoming" size=${12}/></span> ` : ""}${author || ""} · ${isSkel ? "just now" : ago(createdAt)}</span>
       ${id && onEdit && !isSkel ? html`<button class="iconbtn cmt-edit-btn" title="Edit comment" onClick=${startEdit}><${Icon} name="edit" size=${13}/></button>` : null}
     </div>
     ${editing ? html`
