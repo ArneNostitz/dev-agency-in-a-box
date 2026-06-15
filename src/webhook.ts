@@ -353,6 +353,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               invites: sessionUser && sessionUser.role === "admin" ? listInvites() : [],
               webhookSecretSet: sessionUser && sessionUser.role === "admin" ? Boolean(getSecretSetting("github_webhook_secret") || process.env.GITHUB_WEBHOOK_SECRET) : false,
               repos: effectiveRepos(cfg),
+              scanning: running, // a GitHub scan/refresh is in progress (drives the reload spinner)
               auto: { resume: getAutoRaw("resume"), merge: getAutoRaw("merge") },
               autoRepos: Object.fromEntries(
                 effectiveRepos(cfg).map((r) => [r, { resume: getAutoRaw("resume", r), merge: getAutoRaw("merge", r) }]),
@@ -639,7 +640,9 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         };
         // First time we've ever seen this issue (nothing cached) → reconcile synchronously so the
         // panel isn't empty. Otherwise serve the DB immediately and refresh in the background.
-        const cold = conversationCount(repo, number) === 0 && !getSetting(headKey);
+        // No cached comments yet → reconcile synchronously so an issue that's "full on GitHub" never
+        // shows empty (even if a prior head fetch cached a head but the comments fetch came up empty).
+        const cold = conversationCount(repo, number) === 0;
         if (cold) {
           reconcile().then(respond).catch(respond);
         } else {
@@ -753,7 +756,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
     }
 
     // Dashboard actions (auth required), not GitHub webhooks.
-    if (["/archive", "/comment", "/comment-edit", "/run-checks", "/merge", "/close", "/close-not-planned", "/create-pr", "/delete", "/resume", "/stop", "/fix", "/auto", "/start", "/new-issue", "/approve", "/audit", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude", "/model-override", "/agent-def-save", "/agent-def-delete", "/skill-save", "/skill-delete", "/hook-save", "/hook-delete", "/analyzer-run", "/refresh"].includes(path)) {
+    if (["/archive", "/comment", "/comment-edit", "/run-checks", "/merge", "/close", "/close-not-planned", "/create-pr", "/delete", "/resume", "/stop", "/fix", "/auto", "/start", "/new-issue", "/approve", "/audit", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude", "/model-override", "/agent-def-save", "/agent-def-delete", "/skill-save", "/skill-delete", "/hook-save", "/hook-delete", "/analyzer-run", "/refresh", "/refresh-issue", "/cancel"].includes(path)) {
       const actor = userFromReq(req);
       if (!actor) return void res.writeHead(401, { "content-type": "application/json" }).end('{"error":"auth required"}');
       void readBody(req).then(async (body) => {
@@ -1018,6 +1021,30 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           // is re-pulled into the DB and any new issues are ingested. Returns immediately; the scan
           // updates the DB in the background and the board picks it up on its next poll.
           void trigger("dashboard-refresh");
+          return ok();
+        }
+        if (path === "/refresh-issue") {
+          // Re-pull ONE issue from GitHub: fold its whole conversation into the DB + refresh head/title.
+          // Awaited so the dashboard's follow-up thread reload sees the freshly-synced comments.
+          if (!repo || !number) return res.writeHead(400).end("{}");
+          try {
+            const t = await getThreadFull(repo, number);
+            for (const c of t.comments) {
+              if (c.id) foldInGitHubComment({ repo, number, gh_id: c.id, author: c.author, body: c.body, created_at: c.createdAt, isAgency: c.isAgency });
+            }
+            setSetting(`head:${repo}#${number}`, JSON.stringify({ title: t.title, body: t.body, author: t.author, createdAt: t.createdAt, state: t.state }));
+            if (t.title) recordIssueState(repo, number, { title: t.title });
+            return ok();
+          } catch (err) {
+            return res.writeHead(502).end(JSON.stringify({ error: `Couldn't reach GitHub: ${(err as Error).message.slice(0, 160)}` }));
+          }
+        }
+        if (path === "/cancel") {
+          // Reset to Planned regardless of state — even with a PR / work done. Aborts any run, parks
+          // it in Planned (DB is the source of truth; the branch/PR stays on GitHub untouched).
+          if (!repo || !number) return res.writeHead(400).end("{}");
+          if (stop) await stop(repo, number).catch(() => {});
+          recordIssueState(repo, number, { state: "planned" });
           return ok();
         }
         if (path === "/close-not-planned") {

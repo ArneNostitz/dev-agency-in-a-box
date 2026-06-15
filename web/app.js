@@ -43,6 +43,7 @@ const ICONS = {
   chart: '<path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/>',
   users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
   incoming: '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/>',
+  dots: '<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>',
 };
 const Icon = ({ name, size = 18, cls }) => html`<svg class=${"lic " + (cls || "")} width=${size} height=${size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{ __html: ICONS[name] || "" }}></svg>`;
 // Spinning loader to show an action is in flight (blocks "did my click register?" ambiguity).
@@ -244,6 +245,8 @@ function App() {
     approve(repo, number, model) { return guard("approve", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/approve", { repo, number, ...(model ? { model } : {}) }).then(() => toast("Approved" + (model ? ` with model ${model.model}` : "") + " — building")).catch(() => toast("Couldn’t approve", "error")).then(load); }); },
     resume(repo, number, model) { return guard("resume", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/resume", { repo, number, ...(model ? { model } : {}) }).then(() => toast("Resuming" + (model ? ` with model ${model.model}` : "") + "…")).catch(() => toast("Couldn’t resume", "error")).then(load); }); },
     stop(repo, number) { return guard("stop", repo, number, () => { override(repo, number, { state: "planned" }); return api("/stop", { repo, number }).then(() => toast("Stopped — moved to Planned")).catch(() => toast("Couldn’t stop", "error")).then(load); }); },
+    cancel(repo, number) { return guard("cancel", repo, number, () => { override(repo, number, { state: "planned", active: false }); return api("/cancel", { repo, number }).then(() => toast("Reset to Planned")).catch((e) => toast((e && e.message) || "Couldn’t cancel", "error")).then(load); }); },
+    updateIssue(repo, number) { return guard("update", repo, number, () => api("/refresh-issue", { repo, number }).then(() => toast("Updated from GitHub")).catch((e) => toast((e && e.message) || "Couldn’t update", "error")).then(load)); },
     fix(repo, number, model) { return guard("fix", repo, number, () => { override(repo, number, { state: "agency:in-progress", active: true }); return api("/fix", { repo, number, ...(model ? { model } : {}) }).then(() => toast("Fixing the review" + (model ? ` with model ${model.model}` : "") + "…")).catch(() => toast("Couldn’t fix", "error")).then(load); }); },
     merge(repo, number) { return guard("merge", repo, number, () => api("/merge", { repo, number }).then((r) => { toast("Merged"); load(); return r; }).catch(() => toast("Couldn’t merge — conflicts?", "error"))); },
     close(repo, number) { return guard("close", repo, number, () => { override(repo, number, { state: "merged" }); return api("/close", { repo, number }).then(() => { toast("Closed"); setOpenKey(null); }).catch((e) => toast((e && e.message) || "Couldn’t close", "error")).then(load); }); },
@@ -297,7 +300,7 @@ function App() {
 
   return html`
     <div class="app">
-      <${TopBar} working=${working} env=${data.env} theme=${theme} setTheme=${setThemeP} onSettings=${() => setSheet("settings")} onUsage=${() => setSheet("usage")} onAgents=${() => setSheet("agents")} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${load} auto=${data.auto || {}} autoRepos=${data.autoRepos || {}} setAuto=${act.setAuto}/>
+      <${TopBar} working=${working} scanning=${data.scanning} env=${data.env} theme=${theme} setTheme=${setThemeP} onSettings=${() => setSheet("settings")} onUsage=${() => setSheet("usage")} onAgents=${() => setSheet("agents")} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${load} auto=${data.auto || {}} autoRepos=${data.autoRepos || {}} setAuto=${act.setAuto}/>
       ${data.secretsHealth ? html`<${SecretBanner} h=${data.secretsHealth} onFix=${() => setSheet("settings")}/>` : null}
       <${StatusLine} working=${working} session=${data.session} spend=${data.spendToday} analyzer=${data.analyzer} reload=${load}/>
       <div class="content">
@@ -329,13 +332,17 @@ function SecretBanner({ h, onFix }) {
   return html`<div class="secbanner"><b>⚠ Credentials need attention.</b> ${msgs.map((m, i) => html`<div key=${i} style="margin-top:3px">${m}</div>`)} <button class="btn ghost" style="margin-top:7px" onClick=${onFix}>Open Settings</button></div>`;
 }
 
-function TopBar({ working, env, theme, setTheme, onSettings, onUsage, onAgents, repos, repoFilter, setRepoFilter, reload, auto, autoRepos, setAuto }) {
+function TopBar({ working, scanning, env, theme, setTheme, onSettings, onUsage, onAgents, repos, repoFilter, setRepoFilter, reload, auto, autoRepos, setAuto }) {
+  const [refreshing, setRefreshing] = useState(false);
+  useEffect(() => { if (!refreshing) return; const t = setTimeout(() => setRefreshing(false), 7000); return () => clearTimeout(t); }, [refreshing]);
+  const reloadBusy = refreshing || scanning;
+  function reloadGithub() { setRefreshing(true); api("/refresh", {}).then(() => toast("Reloading from GitHub…")).catch(() => toast("Couldn’t reach the server", "error")); setTimeout(reload, 1500); setTimeout(reload, 4000); }
   return html`<div class="topbar">
     <div class="brand"><${Icon} name="crown" size=${18}/> <span class="brandname">Dev Agency in a Box</span> ${env === "development" ? html`<span class="envbadge">DEV</span>` : null} ${working ? html`<span class="dot"></span>` : null}</div>
     <div class="spacer"></div>
     <${RepoDropdown} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${reload} auto=${auto} autoRepos=${autoRepos} setAuto=${setAuto}/>
     <div class="spacer"></div>
-    <button class="iconbtn" aria-label="Reload from GitHub" title="Reload issues from GitHub" onClick=${() => { api("/refresh", {}).then(() => toast("Reloading from GitHub…")).catch(() => toast("Couldn’t reach the server", "error")); setTimeout(reload, 2500); setTimeout(reload, 6000); }}><${Icon} name="refresh"/></button>
+    <button class="iconbtn" aria-label="Reload from GitHub" title=${reloadBusy ? "Reloading from GitHub…" : "Reload issues from GitHub"} disabled=${reloadBusy} onClick=${reloadGithub}>${reloadBusy ? html`<${Spinner} size=${18}/>` : html`<${Icon} name="refresh"/>`}</button>
     <button class="iconbtn" aria-label="Agents" title="Agents editor" onClick=${onAgents}><${Icon} name="users"/></button>
     <button class="iconbtn" aria-label="Token usage" title="Token usage statistics" onClick=${onUsage}><${Icon} name="chart"/></button>
     <button class="iconbtn" aria-label="Toggle theme" onClick=${() => setTheme(theme === "dark" ? "light" : "dark")}><${Icon} name=${theme === "dark" ? "sun" : "moon"}/></button>
@@ -631,6 +638,7 @@ function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIs
   const [atts, setAtts] = useState([]);
   const [busy, setBusy] = useState(false);
   const [armed, setArmed] = useState(""); // two-tap confirm: which destructive action is armed
+  const [moreOpen, setMoreOpen] = useState(false); // toolbar "More" overflow menu
   const [modelOverride, setModelOverride] = useState(
     issue.modelOverride ? issue.modelOverride.providerId + "/" + issue.modelOverride.model : ""
   );
@@ -795,12 +803,15 @@ function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIs
     </button>`;
   };
   const tb = [];
-  tb.push(html`<a class="tbtn" data-tip="Open on GitHub" href=${ghUrl(repo, number)} target="_blank" rel="noopener"><${Icon} name="link"/>${lbl("GitHub")}</a>`);
-  if (issue.pr_url) tb.push(html`<a class="tbtn" data-tip="Open PR" href=${issue.pr_url} target="_blank" rel="noopener"><${Icon} name="pr"/>${lbl("PR")}</a>`);
-  if (issue.previewUrl) tb.push(html`<a class="tbtn primary" data-tip="Open preview" href=${issue.previewUrl} target="_blank" rel="noopener"><${Icon} name="globe"/>${lbl("Preview")}</a>`);
   // A toolbar icon that swaps to a spinner + disables while its action is in flight.
   const bz = (a) => act.isBusy(a, repo, number);
   const tico = (a, name) => bz(a) ? html`<${Spinner} size=${18}/>` : html`<${Icon} name=${name}/>`;
+  // Compact icon-only links (tooltips carry the meaning) so the toolbar stays uncluttered.
+  tb.push(html`<a class="tbtn" data-tip="Open on GitHub" href=${ghUrl(repo, number)} target="_blank" rel="noopener"><${Icon} name="link"/></a>`);
+  if (issue.pr_url) tb.push(html`<a class="tbtn" data-tip="Open PR" href=${issue.pr_url} target="_blank" rel="noopener"><${Icon} name="pr"/></a>`);
+  if (issue.previewUrl) tb.push(html`<a class="tbtn primary" data-tip="Open preview" href=${issue.previewUrl} target="_blank" rel="noopener"><${Icon} name="globe"/></a>`);
+  // Re-pull this single issue (title + whole conversation) from GitHub.
+  tb.push(html`<button class=${"tbtn" + (bz("update") ? " busy" : "")} disabled=${bz("update")} data-tip="Update this issue from GitHub" onClick=${() => act.updateIssue(repo, number).then(loadThread)}>${tico("update", "refresh")}${lbl(bz("update") ? "Updating…" : "Update")}</button>`);
   if (!done) {
     // Decide actions from FACTS, not the (possibly stale) state label:
     //  • running  — something is actually executing right now (live registry), so the only
@@ -826,6 +837,9 @@ function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIs
     const bMerge = (anyway) => { const ma = armed === "merge", mb = bz("merge"); return html`<button class=${"tbtn green" + (ma ? " armed" : "") + (mb ? " busy" : "")} disabled=${mb} data-tip=${ma ? "Tap again to merge" : anyway ? "Merge despite requested changes" : "Merge the PR & close the issue"} onClick=${() => confirmAct("merge", () => act.merge(repo, number).then(onClose))}>${mb ? html`<${Spinner} size=${18}/>` : html`<${Icon} name="merge"/>`}${(isDesktop || ma) ? html`<span class="tlabel">${mb ? "Merging…" : ma ? "Confirm merge" : anyway ? "Merge anyway" : "Merge"}</span>` : null}</button>`; };
     const bClose = (epic) => { const ca = armed === "close", cb = bz("close"); const epicAllDone = issue.epic && issue.epic.done >= issue.epic.total; const clabel = ca ? "Confirm" : cb ? "Closing…" : epic ? (epicAllDone ? "Complete" : "Close epic") : "Close"; return html`<button class=${"tbtn" + (epic ? " green" : "") + (ca ? " armed" : "") + (cb ? " busy" : "")} disabled=${cb} data-tip=${ca ? "Tap again to close" : epic ? "Merge any remaining sub-PRs & close this epic" : "Close this issue (mark it done, no PR)"} onClick=${() => confirmAct("close", () => act.close(repo, number).then(onClose))}>${cb ? html`<${Spinner} size=${18}/>` : html`<${Icon} name="check"/>`}${(isDesktop || ca) ? html`<span class="tlabel">${clabel}</span>` : null}</button>`; };
 
+    // Cancel → reset to Planned even when there's a PR / work in flight (the branch/PR stays on GitHub).
+    const bCancel = () => html`<button class=${"tbtn warn" + (bz("cancel") ? " busy" : "")} disabled=${bz("cancel")} data-tip="Reset to Planned — discards the agency state but keeps the branch/PR on GitHub" onClick=${() => act.cancel(repo, number).then(onClose)}>${tico("cancel", "planned")}${lbl(bz("cancel") ? "Cancelling…" : "Cancel")}</button>`;
+
     if (running) {
       tb.push(bStop()); // the only meaningful action while it's executing
     } else if (hasPr) {
@@ -834,6 +848,7 @@ function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIs
       else if (needsFix) { tb.push(bFix()); tb.push(bMerge(true)); }
       else tb.push(bMerge(false));
       tb.push(bResume());
+      tb.push(bCancel());
     } else if (parked) {
       tb.push(bStart());
     } else if (awaiting) {
@@ -842,22 +857,23 @@ function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIs
     } else if (issue.epic) {
       tb.push(bClose(true)); // master issue → complete/close (merges remaining sub-PRs)
       tb.push(bResume());
+      tb.push(bCancel());
     } else if (approved) {
       tb.push(bCreatePr());
       tb.push(bResume());
+      tb.push(bCancel());
     } else {
       // ready / needs-attention / answered, no PR → re-engage, or close, or park
       tb.push(bResume());
       tb.push(bClose(false));
-      tb.push(bToPlanned());
+      tb.push(bCancel());
     }
-    tb.push(html`<span class="tbsep"></span>`);
-    tb.push(autoToggle("resume"));
-    tb.push(autoToggle("merge"));
   }
+  // Less-frequent controls live behind a "More" menu so the bar stays tidy.
   const da = armed === "del", db = bz("del");
-  tb.push(html`<span class="tbsep"></span>`);
-  tb.push(html`<button class=${"tbtn danger" + (da ? " armed" : "") + (db ? " busy" : "")} disabled=${db} data-tip=${da ? "Tap again to delete" : "Delete"} onClick=${() => confirmAct("del", () => act.del(repo, number))}>${db ? html`<${Spinner} size=${18}/>` : html`<${Icon} name="trash"/>`}${(isDesktop || da) ? html`<span class="tlabel">${db ? "Deleting…" : da ? "Confirm delete" : "Delete"}</span>` : null}</button>`);
+  const moreItems = [];
+  if (!done) { moreItems.push(autoToggle("resume")); moreItems.push(autoToggle("merge")); }
+  moreItems.push(html`<button class=${"tbtn danger wide" + (da ? " armed" : "") + (db ? " busy" : "")} disabled=${db} onClick=${() => confirmAct("del", () => act.del(repo, number))}>${db ? html`<${Spinner} size=${18}/>` : html`<${Icon} name="trash"/>`}<span class="tlabel">${db ? "Deleting…" : da ? "Confirm delete" : "Delete"}</span></button>`);
 
   const streamPane = html`<div class="dpane side">
     <div class="sec">Live stream</div>
@@ -915,13 +931,17 @@ function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIs
     </div>
     <div class="dtoolbar">
       ${tb}
+      <span style="flex:1"></span>
       ${modelOpts.length ? html`
-        <span style="flex:1"></span>
         <select title="Override model for next run" class="modelsel" value=${modelOverride} onChange=${(e) => updateModelOverride(e.target.value)}>
           <option value="">Default model</option>
           ${modelOpts.map((o) => html`<option key=${o.value} value=${o.value}>${o.label}</option>`)}
         </select>
       ` : null}
+      ${moreItems.length ? html`<span class="dropwrap">
+        <button class="tbtn" data-tip="More" onClick=${() => setMoreOpen((o) => !o)}><${Icon} name="dots"/></button>
+        ${moreOpen ? html`<div class="dropscrim" onClick=${() => setMoreOpen(false)}></div><div class="dropmenu toolmore">${moreItems.map((it, i) => html`<div key=${i} class="toolmore-row">${it}</div>`)}</div>` : null}
+      </span>` : null}
     </div>
     ${!isDesktop ? html`<div class="dtoolbar" style="justify-content:center">
       <button class=${"btn ghost " + (tab === "chat" ? "primary" : "")} onClick=${() => setTab("chat")}>Chat</button>

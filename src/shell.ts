@@ -242,8 +242,12 @@ textarea{resize:vertical;min-height:64px}
 .dhead{position:sticky;top:0;background:var(--surface);border-bottom:1px solid var(--line);padding:calc(10px + var(--safe-t)) 12px 10px;display:flex;align-items:center;gap:10px}
 .dhead .tt{font-size:15px;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dmeta{color:var(--ink-3);font-size:12px;font-weight:400}
-.dtoolbar{position:sticky;top:0;background:var(--surface);border-bottom:1px solid var(--line);display:flex;gap:6px;align-items:center;padding:8px 12px;overflow-x:auto;scrollbar-width:none}
-.dtoolbar::-webkit-scrollbar{display:none}
+.dtoolbar{position:sticky;top:0;background:var(--surface);border-bottom:1px solid var(--line);display:flex;gap:6px;align-items:center;padding:8px 12px;flex-wrap:wrap}
+.toolmore{display:flex;flex-direction:column;gap:4px;min-width:200px}
+.toolmore-row{display:flex}
+.toolmore-row>*{flex:1;width:100%}
+.toolmore .tbtn{width:100%;height:36px;justify-content:flex-start;padding:0 12px;gap:8px}
+.toolmore .autotog{width:100%;justify-content:space-between}
 .tbtn{flex:0 0 auto;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);border-radius:9px;width:38px;height:38px;display:inline-flex;align-items:center;justify-content:center;gap:0;cursor:pointer;position:relative}
 .tbtn:has(.tlabel){width:auto;padding:0 13px;gap:7px}
 .tlabel{font-size:13px;font-weight:600;white-space:nowrap}
