@@ -4,7 +4,7 @@ import { Avatar, Icon, Sheet, Spinner, ago, api, fmtTok, getJSON, ghUrl, isDone,
 
 
 // ---------- Detail ----------
-export function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIssue, data }) {
+export function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIssue, data, isOnline = true, onQueueComment }) {
   const [tab, setTab] = useState("chat"); // mobile sub-tab: chat | stream
   const [thread, setThread] = useState(null);
   const [pr, setPr] = useState(null);
@@ -103,11 +103,20 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
 
   function send() {
     if (!reply.trim() && !atts.length) return;
-    setBusy(true);
+    const textToSend = reply;
     const mo = modelOverride ? (() => { const parts = modelOverride.split("/"); return { providerId: parts[0], model: parts.slice(1).join("/") }; })() : null;
+    // If offline, queue without a skeleton (comment appears after flush + thread reload).
+    if (!isOnline) {
+      if (onQueueComment) onQueueComment({ type: "comment", repo, number, body: textToSend, model: mo || null });
+      toast("Queued offline — will send when back online");
+      setReply(""); setAtts([]);
+      if (taRef.current) taRef.current.style.height = "auto";
+      return;
+    }
+    setBusy(true);
     // Optimistic skeleton: show the comment immediately before the server confirms
     const skelId = Date.now();
-    setPendingComments((ps) => ps.concat({ _skel: true, id: skelId, author: "you", createdAt: new Date().toISOString(), body: reply }));
+    setPendingComments((ps) => ps.concat({ _skel: true, id: skelId, author: "you", createdAt: new Date().toISOString(), body: textToSend }));
     // Scroll to bottom so the skeleton is visible
     requestAnimationFrame(() => { if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight; });
     Promise.all(atts.map((a) =>
@@ -117,7 +126,7 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
     ))
       .then((results) => {
         // Replace inline [image N] references with their uploaded markdown
-        let full = reply;
+        let full = textToSend;
         const appended = [];
         for (const r of results.filter(Boolean)) {
           if (r.refId && r.md) full = full.split("[" + r.refId + "]").join(r.md);
@@ -132,7 +141,16 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
         toast(running ? "Queued — the agent will pick it up when the run finishes" : "Sent");
         setTimeout(() => { setPendingComments((ps) => ps.filter((p) => p.id !== skelId)); loadThread(); }, 800);
       })
-      .catch((e) => { toast((e && e.message) || "Couldn’t send", "error"); setPendingComments((ps) => ps.filter((p) => p.id !== skelId)); })
+      .catch((e) => {
+        if (e instanceof TypeError) {
+          // Network error mid-flight — queue the comment and clear the skeleton
+          if (onQueueComment) onQueueComment({ type: "comment", repo, number, body: textToSend, model: mo || null });
+          toast("Network error — comment queued offline");
+        } else {
+          toast((e && e.message) || "Couldn’t send", "error");
+        }
+        setPendingComments((ps) => ps.filter((p) => p.id !== skelId));
+      })
       .finally(() => setBusy(false));
   }
   function editComment(id, body) {
@@ -329,6 +347,7 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
       <div class="composer">
         ${atts.length ? html`<div class="composer-atts">${atts.map((a, idx) => html`<span class="att" key=${idx}>${a.img ? html`<img src=${a.d}/>` : html`<span><${Icon} name="paperclip" size=${12}/> ${a.name}</span>`}<button class="iconbtn" style="width:18px;height:18px;border:none" onClick=${() => setAtts((x) => x.filter((_, j) => j !== idx))}>×</button></span>`)}</div>` : null}
         <textarea ref=${taRef} rows="1" placeholder=${running ? "Message the agent…  (queued until the run finishes)" : "Reply…  (Cmd+Enter sends, paste image to embed)"} value=${reply} onInput=${(e) => { setReply(e.target.value); autosize(); }} onPaste=${onPaste} onKeyDown=${(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); send(); } }}></textarea>
+        ${reply.trim() ? html`<div class="b" dangerouslySetInnerHTML=${{ __html: md(reply) }}></div>` : null}
         <div class="composer-row">
           <label class="composer-icon" title="Attach a file"><${Icon} name="paperclip" size=${18}/><input type="file" multiple style="display:none" onChange=${pickFiles}/></label>
           ${modelOpts && modelOpts.length ? html`<select title="Override model for this run" class="modelsel" value=${modelOverride} onChange=${(e) => updateModelOverride(e.target.value)}>
@@ -428,7 +447,28 @@ export function Composer({ repos, repo, setRepo, onClose, onCreate, data }) {
     onCreate(repo, role, title.trim(), body.trim(), start, atts.map((a) => ({ dataUrl: a.d, name: a.name })), modelOverride);
   }
   function pick(e) { const fs = e.target.files || []; for (let i = 0; i < fs.length; i++) readAttach(fs[i], (a) => setAtts((x) => x.concat(a))); e.target.value = ""; }
-  function onPaste(e) { const items = (e.clipboardData || {}).items || []; for (let i = 0; i < items.length; i++) if (items[i].kind === "file") readAttach(items[i].getAsFile(), (a) => setAtts((x) => x.concat(a))); }
+  function onPaste(e) {
+    const items = (e.clipboardData || {}).items || [];
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].kind !== "file") continue;
+      const file = items[i].getAsFile();
+      if (!file) continue;
+      if (/^image\//.test(file.type)) {
+        const imgNum = atts.filter((a) => a.img).length + 1;
+        const refId = "image " + imgNum;
+        const ta = taRef.current;
+        if (ta) {
+          const start = ta.selectionStart || 0, end = ta.selectionEnd || 0;
+          const token = "[" + refId + "]";
+          setBody((prev) => prev.slice(0, start) + token + prev.slice(end));
+          requestAnimationFrame(() => { if (ta) { const pos = start + token.length; ta.selectionStart = ta.selectionEnd = pos; ta.focus(); } });
+        }
+        readAttach(file, (a) => setAtts((x) => x.concat(Object.assign({}, a, { name: refId, refId }))));
+      } else {
+        readAttach(file, (a) => setAtts((x) => x.concat(a)));
+      }
+    }
+  }
   return html`<${Sheet} title="New issue" onClose=${onClose}>
     <div style="display:flex;gap:8px;margin-bottom:10px">
       <select style="flex:1.5;width:auto" value=${repo || ""} onChange=${(e) => setRepo(e.target.value)}>${repos.map((r) => html`<option key=${r} value=${r}>${r.split("/").pop()}</option>`)}</select>
@@ -447,7 +487,8 @@ export function Composer({ repos, repo, setRepo, onClose, onCreate, data }) {
     <input value=${title} onInput=${(e) => setTitle(e.target.value)} placeholder="What should it do?" style="margin-bottom:10px"/>
     <div class="composer">
       ${atts.length ? html`<div class="composer-atts">${atts.map((a, idx) => html`<span class="att" key=${idx}>${a.img ? html`<img src=${a.d}/>` : html`<span><${Icon} name="paperclip" size=${12}/> ${a.name}</span>`}<button class="iconbtn" style="width:18px;height:18px;border:none" onClick=${() => setAtts((x) => x.filter((_, j) => j !== idx))}>×</button></span>`)}</div>` : null}
-      <textarea ref=${taRef} rows="1" placeholder="Details, context, acceptance criteria…  (paste an image to attach)" value=${body} onInput=${(e) => { setBody(e.target.value); autosize(); }} onPaste=${onPaste}></textarea>
+      <textarea ref=${taRef} rows="1" placeholder="Details, context, acceptance criteria…  (Cmd+Enter starts, paste image to embed)" value=${body} onInput=${(e) => { setBody(e.target.value); autosize(); }} onPaste=${onPaste} onKeyDown=${(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); submit(true); } }}></textarea>
+      ${body.trim() ? html`<div class="b" dangerouslySetInnerHTML=${{ __html: md(body) }}></div>` : null}
       <div class="composer-row">
         <label class="composer-icon" title="Attach a file"><${Icon} name="paperclip" size=${18}/><input type="file" multiple style="display:none" onChange=${pick}/></label>
         <span class="spacer"></span>

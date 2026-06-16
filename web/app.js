@@ -10,6 +10,23 @@ import { Usage } from "./usage.js";
 import { AgentEditor, SkillEditor } from "./agents.js";
 
 
+// ---------- offline queue ----------
+// Persists pending issues + comments in localStorage so they survive a page refresh.
+const OQ_KEY = "dab_offline_q";
+function oqLoad() { try { return JSON.parse(localStorage.getItem(OQ_KEY) || "[]"); } catch (e) { return []; } }
+function oqSave(q) { try { localStorage.setItem(OQ_KEY, JSON.stringify(q)); } catch (e) {} }
+
+// Track browser online/offline state reactively via the standard events.
+function useOnline() {
+  const [on, setOn] = useState(() => typeof navigator !== "undefined" ? navigator.onLine : true);
+  useEffect(() => {
+    const go = () => setOn(true), goff = () => setOn(false);
+    window.addEventListener("online", go); window.addEventListener("offline", goff);
+    return () => { window.removeEventListener("online", go); window.removeEventListener("offline", goff); };
+  }, []);
+  return on;
+}
+
 // ---------- App ----------
 function App() {
   const isDesktop = useIsDesktop();
@@ -29,6 +46,10 @@ function App() {
   const openIssueRef = useRef(null); // last-known open issue, so polls don't flicker the detail closed
   const liveRef = useRef([]); // SSE-appended activity since last poll
   const [, forceTick] = useState(0);
+  const isOnline = useOnline();
+  const [offlineQ, setOfflineQ] = useState(oqLoad);
+  const [syncing, setSyncing] = useState(false);
+  const flushingRef = useRef(false);
 
   useEffect(() => {
     setToastFn((t, kind) => {
@@ -59,6 +80,35 @@ function App() {
     return () => { try { es && es.close(); } catch (e) {} };
   }, []);
 
+  // Push an item onto the offline queue (issues or comments).
+  function oqPush(item) {
+    const q = oqLoad().concat(Object.assign({}, item, { _qid: Date.now() + Math.random() }));
+    oqSave(q); setOfflineQ(q);
+  }
+
+  // Flush the offline queue as soon as we (re)connect. Processes items in order; stops on first failure.
+  useEffect(() => {
+    if (!isOnline || flushingRef.current) return;
+    const q = oqLoad();
+    if (!q.length) return;
+    flushingRef.current = true;
+    setSyncing(true);
+    (async () => {
+      for (const item of q) {
+        try {
+          if (item.type === "issue") {
+            const d = await api("/new-issue", { repo: item.repo, role: item.role, title: item.title, body: item.body || "", start: !!item.start, ...(item.model ? { model: item.model } : {}) });
+            if (d && d.number && item.tmpNum) setPending((ps) => ps.map((p) => p.number === item.tmpNum ? Object.assign({}, p, { number: d.number, _offline: false }) : p));
+          } else if (item.type === "comment") {
+            await api("/comment", { repo: item.repo, number: item.number, body: item.body, ...(item.model ? { model: item.model } : {}) });
+          }
+          const remaining = oqLoad().filter((x) => x._qid !== item._qid);
+          oqSave(remaining); setOfflineQ(remaining);
+        } catch (e) { break; }
+      }
+    })().finally(() => { flushingRef.current = false; setSyncing(false); setTimeout(load, 600); });
+  }, [isOnline]);
+
   function setThemeP(t) { setTheme(t); try { localStorage.setItem("theme", t); } catch (e) {} document.documentElement.setAttribute("data-theme", t); const m = document.getElementById("metatheme"); if (m) m.setAttribute("content", t === "dark" ? "#0e1014" : "#f5f6f8"); }
 
   // merge server issues with optimistic overrides + pendings
@@ -66,6 +116,15 @@ function App() {
   const ov = overridesRef.current;
   let issues = (data.issues || []).map((i) => { const o = ov[i.repo + "#" + i.number]; return o ? Object.assign({}, i, o.patch) : i; });
   issues = issues.concat(pending.filter((p) => !issues.some((i) => i.repo === p.repo && i.number === p.number)));
+  // Wire active/queued per issue: active = agent genuinely running now; queued = in-progress state but no live run.
+  const activeSet = new Set((data.active || []).map((a) => a.repo + "#" + a.number));
+  issues = issues.map((i) => {
+    const key = i.repo + "#" + i.number;
+    const isActive = i.running || activeSet.has(key);
+    if (isActive) return Object.assign({}, i, { active: true });
+    if ((i.state || "") === "agency:in-progress") return Object.assign({}, i, { queued: true });
+    return i;
+  });
   // Repos with a running audit — drives the spinner on the top-bar Audit dropdown. (The audit itself
   // is now a real GitHub tracking issue, so it shows as a normal card + detail.)
   const auditRepos = (data.active || []).filter((a) => a.role === "auditor").map((a) => a.repo);
@@ -111,8 +170,15 @@ function App() {
   function openComposer(repo) { setComposerRepo(repo || repoFilter || (repos[0] || null)); setSheet("composer"); }
   function createIssue(repo, role, title, body, start, atts, model) {
     const tmpNum = -Date.now();
-    const tmp = { repo, number: tmpNum, title, role, state: start ? "agency:in-progress" : "planned", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), _tmp: true };
-    setPending((ps) => ps.concat(tmp)); setSheet(null); toast(start ? "Creating & starting…" : "Added to Planned");
+    const tmp = { repo, number: tmpNum, title, role, state: start ? "agency:in-progress" : "planned", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), _tmp: true, _offline: !isOnline };
+    setPending((ps) => ps.concat(tmp)); setSheet(null);
+    if (!isOnline) {
+      // Offline: queue the issue (attachments are skipped — network required for uploads)
+      toast("Queued offline — will create when back online");
+      oqPush({ type: "issue", repo, role, title, body: body || "", start: !!start, model: model || null, tmpNum, tmpRepo: repo });
+      return;
+    }
+    toast(start ? "Creating & starting…" : "Added to Planned");
     if (start) { setOpenKey(repo + "#" + tmpNum); setDetailError(null); }
     Promise.all((atts || []).map((a) => api("/upload-file", { repo, number: 0, dataUrl: a.dataUrl, name: a.name }).then((j) => j && j.md).catch(() => null)))
       .then((mds) => { const full = [body].concat(mds.filter(Boolean)).filter(Boolean).join("\n\n"); return api("/new-issue", { repo, role, title, body: full, start: !!start, ...(model ? { model } : {}) }); })
@@ -122,9 +188,16 @@ function App() {
         setTimeout(load, 700);
       })
       .catch((e) => {
-        const msg = (e && e.message) || "Couldn’t create";
-        if (start) { setDetailError(msg); } else { toast(msg, "error"); }
-        setPending((ps) => ps.filter((p) => p !== tmp));
+        if (e instanceof TypeError) {
+          // Network error mid-flight — queue and mark offline
+          oqPush({ type: "issue", repo, role, title, body: body || "", start: !!start, model: model || null, tmpNum, tmpRepo: repo });
+          setPending((ps) => ps.map((p) => p === tmp ? Object.assign({}, p, { _offline: true }) : p));
+          toast("Network error — issue queued offline");
+        } else {
+          const msg = (e && e.message) || "Couldn’t create";
+          if (start) { setDetailError(msg); } else { toast(msg, "error"); }
+          setPending((ps) => ps.filter((p) => p !== tmp));
+        }
       });
   }
 
@@ -149,13 +222,13 @@ function App() {
     <div class="app">
       <${TopBar} working=${working} scanning=${data.scanning} env=${data.env} theme=${theme} setTheme=${setThemeP} onSettings=${() => setSheet("settings")} onUsage=${() => setSheet("usage")} onAgents=${() => setSheet("agents")} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${load} auto=${data.auto || {}} autoRepos=${data.autoRepos || {}} setAuto=${act.setAuto}/>
       ${data.secretsHealth ? html`<${SecretBanner} h=${data.secretsHealth} onFix=${() => setSheet("settings")}/>` : null}
-      <${StatusLine} working=${working} session=${data.session} spend=${data.spendToday} analyzer=${data.analyzer} reload=${load}/>
+      <${StatusLine} working=${working} session=${data.session} spend=${data.spendToday} analyzer=${data.analyzer} reload=${load} sort=${sort} setSort=${setSort} offlineQ=${offlineQ} syncing=${syncing}/>
       <div class="content">
         <${Board} issues=${shown} repos=${repos} repoFilter=${repoFilter} tab=${tab} isDesktop=${isDesktop} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onOpenChild=${openIssue} onAddRepo=${() => setSheet("addrepo")} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data}/>
       </div>
       ${!isDesktop && html`<${TabBar} issues=${shown} tab=${tab} setTab=${setTab}/>`}
       ${open && html`<div class="dscrim" onClick=${() => setOpenKey(null)}></div>`}
-      ${open && html`<${Detail} key=${openKey} issue=${open} activity=${activity} act=${act} isDesktop=${isDesktop} startError=${detailError} onClose=${() => { setOpenKey(null); setDetailError(null); }} onOpenIssue=${openIssue} data=${data}/>`}
+      ${open && html`<${Detail} key=${openKey} issue=${open} activity=${activity} act=${act} isDesktop=${isDesktop} startError=${detailError} onClose=${() => { setOpenKey(null); setDetailError(null); }} onOpenIssue=${openIssue} data=${data} isOnline=${isOnline} onQueueComment=${oqPush}/>`}
       ${sheet === "composer" && html`<${Composer} repos=${repos} repo=${composerRepo} setRepo=${setComposerRepo} onClose=${() => setSheet(null)} onCreate=${createIssue} data=${data}/>`}
       ${sheet === "settings" && html`<${Settings} data=${data} onClose=${() => setSheet(null)} reload=${load} openGithubTokens=${() => setSheet("github")} openModels=${() => setSheet("models")}/>`}
       ${sheet === "github" && html`<${GithubTokensModal} secretKeys=${data.secretKeys || []} onClose=${() => setSheet("settings")} reload=${load}/>`}

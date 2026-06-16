@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { mentionsHandle, AGENCY_MARKER } from "../dist/github.js";
+import { mentionsHandle, AGENCY_MARKER, buildNativeSubIssueData } from "../dist/github.js";
 import { roleForText, loadHandleRoleMap, modelFor, ROLES, MODELS } from "../dist/agents/roles.js";
 import { parsePlannerDecision, isApproval, parseSubIssues } from "../dist/pipeline.js";
 import { parseControlCommand } from "../dist/commands.js";
@@ -299,6 +299,52 @@ test("buildLocalCommand produces a runnable mac script for the branch", () => {
   assert.ok(s.includes("agency/issue-94"));
   assert.ok(s.includes("ArneNostitz/reimedy-minimal"));
   assert.ok(s.includes("tauri:dev") || s.includes("tauri dev"));
+});
+
+test("buildNativeSubIssueData: maps parent→children and child→parent", () => {
+  const data = buildNativeSubIssueData([
+    {
+      parent: { number: 5, title: "Big refactor" },
+      children: [
+        { number: 10, title: "Sub A", state: "open" },
+        { number: 11, title: "Sub B", state: "closed" },
+      ],
+    },
+  ]);
+  // parent → children
+  assert.equal(data.parentToChildren[5].length, 2);
+  assert.equal(data.parentToChildren[5][0].number, 10);
+  assert.equal(data.parentToChildren[5][0].closed, false);
+  assert.equal(data.parentToChildren[5][1].number, 11);
+  assert.equal(data.parentToChildren[5][1].closed, true);
+  // child → parent
+  assert.deepEqual(data.childToParent[10], { number: 5, title: "Big refactor" });
+  assert.deepEqual(data.childToParent[11], { number: 5, title: "Big refactor" });
+});
+
+test("buildNativeSubIssueData: empty pairs → empty maps", () => {
+  const data = buildNativeSubIssueData([]);
+  assert.deepEqual(data.parentToChildren, {});
+  assert.deepEqual(data.childToParent, {});
+});
+
+test("buildNativeSubIssueData: pairs with no children are skipped", () => {
+  const data = buildNativeSubIssueData([
+    { parent: { number: 1, title: "Empty epic" }, children: [] },
+  ]);
+  assert.deepEqual(data.parentToChildren, {});
+  assert.deepEqual(data.childToParent, {});
+});
+
+test("buildNativeSubIssueData: multiple parents handled independently", () => {
+  const data = buildNativeSubIssueData([
+    { parent: { number: 1, title: "Epic A" }, children: [{ number: 2, title: "Child A1", state: "open" }] },
+    { parent: { number: 3, title: "Epic B" }, children: [{ number: 4, title: "Child B1", state: "closed" }] },
+  ]);
+  assert.equal(Object.keys(data.parentToChildren).length, 2);
+  assert.deepEqual(data.childToParent[2], { number: 1, title: "Epic A" });
+  assert.deepEqual(data.childToParent[4], { number: 3, title: "Epic B" });
+  assert.equal(data.parentToChildren[3][0].closed, true);
 });
 
 test("parseControlCommand recognizes /add-repo and /list-repos", () => {

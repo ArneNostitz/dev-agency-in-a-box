@@ -10,12 +10,22 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
-test("preact dashboard mounts and renders the board frame + data", async () => {
+// ---------------------------------------------------------------------------
+// Shared helper: create a jsdom window, wire up the browser globals the app
+// needs, copy the web modules to a temp dir, mount the app, and return the
+// { window, dom, root, mod } bundle.
+//
+// opts.fetch     – fetch mock (defaults to a minimal stub returning {})
+// opts.online    – value to force onto navigator.onLine (default: leave as-is)
+// opts.localStorage – object to pre-populate; keys → values (JSON-serialised)
+// ---------------------------------------------------------------------------
+async function mountApp(opts = {}) {
   const dom = new JSDOM(
     '<!doctype html><html><head><meta id="metatheme"></head><body><div id="root"></div></body></html>',
     { pretendToBeVisual: true, url: "https://devagency.test/" },
   );
   const { window } = dom;
+
   // Globals the client expects (browser environment). Some Node globals (navigator) are
   // getter-only, so assign defensively and only what Preact/the app actually reads.
   const setG = (k, v) => { try { global[k] = v; } catch { try { Object.defineProperty(global, k, { value: v, configurable: true }); } catch {} } };
@@ -33,6 +43,32 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
   setG("matchMedia", window.matchMedia);
   setG("EventSource", class { constructor() {} close() {} });
 
+  if (opts.online !== undefined) {
+    try { Object.defineProperty(window.navigator, "onLine", { get: () => opts.online, configurable: true }); } catch {}
+  }
+  if (opts.localStorage) {
+    for (const [k, v] of Object.entries(opts.localStorage)) window.localStorage.setItem(k, JSON.stringify(v));
+  }
+
+  global.fetch = opts.fetch || (async () => ({ ok: true, json: async () => ({}), text: async () => "" }));
+
+  // The dashboard is split across ES modules in web/ that import each other relatively. Copy them
+  // all into one temp dir (rewriting the absolute vendor import to a file URL) so Node can resolve
+  // the relative `./core.js` etc., then import the entry.
+  const webDir = join(HERE, "..", "web");
+  const vendorUrl = pathToFileURL(join(webDir, "vendor", "standalone.mjs")).href;
+  const tmpDir = mkdtempSync(join(tmpdir(), "daui-"));
+  for (const f of ["core", "board", "detail", "settings", "onboarding", "topbar", "usage", "agents", "app"]) {
+    const src = readFileSync(join(webDir, f + ".js"), "utf8").split("/web/vendor/standalone.mjs").join(vendorUrl);
+    writeFileSync(join(tmpDir, f + ".js"), src);
+  }
+  const mod = await import(pathToFileURL(join(tmpDir, "app.js")).href);
+  mod.mount(window.document.getElementById("root"));
+  const root = window.document.getElementById("root");
+  return { window, dom, root, mod, vendorUrl, tmpDir };
+}
+
+test("preact dashboard mounts and renders the board frame + data", async () => {
   const SAMPLE = {
     user: { id: 1, username: "arne", role: "admin", email: "a@x.com" }, authEnabled: true, onboarded: false,
     secretKeys: ["claude_token"], users: [{ id: 1, username: "arne", role: "admin" }], invites: [],
@@ -61,21 +97,12 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
     if (u.includes("/pr-status")) return { review: { verdict: "approved" }, merge: { mergeable: "clean" } };
     return {};
   };
-  global.fetch = async (u) => ({ ok: true, json: async () => route(u), text: async () => "" });
 
-  // The dashboard is split across ES modules in web/ that import each other relatively. Copy them all
-  // into one temp dir (rewriting the absolute vendor import to a file URL) so Node can resolve the
-  // relative `./core.js` etc., then import the entry.
-  const webDir = join(HERE, "..", "web");
-  const vendorUrl = pathToFileURL(join(webDir, "vendor", "standalone.mjs")).href;
-  const tmpDir = mkdtempSync(join(tmpdir(), "daui-"));
-  for (const f of ["core", "board", "detail", "settings", "onboarding", "topbar", "usage", "agents", "app"]) {
-    const src = readFileSync(join(webDir, f + ".js"), "utf8").split("/web/vendor/standalone.mjs").join(vendorUrl);
-    writeFileSync(join(tmpDir, f + ".js"), src);
-  }
-  const mod = await import(pathToFileURL(join(tmpDir, "app.js")).href);
+  const { window, dom, root, mod } = await mountApp({
+    fetch: async (u) => ({ ok: true, json: async () => route(u), text: async () => "" }),
+  });
+
   assert.equal(typeof mod.mount, "function", "app.js exports mount()");
-  mod.mount(window.document.getElementById("root"));
 
   // Initial synchronous render: the shell + column labels must be present.
   let htmlNow = window.document.getElementById("root").innerHTML;
@@ -85,7 +112,6 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
 
   // Let the data fetch + effects flush, then the cards should appear.
   await new Promise((r) => setTimeout(r, 150));
-  const root = window.document.getElementById("root");
   assert.match(root.innerHTML, /A planned task/, "planned issue card renders from /data");
 
   // Verify lane placement for the fix flow: an issue with pr_number AND running:true must go to
@@ -131,6 +157,27 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
   click(q(".card"));
   await tick(80);
   assert.match(root.innerHTML, /Conversation/, "detail opens with conversation pane");
+
+  dom.window.close();
+});
+
+// Offline queue: pre-populate localStorage and verify the status-line indicator renders.
+test("offline queue indicator shows when dab_offline_q has entries", async () => {
+  const SAMPLE = {
+    repos: ["acme/app"], auto: {}, autoRepos: {}, active: [], activity: [],
+    session: {}, config: {}, issues: [
+      { repo: "acme/app", number: 1, title: "Task", state: "planned", updated_at: new Date().toISOString(), auto: {} },
+    ],
+  };
+
+  const { dom, root } = await mountApp({
+    fetch: async (u) => ({ ok: true, json: async () => (String(u).includes("/data") ? SAMPLE : {}), text: async () => "" }),
+    online: false,
+    localStorage: { dab_offline_q: [{ type: "comment", repo: "acme/app", number: 1, body: "offline comment", _qid: 42 }] },
+  });
+
+  await new Promise((r) => setTimeout(r, 150));
+  assert.match(root.innerHTML, /queued offline/, "status line shows 'queued offline' indicator when queue is non-empty");
 
   dom.window.close();
 });

@@ -1199,3 +1199,69 @@ export function mapIssueDetail(raw: {
   });
   return { labels, comments };
 }
+
+// ---- GitHub-native sub-issue relationships ----
+
+export interface NativeSubIssueData {
+  /** parent issue number → its sub-issues */
+  parentToChildren: Record<number, Array<{ number: number; title: string; closed: boolean }>>;
+  /** child issue number → its parent issue (number + title) */
+  childToParent: Record<number, { number: number; title: string }>;
+}
+
+/**
+ * Pure: build NativeSubIssueData from already-fetched (parent, children[]) pairs.
+ * Exported for unit testing.
+ */
+export function buildNativeSubIssueData(
+  pairs: Array<{
+    parent: { number: number; title: string };
+    children: Array<{ number: number; title: string; state: string }>;
+  }>,
+): NativeSubIssueData {
+  const parentToChildren: Record<number, Array<{ number: number; title: string; closed: boolean }>> = {};
+  const childToParent: Record<number, { number: number; title: string }> = {};
+  for (const { parent, children } of pairs) {
+    if (!children.length) continue;
+    parentToChildren[parent.number] = children.map((c) => ({
+      number: c.number,
+      title: c.title,
+      closed: (c.state ?? "").toLowerCase() === "closed",
+    }));
+    for (const c of children) {
+      childToParent[c.number] = { number: parent.number, title: parent.title };
+    }
+  }
+  return { parentToChildren, childToParent };
+}
+
+/**
+ * Fetch GitHub-native parent/sub-issue links for a repo.
+ * 1. Lists issues via REST to find those with sub_issues_summary.total > 0.
+ * 2. For each parent, calls /sub_issues to get the child issue list.
+ * Returns empty maps gracefully if the endpoint is unavailable or there are no sub-issues.
+ */
+export async function fetchNativeSubIssues(repo: string): Promise<NativeSubIssueData> {
+  const listRaw = await gh(["api", `repos/${repo}/issues`, "--paginate"]).catch(() => "[]");
+  let allIssues: Array<{ number: number; title: string; sub_issues_summary?: { total?: number } }> = [];
+  try {
+    const s = listRaw.trim();
+    allIssues = JSON.parse(s.replace(/\]\s*\[/g, ","));
+  } catch {
+    return { parentToChildren: {}, childToParent: {} };
+  }
+  const parentIssues = allIssues.filter((i) => (i.sub_issues_summary?.total ?? 0) > 0);
+  if (!parentIssues.length) return { parentToChildren: {}, childToParent: {} };
+
+  const pairs: Array<{
+    parent: { number: number; title: string };
+    children: Array<{ number: number; title: string; state: string }>;
+  }> = [];
+  for (const p of parentIssues) {
+    const subRaw = await gh(["api", `repos/${repo}/issues/${p.number}/sub_issues`]).catch(() => "[]");
+    let children: Array<{ number: number; title: string; state: string }> = [];
+    try { children = JSON.parse(subRaw); } catch { /* skip */ }
+    if (children.length) pairs.push({ parent: { number: p.number, title: p.title }, children });
+  }
+  return buildNativeSubIssueData(pairs);
+}
