@@ -1,8 +1,56 @@
 // Dev Agency dashboard — board module (split from app.js; Preact + htm, no build step).
 import { html, useState, useEffect } from "/web/vendor/standalone.mjs";
-import { Avatar, COLS, Icon, Spinner, ago, api, classify, fmtTok, ghUrl, isDone, shortModel, sortCmp, statusChip, toast, usageTitle } from "./core.js";
+import { Avatar, COLS, Icon, Spinner, ago, api, boardSortCmp, classify, filterByTime, fmtTok, ghUrl, isDone, shortModel, statusChip, toast, usageTitle } from "./core.js";
+
+// ---------- sort / group / time options ----------
+const SORT_OPTS = [
+  { v: "updated_desc", label: "Recently updated" },
+  { v: "updated_asc",  label: "Oldest updated" },
+  { v: "created_desc", label: "Newest" },
+  { v: "created_asc",  label: "Oldest" },
+  { v: "number_asc",   label: "Issue # ↑" },
+  { v: "number_desc",  label: "Issue # ↓" },
+];
+const TIME_OPTS = [
+  { v: "any", label: "Any time" },
+  { v: "24h", label: "Last 24h" },
+  { v: "7d",  label: "Last 7 days" },
+  { v: "30d", label: "Last 30 days" },
+];
+
+function BoardControls({ boardSort, setBoardSort, boardGroup, setBoardGroup, boardTime, setBoardTime }) {
+  return html`<div class="bctrl">
+    <span class="bctrl-group">
+      <span class="bctrl-label">Sort</span>
+      <select value=${boardSort} onChange=${(e) => setBoardSort(e.target.value)}>
+        ${SORT_OPTS.map((o) => html`<option key=${o.v} value=${o.v}>${o.label}</option>`)}
+      </select>
+    </span>
+    <span class="bctrl-group">
+      <span class="bctrl-label">Group</span>
+      <select value=${boardGroup} onChange=${(e) => setBoardGroup(e.target.value)}>
+        <option value="state">Workflow state</option>
+        <option value="repo">Repo</option>
+      </select>
+    </span>
+    <span class="bctrl-group">
+      <span class="bctrl-label">Updated</span>
+      <select value=${boardTime} onChange=${(e) => setBoardTime(e.target.value)}>
+        ${TIME_OPTS.map((o) => html`<option key=${o.v} value=${o.v}>${o.label}</option>`)}
+      </select>
+    </span>
+  </div>`;
+}
 
 export function Board({ issues, repos, repoFilter, tab, sort, isDesktop, onOpen, onAddRepo, onAddIssue, onAnalyze, auditRepos, act, data }) {
+  // Board-owned controls — distinct localStorage keys to avoid collision with the legacy "boardSort" JSON key.
+  const [boardSort,  setBoardSort]  = useState(() => { try { return localStorage.getItem("boardCtrlSort")  || "updated_desc"; } catch (e) { return "updated_desc"; } });
+  const [boardGroup, setBoardGroup] = useState(() => { try { return localStorage.getItem("boardCtrlGroup") || "state";        } catch (e) { return "state";        } });
+  const [boardTime,  setBoardTime]  = useState(() => { try { return localStorage.getItem("boardCtrlTime")  || "any";          } catch (e) { return "any";          } });
+  useEffect(() => { try { localStorage.setItem("boardCtrlSort",  boardSort);  } catch (e) {} }, [boardSort]);
+  useEffect(() => { try { localStorage.setItem("boardCtrlGroup", boardGroup); } catch (e) {} }, [boardGroup]);
+  useEffect(() => { try { localStorage.setItem("boardCtrlTime",  boardTime);  } catch (e) {} }, [boardTime]);
+
   if (!(repos || []).length) {
     return html`<div class="norepo">
       <div class="obki" style="margin:0 auto 14px"><${Icon} name="pr" size=${28}/></div>
@@ -11,25 +59,70 @@ export function Board({ issues, repos, repoFilter, tab, sort, isDesktop, onOpen,
       <button class="btn primary" style="margin:0 auto;min-width:200px" onClick=${onAddRepo}><${Icon} name="plus" size=${16}/> Add your first repo</button>
     </div>`;
   }
+
   // The Add Issue / Analyze buttons act on the active repo. With "All" + multiple repos there's no
   // single target: Add Issue still opens the composer (it has a repo picker); Analyze is disabled.
   const target = repoFilter || (repos.length === 1 ? repos[0] : null);
   const analyzing = target && (auditRepos || []).includes(target);
-  const byCol = {}; COLS.forEach((c) => (byCol[c.k] = []));
-  issues.slice().sort(sortCmp(sort)).forEach((i) => byCol[classify(i)].push(i));
-  const cols = isDesktop ? COLS : COLS.filter((c) => c.k === tab);
-  return html`<div class="board">
-    ${cols.map((c) => html`<div class="col" key=${c.k}>
-      <div class="colhead"><${Icon} name=${c.icon} size=${15}/> ${c.label} <span class="n">${byCol[c.k].length || ""}</span></div>
-      ${c.k === "planned" ? html`<div class="planned-actions">
-        <button class="colbtn primary" onClick=${() => onAddIssue(target)}><${Icon} name="plus" size=${14}/> Add Issue</button>
-        <button class="colbtn" disabled=${!target || analyzing} title=${target ? "Analyze " + target.split("/").pop() + "'s codebase health" : "Pick a repo first"} onClick=${() => target && onAnalyze(target)}>${analyzing ? html`<${Spinner} size=${14}/>` : html`<${Icon} name="search" size=${14}/>`} Analyze Repo</button>
-      </div>` : null}
-      <div class="cards">
-        ${byCol[c.k].length ? byCol[c.k].map((i) => html`<${Card} key=${i.repo + "#" + i.number} i=${i} multi=${!repoFilter && repos.length > 1} onOpen=${onOpen} act=${act} data=${data}/>`) : html`<div class="empty">—</div>`}
-      </div>
-    </div>`)}
-  </div>`;
+
+  // Apply time filter then sort using the board controls.
+  const filtered = filterByTime(issues, boardTime);
+  const sorted = filtered.slice().sort(boardSortCmp(boardSort));
+
+  const renderCard = (i) => html`<${Card} key=${i.repo + "#" + i.number} i=${i} multi=${!repoFilter && repos.length > 1} onOpen=${onOpen} act=${act} data=${data}/>`;
+  const controls = html`<${BoardControls} boardSort=${boardSort} setBoardSort=${setBoardSort} boardGroup=${boardGroup} setBoardGroup=${setBoardGroup} boardTime=${boardTime} setBoardTime=${setBoardTime}/>`;
+
+  // --- group by workflow state (default) ---
+  let boardContent;
+  if (!boardGroup || boardGroup === "state") {
+    const byCol = {}; COLS.forEach((c) => (byCol[c.k] = []));
+    sorted.forEach((i) => byCol[classify(i)].push(i));
+    const cols = isDesktop ? COLS : COLS.filter((c) => c.k === tab);
+    boardContent = html`<div class="board">
+      ${cols.map((c) => {
+        const allItems = byCol[c.k];
+        const epicPins = c.k === "working" ? allItems.filter((i) => i.state === "agency:epic") : [];
+        const rest = c.k === "working" ? allItems.filter((i) => i.state !== "agency:epic") : allItems;
+        return html`<div class="col" key=${c.k}>
+          <div class="colhead"><${Icon} name=${c.icon} size=${15}/> ${c.label} <span class="n">${allItems.length || ""}</span></div>
+          ${c.k === "planned" ? html`<div class="planned-actions">
+            <button class="colbtn primary" onClick=${() => onAddIssue(target)}><${Icon} name="plus" size=${14}/> Add Issue</button>
+            <button class="colbtn" disabled=${!target || analyzing} title=${target ? "Analyze " + target.split("/").pop() + "'s codebase health" : "Pick a repo first"} onClick=${() => target && onAnalyze(target)}>${analyzing ? html`<${Spinner} size=${14}/>` : html`<${Icon} name="search" size=${14}/>`} Analyze Repo</button>
+          </div>` : null}
+          <div class="cards">
+            ${epicPins.length ? html`
+              ${epicPins.map(renderCard)}
+              ${rest.length ? html`<div class="col-sect-div">sub-issues &amp; tasks</div>` : null}
+            ` : null}
+            ${rest.length ? rest.map(renderCard) : (!epicPins.length ? html`<div class="empty">—</div>` : null)}
+          </div>
+        </div>`;
+      })}
+    </div>`;
+  } else {
+    // --- group by repo ---
+    const repoList = repos.filter((r) => !repoFilter || r === repoFilter);
+    sorted.forEach((i) => { if (!repoList.includes(i.repo)) repoList.push(i.repo); });
+    boardContent = html`<div class="board group-repo">
+      ${repoList.map((r) => {
+        const allItems = sorted.filter((i) => i.repo === r);
+        const short = r.split("/").pop();
+        const rAnalyzing = (auditRepos || []).includes(r);
+        return html`<div class="col" key=${r}>
+          <div class="colhead"><${Icon} name="pr" size=${15}/> ${short} <span class="n">${allItems.length || ""}</span></div>
+          <div class="planned-actions">
+            <button class="colbtn primary" onClick=${() => onAddIssue(r)}><${Icon} name="plus" size=${14}/> Add Issue</button>
+            <button class="colbtn" disabled=${rAnalyzing} onClick=${() => onAnalyze(r)}>${rAnalyzing ? html`<${Spinner} size=${14}/>` : html`<${Icon} name="search" size=${14}/>`} Analyze</button>
+          </div>
+          <div class="cards">
+            ${allItems.length ? allItems.map(renderCard) : html`<div class="empty">—</div>`}
+          </div>
+        </div>`;
+      })}
+    </div>`;
+  }
+
+  return html`<div>${controls}${boardContent}</div>`;
 }
 
 function Card({ i, multi, onOpen, act, data }) {

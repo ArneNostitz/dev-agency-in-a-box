@@ -26,13 +26,6 @@ function App() {
   const toastIdRef = useRef(0);
   const [pending, setPending] = useState([]); // optimistic new issues
   const [detailError, setDetailError] = useState(null); // inline error for the open detail
-  // board sort/group/time — persisted in localStorage
-  const [boardSort, setBoardSort] = useState(() => { try { return localStorage.getItem("boardSort") || "updated_desc"; } catch (e) { return "updated_desc"; } });
-  const [boardGroup, setBoardGroup] = useState(() => { try { return localStorage.getItem("boardGroup") || "state"; } catch (e) { return "state"; } });
-  const [boardTime, setBoardTime] = useState(() => { try { return localStorage.getItem("boardTime") || "any"; } catch (e) { return "any"; } });
-  function setBoardSortP(v) { setBoardSort(v); try { localStorage.setItem("boardSort", v); } catch (e) {} }
-  function setBoardGroupP(v) { setBoardGroup(v); try { localStorage.setItem("boardGroup", v); } catch (e) {} }
-  function setBoardTimeP(v) { setBoardTime(v); try { localStorage.setItem("boardTime", v); } catch (e) {} }
   const overridesRef = useRef({}); // "repo#n" -> {state, t}
   const busyRef = useRef({}); // "action:repo#n" -> ts, while a request is in flight
   const openIssueRef = useRef(null); // last-known open issue, so polls don't flicker the detail closed
