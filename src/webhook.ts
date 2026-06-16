@@ -35,6 +35,7 @@ import { subscribe, getActive } from "./activity.js";
 import { inFlightKeys } from "./pool.js";
 import { listRateLimited } from "./store.js";
 import { getConversation, conversationCount, foldInGitHubComment, recordOutgoingComment, setCommentGhId, updateCommentBody } from "./store.js";
+import { recentFailuresSince } from "./store.js";
 import { effectiveRepos } from "./commands.js";
 import { getThreadFull, commentAsHuman, editCommentAsHuman, commentOnIssue, mergePrForBranch, closeIssue, deleteIssueHard, findPrForBranch, prMergeStatus, mergeProbe, branchHeadSha, detectReviewVerdict, createIssue, readRepoFile, putRepoBase64, listUserRepos } from "./github.js";
 import { listAgentFiles, readAgentFile, isSafeAgentPath } from "./memory.js";
@@ -172,6 +173,8 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
             runStepCount: runStepCountSince(since),
             toolStats: toolStatsSince(since),
             tokensByRole: tokensByRoleSince(since),
+            failures: recentFailuresSince(since), // operational problems (rate limits, failing commands)
+            topIssues: topIssuesByTokensSince(since, 8), // token-heavy issues = wasteful / looping work
             lessons: recentLessons(10),
             config: { minSteps: Number(getSetting("analyzer_min_steps")) || 50, intervalHours: Number(getSetting("analyzer_interval_hours")) || 6 },
           }));
