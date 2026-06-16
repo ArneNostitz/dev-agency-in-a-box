@@ -37,7 +37,7 @@ import { listRateLimited } from "./store.js";
 import { getConversation, conversationCount, foldInGitHubComment, recordOutgoingComment, setCommentGhId, updateCommentBody } from "./store.js";
 import { recentFailuresSince } from "./store.js";
 import { effectiveRepos } from "./commands.js";
-import { getThreadFull, commentAsHuman, editCommentAsHuman, commentOnIssue, mergePrForBranch, closeIssue, deleteIssueHard, findPrForBranch, prMergeStatus, mergeProbe, branchHeadSha, detectReviewVerdict, createIssue, readRepoFile, putRepoBase64, listUserRepos } from "./github.js";
+import { getThreadFull, commentAsHuman, editCommentAsHuman, commentOnIssue, mergePrForBranch, closeIssue, deleteIssueHard, findPrForBranch, prMergeStatus, mergeProbe, branchHeadSha, detectReviewVerdict, createIssue, readRepoFile, putRepoBase64, listUserRepos, fetchNativeSubIssues, type NativeSubIssueData } from "./github.js";
 import { listAgentFiles, readAgentFile, isSafeAgentPath } from "./memory.js";
 import { startApp, stopApp, getApp, pickWebDevScript, isTauriPackage, buildLocalCommand } from "./apprun.js";
 import { ensureRepoAccess } from "./commands.js";
@@ -48,6 +48,18 @@ import { ensureRepoIndex } from "./gitnexus.js";
 
 type ProcessAll = (cfg: Config) => Promise<number>;
 type Resume = (repo: string, number: number) => Promise<void>;
+
+// Cache native sub-issue relationships per repo (TTL: 60s) so the 5s poll doesn't hammer GitHub.
+const _nativeSubIssueCache = new Map<string, { ts: number; data: NativeSubIssueData }>();
+const NATIVE_SUB_TTL = 60_000;
+async function getNativeSubIssues(repo: string): Promise<NativeSubIssueData> {
+  const now = Date.now();
+  const cached = _nativeSubIssueCache.get(repo);
+  if (cached && now - cached.ts < NATIVE_SUB_TTL) return cached.data;
+  const data = await fetchNativeSubIssues(repo).catch(() => ({ parentToChildren: {}, childToParent: {} } as NativeSubIssueData));
+  _nativeSubIssueCache.set(repo, { ts: now, data });
+  return data;
+}
 
 /** Session window/budget come from dashboard settings first, then env, then defaults. */
 function sessionWindowHours(): number {
@@ -296,13 +308,59 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
             }
           }
           const epicCache: Record<string, ReturnType<typeof epicsByParent>> = {};
+          for (const i of issues) epicCache[i.repo] ??= epicsByParent(i.repo);
+          // child issue number → parent number, per repo
+          const childToParentNum: Record<string, Record<number, number>> = {};
+          for (const [repo, byParent] of Object.entries(epicCache)) {
+            childToParentNum[repo] = {};
+            for (const [parentStr, kids] of Object.entries(byParent)) {
+              for (const kid of kids) childToParentNum[repo][kid.child] = Number(parentStr);
+            }
+          }
+          // parent issue number → title (from tracked issues)
+          const epicTitleMap: Record<string, Record<number, string>> = {};
+          for (const i of issues) {
+            if (i.state === "agency:epic") (epicTitleMap[i.repo] ??= {})[i.number] = i.title;
+          }
+          // Fetch GitHub-native parent/sub-issue links and merge with DB-backed maps so issues
+          // created as sub-issues directly in GitHub (not via the agency planner) are included.
+          const nativeByRepo: Record<string, NativeSubIssueData> = {};
+          {
+            const repos = [...new Set(issues.map((i) => i.repo))];
+            await Promise.all(repos.map(async (r) => { nativeByRepo[r] = await getNativeSubIssues(r); }));
+            // Fold native child→parent into childToParentNum (DB wins on conflict).
+            for (const [repo, native] of Object.entries(nativeByRepo)) {
+              const cm = (childToParentNum[repo] ??= {});
+              for (const [childStr, p] of Object.entries(native.childToParent)) {
+                const c = Number(childStr);
+                if (!(c in cm)) cm[c] = p.number;
+              }
+            }
+          }
           const reviews = listReviews(); // verdict per "repo#number" — cheap, for the card badge
           const tokenMap = tokensByIssueAll(); // lifetime tokens/cost/model per "repo#number"
           const conflictMap = listConflicts(); // conflicting files per "repo#number"
           const enriched = issues.map((i) => {
-            const byParent = (epicCache[i.repo] ??= epicsByParent(i.repo));
-            const kids = byParent[i.number];
+            const byParent = epicCache[i.repo] ?? {};
+            const dbKids = byParent[i.number];
+            const rawNativeKids = (nativeByRepo[i.repo]?.parentToChildren ?? {})[i.number];
+            const nativeKids = rawNativeKids?.map((c) => ({
+              child: c.number, title: c.title,
+              state: c.closed ? "done" : "open",
+              closed: c.closed ? 1 : 0,
+            }));
+            // DB takes precedence; fall back to native children
+            const kids = dbKids ?? nativeKids;
             const conflictFilesFor = conflictMap[`${i.repo}#${i.number}`];
+            const parentNum = (childToParentNum[i.repo] ?? {})[i.number];
+            const nativeParent = (nativeByRepo[i.repo]?.childToParent ?? {})[i.number];
+            const parentEpic =
+              parentNum != null
+                ? {
+                    number: parentNum,
+                    title: (epicTitleMap[i.repo] ?? {})[parentNum] ?? nativeParent?.title ?? `#${parentNum}`,
+                  }
+                : null;
             return {
               ...i,
               usage: tokenMap[`${i.repo}#${i.number}`] ?? null,
