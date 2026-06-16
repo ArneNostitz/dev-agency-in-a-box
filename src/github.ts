@@ -145,9 +145,11 @@ export async function listActionableIssues(repo: string, opts: ActionableOptions
 }
 
 export async function addLabel(repo: string, issue: number, label: string): Promise<void> {
-  // Create the label if it does not exist yet (ignore failure if it already does).
+  // Labels are an INFORMATIVE MIRROR only (the DB drives the agency). A failed label write — most
+  // often a GitHub rate limit — must NEVER throw, or it would mark a finished, successful run as
+  // failed. Both the create and the apply are best-effort.
   await gh(["label", "create", label, "--repo", repo, "--force", "--color", "5319e7"]).catch(() => {});
-  await gh(["issue", "edit", String(issue), "--repo", repo, "--add-label", label]);
+  await gh(["issue", "edit", String(issue), "--repo", repo, "--add-label", label]).catch(() => {});
 }
 
 export async function removeLabel(repo: string, issue: number, label: string): Promise<void> {
@@ -164,11 +166,14 @@ export async function commentOnIssue(repo: string, issue: number, body: string):
   // GitHub. Then mirror to GitHub and link the returned comment id back to the local row.
   const localId = recordOutgoingComment({ repo, number: issue, author: "dev-agency", body, source: "agency" });
   if (issue <= 0) return; // dashboard-only issue (no GitHub number yet) — DB is enough
-  const out = await gh(["api", "-X", "POST", `repos/${repo}/issues/${issue}/comments`, "-f", `body=${body}\n\n${AGENCY_MARKER}`]);
+  // Mirror to GitHub best-effort: the comment already lives in the DB (the source of truth), so a
+  // failed post — typically a rate limit — must NOT throw and fail an otherwise-successful run. The
+  // background reconcile mirrors/links it later.
   try {
+    const out = await gh(["api", "-X", "POST", `repos/${repo}/issues/${issue}/comments`, "-f", `body=${body}\n\n${AGENCY_MARKER}`]);
     const j = JSON.parse(out);
     if (j?.id) setCommentGhId(localId, j.id, j.created_at);
-  } catch { /* the comment is on GitHub; reconcile will link it on the next thread read */ }
+  } catch { /* GitHub mirror failed (rate limit / parse) — it's in the DB; reconcile links it later */ }
 }
 
 export async function listComments(repo: string, issue: number): Promise<Array<{ body: string }>> {
