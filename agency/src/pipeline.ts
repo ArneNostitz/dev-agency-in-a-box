@@ -31,7 +31,7 @@ import {
 import { EPIC_LABEL, renderEpicTracker } from "./epics.js";
 import { runRole } from "./agents/roleAgent.js";
 import type { RoleName } from "./agents/roles.js";
-import { recordRun, recordPlan, lastPlan, recordIssueState, recordPr, addEpicChild, listEpicChildren, getSession, issueActivity, recordReview, getReview, recordConflict, clearConflict, getSetting } from "./store.js";
+import { recordRun, recordPlan, lastPlan, recordIssueState, recordIssueFiles, recordPr, addEpicChild, listEpicChildren, getSession, issueActivity, recordReview, getReview, recordConflict, clearConflict, getSetting } from "./store.js";
 import { runReflection } from "./reflect.js";
 import { runChecks, parseDiscoveredChecks, rememberChecks } from "./checks.js";
 import { decideNext } from "./orchestrator.js";
@@ -146,10 +146,19 @@ async function plan(repo: string, issue: Issue, workdir: string, thread: string)
       prior ? `\n### Your earlier plan (for reference)\n${prior}` : "",
       ``,
       `Reply starting with "QUESTIONS" (if you need clarification) or "PLAN" (if ready).`,
+      `When you PLAN, declare the file footprint on its own line: \`FILES: path/one.ts, path/two.ts\` —`,
+      `the exact files this work will create or modify. If you break it into SUB-ISSUES, append a`,
+      `\`{files: ...}\` annotation to EACH sub-issue line with the files THAT sub-issue touches. The agency`,
+      `uses this to run non-overlapping work in parallel and never let two agents edit the same file at once.`,
     ].join("\n"),
   });
   recordRun(repo, issue.number, "planner", res.model, res.turns, "plan", res.costUsd);
-  return parsePlannerDecision(res.text);
+  const decision = parsePlannerDecision(res.text);
+  if (decision.kind === "plan") {
+    const files = parseFileList(decision.body);
+    if (files.length) recordIssueFiles(repo, issue.number, files); // footprint → file-lock scheduling
+  }
+  return decision;
 }
 
 /**
@@ -217,14 +226,28 @@ async function approved(repo: string, issue: Issue, thread: string): Promise<boo
   return isApproval(thread) || (await approvedByReaction(repo, issue.number));
 }
 
-/** Parse a `### SUB-ISSUES` section: lines like `- [Short title] @dev <one-line task>`. */
-export function parseSubIssues(planText: string): Array<{ title: string; body: string }> {
+/** Pull a declared file list out of agent text: `FILES: a, b` or a `{files: a, b}` annotation. */
+export function parseFileList(s: string): string[] {
+  const m = /\{?\s*files?\s*:\s*([^}\n]+)\}?/i.exec(s || "");
+  if (!m) return [];
+  return [...new Set(
+    m[1].split(/[,\s]+/).map((f) => f.trim().replace(/[`'"().]+$/g, "").replace(/^[`'"]+/g, "")).filter((f) => /[\/.]/.test(f) && !f.includes(":")),
+  )];
+}
+
+/** Parse a `### SUB-ISSUES` section: `- [Short title] @dev <task> {files: a, b}`. The files annotation
+ *  (optional) declares the footprint so non-overlapping sub-issues can run in parallel. */
+export function parseSubIssues(planText: string): Array<{ title: string; body: string; files: string[] }> {
   const idx = planText.search(/#{0,3}\s*SUB-?ISSUES/i);
   if (idx < 0) return [];
-  const out: Array<{ title: string; body: string }> = [];
+  const out: Array<{ title: string; body: string; files: string[] }> = [];
   for (const line of planText.slice(idx).split("\n")) {
     const m = /^\s*[-*]\s*\[(.+?)\]\s*(.+)$/.exec(line);
-    if (m) out.push({ title: m[1].trim(), body: m[2].trim() });
+    if (m) {
+      const files = parseFileList(m[2]);
+      const body = m[2].replace(/\{?\s*files?\s*:[^}\n]+\}?/i, "").trim();
+      out.push({ title: m[1].trim(), body, files });
+    }
   }
   return out;
 }
@@ -243,6 +266,7 @@ async function maybeDecompose(repo: string, issue: Issue, planText: string): Pro
     const body = /@\w/.test(s.body) ? s.body : `@dev ${s.body}`;
     const created = await createIssue(repo, s.title, `${body}\n\nPart of epic #${issue.number}.`);
     addEpicChild(repo, issue.number, created.number, s.title);
+    if (s.files.length) recordIssueFiles(repo, created.number, s.files); // footprint → file-lock scheduling
     recordRun(repo, issue.number, "planner", MODELS_NONE, 0, "create-issue");
   }
   await commentOnIssue(
@@ -664,7 +688,11 @@ export async function runReviewFix(repo: string, issue: Issue, workdir: string, 
         task:
           `A merge of \`origin/main\` is IN PROGRESS in this checkout, with conflicts in:\n` +
           m.files.map((f) => `- \`${f}\``).join("\n") +
-          `\n\nResolve EVERY conflict by editing those files (remove all \`<<<<<<<\`/\`=======\`/\`>>>>>>>\` markers, keeping the correct combined result), then \`git add\` each resolved file. ` +
+          `\n\nResolve EVERY conflict by editing those files. CRITICAL — this is a FEATURE-AWARE merge: you must ` +
+          `INTEGRATE BOTH SIDES so NO work is lost. \`main\` (the incoming side) may contain features added by ` +
+          `OTHER issues since this branch started; your branch (the current side) contains THIS issue's feature. ` +
+          `Keep BOTH — combine the changes so every feature from each side survives. Never resolve by deleting one ` +
+          `side's code to make the markers go away. Remove all \`<<<<<<<\`/\`=======\`/\`>>>>>>>\` markers, then \`git add\` each resolved file. ` +
           `Do NOT run \`git merge\`/\`git rebase\` again, do NOT \`git merge --abort\`, do NOT open a new PR, and do NOT commit — the system commits and pushes for you. ` +
           `When every file is resolved and \`git add\`ed, make sure the project still builds, then stop.`,
         ...(getSession(repo, issue.number, "developer") ? { resumeSessionId: getSession(repo, issue.number, "developer") ?? undefined } : {}),
