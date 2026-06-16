@@ -134,3 +134,71 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
 
   dom.window.close();
 });
+
+test("epic card nests its sub-issues and hides their standalone cards", async () => {
+  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { pretendToBeVisual: true, url: "https://devagency.test/" });
+  const { window } = dom;
+  const setG = (k, v) => { try { global[k] = v; } catch { try { Object.defineProperty(global, k, { value: v, configurable: true }); } catch {} } };
+  setG("window", window); setG("document", window.document);
+
+  // Build temp copies of the web modules (rewriting the absolute vendor import) so Node resolves the
+  // relative imports, then load Board + the vendor's html/render directly.
+  const webDir = join(HERE, "..", "web");
+  const vendorUrl = pathToFileURL(join(webDir, "vendor", "standalone.mjs")).href;
+  const tmpDir = mkdtempSync(join(tmpdir(), "dagrp-"));
+  for (const f of ["core", "board"]) {
+    const src = readFileSync(join(webDir, f + ".js"), "utf8").split("/web/vendor/standalone.mjs").join(vendorUrl);
+    writeFileSync(join(tmpDir, f + ".js"), src);
+  }
+  const { Board, nestedChildKeys } = await import(pathToFileURL(join(tmpDir, "board.js")).href);
+  const { html, render } = await import(vendorUrl);
+
+  const issues = [
+    { repo: "acme/app", number: 10, title: "Big epic", state: "agency:epic", auto: {}, updated_at: new Date().toISOString(),
+      epic: { total: 2, done: 1, children: [
+        { child: 11, title: "Nested child A", state: "agency:ready", closed: false },
+        { child: 12, title: "Nested child B", state: "done", closed: true },
+      ] } },
+    // The same sub-issues as their own open issues — these standalone cards must be hidden.
+    { repo: "acme/app", number: 11, title: "STANDALONE-ELEVEN", state: "agency:ready", pr_number: 9, auto: {}, updated_at: new Date().toISOString() },
+    { repo: "acme/app", number: 12, title: "STANDALONE-TWELVE", state: "done", auto: {}, updated_at: new Date().toISOString() },
+  ];
+
+  // Pure helper: keys of issues nested under a present epic parent.
+  const keys = nestedChildKeys(issues);
+  assert.ok(keys.has("acme/app#11") && keys.has("acme/app#12"), "both children are marked nested");
+  assert.equal(keys.size, 2, "the epic parent itself is not nested");
+
+  let opened = null;
+  const act = { isBusy: () => false };
+  const data = { config: {}, providers: [] };
+  render(
+    html`<${Board} issues=${issues} repos=${["acme/app"]} repoFilter="acme/app" tab="planned" sort="time" isDesktop=${true}
+      onOpen=${() => {}} onOpenChild=${(r, n, t) => { opened = { r, n, t }; }} onAddRepo=${() => {}} onAddIssue=${() => {}}
+      onAnalyze=${() => {}} auditRepos=${[]} act=${act} data=${data}/>`,
+    window.document.getElementById("root"),
+  );
+  const root = window.document.getElementById("root");
+  let h = root.innerHTML;
+
+  assert.match(h, /Big epic/, "epic parent card renders");
+  assert.match(h, /Sub-issues/, "epic card shows the collapsible sub-issue list");
+  // Default-open because a child is in Review; the nested rows use the epic metadata titles.
+  assert.match(h, /Nested child A/, "nested sub-issue row renders");
+  assert.match(h, /Nested child B/, "second nested sub-issue row renders");
+  assert.doesNotMatch(h, /STANDALONE-ELEVEN/, "the review sub-issue's standalone card is hidden");
+  assert.doesNotMatch(h, /STANDALONE-TWELVE/, "the done sub-issue's standalone card is hidden");
+
+  // Clicking a nested row opens that sub-issue's detail (via onOpenChild).
+  const rowA = Array.from(window.document.querySelectorAll(".subrow")).find((b) => /Nested child A/.test(b.textContent));
+  rowA.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  assert.deepEqual(opened, { r: "acme/app", n: 11, t: "Nested child A" }, "row opens sub-issue #11");
+
+  // Collapsing the list hides the rows.
+  const toggle = window.document.querySelector(".subtoggle");
+  toggle.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 10));
+  assert.doesNotMatch(root.innerHTML, /Nested child A/, "rows hidden after collapsing");
+
+  dom.window.close();
+});
