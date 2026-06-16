@@ -68,6 +68,15 @@ function App() {
   const ov = overridesRef.current;
   let issues = (data.issues || []).map((i) => { const o = ov[i.repo + "#" + i.number]; return o ? Object.assign({}, i, o.patch) : i; });
   issues = issues.concat(pending.filter((p) => !issues.some((i) => i.repo === p.repo && i.number === p.number)));
+  // Wire active/queued per issue: active = agent genuinely running now; queued = in-progress state but no live run.
+  const activeSet = new Set((data.active || []).map((a) => a.repo + "#" + a.number));
+  issues = issues.map((i) => {
+    const key = i.repo + "#" + i.number;
+    const isActive = i.running || activeSet.has(key);
+    if (isActive) return Object.assign({}, i, { active: true });
+    if ((i.state || "") === "agency:in-progress") return Object.assign({}, i, { queued: true });
+    return i;
+  });
   // Repos with a running audit — drives the spinner on the top-bar Audit dropdown. (The audit itself
   // is now a real GitHub tracking issue, so it shows as a normal card + detail.)
   const auditRepos = (data.active || []).filter((a) => a.role === "auditor").map((a) => a.repo);
