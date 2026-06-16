@@ -303,17 +303,17 @@ textarea{resize:vertical;min-height:64px}
 .cmt .h .cmt-in{display:inline-flex;align-items:center;color:var(--accent);vertical-align:middle}
 .cmt .h .cmt-edit-btn{margin-left:auto;opacity:0;transition:opacity .15s;padding:2px}
 .cmt:hover .h .cmt-edit-btn{opacity:1}
-.cmt .b{font-size:14px}
-.cmt .b pre{background:var(--bg);padding:8px 10px;border-radius:8px;overflow:auto;font-size:12px}
-.cmt .b code{background:var(--bg);padding:1px 5px;border-radius:5px;font-size:.9em}
-.cmt .b img{max-width:100%;border-radius:8px}
-.cmt .b h1{font-size:1.35em;font-weight:700;margin:.5em 0 .2em;border-bottom:1px solid var(--line);padding-bottom:.2em}
-.cmt .b h2{font-size:1.15em;font-weight:700;margin:.45em 0 .2em;border-bottom:1px solid var(--line);padding-bottom:.15em}
-.cmt .b h3{font-size:1.05em;font-weight:600;margin:.4em 0 .15em}
-.cmt .b h4,.cmt .b h5,.cmt .b h6{font-size:1em;font-weight:600;margin:.3em 0 .1em}
-.cmt .b ul,.cmt .b ol{margin:.35em 0;padding-left:1.5em}
-.cmt .b li{margin:.1em 0}
-.cmt .b blockquote{border-left:3px solid var(--line-2);margin:.35em 0;padding:.1em .7em;color:var(--ink-2)}
+.cmt .b,.composer .b{font-size:14px}
+.cmt .b pre,.composer .b pre{background:var(--bg);padding:8px 10px;border-radius:8px;overflow:auto;font-size:12px}
+.cmt .b code,.composer .b code{background:var(--bg);padding:1px 5px;border-radius:5px;font-size:.9em}
+.cmt .b img,.composer .b img{max-width:100%;border-radius:8px}
+.cmt .b h1,.composer .b h1{font-size:1.35em;font-weight:700;margin:.5em 0 .2em;border-bottom:1px solid var(--line);padding-bottom:.2em}
+.cmt .b h2,.composer .b h2{font-size:1.15em;font-weight:700;margin:.45em 0 .2em;border-bottom:1px solid var(--line);padding-bottom:.15em}
+.cmt .b h3,.composer .b h3{font-size:1.05em;font-weight:600;margin:.4em 0 .15em}
+.cmt .b h4,.cmt .b h5,.cmt .b h6,.composer .b h4,.composer .b h5,.composer .b h6{font-size:1em;font-weight:600;margin:.3em 0 .1em}
+.cmt .b ul,.cmt .b ol,.composer .b ul,.composer .b ol{margin:.35em 0;padding-left:1.5em}
+.cmt .b li,.composer .b li{margin:.1em 0}
+.cmt .b blockquote,.composer .b blockquote{border-left:3px solid var(--line-2);margin:.35em 0;padding:.1em .7em;color:var(--ink-2)}
 .cmt .b blockquote p{margin:.15em 0}
 .cmt .b hr{border:none;border-top:1px solid var(--line);margin:.6em 0}
 .cmt .b p{margin:.3em 0}
