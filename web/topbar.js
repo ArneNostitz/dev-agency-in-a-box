@@ -101,7 +101,7 @@ function analyzerStatus(an) {
   const stale = mins > 12 * 60;
   return { cls: stale ? "amber" : "green", text: seen, title: "Analyzer last pulled telemetry " + new Date(an.lastPull).toLocaleString() + (an.lastIssueAt ? "\nLast proposal: " + new Date(an.lastIssueAt).toLocaleString() : "") };
 }
-export function StatusLine({ working, session, spend, analyzer, reload, sort, setSort }) {
+export function StatusLine({ working, session, spend, analyzer, reload, sort, setSort, offlineQ, syncing }) {
   const an = analyzerStatus(analyzer);
   const s = session || {};
   const pct = s.budget > 0 ? Math.min(100, Math.round((100 * s.tokens) / s.budget)) : 0;
@@ -136,6 +136,7 @@ export function StatusLine({ working, session, spend, analyzer, reload, sort, se
   return html`<div class="statusline">
     <span>${working ? working + " working now" : "Idle"}</span>
     ${spend && spend.costUsd > 0 ? html`<span>· $${spend.costUsd.toFixed(2)} today</span>` : null}
+    ${syncing ? html`<span>· <${Spinner} size=${13}/> syncing…</span>` : offlineQ && offlineQ.length > 0 ? html`<span title=${"" + offlineQ.length + " action(s) queued while offline"}>· 🔌 ${offlineQ.length} queued offline</span>` : null}
     <span class="statpop">
       ${s.budget > 0
         ? html`<span class="statlink" title="Calibrate usage %" onClick=${openUsage}>· <span class="gauge"><i style=${"width:" + pct + "%;background:" + col}></i></span> ${pct}%</span>`

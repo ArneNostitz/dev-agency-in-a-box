@@ -4,7 +4,7 @@ import { Avatar, Icon, Sheet, Spinner, ago, api, fmtTok, getJSON, ghUrl, isDone,
 
 
 // ---------- Detail ----------
-export function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIssue, data }) {
+export function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIssue, data, isOnline = true, onQueueComment }) {
   const [tab, setTab] = useState("chat"); // mobile sub-tab: chat | stream
   const [thread, setThread] = useState(null);
   const [pr, setPr] = useState(null);
@@ -103,11 +103,20 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
 
   function send() {
     if (!reply.trim() && !atts.length) return;
-    setBusy(true);
+    const textToSend = reply;
     const mo = modelOverride ? (() => { const parts = modelOverride.split("/"); return { providerId: parts[0], model: parts.slice(1).join("/") }; })() : null;
+    // If offline, queue without a skeleton (comment appears after flush + thread reload).
+    if (!isOnline) {
+      if (onQueueComment) onQueueComment({ type: "comment", repo, number, body: textToSend, model: mo || null });
+      toast("Queued offline — will send when back online");
+      setReply(""); setAtts([]);
+      if (taRef.current) taRef.current.style.height = "auto";
+      return;
+    }
+    setBusy(true);
     // Optimistic skeleton: show the comment immediately before the server confirms
     const skelId = Date.now();
-    setPendingComments((ps) => ps.concat({ _skel: true, id: skelId, author: "you", createdAt: new Date().toISOString(), body: reply }));
+    setPendingComments((ps) => ps.concat({ _skel: true, id: skelId, author: "you", createdAt: new Date().toISOString(), body: textToSend }));
     // Scroll to bottom so the skeleton is visible
     requestAnimationFrame(() => { if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight; });
     Promise.all(atts.map((a) =>
@@ -117,7 +126,7 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
     ))
       .then((results) => {
         // Replace inline [image N] references with their uploaded markdown
-        let full = reply;
+        let full = textToSend;
         const appended = [];
         for (const r of results.filter(Boolean)) {
           if (r.refId && r.md) full = full.split("[" + r.refId + "]").join(r.md);
@@ -132,7 +141,16 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
         toast(running ? "Queued — the agent will pick it up when the run finishes" : "Sent");
         setTimeout(() => { setPendingComments((ps) => ps.filter((p) => p.id !== skelId)); loadThread(); }, 800);
       })
-      .catch((e) => { toast((e && e.message) || "Couldn’t send", "error"); setPendingComments((ps) => ps.filter((p) => p.id !== skelId)); })
+      .catch((e) => {
+        if (e instanceof TypeError) {
+          // Network error mid-flight — queue the comment and clear the skeleton
+          if (onQueueComment) onQueueComment({ type: "comment", repo, number, body: textToSend, model: mo || null });
+          toast("Network error — comment queued offline");
+        } else {
+          toast((e && e.message) || "Couldn’t send", "error");
+        }
+        setPendingComments((ps) => ps.filter((p) => p.id !== skelId));
+      })
       .finally(() => setBusy(false));
   }
   function editComment(id, body) {
