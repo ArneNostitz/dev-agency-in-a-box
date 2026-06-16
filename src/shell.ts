@@ -120,11 +120,11 @@ input,select,textarea{font-size:16px}
 .gauge i{display:block;height:100%}
 
 /* board controls toolbar */
-.bctrl{display:flex;align-items:center;gap:6px;padding:6px 8px;flex-wrap:wrap}
+.bctrl{display:flex;align-items:center;gap:10px;padding:6px 8px;flex-wrap:wrap}
+.bctrl-group{display:flex;align-items:center;gap:6px}
 .bctrl-label{font-size:11.5px;color:var(--ink-3);font-weight:540;white-space:nowrap}
 .bctrl select{font:12.5px inherit;border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:8px;padding:4px 8px;cursor:pointer}
 .bctrl select:focus{outline:none;border-color:var(--accent)}
-.bctrl-sep{flex:1}
 
 /* board */
 .board{padding:8px}

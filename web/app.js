@@ -538,19 +538,25 @@ function filterByTime(arr, timeKey) {
 
 function BoardControls({ boardSort, setBoardSort, boardGroup, setBoardGroup, boardTime, setBoardTime }) {
   return html`<div class="bctrl">
-    <span class="bctrl-label">Sort</span>
-    <select value=${boardSort} onChange=${(e) => setBoardSort(e.target.value)}>
-      ${SORT_OPTS.map((o) => html`<option key=${o.v} value=${o.v}>${o.label}</option>`)}
-    </select>
-    <span class="bctrl-label" style="margin-left:6px">Group</span>
-    <select value=${boardGroup} onChange=${(e) => setBoardGroup(e.target.value)}>
-      <option value="state">Workflow state</option>
-      <option value="repo">Repo</option>
-    </select>
-    <span class="bctrl-label" style="margin-left:6px">Updated</span>
-    <select value=${boardTime} onChange=${(e) => setBoardTime(e.target.value)}>
-      ${TIME_OPTS.map((o) => html`<option key=${o.v} value=${o.v}>${o.label}</option>`)}
-    </select>
+    <span class="bctrl-group">
+      <span class="bctrl-label">Sort</span>
+      <select value=${boardSort} onChange=${(e) => setBoardSort(e.target.value)}>
+        ${SORT_OPTS.map((o) => html`<option key=${o.v} value=${o.v}>${o.label}</option>`)}
+      </select>
+    </span>
+    <span class="bctrl-group">
+      <span class="bctrl-label">Group</span>
+      <select value=${boardGroup} onChange=${(e) => setBoardGroup(e.target.value)}>
+        <option value="state">Workflow state</option>
+        <option value="repo">Repo</option>
+      </select>
+    </span>
+    <span class="bctrl-group">
+      <span class="bctrl-label">Updated</span>
+      <select value=${boardTime} onChange=${(e) => setBoardTime(e.target.value)}>
+        ${TIME_OPTS.map((o) => html`<option key=${o.v} value=${o.v}>${o.label}</option>`)}
+      </select>
+    </span>
   </div>`;
 }
 
@@ -573,46 +579,42 @@ function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, onAddRepo, o
   const sorted = sortIssues(filtered, boardSort);
 
   const renderCard = (i) => html`<${Card} key=${i.repo + "#" + i.number} i=${i} multi=${!repoFilter && repos.length > 1} onOpen=${onOpen} act=${act} data=${data}/>`;
+  const controls = html`<${BoardControls} boardSort=${boardSort} setBoardSort=${setBoardSort} boardGroup=${boardGroup} setBoardGroup=${setBoardGroup} boardTime=${boardTime} setBoardTime=${setBoardTime}/>`;
 
   // --- group by workflow state (default) ---
+  let boardContent;
   if (!boardGroup || boardGroup === "state") {
     const byCol = {}; COLS.forEach((c) => (byCol[c.k] = []));
     sorted.forEach((i) => byCol[classify(i)].push(i));
     const cols = isDesktop ? COLS : COLS.filter((c) => c.k === tab);
-    return html`<div>
-      <${BoardControls} boardSort=${boardSort} setBoardSort=${setBoardSort} boardGroup=${boardGroup} setBoardGroup=${setBoardGroup} boardTime=${boardTime} setBoardTime=${setBoardTime}/>
-      <div class="board">
-        ${cols.map((c) => {
-          const allItems = byCol[c.k];
-          // Working column: pin epic parents at the top; sub-issues + regular cards go below
-          const epicPins = c.k === "working" ? allItems.filter((i) => i.state === "agency:epic") : [];
-          const workingRest = c.k === "working" ? allItems.filter((i) => i.state !== "agency:epic") : allItems;
-          return html`<div class="col" key=${c.k}>
-            <div class="colhead"><${Icon} name=${c.icon} size=${15}/> ${c.label} <span class="n">${allItems.length || ""}</span></div>
-            ${c.k === "planned" ? html`<div class="planned-actions">
-              <button class="colbtn primary" onClick=${() => onAddIssue(target)}><${Icon} name="plus" size=${14}/> Add Issue</button>
-              <button class="colbtn" disabled=${!target || analyzing} title=${target ? "Analyze " + target.split("/").pop() + "'s codebase health" : "Pick a repo first"} onClick=${() => target && onAnalyze(target)}>${analyzing ? html`<${Spinner} size=${14}/>` : html`<${Icon} name="search" size=${14}/>`} Analyze Repo</button>
-            </div>` : null}
-            <div class="cards">
-              ${epicPins.length ? html`
-                ${epicPins.map(renderCard)}
-                ${workingRest.length ? html`<div class="col-sect-div">sub-issues &amp; tasks</div>` : null}
-              ` : null}
-              ${workingRest.length ? workingRest.map(renderCard) : (!epicPins.length ? html`<div class="empty">—</div>` : null)}
-            </div>
-          </div>`;
-        })}
-      </div>
+    boardContent = html`<div class="board">
+      ${cols.map((c) => {
+        const allItems = byCol[c.k];
+        // Working column: pin epic parents at the top; sub-issues + regular cards go below
+        const epicPins = c.k === "working" ? allItems.filter((i) => i.state === "agency:epic") : [];
+        const workingRest = c.k === "working" ? allItems.filter((i) => i.state !== "agency:epic") : allItems;
+        return html`<div class="col" key=${c.k}>
+          <div class="colhead"><${Icon} name=${c.icon} size=${15}/> ${c.label} <span class="n">${allItems.length || ""}</span></div>
+          ${c.k === "planned" ? html`<div class="planned-actions">
+            <button class="colbtn primary" onClick=${() => onAddIssue(target)}><${Icon} name="plus" size=${14}/> Add Issue</button>
+            <button class="colbtn" disabled=${!target || analyzing} title=${target ? "Analyze " + target.split("/").pop() + "'s codebase health" : "Pick a repo first"} onClick=${() => target && onAnalyze(target)}>${analyzing ? html`<${Spinner} size=${14}/>` : html`<${Icon} name="search" size=${14}/>`} Analyze Repo</button>
+          </div>` : null}
+          <div class="cards">
+            ${epicPins.length ? html`
+              ${epicPins.map(renderCard)}
+              ${workingRest.length ? html`<div class="col-sect-div">sub-issues &amp; tasks</div>` : null}
+            ` : null}
+            ${workingRest.length ? workingRest.map(renderCard) : (!epicPins.length ? html`<div class="empty">—</div>` : null)}
+          </div>
+        </div>`;
+      })}
     </div>`;
-  }
-
-  // --- group by repo ---
-  const repoList = repos.filter((r) => !repoFilter || r === repoFilter);
-  // include any repos present in filtered issues but not in the watched list
-  sorted.forEach((i) => { if (!repoList.includes(i.repo)) repoList.push(i.repo); });
-  return html`<div>
-    <${BoardControls} boardSort=${boardSort} setBoardSort=${setBoardSort} boardGroup=${boardGroup} setBoardGroup=${setBoardGroup} boardTime=${boardTime} setBoardTime=${setBoardTime}/>
-    <div class=${"board group-repo"}>
+  } else {
+    // --- group by repo ---
+    const repoList = repos.filter((r) => !repoFilter || r === repoFilter);
+    // include any repos present in filtered issues but not in the watched list
+    sorted.forEach((i) => { if (!repoList.includes(i.repo)) repoList.push(i.repo); });
+    boardContent = html`<div class="board group-repo">
       ${repoList.map((r) => {
         const allItems = sorted.filter((i) => i.repo === r);
         const short = r.split("/").pop();
@@ -628,8 +630,9 @@ function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, onAddRepo, o
           </div>
         </div>`;
       })}
-    </div>
-  </div>`;
+    </div>`;
+  }
+  return html`<div>${controls}${boardContent}</div>`;
 }
 
 function usageTitle(u) {
