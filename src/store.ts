@@ -91,6 +91,11 @@ function getDb(): DatabaseSync | null {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         repo TEXT, number INTEGER, role TEXT, tool TEXT, detail TEXT, ok INTEGER, ts TEXT
       );
+      -- Files an issue's work declares it will touch (planner output) — the file-lock scheduler uses
+      -- this to run non-overlapping issues in parallel and serialize overlapping ones.
+      CREATE TABLE IF NOT EXISTS issue_files (
+        repo TEXT NOT NULL, number INTEGER NOT NULL, files TEXT, updated_at TEXT, PRIMARY KEY (repo, number)
+      );
       -- Pluggable agent registry (v3): custom agents (incl. interactive chat agents) defined/edited
       -- in the dashboard. Built-in repo roles still live in code; these are additive.
       CREATE TABLE IF NOT EXISTS agent_def (
@@ -203,6 +208,27 @@ export function listWatchedRepos(): string[] {
   } catch {
     return [];
   }
+}
+
+/** Record the files an issue's work will touch (from the planner) — drives the file-lock scheduler. */
+export function recordIssueFiles(repo: string, number: number, files: string[]): void {
+  const d = getDb();
+  if (!d) return;
+  try {
+    d.prepare(`INSERT INTO issue_files (repo, number, files, updated_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT(repo, number) DO UPDATE SET files = excluded.files, updated_at = excluded.updated_at`)
+      .run(repo, number, JSON.stringify(files || []), now());
+  } catch { /* best effort */ }
+}
+
+/** The declared file footprint for an issue (empty = unknown → don't lock, fall back to merge check). */
+export function filesFor(repo: string, number: number): string[] {
+  const d = getDb();
+  if (!d) return [];
+  try {
+    const r = d.prepare(`SELECT files FROM issue_files WHERE repo = ? AND number = ?`).get(repo, number) as { files?: string } | undefined;
+    return r?.files ? (JSON.parse(r.files) as string[]) : [];
+  } catch { return []; }
 }
 
 export function recordIssueState(

@@ -91,7 +91,10 @@ import {
   chatAgentForText,
   seedChatAgents,
   clearIssueModelOverride,
+  filesFor,
+  recordIncident,
 } from "./store.js";
+import { claimFiles, releaseFiles } from "./locks.js";
 import { parseRateLimit, nextWindowReset } from "./ratelimit.js";
 import { startPreviewSweeper, killAllApps } from "./apprun.js";
 import { setActive, clearActive, getActive } from "./activity.js";
@@ -904,18 +907,29 @@ async function scanRepo(cfg: Config, repo: string): Promise<void> {
     if (paused) continue; // usage-limit wall — leave it; it resumes after the reset
 
     const issue: Issue = { number: t.number, title: t.title, body: t.body, labels: t.labels };
+
+    // FILE-LOCK GATE (overwrite protection, repo-wide, any issue↔issue): claim this issue's declared
+    // file footprint. If another in-flight run holds an overlapping file, DON'T dispatch now — defer
+    // to a later scan when it frees (serializes only the overlapping work; disjoint work runs in
+    // parallel). An unknown footprint never blocks (the feature-aware merge is the backstop).
+    const claim = claimFiles(repo, t.number, filesFor(repo, t.number));
+    if (!claim.ok) {
+      recordIncident("file-lock-deferred", `#${t.number} waits on \`${claim.file}\` (held by #${claim.blockedBy})`);
+      continue;
+    }
+    const release = () => releaseFiles(repo, t.number);
     // Mark this comment handled now so re-polls during the run don't double-fire.
     if (newHumanComment) setThreadCursor(repo, t.number, lastCommentId);
 
     if (action === "prfix" && openPr) {
       const thread = await commentThread(repo, t.number);
       const pr = { number: openPr.number, title: t.title, branch: `agency/issue-${t.number}`, issueNumber: t.number };
-      dispatch(`${repo}#pr-${pr.number}`, () => processPrFeedbackOne(repo, pr, thread));
+      dispatch(`${repo}#pr-${pr.number}`, () => processPrFeedbackOne(repo, pr, thread).finally(release));
     } else if (action === "followup") {
-      dispatch(`${repo}#${t.number}`, () => processFollowUp(cfg, repo, issue));
+      dispatch(`${repo}#${t.number}`, () => processFollowUp(cfg, repo, issue).finally(release));
     } else {
       // fresh or resume — processIssue picks the role and sorts approve/answer/change.
-      dispatch(`${repo}#${t.number}`, () => processIssue(cfg, repo, issue));
+      dispatch(`${repo}#${t.number}`, () => processIssue(cfg, repo, issue).finally(release));
     }
   }
 
