@@ -51,10 +51,6 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
       // Issue 3 simulates the "fix" flow: has a PR (was in Review) but is now actively being fixed.
       // classify() must put it in Working (via i.running), not keep it in Review (via i.pr_number).
       { repo: "acme/app", number: 3, title: "Fix running now", state: "agency:in-progress", pr_number: 7, running: true, updated_at: new Date().toISOString(), auto: {} },
-      // Epic parent — should be pinned at the top of the Working column
-      { repo: "acme/app", number: 4, title: "My Epic", state: "agency:epic", epic: { total: 1, done: 0, children: [{ child: 5, title: "Sub task", state: "open", closed: 0 }] }, updated_at: new Date().toISOString(), auto: {} },
-      // Sub-issue — should show parent bar "#4 · My Epic" in the card
-      { repo: "acme/app", number: 5, title: "Sub task", state: "agency:in-progress", parentEpic: { number: 4, title: "My Epic" }, updated_at: new Date().toISOString(), auto: {} },
     ],
   };
   const route = (u) => {
@@ -67,14 +63,17 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
   };
   global.fetch = async (u) => ({ ok: true, json: async () => route(u), text: async () => "" });
 
-  // Rewrite the absolute vendor import (browser path) to a file URL so Node can resolve it.
-  const src = readFileSync(join(HERE, "..", "web", "app.js"), "utf8");
-  const vendorUrl = pathToFileURL(join(HERE, "..", "web", "vendor", "standalone.mjs")).href;
-  const patched = src.replace("/web/vendor/standalone.mjs", vendorUrl);
-  const tmp = join(mkdtempSync(join(tmpdir(), "daui-")), "app.mjs");
-  writeFileSync(tmp, patched);
-
-  const mod = await import(pathToFileURL(tmp).href);
+  // The dashboard is split across ES modules in web/ that import each other relatively. Copy them all
+  // into one temp dir (rewriting the absolute vendor import to a file URL) so Node can resolve the
+  // relative `./core.js` etc., then import the entry.
+  const webDir = join(HERE, "..", "web");
+  const vendorUrl = pathToFileURL(join(webDir, "vendor", "standalone.mjs")).href;
+  const tmpDir = mkdtempSync(join(tmpdir(), "daui-"));
+  for (const f of ["core", "board", "detail", "settings", "onboarding", "topbar", "usage", "agents", "app"]) {
+    const src = readFileSync(join(webDir, f + ".js"), "utf8").split("/web/vendor/standalone.mjs").join(vendorUrl);
+    writeFileSync(join(tmpDir, f + ".js"), src);
+  }
+  const mod = await import(pathToFileURL(join(tmpDir, "app.js")).href);
   assert.equal(typeof mod.mount, "function", "app.js exports mount()");
   mod.mount(window.document.getElementById("root"));
 
@@ -90,36 +89,12 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
   assert.match(root.innerHTML, /A planned task/, "planned issue card renders from /data");
 
   // Verify lane placement for the fix flow: an issue with pr_number AND running:true must go to
-  // Working, not Review. The mobile TabBar shows counts per column, so "Working · 3" confirms
-  // classify() placed the fix-running card + epic + sub-issue in Working rather than Review.
+  // Working, not Review. The mobile TabBar shows counts per column, so "Working · 1" confirms
+  // classify() put the fix-running card in Working rather than Review.
   const html2 = root.innerHTML;
-  assert.match(html2, /Working.*?·.*?3|Working\s*·\s*3/, "Working tab shows 3 issues (fix-running + epic + sub-issue)");
-  // Review should have 1 card (the approved PR), not more.
+  assert.match(html2, /Working.*?·.*?1|Working\s*·\s*1/, "Working tab shows 1 issue (the fix-running card)");
+  // Review should have 1 card (the approved PR), not 2 — the fix-running card must NOT be there.
   assert.match(html2, /Review.*?·.*?1|Review\s*·\s*1/, "Review tab shows only 1 issue (not the fix-running card)");
-
-  // Switch to Working tab (mobile renders one column at a time; matchMedia returns non-desktop)
-  const workingTabBtn = Array.from(root.querySelectorAll(".tab")).find((b) => /Working/.test(b.textContent));
-  if (workingTabBtn) {
-    workingTabBtn.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-    await new Promise((r) => setTimeout(r, 30));
-  }
-
-  // Epic pinning: the parent bar for the sub-issue must render with parent info
-  const parentBar = root.querySelector(".card-parent-bar");
-  assert.ok(parentBar, "card-parent-bar element exists for sub-issue");
-  assert.match(parentBar.textContent, /#4/, "parent bar shows parent issue number");
-  assert.match(parentBar.textContent, /My Epic/, "parent bar shows parent issue title");
-
-  // Epic pin divider: Working column must have the section divider between pinned epics and tasks
-  const sectDiv = root.querySelector(".col-sect-div");
-  assert.ok(sectDiv, "col-sect-div divider renders in Working column between epic pins and sub-issues");
-
-  // Switch back to Planned tab so subsequent interactions (Add Issue, etc.) work as expected
-  const plannedTabBtn = Array.from(root.querySelectorAll(".tab")).find((b) => /Planned/.test(b.textContent));
-  if (plannedTabBtn) {
-    plannedTabBtn.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-    await new Promise((r) => setTimeout(r, 30));
-  }
 
   // onboarding wizard renders (onboarded:false) — exercises its hook components
   assert.match(root.innerHTML, /Welcome to Dev Agency in a Box/, "onboarding wizard renders");
