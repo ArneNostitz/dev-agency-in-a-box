@@ -11,28 +11,46 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sBool } from "./settings.js";
 import { ghBotToken, ghUserToken } from "./creds.js";
-import { recordOutgoingComment, setCommentGhId } from "./store.js";
+import { recordOutgoingComment, setCommentGhId, recordIncident } from "./store.js";
 
 const execFileAsync = promisify(execFile);
+
+/** Note operational problems (rate limits, secondary limits) so the Process Analyzer can propose a fix. */
+function noteGhFailure(args: string[], err: unknown): void {
+  const msg = (err as Error)?.message || "";
+  if (/rate limit|secondary rate|abuse detection|was submitted too quickly/i.test(msg)) {
+    recordIncident("github-rate-limit", `${args.slice(0, 2).join(" ")}: ${msg.slice(0, 160)}`);
+  }
+}
 
 /** Run gh as the human owner ("acts as you"); empty token falls back to the stored owner/bot token. */
 async function ghAs(token: string, args: string[]): Promise<string> {
   const t = token || ghUserToken() || ghBotToken();
-  const { stdout } = await execFileAsync("gh", args, {
-    maxBuffer: 10 * 1024 * 1024,
-    env: t ? { ...process.env, GH_TOKEN: t, GITHUB_TOKEN: t } : process.env,
-  });
-  return stdout.trim();
+  try {
+    const { stdout } = await execFileAsync("gh", args, {
+      maxBuffer: 10 * 1024 * 1024,
+      env: t ? { ...process.env, GH_TOKEN: t, GITHUB_TOKEN: t } : process.env,
+    });
+    return stdout.trim();
+  } catch (err) {
+    noteGhFailure(args, err);
+    throw err;
+  }
 }
 
 /** Run gh as the agency bot, using the dashboard-stored bot token (or GITHUB_TOKEN env). */
 async function gh(args: string[]): Promise<string> {
   const token = ghBotToken();
-  const { stdout } = await execFileAsync("gh", args, {
-    maxBuffer: 10 * 1024 * 1024,
-    env: token ? { ...process.env, GH_TOKEN: token, GITHUB_TOKEN: token } : process.env,
-  });
-  return stdout.trim();
+  try {
+    const { stdout } = await execFileAsync("gh", args, {
+      maxBuffer: 10 * 1024 * 1024,
+      env: token ? { ...process.env, GH_TOKEN: token, GITHUB_TOKEN: token } : process.env,
+    });
+    return stdout.trim();
+  } catch (err) {
+    noteGhFailure(args, err);
+    throw err;
+  }
 }
 
 export interface Issue {

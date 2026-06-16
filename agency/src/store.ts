@@ -1358,6 +1358,26 @@ export function toolStatsSince(sinceIso: string): ToolStat[] {
   } catch { return []; }
 }
 
+/** Log an OPERATIONAL incident (e.g. a GitHub rate limit) so the Process Analyzer can see it and
+ *  propose a fix. Stored as a run_step with role "system" + ok=0 so it shows up in failure stats. */
+export function recordIncident(kind: string, detail: string): void {
+  recordRunStep("", 0, "system", kind, detail, false);
+}
+
+export interface FailureStat { role: string; tool: string; count: number; sample: string }
+/** Recent FAILURES (ok=0) grouped by role+tool with a sample message — the operational problems the
+ *  Analyzer should propose fixes for (rate limits, failing commands, repeated agent tool errors). */
+export function recentFailuresSince(sinceIso: string, limit = 15): FailureStat[] {
+  const d = getDb();
+  if (!d) return [];
+  try {
+    return d.prepare(
+      `SELECT role, tool, COUNT(*) AS count, MAX(detail) AS sample
+       FROM run_step WHERE ts >= ? AND ok = 0 GROUP BY role, tool ORDER BY count DESC LIMIT ?`,
+    ).all(sinceIso, limit) as unknown as FailureStat[];
+  } catch { return []; }
+}
+
 /** Count of run_step rows since an ISO time — the "enough new data?" gate for the analyzer. */
 export function runStepCountSince(sinceIso: string): number {
   const d = getDb();
