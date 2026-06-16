@@ -56,7 +56,7 @@ export function nestedChildKeys(issues) {
   return keys;
 }
 
-export function Board({ issues, repos, repoFilter, tab, sort, isDesktop, onOpen, onOpenChild, onAddRepo, onAddIssue, onAnalyze, auditRepos, act, data }) {
+export function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, onOpenChild, onAddRepo, onAddIssue, onAnalyze, auditRepos, act, data }) {
   // Board-owned controls — distinct localStorage keys to avoid collision with the legacy "boardSort" JSON key.
   const [boardSort,  setBoardSort]  = useState(() => { try { return localStorage.getItem("boardCtrlSort")  || "updated_desc"; } catch (e) { return "updated_desc"; } });
   const [boardGroup, setBoardGroup] = useState(() => { try { return localStorage.getItem("boardCtrlGroup") || "state";        } catch (e) { return "state";        } });
@@ -106,8 +106,6 @@ export function Board({ issues, repos, repoFilter, tab, sort, isDesktop, onOpen,
     boardContent = html`<div class="board">
       ${cols.map((c) => {
         const allItems = byCol[c.k];
-        const epicPins = c.k === "working" ? allItems.filter((i) => i.state === "agency:epic") : [];
-        const rest = c.k === "working" ? allItems.filter((i) => i.state !== "agency:epic") : allItems;
         return html`<div class="col" key=${c.k}>
           <div class="colhead"><${Icon} name=${c.icon} size=${15}/> ${c.label} <span class="n">${allItems.length || ""}</span></div>
           ${c.k === "planned" ? html`<div class="planned-actions">
@@ -115,11 +113,7 @@ export function Board({ issues, repos, repoFilter, tab, sort, isDesktop, onOpen,
             <button class="colbtn" disabled=${!target || analyzing} title=${target ? "Analyze " + target.split("/").pop() + "'s codebase health" : "Pick a repo first"} onClick=${() => target && onAnalyze(target)}>${analyzing ? html`<${Spinner} size=${14}/>` : html`<${Icon} name="search" size=${14}/>`} Analyze Repo</button>
           </div>` : null}
           <div class="cards">
-            ${epicPins.length ? html`
-              ${epicPins.map(renderCard)}
-              ${rest.length ? html`<div class="col-sect-div">sub-issues &amp; tasks</div>` : null}
-            ` : null}
-            ${rest.length ? rest.map(renderCard) : (!epicPins.length ? html`<div class="empty">—</div>` : null)}
+            ${allItems.length ? allItems.map(renderCard) : html`<div class="empty">—</div>`}
           </div>
         </div>`;
       })}
