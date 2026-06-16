@@ -169,6 +169,8 @@ function App() {
   const [data, setData] = useState({ issues: [], repos: [], active: [], activity: [], session: {}, config: {}, auto: {}, autoRepos: {} });
   const [repoFilter, setRepoFilter] = useState(null);
   const [tab, setTab] = useState("planned");
+  const [sort, setSort] = useState(() => { try { return JSON.parse(localStorage.getItem("boardSort")) || { key: "time", dir: "desc" }; } catch (e) { return { key: "time", dir: "desc" }; } });
+  useEffect(() => { try { localStorage.setItem("boardSort", JSON.stringify(sort)); } catch (e) {} }, [sort]);
   const [openKey, setOpenKey] = useState(null); // "repo#number"
   const [sheet, setSheet] = useState(null); // "composer" | "settings"
   const [composerRepo, setComposerRepo] = useState(null);
@@ -302,9 +304,9 @@ function App() {
     <div class="app">
       <${TopBar} working=${working} scanning=${data.scanning} env=${data.env} theme=${theme} setTheme=${setThemeP} onSettings=${() => setSheet("settings")} onUsage=${() => setSheet("usage")} onAgents=${() => setSheet("agents")} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${load} auto=${data.auto || {}} autoRepos=${data.autoRepos || {}} setAuto=${act.setAuto}/>
       ${data.secretsHealth ? html`<${SecretBanner} h=${data.secretsHealth} onFix=${() => setSheet("settings")}/>` : null}
-      <${StatusLine} working=${working} session=${data.session} spend=${data.spendToday} analyzer=${data.analyzer} reload=${load}/>
+      <${StatusLine} working=${working} session=${data.session} spend=${data.spendToday} analyzer=${data.analyzer} reload=${load} sort=${sort} setSort=${setSort}/>
       <div class="content">
-        <${Board} issues=${shown} repos=${repos} repoFilter=${repoFilter} tab=${tab} isDesktop=${isDesktop} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onAddRepo=${() => setSheet("addrepo")} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data}/>
+        <${Board} issues=${shown} repos=${repos} repoFilter=${repoFilter} tab=${tab} sort=${sort} isDesktop=${isDesktop} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onAddRepo=${() => setSheet("addrepo")} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data}/>
       </div>
       ${!isDesktop && html`<${TabBar} issues=${shown} tab=${tab} setTab=${setTab}/>`}
       ${open && html`<div class="dscrim" onClick=${() => setOpenKey(null)}></div>`}
@@ -418,7 +420,7 @@ function analyzerStatus(an) {
   const stale = mins > 12 * 60;
   return { cls: stale ? "amber" : "green", text: seen, title: "Analyzer last pulled telemetry " + new Date(an.lastPull).toLocaleString() + (an.lastIssueAt ? "\nLast proposal: " + new Date(an.lastIssueAt).toLocaleString() : "") };
 }
-function StatusLine({ working, session, spend, analyzer, reload }) {
+function StatusLine({ working, session, spend, analyzer, reload, sort, setSort }) {
   const an = analyzerStatus(analyzer);
   const s = session || {};
   const pct = s.budget > 0 ? Math.min(100, Math.round((100 * s.tokens) / s.budget)) : 0;
@@ -493,11 +495,26 @@ function StatusLine({ working, session, spend, analyzer, reload }) {
       </div>` : null}
     </span>` : null}
     <span class="spacer"></span>
+    ${setSort ? html`<span class="statpop">
+      <span class="statlink" title="Sort the board cards" onClick=${() => setPop(pop === "sort" ? null : "sort")}>· sort: ${(sort && sort.key) === "name" ? "name" : "time"} ${(sort && sort.dir) === "asc" ? "↑" : "↓"}</span>
+      ${pop === "sort" ? html`<div class="dropscrim" onClick=${() => setPop(null)}></div><div class="dropmenu statmenu">
+        <div class="dropmenu-h">Sort cards</div>
+        <button class="btn ghost" style="width:100%;justify-content:flex-start" onClick=${() => setSort((s) => ({ ...s, key: "time" }))}>${(sort && sort.key) !== "name" ? "✓ " : ""}By time updated</button>
+        <button class="btn ghost" style="width:100%;justify-content:flex-start;margin-top:4px" onClick=${() => setSort((s) => ({ ...s, key: "name" }))}>${(sort && sort.key) === "name" ? "✓ " : ""}By name</button>
+        <button class="btn" style="width:100%;justify-content:center;margin-top:8px" onClick=${() => setSort((s) => ({ ...s, dir: (s && s.dir) === "asc" ? "desc" : "asc" }))}>${(sort && sort.dir) === "asc" ? "Ascending ↑" : "Descending ↓"} — flip</button>
+      </div>` : null}
+    </span>` : null}
     <span class="buildstamp" title=${verTitle}>${verLabel}</span>
   </div>`;
 }
 
-function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, onAddRepo, onAddIssue, onAnalyze, auditRepos, act, data }) {
+function sortCmp(sort) {
+  const s = sort || { key: "time", dir: "desc" };
+  const dir = s.dir === "asc" ? 1 : -1;
+  if (s.key === "name") return (a, b) => dir * String(a.title || "").localeCompare(String(b.title || ""));
+  return (a, b) => dir * (new Date(a.updated_at || 0) - new Date(b.updated_at || 0));
+}
+function Board({ issues, repos, repoFilter, tab, sort, isDesktop, onOpen, onAddRepo, onAddIssue, onAnalyze, auditRepos, act, data }) {
   if (!(repos || []).length) {
     return html`<div class="norepo">
       <div class="obki" style="margin:0 auto 14px"><${Icon} name="pr" size=${28}/></div>
@@ -511,7 +528,7 @@ function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, onAddRepo, o
   const target = repoFilter || (repos.length === 1 ? repos[0] : null);
   const analyzing = target && (auditRepos || []).includes(target);
   const byCol = {}; COLS.forEach((c) => (byCol[c.k] = []));
-  issues.slice().sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0)).forEach((i) => byCol[classify(i)].push(i));
+  issues.slice().sort(sortCmp(sort)).forEach((i) => byCol[classify(i)].push(i));
   const cols = isDesktop ? COLS : COLS.filter((c) => c.k === tab);
   return html`<div class="board">
     ${cols.map((c) => html`<div class="col" key=${c.k}>

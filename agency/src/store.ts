@@ -220,7 +220,13 @@ export function recordIssueState(
          title = COALESCE(excluded.title, issues.title),
          role  = COALESCE(excluded.role,  issues.role),
          state = COALESCE(excluded.state, issues.state),
-         updated_at = excluded.updated_at`,
+         -- Only bump updated_at on a REAL change. The scan re-records every issue each pass; bumping
+         -- it on a no-op made the board (sorted by updated_at) reshuffle constantly.
+         updated_at = CASE WHEN
+              COALESCE(excluded.title, issues.title) IS NOT issues.title
+           OR COALESCE(excluded.role,  issues.role)  IS NOT issues.role
+           OR COALESCE(excluded.state, issues.state) IS NOT issues.state
+           THEN excluded.updated_at ELSE issues.updated_at END`,
     ).run(repo, number, fields.title ?? null, fields.role ?? null, fields.state ?? null, now());
   } catch (err) {
     console.warn("[agency] memory write (issue) failed:", (err as Error).message);
