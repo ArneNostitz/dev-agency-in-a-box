@@ -172,6 +172,24 @@ export function sortCmp(sort) {
   return (a, b) => dir * (new Date(a.updated_at || 0) - new Date(b.updated_at || 0));
 }
 
+// Board control sort — string key form used by the BoardControls toolbar.
+export function boardSortCmp(v) {
+  if (v === "updated_asc")  return (a, b) => new Date(a.updated_at || 0) - new Date(b.updated_at || 0);
+  if (v === "created_desc") return (a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0);
+  if (v === "created_asc")  return (a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0);
+  if (v === "number_asc")   return (a, b) => (a.number || 0) - (b.number || 0);
+  if (v === "number_desc")  return (a, b) => (b.number || 0) - (a.number || 0);
+  return (a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0); // updated_desc default
+}
+
+// Filter issues by updated_at recency.
+export function filterByTime(arr, v) {
+  if (!v || v === "any") return arr;
+  const ms = v === "24h" ? 86400000 : v === "7d" ? 7 * 86400000 : 30 * 86400000;
+  const cut = Date.now() - ms;
+  return arr.filter((i) => new Date(i.updated_at || 0).getTime() >= cut);
+}
+
 export function usageTitle(u) {
   if (!u || !u.tokens) return "No token usage recorded yet";
   return `${fmtTok(u.tokens)} tokens · $${Number(u.costUsd || 0).toFixed(2)}${u.model ? " · " + shortModel(u.model) : ""} · ${u.runs || 0} runs`;
