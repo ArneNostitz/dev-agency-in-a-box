@@ -140,6 +140,18 @@ input,select,textarea{font-size:16px}
 .card-chips{display:flex;align-items:center;gap:6px;flex-wrap:wrap;color:var(--ink-3);font-size:12px}
 .card-f{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end;border-top:1px solid var(--line);padding-top:8px}
 .card-f .cardbtn{margin-left:0}
+.card-subs{display:flex;flex-direction:column;border-top:1px solid var(--line);padding-top:5px}
+.subtoggle{display:flex;align-items:center;gap:6px;width:100%;text-align:left;border:none;background:transparent;color:var(--ink-2);font-size:12px;font-weight:560;cursor:pointer;padding:2px}
+.subtoggle .chev{display:inline-flex;color:var(--ink-3);transition:transform .15s}
+.subtoggle.open .chev{transform:rotate(90deg)}
+.subtoggle .n{margin-left:auto;color:var(--ink-3);font-weight:500}
+.sublist{display:flex;flex-direction:column;gap:1px;margin-top:3px}
+.subrow{display:flex;align-items:center;gap:7px;width:100%;text-align:left;border:none;background:transparent;color:var(--ink);padding:4px 5px;border-radius:7px;cursor:pointer;font-size:12.5px}
+.subrow:hover{background:var(--surface-2)}
+.subdot{flex:0 0 auto;width:8px;height:8px;border-radius:50%}
+.subnum{flex:0 0 auto;color:var(--ink-3);font-size:11px}
+.subttl{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.substate{flex:0 0 auto;font-size:10.5px;color:var(--ink-3)}
 .statuschip{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;font-weight:540;border-radius:999px;padding:2px 9px}
 .s-planned{background:var(--surface-2);color:var(--ink-2)}
 .s-working{background:var(--accent-weak);color:var(--accent)}

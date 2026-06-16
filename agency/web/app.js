@@ -153,7 +153,7 @@ function App() {
       ${data.secretsHealth ? html`<${SecretBanner} h=${data.secretsHealth} onFix=${() => setSheet("settings")}/>` : null}
       <${StatusLine} working=${working} session=${data.session} spend=${data.spendToday} analyzer=${data.analyzer} reload=${load} sort=${sort} setSort=${setSort}/>
       <div class="content">
-        <${Board} issues=${shown} repos=${repos} repoFilter=${repoFilter} tab=${tab} sort=${sort} isDesktop=${isDesktop} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onAddRepo=${() => setSheet("addrepo")} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data}/>
+        <${Board} issues=${shown} repos=${repos} repoFilter=${repoFilter} tab=${tab} sort=${sort} isDesktop=${isDesktop} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onOpenChild=${openIssue} onAddRepo=${() => setSheet("addrepo")} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data}/>
       </div>
       ${!isDesktop && html`<${TabBar} issues=${shown} tab=${tab} setTab=${setTab}/>`}
       ${open && html`<div class="dscrim" onClick=${() => setOpenKey(null)}></div>`}
