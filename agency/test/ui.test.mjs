@@ -63,14 +63,17 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
   };
   global.fetch = async (u) => ({ ok: true, json: async () => route(u), text: async () => "" });
 
-  // Rewrite the absolute vendor import (browser path) to a file URL so Node can resolve it.
-  const src = readFileSync(join(HERE, "..", "web", "app.js"), "utf8");
-  const vendorUrl = pathToFileURL(join(HERE, "..", "web", "vendor", "standalone.mjs")).href;
-  const patched = src.replace("/web/vendor/standalone.mjs", vendorUrl);
-  const tmp = join(mkdtempSync(join(tmpdir(), "daui-")), "app.mjs");
-  writeFileSync(tmp, patched);
-
-  const mod = await import(pathToFileURL(tmp).href);
+  // The dashboard is split across ES modules in web/ that import each other relatively. Copy them all
+  // into one temp dir (rewriting the absolute vendor import to a file URL) so Node can resolve the
+  // relative `./core.js` etc., then import the entry.
+  const webDir = join(HERE, "..", "web");
+  const vendorUrl = pathToFileURL(join(webDir, "vendor", "standalone.mjs")).href;
+  const tmpDir = mkdtempSync(join(tmpdir(), "daui-"));
+  for (const f of ["core", "board", "detail", "settings", "onboarding", "topbar", "usage", "agents", "app"]) {
+    const src = readFileSync(join(webDir, f + ".js"), "utf8").split("/web/vendor/standalone.mjs").join(vendorUrl);
+    writeFileSync(join(tmpDir, f + ".js"), src);
+  }
+  const mod = await import(pathToFileURL(join(tmpDir, "app.js")).href);
   assert.equal(typeof mod.mount, "function", "app.js exports mount()");
   mod.mount(window.document.getElementById("root"));
 
