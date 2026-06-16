@@ -39,6 +39,7 @@ import {
   fetchCheckout,
   mergeBaseInto,
   mergePrForBranch,
+  prMerged,
   closeIssue,
   mentionsHandle,
   canTrigger,
@@ -831,12 +832,15 @@ async function scanRepo(cfg: Config, repo: string): Promise<void> {
     if (!t.closed && t.title) recordIssueState(repo, t.number, { title: t.title });
     if (t.labels.includes("agency:planned")) continue; // parked in Planned — waits for the play button
 
-    // Backstop for PRs merged/closed on GitHub directly: a closed thread that still carries a
-    // live agency label is finished — record it terminal and strip the labels (once).
+    // Backstop for threads finished on GitHub directly: a closed thread still carrying a live agency
+    // label is terminal. Record it HONESTLY — "merged" ONLY if the PR was actually merged, else
+    // "closed" (closed-as-not-planned / closed by the epic / manual close ≠ merged). One gh read,
+    // and only once per thread (the labels are stripped, so the next scan skips it).
     if (t.closed) {
       const had = t.labels.filter((l) => LIVE_LABELS.includes(l));
       if (had.length) {
-        recordIssueState(repo, t.number, { title: t.title, state: "merged" });
+        const merged = await prMerged(repo, `agency/issue-${t.number}`).catch(() => false);
+        recordIssueState(repo, t.number, { title: t.title, state: merged ? "merged" : "closed" });
         for (const l of had) await removeLabel(repo, t.number, l).catch(() => {});
         t.labels = t.labels.filter((l) => !LIVE_LABELS.includes(l));
       }

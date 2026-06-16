@@ -1019,7 +1019,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               // some child PR couldn't merge — the user still asked to close, so close the parent.
             }
             await closeIssue(repo, number, "✅ Closed from the dashboard.").catch(() => {});
-            recordIssueState(repo, number, { state: "merged" });
+            recordIssueState(repo, number, { state: "closed" }); // closed ≠ merged — keep the chip honest
             return ok();
           } catch (err) {
             return res.writeHead(500).end(JSON.stringify({ error: (err as Error).message }));
