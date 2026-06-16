@@ -309,6 +309,17 @@ export async function listRecentThreads(repo: string, limit = 60): Promise<Recen
   }));
 }
 
+/** True only if the issue's agency PR was actually MERGED (not just closed). One cheap gh read. */
+export async function prMerged(repo: string, branch: string): Promise<boolean> {
+  const out = await gh(["pr", "list", "--repo", repo, "--head", branch, "--state", "all", "--json", "mergedAt", "--limit", "1"]).catch(() => "[]");
+  try {
+    const arr = JSON.parse(out) as Array<{ mergedAt?: string | null }>;
+    return Boolean(arr[0]?.mergedAt);
+  } catch {
+    return false;
+  }
+}
+
 export async function reopenIssue(repo: string, number: number): Promise<void> {
   await gh(["issue", "reopen", String(number), "--repo", repo]).catch(() => {});
 }

@@ -119,7 +119,7 @@ function classify(i) {
 }
 function statusChip(i) {
   const s = i.state || "";
-  if (isDone(i)) return { cls: "s-done", label: s.indexOf("merg") >= 0 ? "merged" : "done", icon: "merge" };
+  if (isDone(i)) return s.indexOf("merg") >= 0 ? { cls: "s-done", label: "merged", icon: "merge" } : { cls: "s-planned", label: s.indexOf("clos") >= 0 ? "closed" : "done", icon: "check" };
   if (i.active) return { cls: "s-working", label: "working", icon: "loader" };
   if (s === "agency:rate-limited") return { cls: "s-auto", label: i.resumeAt ? "resumes " + hm(new Date(i.resumeAt)) : "auto-resume", icon: "hourglass" };
   if (i.queued) return { cls: "s-working", label: "queued", icon: "clock" };
@@ -249,7 +249,7 @@ function App() {
     updateIssue(repo, number) { return guard("update", repo, number, () => api("/refresh-issue", { repo, number }).then(() => toast("Updated from GitHub")).catch((e) => toast((e && e.message) || "Couldn’t update", "error")).then(load)); },
     fix(repo, number, model) { return guard("fix", repo, number, () => { override(repo, number, { state: "agency:in-progress", active: true }); return api("/fix", { repo, number, ...(model ? { model } : {}) }).then(() => toast("Fixing the review" + (model ? ` with model ${model.model}` : "") + "…")).catch(() => toast("Couldn’t fix", "error")).then(load); }); },
     merge(repo, number) { return guard("merge", repo, number, () => api("/merge", { repo, number }).then((r) => { toast("Merged"); load(); return r; }).catch(() => toast("Couldn’t merge — conflicts?", "error"))); },
-    close(repo, number) { return guard("close", repo, number, () => { override(repo, number, { state: "merged" }); return api("/close", { repo, number }).then(() => { toast("Closed"); setOpenKey(null); }).catch((e) => toast((e && e.message) || "Couldn’t close", "error")).then(load); }); },
+    close(repo, number) { return guard("close", repo, number, () => { override(repo, number, { state: "closed" }); return api("/close", { repo, number }).then(() => { toast("Closed"); setOpenKey(null); }).catch((e) => toast((e && e.message) || "Couldn’t close", "error")).then(load); }); },
     closeNotPlanned(repo, number) { return guard("close-not-planned", repo, number, () => { override(repo, number, { state: "done" }); return api("/close-not-planned", { repo, number }).then(() => { toast("Closed as not planned"); setOpenKey(null); }).catch((e) => toast((e && e.message) || "Couldn’t close", "error")).then(load); }); },
     createPr(repo, number) { return guard("createPr", repo, number, () => { override(repo, number, { state: "agency:ready" }); return api("/create-pr", { repo, number }).then((r) => toast(r && r.url ? "PR opened" : "PR opened")).catch((e) => toast((e && e.message) || "Couldn’t open PR", "error")).then(load); }); },
     del(repo, number) { return guard("del", repo, number, () => { override(repo, number, { state: "done" }); return api("/delete", { repo, number }).then(() => { toast("Deleted"); setOpenKey(null); }).catch(() => toast("Couldn’t delete", "error")).then(load); }); },
@@ -514,27 +514,16 @@ function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, onAddRepo, o
   issues.slice().sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0)).forEach((i) => byCol[classify(i)].push(i));
   const cols = isDesktop ? COLS : COLS.filter((c) => c.k === tab);
   return html`<div class="board">
-    ${cols.map((c) => {
-      const allItems = byCol[c.k];
-      // Working column: pin epic parents at the top; sub-issues + regular cards go below
-      const epicPins = c.k === "working" ? allItems.filter((i) => i.state === "agency:epic") : [];
-      const workingRest = c.k === "working" ? allItems.filter((i) => i.state !== "agency:epic") : allItems;
-      const renderCard = (i) => html`<${Card} key=${i.repo + "#" + i.number} i=${i} multi=${!repoFilter && repos.length > 1} onOpen=${onOpen} act=${act} data=${data}/>`;
-      return html`<div class="col" key=${c.k}>
-        <div class="colhead"><${Icon} name=${c.icon} size=${15}/> ${c.label} <span class="n">${allItems.length || ""}</span></div>
-        ${c.k === "planned" ? html`<div class="planned-actions">
-          <button class="colbtn primary" onClick=${() => onAddIssue(target)}><${Icon} name="plus" size=${14}/> Add Issue</button>
-          <button class="colbtn" disabled=${!target || analyzing} title=${target ? "Analyze " + target.split("/").pop() + "'s codebase health" : "Pick a repo first"} onClick=${() => target && onAnalyze(target)}>${analyzing ? html`<${Spinner} size=${14}/>` : html`<${Icon} name="search" size=${14}/>`} Analyze Repo</button>
-        </div>` : null}
-        <div class="cards">
-          ${epicPins.length ? html`
-            ${epicPins.map(renderCard)}
-            ${workingRest.length ? html`<div class="col-sect-div">sub-issues &amp; tasks</div>` : null}
-          ` : null}
-          ${workingRest.length ? workingRest.map(renderCard) : (!epicPins.length ? html`<div class="empty">—</div>` : null)}
-        </div>
-      </div>`;
-    })}
+    ${cols.map((c) => html`<div class="col" key=${c.k}>
+      <div class="colhead"><${Icon} name=${c.icon} size=${15}/> ${c.label} <span class="n">${byCol[c.k].length || ""}</span></div>
+      ${c.k === "planned" ? html`<div class="planned-actions">
+        <button class="colbtn primary" onClick=${() => onAddIssue(target)}><${Icon} name="plus" size=${14}/> Add Issue</button>
+        <button class="colbtn" disabled=${!target || analyzing} title=${target ? "Analyze " + target.split("/").pop() + "'s codebase health" : "Pick a repo first"} onClick=${() => target && onAnalyze(target)}>${analyzing ? html`<${Spinner} size=${14}/>` : html`<${Icon} name="search" size=${14}/>`} Analyze Repo</button>
+      </div>` : null}
+      <div class="cards">
+        ${byCol[c.k].length ? byCol[c.k].map((i) => html`<${Card} key=${i.repo + "#" + i.number} i=${i} multi=${!repoFilter && repos.length > 1} onOpen=${onOpen} act=${act} data=${data}/>`) : html`<div class="empty">—</div>`}
+      </div>
+    </div>`)}
   </div>`;
 }
 
@@ -596,10 +585,12 @@ function Card({ i, multi, onOpen, act, data }) {
     else quick.fn();
   };
 
-  const engaged = !tmp && (i.active || ["agency:in-progress", "agency:rate-limited", "agency:awaiting-answer", "agency:awaiting-approval", "agency:needs-attention"].includes(i.state) || i.review === "changes");
+  // Avatar shows ONLY while an agent is actively executing on this issue (same signal as the Working
+  // column) — never on review / needs-you / planned / done. A parked issue's last role is stale
+  // (e.g. it sat in "developer" before going to review), so showing it there is misleading.
+  const engaged = !tmp && !done && (i.active || i.queued || i.running);
   const avatarsOn = (data && data.config && data.config.avatars) !== "off";
   return html`<div class=${"card" + (tmp ? " busy" : "") + (i.active ? " active-now" : "")} title=${usageTitle(i.usage)} onClick=${tmp ? null : () => onOpen(i)}>
-    ${i.parentEpic ? html`<div class="card-parent-bar"><${Icon} name="layers" size=${11}/> #${i.parentEpic.number} · ${i.parentEpic.title}</div>` : null}
     <div class="card-h">
       <span class="card-repo">${i.repo.split("/").pop()}</span>
       <span class="spacer" style="margin-left:auto"></span>
