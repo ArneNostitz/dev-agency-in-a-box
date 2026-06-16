@@ -348,16 +348,13 @@ export const EPIC_MARKER = "<!-- epic-tracker -->";
 /** Create-or-update the one epic tracking comment on a parent issue. */
 export async function upsertTrackerComment(repo: string, parent: number, body: string): Promise<void> {
   const full = `${body}\n\n${EPIC_MARKER}\n${AGENCY_MARKER}`;
-  const out = await gh([
-    "api", `repos/${repo}/issues/${parent}/comments`, "--paginate", "--jq", "[.[]|{id,body}]",
-  ]).catch(() => "[]");
+  // Robustly find the EXISTING tracker comment so we EDIT it (no email) instead of posting a new one
+  // every scan (the old `--paginate --jq` returns invalid JSON on a busy epic → id stayed 0 → a fresh
+  // comment each pass → hundreds of notification emails). Raw fetch + tolerant parse.
+  const out = await gh(["api", `repos/${repo}/issues/${parent}/comments`, "--paginate", "-f", "per_page=100"]).catch(() => "");
   let id = 0;
-  try {
-    for (const c of JSON.parse(out) as Array<{ id: number; body: string }>) {
-      if (c.body.includes(EPIC_MARKER)) id = c.id;
-    }
-  } catch {
-    /* ignore */
+  for (const c of parseGhCommentsJson(out)) {
+    if ((c.body || "").includes(EPIC_MARKER)) id = c.id ?? id;
   }
   if (id) {
     await gh(["api", "-X", "PATCH", `repos/${repo}/issues/comments/${id}`, "-f", `body=${full}`]).catch(() => {});

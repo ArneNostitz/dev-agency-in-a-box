@@ -176,7 +176,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
             failures: recentFailuresSince(since), // operational problems (rate limits, failing commands)
             topIssues: topIssuesByTokensSince(since, 8), // token-heavy issues = wasteful / looping work
             lessons: recentLessons(10),
-            config: { minSteps: Number(getSetting("analyzer_min_steps")) || 50, intervalHours: Number(getSetting("analyzer_interval_hours")) || 6 },
+            config: { minSteps: Number(getSetting("analyzer_min_steps")) || 15, intervalHours: Number(getSetting("analyzer_interval_hours")) || 1 },
           }));
         }
         // POST /analyzer-issue — the agency opens the advisory issue for the analyzer. Rate-limited.
