@@ -35,6 +35,7 @@ import { subscribe, getActive } from "./activity.js";
 import { inFlightKeys } from "./pool.js";
 import { listRateLimited } from "./store.js";
 import { getConversation, conversationCount, foldInGitHubComment, recordOutgoingComment, setCommentGhId, updateCommentBody } from "./store.js";
+import { recentFailuresSince } from "./store.js";
 import { effectiveRepos } from "./commands.js";
 import { getThreadFull, commentAsHuman, editCommentAsHuman, commentOnIssue, mergePrForBranch, closeIssue, deleteIssueHard, findPrForBranch, prMergeStatus, mergeProbe, branchHeadSha, detectReviewVerdict, createIssue, readRepoFile, putRepoBase64, listUserRepos } from "./github.js";
 import { listAgentFiles, readAgentFile, isSafeAgentPath } from "./memory.js";
@@ -172,8 +173,10 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
             runStepCount: runStepCountSince(since),
             toolStats: toolStatsSince(since),
             tokensByRole: tokensByRoleSince(since),
+            failures: recentFailuresSince(since), // operational problems (rate limits, failing commands)
+            topIssues: topIssuesByTokensSince(since, 8), // token-heavy issues = wasteful / looping work
             lessons: recentLessons(10),
-            config: { minSteps: Number(getSetting("analyzer_min_steps")) || 50, intervalHours: Number(getSetting("analyzer_interval_hours")) || 6 },
+            config: { minSteps: Number(getSetting("analyzer_min_steps")) || 15, intervalHours: Number(getSetting("analyzer_interval_hours")) || 1 },
           }));
         }
         // POST /analyzer-issue — the agency opens the advisory issue for the analyzer. Rate-limited.
@@ -292,34 +295,14 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               }
             }
           }
-          // Pre-build epic maps for all repos so we can derive both parent→children and child→parent.
           const epicCache: Record<string, ReturnType<typeof epicsByParent>> = {};
-          for (const i of issues) epicCache[i.repo] ??= epicsByParent(i.repo);
-          // child issue number → parent number, per repo
-          const childToParentNum: Record<string, Record<number, number>> = {};
-          for (const [repo, byParent] of Object.entries(epicCache)) {
-            childToParentNum[repo] = {};
-            for (const [parentStr, kids] of Object.entries(byParent)) {
-              for (const kid of kids) childToParentNum[repo][kid.child] = Number(parentStr);
-            }
-          }
-          // parent issue number → title (from tracked issues)
-          const epicTitleMap: Record<string, Record<number, string>> = {};
-          for (const i of issues) {
-            if (i.state === "agency:epic") (epicTitleMap[i.repo] ??= {})[i.number] = i.title;
-          }
           const reviews = listReviews(); // verdict per "repo#number" — cheap, for the card badge
           const tokenMap = tokensByIssueAll(); // lifetime tokens/cost/model per "repo#number"
           const conflictMap = listConflicts(); // conflicting files per "repo#number"
           const enriched = issues.map((i) => {
-            const byParent = epicCache[i.repo] ?? {};
+            const byParent = (epicCache[i.repo] ??= epicsByParent(i.repo));
             const kids = byParent[i.number];
             const conflictFilesFor = conflictMap[`${i.repo}#${i.number}`];
-            const parentNum = (childToParentNum[i.repo] ?? {})[i.number];
-            const parentEpic =
-              parentNum != null
-                ? { number: parentNum, title: (epicTitleMap[i.repo] ?? {})[parentNum] ?? `#${parentNum}` }
-                : null;
             return {
               ...i,
               usage: tokenMap[`${i.repo}#${i.number}`] ?? null,
@@ -328,7 +311,6 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               epic: kids
                 ? { total: kids.length, done: kids.filter((c) => c.closed).length, children: kids }
                 : null,
-              parentEpic,
               app: getApp(i.repo, i.number),
               review: reviews[`${i.repo}#${i.number}`] ?? null,
               modelOverride: getIssueModelOverride(i.repo, i.number),
@@ -1040,7 +1022,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               // some child PR couldn't merge — the user still asked to close, so close the parent.
             }
             await closeIssue(repo, number, "✅ Closed from the dashboard.").catch(() => {});
-            recordIssueState(repo, number, { state: "merged" });
+            recordIssueState(repo, number, { state: "closed" }); // closed ≠ merged — keep the chip honest
             return ok();
           } catch (err) {
             return res.writeHead(500).end(JSON.stringify({ error: (err as Error).message }));

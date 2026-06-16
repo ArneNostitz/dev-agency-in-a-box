@@ -39,6 +39,7 @@ import {
   fetchCheckout,
   mergeBaseInto,
   mergePrForBranch,
+  prMerged,
   closeIssue,
   mentionsHandle,
   canTrigger,
@@ -90,7 +91,10 @@ import {
   chatAgentForText,
   seedChatAgents,
   clearIssueModelOverride,
+  filesFor,
+  recordIncident,
 } from "./store.js";
+import { claimFiles, releaseFiles } from "./locks.js";
 import { parseRateLimit, nextWindowReset } from "./ratelimit.js";
 import { startPreviewSweeper, killAllApps } from "./apprun.js";
 import { setActive, clearActive, getActive } from "./activity.js";
@@ -831,12 +835,15 @@ async function scanRepo(cfg: Config, repo: string): Promise<void> {
     if (!t.closed && t.title) recordIssueState(repo, t.number, { title: t.title });
     if (t.labels.includes("agency:planned")) continue; // parked in Planned — waits for the play button
 
-    // Backstop for PRs merged/closed on GitHub directly: a closed thread that still carries a
-    // live agency label is finished — record it terminal and strip the labels (once).
+    // Backstop for threads finished on GitHub directly: a closed thread still carrying a live agency
+    // label is terminal. Record it HONESTLY — "merged" ONLY if the PR was actually merged, else
+    // "closed" (closed-as-not-planned / closed by the epic / manual close ≠ merged). One gh read,
+    // and only once per thread (the labels are stripped, so the next scan skips it).
     if (t.closed) {
       const had = t.labels.filter((l) => LIVE_LABELS.includes(l));
       if (had.length) {
-        recordIssueState(repo, t.number, { title: t.title, state: "merged" });
+        const merged = await prMerged(repo, `agency/issue-${t.number}`).catch(() => false);
+        recordIssueState(repo, t.number, { title: t.title, state: merged ? "merged" : "closed" });
         for (const l of had) await removeLabel(repo, t.number, l).catch(() => {});
         t.labels = t.labels.filter((l) => !LIVE_LABELS.includes(l));
       }
@@ -900,18 +907,29 @@ async function scanRepo(cfg: Config, repo: string): Promise<void> {
     if (paused) continue; // usage-limit wall — leave it; it resumes after the reset
 
     const issue: Issue = { number: t.number, title: t.title, body: t.body, labels: t.labels };
+
+    // FILE-LOCK GATE (overwrite protection, repo-wide, any issue↔issue): claim this issue's declared
+    // file footprint. If another in-flight run holds an overlapping file, DON'T dispatch now — defer
+    // to a later scan when it frees (serializes only the overlapping work; disjoint work runs in
+    // parallel). An unknown footprint never blocks (the feature-aware merge is the backstop).
+    const claim = claimFiles(repo, t.number, filesFor(repo, t.number));
+    if (!claim.ok) {
+      recordIncident("file-lock-deferred", `#${t.number} waits on \`${claim.file}\` (held by #${claim.blockedBy})`);
+      continue;
+    }
+    const release = () => releaseFiles(repo, t.number);
     // Mark this comment handled now so re-polls during the run don't double-fire.
     if (newHumanComment) setThreadCursor(repo, t.number, lastCommentId);
 
     if (action === "prfix" && openPr) {
       const thread = await commentThread(repo, t.number);
       const pr = { number: openPr.number, title: t.title, branch: `agency/issue-${t.number}`, issueNumber: t.number };
-      dispatch(`${repo}#pr-${pr.number}`, () => processPrFeedbackOne(repo, pr, thread));
+      dispatch(`${repo}#pr-${pr.number}`, () => processPrFeedbackOne(repo, pr, thread).finally(release));
     } else if (action === "followup") {
-      dispatch(`${repo}#${t.number}`, () => processFollowUp(cfg, repo, issue));
+      dispatch(`${repo}#${t.number}`, () => processFollowUp(cfg, repo, issue).finally(release));
     } else {
       // fresh or resume — processIssue picks the role and sorts approve/answer/change.
-      dispatch(`${repo}#${t.number}`, () => processIssue(cfg, repo, issue));
+      dispatch(`${repo}#${t.number}`, () => processIssue(cfg, repo, issue).finally(release));
     }
   }
 

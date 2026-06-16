@@ -11,28 +11,46 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sBool } from "./settings.js";
 import { ghBotToken, ghUserToken } from "./creds.js";
-import { recordOutgoingComment, setCommentGhId } from "./store.js";
+import { recordOutgoingComment, setCommentGhId, recordIncident } from "./store.js";
 
 const execFileAsync = promisify(execFile);
+
+/** Note operational problems (rate limits, secondary limits) so the Process Analyzer can propose a fix. */
+function noteGhFailure(args: string[], err: unknown): void {
+  const msg = (err as Error)?.message || "";
+  if (/rate limit|secondary rate|abuse detection|was submitted too quickly/i.test(msg)) {
+    recordIncident("github-rate-limit", `${args.slice(0, 2).join(" ")}: ${msg.slice(0, 160)}`);
+  }
+}
 
 /** Run gh as the human owner ("acts as you"); empty token falls back to the stored owner/bot token. */
 async function ghAs(token: string, args: string[]): Promise<string> {
   const t = token || ghUserToken() || ghBotToken();
-  const { stdout } = await execFileAsync("gh", args, {
-    maxBuffer: 10 * 1024 * 1024,
-    env: t ? { ...process.env, GH_TOKEN: t, GITHUB_TOKEN: t } : process.env,
-  });
-  return stdout.trim();
+  try {
+    const { stdout } = await execFileAsync("gh", args, {
+      maxBuffer: 10 * 1024 * 1024,
+      env: t ? { ...process.env, GH_TOKEN: t, GITHUB_TOKEN: t } : process.env,
+    });
+    return stdout.trim();
+  } catch (err) {
+    noteGhFailure(args, err);
+    throw err;
+  }
 }
 
 /** Run gh as the agency bot, using the dashboard-stored bot token (or GITHUB_TOKEN env). */
 async function gh(args: string[]): Promise<string> {
   const token = ghBotToken();
-  const { stdout } = await execFileAsync("gh", args, {
-    maxBuffer: 10 * 1024 * 1024,
-    env: token ? { ...process.env, GH_TOKEN: token, GITHUB_TOKEN: token } : process.env,
-  });
-  return stdout.trim();
+  try {
+    const { stdout } = await execFileAsync("gh", args, {
+      maxBuffer: 10 * 1024 * 1024,
+      env: token ? { ...process.env, GH_TOKEN: token, GITHUB_TOKEN: token } : process.env,
+    });
+    return stdout.trim();
+  } catch (err) {
+    noteGhFailure(args, err);
+    throw err;
+  }
 }
 
 export interface Issue {
@@ -145,9 +163,11 @@ export async function listActionableIssues(repo: string, opts: ActionableOptions
 }
 
 export async function addLabel(repo: string, issue: number, label: string): Promise<void> {
-  // Create the label if it does not exist yet (ignore failure if it already does).
+  // Labels are an INFORMATIVE MIRROR only (the DB drives the agency). A failed label write — most
+  // often a GitHub rate limit — must NEVER throw, or it would mark a finished, successful run as
+  // failed. Both the create and the apply are best-effort.
   await gh(["label", "create", label, "--repo", repo, "--force", "--color", "5319e7"]).catch(() => {});
-  await gh(["issue", "edit", String(issue), "--repo", repo, "--add-label", label]);
+  await gh(["issue", "edit", String(issue), "--repo", repo, "--add-label", label]).catch(() => {});
 }
 
 export async function removeLabel(repo: string, issue: number, label: string): Promise<void> {
@@ -164,11 +184,14 @@ export async function commentOnIssue(repo: string, issue: number, body: string):
   // GitHub. Then mirror to GitHub and link the returned comment id back to the local row.
   const localId = recordOutgoingComment({ repo, number: issue, author: "dev-agency", body, source: "agency" });
   if (issue <= 0) return; // dashboard-only issue (no GitHub number yet) — DB is enough
-  const out = await gh(["api", "-X", "POST", `repos/${repo}/issues/${issue}/comments`, "-f", `body=${body}\n\n${AGENCY_MARKER}`]);
+  // Mirror to GitHub best-effort: the comment already lives in the DB (the source of truth), so a
+  // failed post — typically a rate limit — must NOT throw and fail an otherwise-successful run. The
+  // background reconcile mirrors/links it later.
   try {
+    const out = await gh(["api", "-X", "POST", `repos/${repo}/issues/${issue}/comments`, "-f", `body=${body}\n\n${AGENCY_MARKER}`]);
     const j = JSON.parse(out);
     if (j?.id) setCommentGhId(localId, j.id, j.created_at);
-  } catch { /* the comment is on GitHub; reconcile will link it on the next thread read */ }
+  } catch { /* GitHub mirror failed (rate limit / parse) — it's in the DB; reconcile links it later */ }
 }
 
 export async function listComments(repo: string, issue: number): Promise<Array<{ body: string }>> {
@@ -304,6 +327,17 @@ export async function listRecentThreads(repo: string, limit = 60): Promise<Recen
   }));
 }
 
+/** True only if the issue's agency PR was actually MERGED (not just closed). One cheap gh read. */
+export async function prMerged(repo: string, branch: string): Promise<boolean> {
+  const out = await gh(["pr", "list", "--repo", repo, "--head", branch, "--state", "all", "--json", "mergedAt", "--limit", "1"]).catch(() => "[]");
+  try {
+    const arr = JSON.parse(out) as Array<{ mergedAt?: string | null }>;
+    return Boolean(arr[0]?.mergedAt);
+  } catch {
+    return false;
+  }
+}
+
 export async function reopenIssue(repo: string, number: number): Promise<void> {
   await gh(["issue", "reopen", String(number), "--repo", repo]).catch(() => {});
 }
@@ -314,16 +348,13 @@ export const EPIC_MARKER = "<!-- epic-tracker -->";
 /** Create-or-update the one epic tracking comment on a parent issue. */
 export async function upsertTrackerComment(repo: string, parent: number, body: string): Promise<void> {
   const full = `${body}\n\n${EPIC_MARKER}\n${AGENCY_MARKER}`;
-  const out = await gh([
-    "api", `repos/${repo}/issues/${parent}/comments`, "--paginate", "--jq", "[.[]|{id,body}]",
-  ]).catch(() => "[]");
+  // Robustly find the EXISTING tracker comment so we EDIT it (no email) instead of posting a new one
+  // every scan (the old `--paginate --jq` returns invalid JSON on a busy epic → id stayed 0 → a fresh
+  // comment each pass → hundreds of notification emails). Raw fetch + tolerant parse.
+  const out = await gh(["api", `repos/${repo}/issues/${parent}/comments`, "--paginate", "-f", "per_page=100"]).catch(() => "");
   let id = 0;
-  try {
-    for (const c of JSON.parse(out) as Array<{ id: number; body: string }>) {
-      if (c.body.includes(EPIC_MARKER)) id = c.id;
-    }
-  } catch {
-    /* ignore */
+  for (const c of parseGhCommentsJson(out)) {
+    if ((c.body || "").includes(EPIC_MARKER)) id = c.id ?? id;
   }
   if (id) {
     await gh(["api", "-X", "PATCH", `repos/${repo}/issues/comments/${id}`, "-f", `body=${full}`]).catch(() => {});

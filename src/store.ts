@@ -91,6 +91,11 @@ function getDb(): DatabaseSync | null {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         repo TEXT, number INTEGER, role TEXT, tool TEXT, detail TEXT, ok INTEGER, ts TEXT
       );
+      -- Files an issue's work declares it will touch (planner output) — the file-lock scheduler uses
+      -- this to run non-overlapping issues in parallel and serialize overlapping ones.
+      CREATE TABLE IF NOT EXISTS issue_files (
+        repo TEXT NOT NULL, number INTEGER NOT NULL, files TEXT, updated_at TEXT, PRIMARY KEY (repo, number)
+      );
       -- Pluggable agent registry (v3): custom agents (incl. interactive chat agents) defined/edited
       -- in the dashboard. Built-in repo roles still live in code; these are additive.
       CREATE TABLE IF NOT EXISTS agent_def (
@@ -205,6 +210,27 @@ export function listWatchedRepos(): string[] {
   }
 }
 
+/** Record the files an issue's work will touch (from the planner) — drives the file-lock scheduler. */
+export function recordIssueFiles(repo: string, number: number, files: string[]): void {
+  const d = getDb();
+  if (!d) return;
+  try {
+    d.prepare(`INSERT INTO issue_files (repo, number, files, updated_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT(repo, number) DO UPDATE SET files = excluded.files, updated_at = excluded.updated_at`)
+      .run(repo, number, JSON.stringify(files || []), now());
+  } catch { /* best effort */ }
+}
+
+/** The declared file footprint for an issue (empty = unknown → don't lock, fall back to merge check). */
+export function filesFor(repo: string, number: number): string[] {
+  const d = getDb();
+  if (!d) return [];
+  try {
+    const r = d.prepare(`SELECT files FROM issue_files WHERE repo = ? AND number = ?`).get(repo, number) as { files?: string } | undefined;
+    return r?.files ? (JSON.parse(r.files) as string[]) : [];
+  } catch { return []; }
+}
+
 export function recordIssueState(
   repo: string,
   number: number,
@@ -220,7 +246,13 @@ export function recordIssueState(
          title = COALESCE(excluded.title, issues.title),
          role  = COALESCE(excluded.role,  issues.role),
          state = COALESCE(excluded.state, issues.state),
-         updated_at = excluded.updated_at`,
+         -- Only bump updated_at on a REAL change. The scan re-records every issue each pass; bumping
+         -- it on a no-op made the board (sorted by updated_at) reshuffle constantly.
+         updated_at = CASE WHEN
+              COALESCE(excluded.title, issues.title) IS NOT issues.title
+           OR COALESCE(excluded.role,  issues.role)  IS NOT issues.role
+           OR COALESCE(excluded.state, issues.state) IS NOT issues.state
+           THEN excluded.updated_at ELSE issues.updated_at END`,
     ).run(repo, number, fields.title ?? null, fields.role ?? null, fields.state ?? null, now());
   } catch (err) {
     console.warn("[agency] memory write (issue) failed:", (err as Error).message);
@@ -1355,6 +1387,26 @@ export function toolStatsSince(sinceIso: string): ToolStat[] {
       `SELECT role, tool, COUNT(*) AS uses, SUM(CASE WHEN ok=0 THEN 1 ELSE 0 END) AS fails
        FROM run_step WHERE ts >= ? GROUP BY role, tool ORDER BY uses DESC`,
     ).all(sinceIso) as unknown as ToolStat[];
+  } catch { return []; }
+}
+
+/** Log an OPERATIONAL incident (e.g. a GitHub rate limit) so the Process Analyzer can see it and
+ *  propose a fix. Stored as a run_step with role "system" + ok=0 so it shows up in failure stats. */
+export function recordIncident(kind: string, detail: string): void {
+  recordRunStep("", 0, "system", kind, detail, false);
+}
+
+export interface FailureStat { role: string; tool: string; count: number; sample: string }
+/** Recent FAILURES (ok=0) grouped by role+tool with a sample message — the operational problems the
+ *  Analyzer should propose fixes for (rate limits, failing commands, repeated agent tool errors). */
+export function recentFailuresSince(sinceIso: string, limit = 15): FailureStat[] {
+  const d = getDb();
+  if (!d) return [];
+  try {
+    return d.prepare(
+      `SELECT role, tool, COUNT(*) AS count, MAX(detail) AS sample
+       FROM run_step WHERE ts >= ? AND ok = 0 GROUP BY role, tool ORDER BY count DESC LIMIT ?`,
+    ).all(sinceIso, limit) as unknown as FailureStat[];
   } catch { return []; }
 }
 
