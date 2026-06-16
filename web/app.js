@@ -177,6 +177,13 @@ function App() {
   const toastIdRef = useRef(0);
   const [pending, setPending] = useState([]); // optimistic new issues
   const [detailError, setDetailError] = useState(null); // inline error for the open detail
+  // board sort/group/time — persisted in localStorage
+  const [boardSort, setBoardSort] = useState(() => { try { return localStorage.getItem("boardSort") || "updated_desc"; } catch (e) { return "updated_desc"; } });
+  const [boardGroup, setBoardGroup] = useState(() => { try { return localStorage.getItem("boardGroup") || "state"; } catch (e) { return "state"; } });
+  const [boardTime, setBoardTime] = useState(() => { try { return localStorage.getItem("boardTime") || "any"; } catch (e) { return "any"; } });
+  function setBoardSortP(v) { setBoardSort(v); try { localStorage.setItem("boardSort", v); } catch (e) {} }
+  function setBoardGroupP(v) { setBoardGroup(v); try { localStorage.setItem("boardGroup", v); } catch (e) {} }
+  function setBoardTimeP(v) { setBoardTime(v); try { localStorage.setItem("boardTime", v); } catch (e) {} }
   const overridesRef = useRef({}); // "repo#n" -> {state, t}
   const busyRef = useRef({}); // "action:repo#n" -> ts, while a request is in flight
   const openIssueRef = useRef(null); // last-known open issue, so polls don't flicker the detail closed
@@ -304,7 +311,7 @@ function App() {
       ${data.secretsHealth ? html`<${SecretBanner} h=${data.secretsHealth} onFix=${() => setSheet("settings")}/>` : null}
       <${StatusLine} working=${working} session=${data.session} spend=${data.spendToday} analyzer=${data.analyzer} reload=${load}/>
       <div class="content">
-        <${Board} issues=${shown} repos=${repos} repoFilter=${repoFilter} tab=${tab} isDesktop=${isDesktop} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onAddRepo=${() => setSheet("addrepo")} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data}/>
+        <${Board} issues=${shown} repos=${repos} repoFilter=${repoFilter} tab=${tab} isDesktop=${isDesktop} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onAddRepo=${() => setSheet("addrepo")} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data} boardSort=${boardSort} setBoardSort=${setBoardSortP} boardGroup=${boardGroup} setBoardGroup=${setBoardGroupP} boardTime=${boardTime} setBoardTime=${setBoardTimeP}/>
       </div>
       ${!isDesktop && html`<${TabBar} issues=${shown} tab=${tab} setTab=${setTab}/>`}
       ${open && html`<div class="dscrim" onClick=${() => setOpenKey(null)}></div>`}
@@ -497,7 +504,57 @@ function StatusLine({ working, session, spend, analyzer, reload }) {
   </div>`;
 }
 
-function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, onAddRepo, onAddIssue, onAnalyze, auditRepos, act, data }) {
+// ---------- sort helpers ----------
+const SORT_OPTS = [
+  { v: "updated_desc", label: "Recently updated" },
+  { v: "updated_asc",  label: "Oldest updated" },
+  { v: "created_desc", label: "Newest" },
+  { v: "created_asc",  label: "Oldest" },
+  { v: "number_asc",   label: "Issue # ↑" },
+  { v: "number_desc",  label: "Issue # ↓" },
+];
+const TIME_OPTS = [
+  { v: "any", label: "Any time" },
+  { v: "24h", label: "Last 24h" },
+  { v: "7d",  label: "Last 7 days" },
+  { v: "30d", label: "Last 30 days" },
+];
+function sortIssues(arr, sortKey) {
+  return arr.slice().sort((a, b) => {
+    if (sortKey === "updated_asc")  return new Date(a.updated_at || 0) - new Date(b.updated_at || 0);
+    if (sortKey === "created_desc") return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+    if (sortKey === "created_asc")  return new Date(a.created_at || 0) - new Date(b.created_at || 0);
+    if (sortKey === "number_asc")   return (a.number || 0) - (b.number || 0);
+    if (sortKey === "number_desc")  return (b.number || 0) - (a.number || 0);
+    return new Date(b.updated_at || 0) - new Date(a.updated_at || 0); // updated_desc default
+  });
+}
+function filterByTime(arr, timeKey) {
+  if (!timeKey || timeKey === "any") return arr;
+  const ms = timeKey === "24h" ? 86400000 : timeKey === "7d" ? 7 * 86400000 : 30 * 86400000;
+  const cut = Date.now() - ms;
+  return arr.filter((i) => new Date(i.updated_at || 0).getTime() >= cut);
+}
+
+function BoardControls({ boardSort, setBoardSort, boardGroup, setBoardGroup, boardTime, setBoardTime }) {
+  return html`<div class="bctrl">
+    <span class="bctrl-label">Sort</span>
+    <select value=${boardSort} onChange=${(e) => setBoardSort(e.target.value)}>
+      ${SORT_OPTS.map((o) => html`<option key=${o.v} value=${o.v}>${o.label}</option>`)}
+    </select>
+    <span class="bctrl-label" style="margin-left:6px">Group</span>
+    <select value=${boardGroup} onChange=${(e) => setBoardGroup(e.target.value)}>
+      <option value="state">Workflow state</option>
+      <option value="repo">Repo</option>
+    </select>
+    <span class="bctrl-label" style="margin-left:6px">Updated</span>
+    <select value=${boardTime} onChange=${(e) => setBoardTime(e.target.value)}>
+      ${TIME_OPTS.map((o) => html`<option key=${o.v} value=${o.v}>${o.label}</option>`)}
+    </select>
+  </div>`;
+}
+
+function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, onAddRepo, onAddIssue, onAnalyze, auditRepos, act, data, boardSort, setBoardSort, boardGroup, setBoardGroup, boardTime, setBoardTime }) {
   if (!(repos || []).length) {
     return html`<div class="norepo">
       <div class="obki" style="margin:0 auto 14px"><${Icon} name="pr" size=${28}/></div>
@@ -510,31 +567,68 @@ function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, onAddRepo, o
   // single target: Add Issue still opens the composer (it has a repo picker); Analyze is disabled.
   const target = repoFilter || (repos.length === 1 ? repos[0] : null);
   const analyzing = target && (auditRepos || []).includes(target);
-  const byCol = {}; COLS.forEach((c) => (byCol[c.k] = []));
-  issues.slice().sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0)).forEach((i) => byCol[classify(i)].push(i));
-  const cols = isDesktop ? COLS : COLS.filter((c) => c.k === tab);
-  return html`<div class="board">
-    ${cols.map((c) => {
-      const allItems = byCol[c.k];
-      // Working column: pin epic parents at the top; sub-issues + regular cards go below
-      const epicPins = c.k === "working" ? allItems.filter((i) => i.state === "agency:epic") : [];
-      const workingRest = c.k === "working" ? allItems.filter((i) => i.state !== "agency:epic") : allItems;
-      const renderCard = (i) => html`<${Card} key=${i.repo + "#" + i.number} i=${i} multi=${!repoFilter && repos.length > 1} onOpen=${onOpen} act=${act} data=${data}/>`;
-      return html`<div class="col" key=${c.k}>
-        <div class="colhead"><${Icon} name=${c.icon} size=${15}/> ${c.label} <span class="n">${allItems.length || ""}</span></div>
-        ${c.k === "planned" ? html`<div class="planned-actions">
-          <button class="colbtn primary" onClick=${() => onAddIssue(target)}><${Icon} name="plus" size=${14}/> Add Issue</button>
-          <button class="colbtn" disabled=${!target || analyzing} title=${target ? "Analyze " + target.split("/").pop() + "'s codebase health" : "Pick a repo first"} onClick=${() => target && onAnalyze(target)}>${analyzing ? html`<${Spinner} size=${14}/>` : html`<${Icon} name="search" size=${14}/>`} Analyze Repo</button>
-        </div>` : null}
-        <div class="cards">
-          ${epicPins.length ? html`
-            ${epicPins.map(renderCard)}
-            ${workingRest.length ? html`<div class="col-sect-div">sub-issues &amp; tasks</div>` : null}
-          ` : null}
-          ${workingRest.length ? workingRest.map(renderCard) : (!epicPins.length ? html`<div class="empty">—</div>` : null)}
-        </div>
-      </div>`;
-    })}
+
+  // Apply time filter then sort
+  const filtered = filterByTime(issues, boardTime);
+  const sorted = sortIssues(filtered, boardSort);
+
+  const renderCard = (i) => html`<${Card} key=${i.repo + "#" + i.number} i=${i} multi=${!repoFilter && repos.length > 1} onOpen=${onOpen} act=${act} data=${data}/>`;
+
+  // --- group by workflow state (default) ---
+  if (!boardGroup || boardGroup === "state") {
+    const byCol = {}; COLS.forEach((c) => (byCol[c.k] = []));
+    sorted.forEach((i) => byCol[classify(i)].push(i));
+    const cols = isDesktop ? COLS : COLS.filter((c) => c.k === tab);
+    return html`<div>
+      <${BoardControls} boardSort=${boardSort} setBoardSort=${setBoardSort} boardGroup=${boardGroup} setBoardGroup=${setBoardGroup} boardTime=${boardTime} setBoardTime=${setBoardTime}/>
+      <div class="board">
+        ${cols.map((c) => {
+          const allItems = byCol[c.k];
+          // Working column: pin epic parents at the top; sub-issues + regular cards go below
+          const epicPins = c.k === "working" ? allItems.filter((i) => i.state === "agency:epic") : [];
+          const workingRest = c.k === "working" ? allItems.filter((i) => i.state !== "agency:epic") : allItems;
+          return html`<div class="col" key=${c.k}>
+            <div class="colhead"><${Icon} name=${c.icon} size=${15}/> ${c.label} <span class="n">${allItems.length || ""}</span></div>
+            ${c.k === "planned" ? html`<div class="planned-actions">
+              <button class="colbtn primary" onClick=${() => onAddIssue(target)}><${Icon} name="plus" size=${14}/> Add Issue</button>
+              <button class="colbtn" disabled=${!target || analyzing} title=${target ? "Analyze " + target.split("/").pop() + "'s codebase health" : "Pick a repo first"} onClick=${() => target && onAnalyze(target)}>${analyzing ? html`<${Spinner} size=${14}/>` : html`<${Icon} name="search" size=${14}/>`} Analyze Repo</button>
+            </div>` : null}
+            <div class="cards">
+              ${epicPins.length ? html`
+                ${epicPins.map(renderCard)}
+                ${workingRest.length ? html`<div class="col-sect-div">sub-issues &amp; tasks</div>` : null}
+              ` : null}
+              ${workingRest.length ? workingRest.map(renderCard) : (!epicPins.length ? html`<div class="empty">—</div>` : null)}
+            </div>
+          </div>`;
+        })}
+      </div>
+    </div>`;
+  }
+
+  // --- group by repo ---
+  const repoList = repos.filter((r) => !repoFilter || r === repoFilter);
+  // include any repos present in filtered issues but not in the watched list
+  sorted.forEach((i) => { if (!repoList.includes(i.repo)) repoList.push(i.repo); });
+  return html`<div>
+    <${BoardControls} boardSort=${boardSort} setBoardSort=${setBoardSort} boardGroup=${boardGroup} setBoardGroup=${setBoardGroup} boardTime=${boardTime} setBoardTime=${setBoardTime}/>
+    <div class=${"board group-repo"}>
+      ${repoList.map((r) => {
+        const allItems = sorted.filter((i) => i.repo === r);
+        const short = r.split("/").pop();
+        const rAnalyzing = (auditRepos || []).includes(r);
+        return html`<div class="col" key=${r}>
+          <div class="colhead"><${Icon} name="pr" size=${15}/> ${short} <span class="n">${allItems.length || ""}</span></div>
+          <div class="planned-actions">
+            <button class="colbtn primary" onClick=${() => onAddIssue(r)}><${Icon} name="plus" size=${14}/> Add Issue</button>
+            <button class="colbtn" disabled=${rAnalyzing} onClick=${() => onAnalyze(r)}>${rAnalyzing ? html`<${Spinner} size=${14}/>` : html`<${Icon} name="search" size=${14}/>`} Analyze</button>
+          </div>
+          <div class="cards">
+            ${allItems.length ? allItems.map(renderCard) : html`<div class="empty">—</div>`}
+          </div>
+        </div>`;
+      })}
+    </div>
   </div>`;
 }
 

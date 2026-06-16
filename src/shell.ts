@@ -119,6 +119,13 @@ input,select,textarea{font-size:16px}
 .gauge{display:inline-block;width:60px;height:6px;border-radius:3px;background:var(--line);overflow:hidden;vertical-align:middle}
 .gauge i{display:block;height:100%}
 
+/* board controls toolbar */
+.bctrl{display:flex;align-items:center;gap:6px;padding:6px 8px;flex-wrap:wrap}
+.bctrl-label{font-size:11.5px;color:var(--ink-3);font-weight:540;white-space:nowrap}
+.bctrl select{font:12.5px inherit;border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:8px;padding:4px 8px;cursor:pointer}
+.bctrl select:focus{outline:none;border-color:var(--accent)}
+.bctrl-sep{flex:1}
+
 /* board */
 .board{padding:8px}
 .col{margin-bottom:14px}
@@ -345,6 +352,7 @@ textarea{resize:vertical;min-height:64px}
 @media(min-width:880px){
   .tabbar{display:none}
   .board{max-width:1500px;margin:0 auto;display:grid;grid-template-columns:repeat(4,1fr);gap:12px;align-items:start;padding:14px}
+  .board.group-repo{grid-template-columns:repeat(auto-fill,minmax(260px,1fr))}
   .col{margin:0}
   .cards{max-height:calc(100dvh - 200px);overflow-y:auto;padding-right:2px}
   .detail{left:auto;right:0;width:min(1080px,92vw);box-shadow:-8px 0 30px rgba(0,0,0,.18)}
