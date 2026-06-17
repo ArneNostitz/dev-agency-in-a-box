@@ -29,4 +29,4 @@
   - Print LLM invocation URL and details to the console on start.
   - Push activity event to dashboard live activity stream (e.g., `🤖 LLM Call: [model] via [provider] ([url])`).
   - Include model details in frontend startup toast notifications.
-
+- [x] Task 10: Fix ReferenceError by removing sort and setSort from StatusLine in web/app.js
