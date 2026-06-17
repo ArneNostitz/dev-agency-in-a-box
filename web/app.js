@@ -222,7 +222,7 @@ function App() {
     <div class="app">
       <${TopBar} working=${working} scanning=${data.scanning} env=${data.env} theme=${theme} setTheme=${setThemeP} onSettings=${() => setSheet("settings")} onUsage=${() => setSheet("usage")} onAgents=${() => setSheet("agents")} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${load} auto=${data.auto || {}} autoRepos=${data.autoRepos || {}} setAuto=${act.setAuto}/>
       ${data.secretsHealth ? html`<${SecretBanner} h=${data.secretsHealth} onFix=${() => setSheet("settings")}/>` : null}
-      <${StatusLine} working=${working} session=${data.session} spend=${data.spendToday} analyzer=${data.analyzer} reload=${load} sort=${sort} setSort=${setSort} offlineQ=${offlineQ} syncing=${syncing}/>
+      <${StatusLine} working=${working} session=${data.session} spend=${data.spendToday} analyzer=${data.analyzer} reload=${load} offlineQ=${offlineQ} syncing=${syncing}/>
       <div class="content">
         <${Board} issues=${shown} repos=${repos} repoFilter=${repoFilter} tab=${tab} isDesktop=${isDesktop} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onOpenChild=${openIssue} onAddRepo=${() => setSheet("addrepo")} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data}/>
       </div>

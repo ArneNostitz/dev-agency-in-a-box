@@ -50,3 +50,5 @@
 6. Push a status activity log (text type) to the live-stream so user sees LLM calls immediately.
 7. Include the selected model in frontend starting toasts.
 
+## Phase 8: Fix Sort Reference Error
+1. Remove sort and setSort props from StatusLine component call in web/app.js.
