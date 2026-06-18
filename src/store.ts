@@ -12,9 +12,12 @@ import { fileURLToPath } from "node:url";
 import { encryptSecret, tryDecrypt } from "./crypto.js";
 import { parseLegacyStatus, stateColumnFor, STATUS_NOT_PLANNED, type IssueStatus, type BlockedReason } from "./state.js";
 import { getDb, now } from "./db/connection.js";
+import { getSetting, setSetting, setSecretSetting, getSecretSetting } from "./db/settings.js";
 
 // Re-export the connection-layer symbols the rest of the app imports from store.ts (back-compat).
 export { getDb, now, migrateIssueStates } from "./db/connection.js";
+export { getSetting, setSetting, setSecretSetting, getSecretSetting } from "./db/settings.js";
+export { addWatchedRepo, removeWatchedRepo, listWatchedRepos } from "./db/watched.js";
 // Re-export the users aggregate (Candidate 3, #70).
 export {
   countUsers, getUserByName, getUserByNameOrEmail, createPasswordReset, consumePasswordReset,
@@ -46,38 +49,9 @@ export { recordActivity, recentActivity, issueActivity } from "./db/activity.js"
 export type { ActivityRow } from "./db/activity.js";
 
 
-export function addWatchedRepo(repo: string): void {
-  const d = getDb();
-  if (!d) return;
-  try {
-    d.prepare(`INSERT OR IGNORE INTO watched_repos (repo, added_at) VALUES (?, ?)`).run(repo, now());
-  } catch (err) {
-    console.warn("[agency] memory write (watched_repo) failed:", (err as Error).message);
-  }
-}
 
-export function removeWatchedRepo(repo: string): void {
-  const d = getDb();
-  if (!d) return;
-  try {
-    d.prepare(`DELETE FROM watched_repos WHERE repo = ?`).run(repo);
-  } catch {
-    /* best effort */
-  }
-}
 
 /** Repos added at runtime via issue commands (unioned with config/repos.txt). */
-export function listWatchedRepos(): string[] {
-  const d = getDb();
-  if (!d) return [];
-  try {
-    return (d.prepare(`SELECT repo FROM watched_repos ORDER BY repo`).all() as Array<{ repo: string }>).map(
-      (r) => r.repo,
-    );
-  } catch {
-    return [];
-  }
-}
 
 /** Record the files an issue's work will touch (from the planner) — drives the file-lock scheduler. */
 
@@ -363,47 +337,10 @@ export function clearIssueModelOverride(repo: string, number: number): void {
 }
 
 // ---- settings (editable from the dashboard, no redeploy) ----
-export function getSetting(key: string): string | null {
-  const d = getDb();
-  if (!d) return null;
-  try {
-    const row = d.prepare(`SELECT value FROM settings WHERE key = ?`).get(key) as { value?: string } | undefined;
-    return row?.value ?? null;
-  } catch {
-    return null;
-  }
-}
-export function setSetting(key: string, value: string): void {
-  const d = getDb();
-  if (!d) return;
-  try {
-    d.prepare(`INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(
-      key,
-      value,
-    );
-  } catch {
-    /* best effort */
-  }
-}
 
 // ---- global encrypted secrets (admin-managed, e.g. the GitHub webhook secret) ----
 /** Store a global secret encrypted at rest (needs MASTER_KEY). Empty clears it. */
-export function setSecretSetting(key: string, plaintext: string): void {
-  if (!plaintext) {
-    setSetting(`secret.${key}`, "");
-    return;
-  }
-  try {
-    setSetting(`secret.${key}`, encryptSecret(plaintext));
-  } catch {
-    /* no MASTER_KEY — can't store securely; ignore */
-  }
-}
 /** Decrypt a global secret, or null if unset/undecryptable. */
-export function getSecretSetting(key: string): string | null {
-  const v = getSetting(`secret.${key}`);
-  return v ? tryDecrypt(v) : null;
-}
 
 // ---- auto-mode (auto-resume / auto-merge), resolved issue → repo → global ----
 export type AutoKind = "resume" | "merge";
