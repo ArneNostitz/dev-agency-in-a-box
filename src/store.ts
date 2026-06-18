@@ -14,6 +14,8 @@ import { getSetting, setSetting, setSecretSetting, getSecretSetting } from "./db
 // Re-export the connection-layer symbols the rest of the app imports from store.ts (back-compat).
 export { getDb, now, migrateIssueStates } from "./db/connection.js";
 export { getSetting, setSetting, setSecretSetting, getSecretSetting } from "./db/settings.js";
+export { addEpicChild, updateEpicChild, listEpicChildren, listEpicParents, epicsByParent, getEpicMeta, setEpicMeta } from "./db/epic_tables.js";
+export type { EpicChild } from "./db/epic_tables.js";
 export { getThreadCursor, setThreadCursor } from "./db/thread_cursor.js";
 export { setSession, getSession } from "./db/agent_sessions.js";
 export { getAutofixCount, incAutofix, resetAutofix } from "./db/autofix.js";
@@ -238,111 +240,14 @@ export type { ActivityRow } from "./db/activity.js";
 
 // ---- epics (parent issue -> sub-issues) ----
 
-export interface EpicChild {
-  child: number;
-  title: string;
-  state: string;
-  closed: number;
-}
 
-export function addEpicChild(repo: string, parent: number, child: number, title: string): void {
-  const d = getDb();
-  if (!d) return;
-  try {
-    d.prepare(`INSERT OR IGNORE INTO epics (repo, parent, child, title, state, closed) VALUES (?, ?, ?, ?, 'open', 0)`).run(
-      repo,
-      parent,
-      child,
-      title,
-    );
-  } catch {
-    /* best effort */
-  }
-}
 
-export function updateEpicChild(repo: string, parent: number, child: number, state: string, closed: boolean): void {
-  const d = getDb();
-  if (!d) return;
-  try {
-    d.prepare(`UPDATE epics SET state = ?, closed = ? WHERE repo = ? AND parent = ? AND child = ?`).run(
-      state,
-      closed ? 1 : 0,
-      repo,
-      parent,
-      child,
-    );
-  } catch {
-    /* best effort */
-  }
-}
 
-export function listEpicChildren(repo: string, parent: number): EpicChild[] {
-  const d = getDb();
-  if (!d) return [];
-  try {
-    return d
-      .prepare(`SELECT child, title, state, closed FROM epics WHERE repo = ? AND parent = ? ORDER BY child`)
-      .all(repo, parent) as unknown as EpicChild[];
-  } catch {
-    return [];
-  }
-}
 
-export function listEpicParents(repo: string): number[] {
-  const d = getDb();
-  if (!d) return [];
-  try {
-    return (d.prepare(`SELECT DISTINCT parent FROM epics WHERE repo = ?`).all(repo) as Array<{ parent: number }>).map(
-      (r) => r.parent,
-    );
-  } catch {
-    return [];
-  }
-}
 
 /** All epics grouped by parent number, for the dashboard (one query). */
-export function epicsByParent(repo: string): Record<number, EpicChild[]> {
-  const d = getDb();
-  if (!d) return {};
-  try {
-    const rows = d
-      .prepare(`SELECT parent, child, title, state, closed FROM epics WHERE repo = ? ORDER BY parent, child`)
-      .all(repo) as unknown as Array<EpicChild & { parent: number }>;
-    const out: Record<number, EpicChild[]> = {};
-    for (const r of rows) (out[r.parent] = out[r.parent] ?? []).push({ child: r.child, title: r.title, state: r.state, closed: r.closed });
-    return out;
-  } catch {
-    return {};
-  }
-}
 
-export function getEpicMeta(repo: string, parent: number): { hash: string; reviewed: boolean } {
-  const d = getDb();
-  if (!d) return { hash: "", reviewed: false };
-  try {
-    const row = d.prepare(`SELECT tracker_hash, reviewed FROM epic_state WHERE repo = ? AND parent = ?`).get(repo, parent) as
-      | { tracker_hash?: string; reviewed?: number }
-      | undefined;
-    return { hash: row?.tracker_hash ?? "", reviewed: Boolean(row?.reviewed) };
-  } catch {
-    return { hash: "", reviewed: false };
-  }
-}
 
-export function setEpicMeta(repo: string, parent: number, fields: { hash?: string; reviewed?: boolean }): void {
-  const d = getDb();
-  if (!d) return;
-  try {
-    d.prepare(
-      `INSERT INTO epic_state (repo, parent, tracker_hash, reviewed) VALUES (?, ?, ?, ?)
-       ON CONFLICT(repo, parent) DO UPDATE SET
-         tracker_hash = COALESCE(excluded.tracker_hash, epic_state.tracker_hash),
-         reviewed = COALESCE(excluded.reviewed, epic_state.reviewed)`,
-    ).run(repo, parent, fields.hash ?? null, fields.reviewed === undefined ? null : fields.reviewed ? 1 : 0);
-  } catch {
-    /* best effort */
-  }
-}
 
 /** Hide an issue from the dashboard. */
 
