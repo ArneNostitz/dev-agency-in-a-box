@@ -31,11 +31,11 @@ import {
 import { EPIC_LABEL, renderEpicTracker } from "./epics.js";
 import { runRole } from "./agents/roleAgent.js";
 import type { RoleName } from "./agents/roles.js";
-import { recordRun, recordPlan, lastPlan, recordIssueState, recordIssueFiles, recordPr, addEpicChild, listEpicChildren, getSession, issueActivity, recordReview, getReview, recordConflict, clearConflict, getSetting } from "./store.js";
+import { recordRun, recordPlan, lastPlan, recordIssueState, recordIssueStatus, recordIssueFiles, recordPr, addEpicChild, listEpicChildren, getSession, issueActivity, recordReview, getReview, recordConflict, clearConflict, getSetting } from "./store.js";
 import { runReflection } from "./reflect.js";
 import { runChecks, parseDiscoveredChecks, rememberChecks } from "./checks.js";
 import { decideNext } from "./orchestrator.js";
-import { LABEL_IN_PROGRESS as IN_PROGRESS, LABEL_READY as READY, LABEL_NEEDS_ATTENTION as NEEDS_ATTENTION } from "./state.js";
+import { LABEL_IN_PROGRESS as IN_PROGRESS, LABEL_READY as READY, LABEL_NEEDS_ATTENTION as NEEDS_ATTENTION, withStatus, setBlocked, parseLegacyStatus } from "./state.js";
 
 /**
  * Run the project's checks the cheap way: deterministic command runner first (zero tokens), and only
@@ -170,7 +170,7 @@ async function finalizeWithPr(repo: string, issue: Issue, workdir: string, branc
   await removeLabel(repo, issue.number, IN_PROGRESS);
   if (pr) {
     await addLabel(repo, issue.number, READY);
-    recordIssueState(repo, issue.number, { state: READY });
+    recordIssueStatus(repo, issue.number, withStatus("review"));
     recordPr(repo, issue.number, pr.number, pr.url);
     // Reconcile the conflict box against reality — a normal finalize (not just the conflict-only Fix
     // path) can make a branch mergeable, and a stale "resolve first" must not stick on the card/PR bar.
@@ -195,7 +195,7 @@ async function finalizeWithPr(repo: string, issue: Issue, workdir: string, branc
     return true;
   } else {
     await addLabel(repo, issue.number, NEEDS_ATTENTION);
-    recordIssueState(repo, issue.number, { state: NEEDS_ATTENTION });
+    recordIssueStatus(repo, issue.number, setBlocked(withStatus("working"), "needsAttention"));
     await commentOnIssue(
       repo,
       issue.number,
@@ -286,7 +286,8 @@ const MODELS_NONE = "-";
 async function pause(repo: string, issue: Issue, label: string): Promise<void> {
   await removeLabel(repo, issue.number, IN_PROGRESS);
   await addLabel(repo, issue.number, label);
-  recordIssueState(repo, issue.number, { state: label });
+  // label → {state, blocked} via the state module (e.g. 'agency:awaiting-answer' → working+awaitingAnswer).
+  recordIssueStatus(repo, issue.number, parseLegacyStatus(label));
 }
 
 /** Build phase: Developer implements -> Tester -> Reviewer (1 revise) -> PR. */
@@ -508,7 +509,7 @@ async function runSpecialist(
       await removeLabel(repo, issue.number, IN_PROGRESS);
       await addLabel(repo, issue.number, READY);
       await commentOnIssue(repo, issue.number, say("planner", "**👍 Plan accepted.** Pin `@dev` to build it."));
-      recordIssueState(repo, issue.number, { state: READY });
+      recordIssueStatus(repo, issue.number, withStatus("review"));
       return;
     }
     await removeLabel(repo, issue.number, APPROVAL_LABEL);
@@ -518,7 +519,7 @@ async function runSpecialist(
       await commentOnIssue(repo, issue.number, say("planner", `**A few questions**\n\n${decision.body}`));
       await removeLabel(repo, issue.number, IN_PROGRESS);
       await addLabel(repo, issue.number, AWAITING_LABEL);
-      recordIssueState(repo, issue.number, { state: AWAITING_LABEL });
+      recordIssueStatus(repo, issue.number, setBlocked(withStatus("working"), "awaitingAnswer"));
       return;
     }
     // Post the plan and keep the conversation open — reply to refine, or "ok" to accept.
@@ -531,7 +532,7 @@ async function runSpecialist(
     );
     await removeLabel(repo, issue.number, IN_PROGRESS);
     await addLabel(repo, issue.number, APPROVAL_LABEL);
-    recordIssueState(repo, issue.number, { state: APPROVAL_LABEL });
+    recordIssueStatus(repo, issue.number, setBlocked(withStatus("planned"), "awaitingApproval"));
     return;
   }
 
@@ -550,7 +551,7 @@ async function runSpecialist(
   await commentOnIssue(repo, issue.number, say(role, out.text));
   await removeLabel(repo, issue.number, IN_PROGRESS);
   await addLabel(repo, issue.number, READY);
-  recordIssueState(repo, issue.number, { state: READY });
+  recordIssueStatus(repo, issue.number, withStatus("review"));
   console.log(`[agency] ${repo} #${issue.number} -> ${READY} (${role}).`);
 }
 
@@ -751,7 +752,7 @@ export async function runReviewFix(repo: string, issue: Issue, workdir: string, 
   if (!changed) {
     await removeLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
     await addLabel(repo, issue.number, NEEDS_ATTENTION).catch(() => {});
-    recordIssueState(repo, issue.number, { state: NEEDS_ATTENTION });
+    recordIssueStatus(repo, issue.number, setBlocked(withStatus("working"), "needsAttention"));
     await commentOnIssue(repo, issue.number, say("developer", `**No code changes were produced** addressing the review, so I skipped the re-test/re-review to avoid burning tokens. Comment guidance and re-pin, or **Merge anyway**.`));
     return;
   }
@@ -780,7 +781,7 @@ export async function runReviewFix(repo: string, issue: Issue, workdir: string, 
 async function conflictUnresolved(repo: string, issue: Issue, branch: string, why: string, files: string[]): Promise<void> {
   await removeLabel(repo, issue.number, READY).catch(() => {});
   await addLabel(repo, issue.number, NEEDS_ATTENTION).catch(() => {});
-  recordIssueState(repo, issue.number, { state: NEEDS_ATTENTION });
+  recordIssueStatus(repo, issue.number, setBlocked(withStatus("working"), "needsAttention"));
   recordConflict(repo, issue.number, "", files); // keep the box visible with whatever files we know
   await commentOnIssue(
     repo,
