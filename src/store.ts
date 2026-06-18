@@ -14,6 +14,11 @@ import { getSetting, setSetting, setSecretSetting, getSecretSetting } from "./db
 // Re-export the connection-layer symbols the rest of the app imports from store.ts (back-compat).
 export { getDb, now, migrateIssueStates } from "./db/connection.js";
 export { getSetting, setSetting, setSecretSetting, getSecretSetting } from "./db/settings.js";
+export { getThreadCursor, setThreadCursor } from "./db/thread_cursor.js";
+export { setSession, getSession } from "./db/agent_sessions.js";
+export { getAutofixCount, incAutofix, resetAutofix } from "./db/autofix.js";
+export { recentRuns } from "./db/runs.js";
+export type { RunRow } from "./db/runs.js";
 export { upsertLocalIssue, getLocalIssue, listLocalOpenIssues, nextLocalIssueNumber, addLocalComment, getLocalComments, recordOutgoingComment, setCommentGhId, foldInGitHubComment, updateCommentBody, getConversation, conversationCount } from "./db/local.js";
 export type { LocalIssue, LocalComment, ConversationComment } from "./db/local.js";
 export { getAutoRaw, setAuto, autoEnabled, autoAttempts, bumpAutoAttempts, resetAutoAttempts } from "./db/auto.js";
@@ -213,125 +218,23 @@ export type { ActivityRow } from "./db/activity.js";
 
 /** Recent activity, oldest-first within the latest `limit` (for the stream panel). */
 
-export interface RunRow {
-  repo: string;
-  number: number;
-  role: string;
-  model: string;
-  turns: number;
-  kind: string;
-  cost_usd: number;
-  created_at: string;
-}
 
 /** Record the PR a delivered issue produced (for the dashboard's links + preview). */
 
 /** Recent agent runs, newest first (for the status dashboard). */
-export function recentRuns(limit = 40): RunRow[] {
-  const d = getDb();
-  if (!d) return [];
-  try {
-    return d
-      .prepare(`SELECT repo, number, role, model, turns, kind, cost_usd, created_at FROM runs ORDER BY id DESC LIMIT ?`)
-      .all(limit) as unknown as RunRow[];
-  } catch {
-    return [];
-  }
-}
 
 /** Recent issue states (excluding archived), newest first (for the status dashboard). */
 
 
 /** Auto-fix attempt counter per PR (bounds self-healing so it can't loop). */
-export function getAutofixCount(repo: string, pr: number): number {
-  const d = getDb();
-  if (!d) return 0;
-  try {
-    const row = d.prepare(`SELECT attempts FROM pr_autofix WHERE repo = ? AND pr = ?`).get(repo, pr) as
-      | { attempts?: number }
-      | undefined;
-    return row?.attempts ?? 0;
-  } catch {
-    return 0;
-  }
-}
-export function incAutofix(repo: string, pr: number): void {
-  const d = getDb();
-  if (!d) return;
-  try {
-    d.prepare(
-      `INSERT INTO pr_autofix (repo, pr, attempts) VALUES (?, ?, 1)
-       ON CONFLICT(repo, pr) DO UPDATE SET attempts = attempts + 1`,
-    ).run(repo, pr);
-  } catch {
-    /* best effort */
-  }
-}
-export function resetAutofix(repo: string, pr: number): void {
-  const d = getDb();
-  if (!d) return;
-  try {
-    d.prepare(`DELETE FROM pr_autofix WHERE repo = ? AND pr = ?`).run(repo, pr);
-  } catch {
-    /* best effort */
-  }
-}
 
 // ---- agent sessions (for SDK resume) + per-issue activity (for the resume digest) ----
 
-export function setSession(repo: string, number: number, role: string, sessionId: string): void {
-  const d = getDb();
-  if (!d || !sessionId) return;
-  try {
-    d.prepare(
-      `INSERT INTO agent_sessions (repo, number, role, session_id, updated_at) VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(repo, number, role) DO UPDATE SET session_id = excluded.session_id, updated_at = excluded.updated_at`,
-    ).run(repo, number, role, sessionId, now());
-  } catch {
-    /* best effort */
-  }
-}
-export function getSession(repo: string, number: number, role: string): string | null {
-  const d = getDb();
-  if (!d) return null;
-  try {
-    const row = d.prepare(`SELECT session_id FROM agent_sessions WHERE repo = ? AND number = ? AND role = ?`).get(repo, number, role) as
-      | { session_id?: string }
-      | undefined;
-    return row?.session_id ?? null;
-  } catch {
-    return null;
-  }
-}
 
 // ---- comment cursor (handle each human comment exactly once) ----
 
 /** The id of the last human comment we acted on for this thread (0 if none). */
-export function getThreadCursor(repo: string, number: number): number {
-  const d = getDb();
-  if (!d) return 0;
-  try {
-    const row = d.prepare(`SELECT last_comment_id FROM thread_cursor WHERE repo = ? AND number = ?`).get(repo, number) as
-      | { last_comment_id?: number }
-      | undefined;
-    return row?.last_comment_id ?? 0;
-  } catch {
-    return 0;
-  }
-}
 
-export function setThreadCursor(repo: string, number: number, commentId: number): void {
-  const d = getDb();
-  if (!d || !commentId) return;
-  try {
-    d.prepare(
-      `INSERT INTO thread_cursor (repo, number, last_comment_id) VALUES (?, ?, ?)
-       ON CONFLICT(repo, number) DO UPDATE SET last_comment_id = excluded.last_comment_id`,
-    ).run(repo, number, commentId);
-  } catch {
-    /* best effort */
-  }
-}
 
 // ---- epics (parent issue -> sub-issues) ----
 
