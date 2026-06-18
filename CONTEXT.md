@@ -12,7 +12,8 @@ GitHub is a mirror and a code host, not the database.
 **IssueState**:
 The lifecycle position of an issue — where it is in its journey from intake to done.
 Five states: `notPlanned → planned → working → review → done`. Owned by a single
-module as a closed set with an explicit transition guard.
+module as a closed set with an explicit transition guard. The DB `issues.state`
+column holds the canonical enum string directly.
 _Avoid_: status, column, stage, label
 
 **IssueKind**:

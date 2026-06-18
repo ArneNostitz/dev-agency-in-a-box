@@ -122,7 +122,7 @@ function App() {
     const key = i.repo + "#" + i.number;
     const isActive = i.running || activeSet.has(key);
     if (isActive) return Object.assign({}, i, { active: true });
-    if ((i.state || "") === "agency:in-progress") return Object.assign({}, i, { queued: true });
+    if ((i.state || "") === "working") return Object.assign({}, i, { queued: true });
     return i;
   });
   // Repos with a running audit — drives the spinner on the top-bar Audit dropdown. (The audit itself
@@ -147,17 +147,17 @@ function App() {
   // actions (optimistic + reconcile). Each is guarded: spins + blocks until the server responds.
   const act = {
     isBusy: (action, repo, number) => Boolean(busyRef.current[bkey(action, repo, number)]),
-    start(repo, number, model) { return guard("start", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/start", { repo, number, ...(model ? { model } : {}) }).then(() => toast("Starting" + (model ? ` with model ${model.model}` : "") + "…")).catch(() => { toast("Couldn’t start", "error"); delete ov[repo + "#" + number]; }).then(load); }); },
-    approve(repo, number, model) { return guard("approve", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/approve", { repo, number, ...(model ? { model } : {}) }).then(() => toast("Approved" + (model ? ` with model ${model.model}` : "") + " — building")).catch(() => toast("Couldn’t approve", "error")).then(load); }); },
-    resume(repo, number, model) { return guard("resume", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/resume", { repo, number, ...(model ? { model } : {}) }).then(() => toast("Resuming" + (model ? ` with model ${model.model}` : "") + "…")).catch(() => toast("Couldn’t resume", "error")).then(load); }); },
+    start(repo, number, model) { return guard("start", repo, number, () => { override(repo, number, { state: "working" }); return api("/start", { repo, number, ...(model ? { model } : {}) }).then(() => toast("Starting" + (model ? ` with model ${model.model}` : "") + "…")).catch(() => { toast("Couldn’t start", "error"); delete ov[repo + "#" + number]; }).then(load); }); },
+    approve(repo, number, model) { return guard("approve", repo, number, () => { override(repo, number, { state: "working" }); return api("/approve", { repo, number, ...(model ? { model } : {}) }).then(() => toast("Approved" + (model ? ` with model ${model.model}` : "") + " — building")).catch(() => toast("Couldn’t approve", "error")).then(load); }); },
+    resume(repo, number, model) { return guard("resume", repo, number, () => { override(repo, number, { state: "working" }); return api("/resume", { repo, number, ...(model ? { model } : {}) }).then(() => toast("Resuming" + (model ? ` with model ${model.model}` : "") + "…")).catch(() => toast("Couldn’t resume", "error")).then(load); }); },
     stop(repo, number) { return guard("stop", repo, number, () => { override(repo, number, { state: "planned" }); return api("/stop", { repo, number }).then(() => toast("Stopped — moved to Planned")).catch(() => toast("Couldn’t stop", "error")).then(load); }); },
     cancel(repo, number) { return guard("cancel", repo, number, () => { override(repo, number, { state: "planned", active: false }); return api("/cancel", { repo, number }).then(() => toast("Reset to Planned")).catch((e) => toast((e && e.message) || "Couldn’t cancel", "error")).then(load); }); },
     updateIssue(repo, number) { return guard("update", repo, number, () => api("/refresh-issue", { repo, number }).then(() => toast("Updated from GitHub")).catch((e) => toast((e && e.message) || "Couldn’t update", "error")).then(load)); },
-    fix(repo, number, model) { return guard("fix", repo, number, () => { override(repo, number, { state: "agency:in-progress", active: true }); return api("/fix", { repo, number, ...(model ? { model } : {}) }).then(() => toast("Fixing the review" + (model ? ` with model ${model.model}` : "") + "…")).catch(() => toast("Couldn’t fix", "error")).then(load); }); },
+    fix(repo, number, model) { return guard("fix", repo, number, () => { override(repo, number, { state: "working", active: true }); return api("/fix", { repo, number, ...(model ? { model } : {}) }).then(() => toast("Fixing the review" + (model ? ` with model ${model.model}` : "") + "…")).catch(() => toast("Couldn’t fix", "error")).then(load); }); },
     merge(repo, number) { return guard("merge", repo, number, () => api("/merge", { repo, number }).then((r) => { toast("Merged"); load(); return r; }).catch(() => toast("Couldn’t merge — conflicts?", "error"))); },
     close(repo, number) { return guard("close", repo, number, () => { override(repo, number, { state: "closed" }); return api("/close", { repo, number }).then(() => { toast("Closed"); setOpenKey(null); }).catch((e) => toast((e && e.message) || "Couldn’t close", "error")).then(load); }); },
     closeNotPlanned(repo, number) { return guard("close-not-planned", repo, number, () => { override(repo, number, { state: "done" }); return api("/close-not-planned", { repo, number }).then(() => { toast("Closed as not planned"); setOpenKey(null); }).catch((e) => toast((e && e.message) || "Couldn’t close", "error")).then(load); }); },
-    createPr(repo, number) { return guard("createPr", repo, number, () => { override(repo, number, { state: "agency:ready" }); return api("/create-pr", { repo, number }).then((r) => toast(r && r.url ? "PR opened" : "PR opened")).catch((e) => toast((e && e.message) || "Couldn’t open PR", "error")).then(load); }); },
+    createPr(repo, number) { return guard("createPr", repo, number, () => { override(repo, number, { state: "review" }); return api("/create-pr", { repo, number }).then((r) => toast(r && r.url ? "PR opened" : "PR opened")).catch((e) => toast((e && e.message) || "Couldn’t open PR", "error")).then(load); }); },
     del(repo, number) { return guard("del", repo, number, () => { override(repo, number, { state: "done" }); return api("/delete", { repo, number }).then(() => { toast("Deleted"); setOpenKey(null); }).catch(() => toast("Couldn’t delete", "error")).then(load); }); },
     runChecks(repo, number, title) { return guard("runChecks", repo, number, () => api("/run-checks", { repo, number, title }).then(() => toast("Running checks…")).catch(() => toast("Couldn’t run checks", "error"))); },
 
@@ -170,7 +170,7 @@ function App() {
   function openComposer(repo) { setComposerRepo(repo || repoFilter || (repos[0] || null)); setSheet("composer"); }
   function createIssue(repo, role, title, body, start, atts, model) {
     const tmpNum = -Date.now();
-    const tmp = { repo, number: tmpNum, title, role, state: start ? "agency:in-progress" : "planned", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), _tmp: true, _offline: !isOnline };
+    const tmp = { repo, number: tmpNum, title, role, state: start ? "working" : "planned", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), _tmp: true, _offline: !isOnline };
     setPending((ps) => ps.concat(tmp)); setSheet(null);
     if (!isOnline) {
       // Offline: queue the issue (attachments are skipped — network required for uploads)

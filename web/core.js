@@ -194,29 +194,37 @@ export function MarkdownArea({ value, onInput, onPaste, onKeyDown, placeholder, 
 export function api(url, body) { return fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}) }).then(async (r) => { if (!r.ok) { let msg = "http " + r.status; try { const j = await r.json(); if (j && j.error) msg = j.error; } catch (e) {} throw new Error(msg); } return r.json().catch(() => ({})); }); }
 export function getJSON(u) { return fetch(u).then((r) => r.json()); }
 
-export function isDone(i) { const s = i.state || ""; return s === "merged" || s === "agency:merged" || s === "closed" || s === "done"; }
+export function isDone(i) { return i.state === "done"; }
+// The issue's lifecycle lane: planned | working | review | done. Derived from the canonical
+// IssueState enum in `i.state` + the BlockedReason in `i.blocked` (ADR-0001). `agency:epic`
+// is an IssueKind carried in state until the IssueKind module exists — handled as a branch.
 export function classify(i) {
   const s = i.state || "";
-  if (isDone(i)) return "done";
-  if (i.active || i.queued || i.running) return "working"; // actually executing right now (i.running = live hasActiveRun from server)
-  if (i.pr_number) return "review"; // a PR exists → it's waiting on you, even if a restart left a stale "in-progress" label
-  if (s === "agency:in-progress" || s === "agency:rate-limited") return "working";
   if (s === "agency:epic") return i.epic && i.epic.done >= i.epic.total ? "review" : "working";
-  if (s === "agency:ready" || s === "agency:needs-attention" || s === "agency:awaiting-approval" || s === "agency:awaiting-answer") return "review";
+  if (s === "done") return "done";
+  if (i.active || i.queued || i.running) return "working"; // actually executing right now
+  if (i.pr_number && s !== "planned" && s !== "notPlanned") return "review"; // a PR is up → waiting on you
+  // Waiting on the human shows in Review (needs your 👍 / answer / attention).
+  if (i.blocked === "awaitingApproval" || i.blocked === "awaitingAnswer" || i.blocked === "needsAttention") return "review";
+  if (s === "working") return "working";
+  if (s === "review") return "review";
   return "planned";
 }
 export function statusChip(i) {
   const s = i.state || "";
-  if (isDone(i)) return s.indexOf("merg") >= 0 ? { cls: "s-done", label: "merged", icon: "merge" } : { cls: "s-planned", label: s.indexOf("clos") >= 0 ? "closed" : "done", icon: "check" };
+  if (s === "done") return { cls: "s-done", label: "done", icon: "merge" };
   if (i.active) return { cls: "s-working", label: "working", icon: "loader" };
-  if (s === "agency:rate-limited") return { cls: "s-auto", label: i.resumeAt ? "resumes " + hm(new Date(i.resumeAt)) : "auto-resume", icon: "hourglass" };
   if (i.queued) return { cls: "s-working", label: "queued", icon: "clock" };
+  if (i.blocked === "rateLimited") return { cls: "s-auto", label: i.resumeAt ? "resumes " + hm(new Date(i.resumeAt)) : "auto-resume", icon: "hourglass" };
   if (s === "agency:epic") return { cls: "s-epic", label: i.epic ? i.epic.done + "/" + i.epic.total : "epic", icon: "layers" };
-  if (s === "agency:in-progress") return { cls: "s-working", label: "working", icon: "loader" };
-  if (s === "agency:ready") return i.review === "changes" ? { cls: "s-changes", label: "changes", icon: "alert" } : { cls: "s-ready", label: "ready", icon: "pr" };
-  if (s === "agency:needs-attention") return { cls: "s-attn", label: "needs you", icon: "alert" };
-  if (s === "agency:awaiting-approval") return { cls: "s-attn", label: "approve?", icon: "check" };
-  if (s === "agency:awaiting-answer") return { cls: "s-attn", label: "reply", icon: "messages" };
+  // Distinct chips for each BlockedReason (the payoff of carrying `blocked` in the payload).
+  if (i.blocked === "conflict") return { cls: "s-changes", label: "conflict", icon: "alert" };
+  if (i.blocked === "budgetExceeded") return { cls: "s-attn", label: "over budget", icon: "alert" };
+  if (i.blocked === "needsAttention") return { cls: "s-attn", label: "needs you", icon: "alert" };
+  if (i.blocked === "awaitingApproval") return { cls: "s-attn", label: "approve?", icon: "check" };
+  if (i.blocked === "awaitingAnswer") return { cls: "s-attn", label: "reply", icon: "messages" };
+  if (s === "working") return { cls: "s-working", label: "working", icon: "loader" };
+  if (s === "review") return i.review === "changes" ? { cls: "s-changes", label: "changes", icon: "alert" } : { cls: "s-ready", label: "ready", icon: "pr" };
   return { cls: "s-planned", label: "planned", icon: "planned" };
 }
 export const COLS = [

@@ -167,46 +167,13 @@ export function labelsFor(status: IssueStatus): string[] {
 }
 
 /**
- * The DB `state` column value for a status. Encodes the blocked reason into the legacy
- * `agency:*` composite so the FRONTEND (which reads `state` directly via /data and matches
- * `agency:in-progress`/`agency:ready`/`agency:awaiting-answer`/… in web/core.js, board.js,
- * detail.js) keeps rendering the right chip without a frontend change. This is the inverse
- * of parseLegacyStatus.
- *
- * The `blocked` COLUMN is the authoritative source for new code (getIssueStatus prefers
- * it); this composite is the back-compat projection onto the single column the UI still
- * reads. Once the frontend migrates to read `blocked`, this can collapse to the lifecycle
- * label only.
+ * The DB `issues.state` column value for a status — the canonical lifecycle enum string
+ * itself ("notPlanned"/"planned"/"working"/"review"/"done"). No legacy composite, no
+ * `agency:*` mapping (ADR-0001: no back-compat — beta/single-user, DB can be flushed).
+ * The BlockedReason lives in its own `issues.blocked` column.
  */
 export function stateColumnFor(status: IssueStatus): string {
-  switch (status.blocked) {
-    case "awaitingApproval":
-      return "agency:awaiting-approval";
-    case "awaitingAnswer":
-      return "agency:awaiting-answer";
-    case "needsAttention":
-      return "agency:needs-attention";
-    case "rateLimited":
-      return "agency:rate-limited";
-    case "budgetExceeded":
-      return "agency:needs-attention"; // same chip; blocked column disambiguates
-    case "conflict":
-      return "agency:in-progress"; // conflict is shown via the separate `conflict` field
-    case null:
-    default:
-      switch (status.state) {
-        case "planned":
-          return "agency:planned";
-        case "working":
-          return "agency:in-progress";
-        case "review":
-          return "agency:ready";
-        case "done":
-          return "merged";
-        default:
-          return ""; // notPlanned — untouched issue
-      }
-  }
+  return status.state;
 }
 
 /**

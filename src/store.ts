@@ -11,7 +11,7 @@ import { mkdirSync, readFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hashPassword, verifyPassword, newToken, encryptSecret, tryDecrypt } from "./crypto.js";
-import { parseLegacyStatus, stateColumnFor, type IssueStatus, type BlockedReason } from "./state.js";
+import { parseLegacyStatus, stateColumnFor, STATUS_NOT_PLANNED, type IssueStatus, type BlockedReason } from "./state.js";
 
 let db: DatabaseSync | null = null;
 
@@ -263,9 +263,8 @@ export function recordIssueState(
 
 /**
  * Write a full IssueStatus (state + blocked) via the state module — the two-field model.
- * The lifecycle label goes to `state` (parseLegacyStatus reads it back); the blocked
- * reason goes to its own `blocked` column. Old rows with blocked IS NULL are handled by
- * getIssueStatus's parseLegacyStatus fallback. Best-effort, like every memory write.
+ * The canonical lifecycle enum goes to `state` (e.g. "working"); the BlockedReason goes
+ * to its own `blocked` column. Best-effort, like every memory write.
  */
 export function recordIssueStatus(repo: string, number: number, status: IssueStatus, extra: { title?: string; role?: string } = {}): void {
   const d = getDb();
@@ -294,16 +293,16 @@ export function recordIssueStatus(repo: string, number: number, status: IssueSta
 }
 
 /**
- * Read the two-field IssueStatus. Prefers the `blocked` column; falls back to deriving
- * blocked from the legacy `state` string (parseLegacyStatus) for rows written before the
- * blocked column existed. Pure DB read + the state module's parser — no GitHub.
+ * Read the two-field IssueStatus. `state` holds the canonical enum; `blocked` the reason.
+ * parseLegacyStatus is a safety net for rare pre-flush rows; a flushed DB has clean enum
+ * values and the parser is a pass-through. Pure DB read + the state module — no GitHub.
  */
 export function getIssueStatus(repo: string, number: number): IssueStatus {
   const row = getIssueRow(repo, number);
-  if (!row) return parseLegacyStatus(null);
-  const base = parseLegacyStatus(row.state);
-  const blockedCol = row.blocked as BlockedReason | null;
-  return blockedCol ? { state: base.state, blocked: blockedCol } : base;
+  if (!row) return STATUS_NOT_PLANNED;
+  // The state column holds the canonical enum directly (ADR-0001). parseLegacyStatus is
+  // only a safety net for the rare pre-flush row; valid enum values pass through it as-is.
+  return { state: parseLegacyStatus(row.state).state, blocked: (row.blocked as BlockedReason | null) ?? null };
 }
 
 export function recordRun(

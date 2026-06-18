@@ -212,8 +212,8 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
     //  • hasPr    — a PR exists → the goal is Merge (or Fix/Resolve if blocked). Never Create PR/Close.
     //  • approved — reviewer approved but no PR yet → Create PR (token-free).
     const hasPr = !!issue.pr_number;
-    const parked = !st || st === "planned" || st === "agency:planned";
-    const awaiting = st === "agency:awaiting-approval";
+    const parked = !st || st === "notPlanned" || st === "planned";
+    const awaiting = issue.blocked === "awaitingApproval";
     const approved = review === "approved";
 
     const parts = modelOverride ? modelOverride.split("/") : [];

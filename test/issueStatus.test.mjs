@@ -58,49 +58,44 @@ test("getIssueStatus on an unknown issue returns notPlanned", () => {
   assert.deepEqual(s.getIssueStatus(REPO, 9999), state.STATUS_NOT_PLANNED);
 });
 
-// ---- frontend back-compat: the `state` column must hold a value web/core.js classify() understands ----
-// The UI reads `issue.state` directly from /data and string-matches agency:* values. Until the
-// frontend migrates to read `blocked`, recordIssueStatus must keep emitting the legacy composite.
-test("the state column always holds a frontend-recognised agency:* composite (back-compat)", () => {
-  const recognised = new Set([
-    "", "planned", "agency:planned", "agency:in-progress", "agency:ready",
-    "agency:awaiting-answer", "agency:awaiting-approval", "agency:needs-attention",
-    "agency:rate-limited", "merged", "closed", "done",
-  ]);
+test("the state column holds the canonical lifecycle enum directly (no back-compat)", () => {
+  // ADR-0001: no legacy agency:* composite. The column is single-axis (lifecycle only).
   const cases = [
-    state.withStatus("notPlanned"),
-    state.withStatus("planned"),
-    state.withStatus("working"),
-    state.withStatus("review"),
-    state.withStatus("done"),
-    state.setBlocked(state.withStatus("planned"), "awaitingApproval"),
-    state.setBlocked(state.withStatus("working"), "awaitingAnswer"),
-    state.setBlocked(state.withStatus("working"), "needsAttention"),
-    state.setBlocked(state.withStatus("working"), "rateLimited"),
-    state.setBlocked(state.withStatus("working"), "conflict"),
-    state.setBlocked(state.withStatus("working"), "budgetExceeded"),
+    [state.withStatus("notPlanned"), "notPlanned"],
+    [state.withStatus("planned"), "planned"],
+    [state.withStatus("working"), "working"],
+    [state.withStatus("review"), "review"],
+    [state.withStatus("done"), "done"],
+    // blocked never leaks into the state column — it lives in its own column
+    [state.setBlocked(state.withStatus("planned"), "awaitingApproval"), "planned"],
+    [state.setBlocked(state.withStatus("working"), "awaitingAnswer"), "working"],
+    [state.setBlocked(state.withStatus("working"), "needsAttention"), "working"],
+    [state.setBlocked(state.withStatus("working"), "rateLimited"), "working"],
+    [state.setBlocked(state.withStatus("working"), "conflict"), "working"],
+    [state.setBlocked(state.withStatus("working"), "budgetExceeded"), "working"],
   ];
-  for (const status of cases) {
+  for (const [status, expectedCol] of cases) {
     s.recordIssueStatus(REPO, 30, status);
     const row = s.getIssueRow(REPO, 30);
-    assert.ok(recognised.has(row.state || ""), `unrecognised column value for ${JSON.stringify(status)}: ${row.state}`);
+    assert.equal(row.state, expectedCol, `column for ${JSON.stringify(status)}: got ${row.state}`);
   }
 });
 
-// ---- back-compat: rows written the OLD way (legacy label string, blocked column NULL) ----
+// ---- import-time fallback only: parseLegacyStatus re-derives a pre-flush row, one-way ----
+// ADR-0001: no live back-compat. The canonical path writes enum values; parseLegacyStatus
+// exists solely for importing existing GitHub labels / pre-flush rows during adoption.
 
-test("legacy row (recordIssueState with 'agency:awaiting-answer', no blocked column) is derived loss-free", () => {
-  // Simulate an old row: write via the legacy function, which does not touch `blocked`.
-  s.recordIssueState(REPO, 10, { state: "agency:awaiting-answer" });
-  const got = s.getIssueStatus(REPO, 10);
-  // blocked column is NULL → parseLegacyStatus derives it from the legacy state string.
-  assert.equal(got.state, "working");
-  assert.equal(got.blocked, "awaitingAnswer");
+test("getIssueStatus round-trips the canonical enum (the normal path)", () => {
+  s.recordIssueStatus(REPO, 11, state.withStatus("review"));
+  assert.deepEqual(s.getIssueStatus(REPO, 11), { state: "review", blocked: null });
+  s.recordIssueStatus(REPO, 12, state.setBlocked(state.withStatus("working"), "awaitingAnswer"));
+  assert.deepEqual(s.getIssueStatus(REPO, 12), { state: "working", blocked: "awaitingAnswer" });
 });
 
-test("legacy row 'agency:ready' derives to review + no block", () => {
-  s.recordIssueState(REPO, 11, { state: "agency:ready" });
-  assert.deepEqual(s.getIssueStatus(REPO, 11), { state: "review", blocked: null });
+test("parseLegacyStatus re-derives a pre-flush row at import time (one-way, not live)", () => {
+  // Simulate a stale row that somehow holds a legacy composite: the parser recovers it.
+  assert.deepEqual(state.parseLegacyStatus("agency:awaiting-answer"), { state: "working", blocked: "awaitingAnswer" });
+  assert.deepEqual(state.parseLegacyStatus("agency:ready"), { state: "review", blocked: null });
 });
 
 test("a full lifecycle with a mid-work block round-trips through the DB", () => {

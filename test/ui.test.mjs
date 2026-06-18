@@ -83,10 +83,10 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
     session: { tokens: 0, budget: 0 }, config: {},
     issues: [
       { repo: "acme/app", number: 1, title: "A planned task", state: "planned", updated_at: new Date().toISOString(), auto: {} },
-      { repo: "acme/app", number: 2, title: "Ready PR", state: "agency:ready", pr_number: 5, review: "approved", updated_at: new Date().toISOString(), auto: {} },
+      { repo: "acme/app", number: 2, title: "Ready PR", state: "review", pr_number: 5, review: "approved", updated_at: new Date().toISOString(), auto: {} },
       // Issue 3 simulates the "fix" flow: has a PR (was in Review) but is now actively being fixed.
       // classify() must put it in Working (via i.running), not keep it in Review (via i.pr_number).
-      { repo: "acme/app", number: 3, title: "Fix running now", state: "agency:in-progress", pr_number: 7, running: true, updated_at: new Date().toISOString(), auto: {} },
+      { repo: "acme/app", number: 3, title: "Fix running now", state: "working", pr_number: 7, running: true, updated_at: new Date().toISOString(), auto: {} },
     ],
   };
   const route = (u) => {
@@ -335,11 +335,11 @@ test("epic card nests its sub-issues and hides their standalone cards", async ()
   const issues = [
     { repo: "acme/app", number: 10, title: "Big epic", state: "agency:epic", auto: {}, updated_at: new Date().toISOString(),
       epic: { total: 2, done: 1, children: [
-        { child: 11, title: "Nested child A", state: "agency:ready", closed: false },
+        { child: 11, title: "Nested child A", state: "review", closed: false },
         { child: 12, title: "Nested child B", state: "done", closed: true },
       ] } },
     // The same sub-issues as their own open issues — these standalone cards must be hidden.
-    { repo: "acme/app", number: 11, title: "STANDALONE-ELEVEN", state: "agency:ready", pr_number: 9, auto: {}, updated_at: new Date().toISOString() },
+    { repo: "acme/app", number: 11, title: "STANDALONE-ELEVEN", state: "review", pr_number: 9, auto: {}, updated_at: new Date().toISOString() },
     { repo: "acme/app", number: 12, title: "STANDALONE-TWELVE", state: "done", auto: {}, updated_at: new Date().toISOString() },
   ];
 
