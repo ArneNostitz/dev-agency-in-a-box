@@ -146,3 +146,17 @@ export function archiveIssue(repo: string, number: number): void {
     /* best effort */
   }
 }
+
+/** The role last assigned to an issue (read from the issues row). */
+export function getIssueRole(repo: string, number: number): string | null {
+  const d = getDb();
+  if (!d) return null;
+  try {
+    const row = d.prepare(`SELECT role FROM issues WHERE repo = ? AND number = ?`).get(repo, number) as
+      | { role?: string }
+      | undefined;
+    return row?.role ?? null;
+  } catch {
+    return null;
+  }
+}
