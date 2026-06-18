@@ -63,6 +63,7 @@ import { parseAuditProposals } from "./auditparse.js";
 import {
   recordIssueState,
   recordIssueStatus,
+  getIssueStatus,
   recordPr,
   getIssueRole,
   getAutofixCount,
@@ -861,7 +862,12 @@ async function scanRepo(cfg: Config, repo: string): Promise<void> {
     if (t.closed && !recentEnough(t.updatedAt)) continue; // ignore stale closed threads
 
     const ownedByLabel = t.labels.some((l) => l.startsWith("agency:"));
-    const awaiting = t.labels.some((l) => AWAITING_LABELS.includes(l));
+    // DB truth (ADR-0001): the lifecycle state + blocked reason come from getIssueStatus, not
+    // the GitHub label array. A never-touched issue has no row → notPlanned; adoption happens on
+    // first touch. ownedByLabel stays as an additional "the agency has been here" hint for legacy
+    // rows that carry labels but no DB state yet.
+    const status = getIssueStatus(repo, t.number);
+    const awaiting = status.blocked === "awaitingApproval" || status.blocked === "awaitingAnswer";
     // The dashboard is the control plane. The ONLY thing that auto-starts a fresh run from GitHub is
     // an @mention by a repo member (owner/member/collaborator) — labels never trigger anymore; they
     // are an informative mirror. Untagged issues (and mentions from non-members) just surface as
@@ -895,8 +901,8 @@ async function scanRepo(cfg: Config, repo: string): Promise<void> {
       ignored: false,
       inProgress: false,
       closed: t.closed,
-      ready: t.labels.includes(READY),
-      needsAttention: t.labels.includes(NEEDS_ATTENTION),
+      ready: status.state === "review",
+      needsAttention: status.blocked === "needsAttention",
       awaiting,
       owned,
       newHumanComment,
