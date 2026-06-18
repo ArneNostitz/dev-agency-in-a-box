@@ -11,6 +11,7 @@ import { mkdirSync, readFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hashPassword, verifyPassword, newToken, encryptSecret, tryDecrypt } from "./crypto.js";
+import { parseLegacyStatus, stateColumnFor, type IssueStatus, type BlockedReason } from "./state.js";
 
 let db: DatabaseSync | null = null;
 
@@ -158,6 +159,7 @@ function getDb(): DatabaseSync | null {
       `ALTER TABLE token_usage ADD COLUMN repo TEXT`,
       `ALTER TABLE token_usage ADD COLUMN number INTEGER`,
       `ALTER TABLE token_usage ADD COLUMN role TEXT`,
+      `ALTER TABLE issues ADD COLUMN blocked TEXT`,
     ]) {
       try {
         d.exec(sql);
@@ -257,6 +259,51 @@ export function recordIssueState(
   } catch (err) {
     console.warn("[agency] memory write (issue) failed:", (err as Error).message);
   }
+}
+
+/**
+ * Write a full IssueStatus (state + blocked) via the state module — the two-field model.
+ * The lifecycle label goes to `state` (parseLegacyStatus reads it back); the blocked
+ * reason goes to its own `blocked` column. Old rows with blocked IS NULL are handled by
+ * getIssueStatus's parseLegacyStatus fallback. Best-effort, like every memory write.
+ */
+export function recordIssueStatus(repo: string, number: number, status: IssueStatus, extra: { title?: string; role?: string } = {}): void {
+  const d = getDb();
+  if (!d) return;
+  try {
+    const stateCol = stateColumnFor(status);
+    const blockedCol = status.blocked;
+    d.prepare(
+      `INSERT INTO issues (repo, number, title, role, state, blocked, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(repo, number) DO UPDATE SET
+         title   = COALESCE(excluded.title, issues.title),
+         role    = COALESCE(excluded.role,  issues.role),
+         state   = excluded.state,
+         blocked = excluded.blocked,
+         updated_at = CASE WHEN
+              COALESCE(excluded.title, issues.title) IS NOT issues.title
+           OR COALESCE(excluded.role,  issues.role)  IS NOT issues.role
+           OR excluded.state IS NOT issues.state
+           OR excluded.blocked IS NOT issues.blocked
+           THEN excluded.updated_at ELSE issues.updated_at END`,
+    ).run(repo, number, extra.title ?? null, extra.role ?? null, stateCol, blockedCol, now());
+  } catch (err) {
+    console.warn("[agency] memory write (issue status) failed:", (err as Error).message);
+  }
+}
+
+/**
+ * Read the two-field IssueStatus. Prefers the `blocked` column; falls back to deriving
+ * blocked from the legacy `state` string (parseLegacyStatus) for rows written before the
+ * blocked column existed. Pure DB read + the state module's parser — no GitHub.
+ */
+export function getIssueStatus(repo: string, number: number): IssueStatus {
+  const row = getIssueRow(repo, number);
+  if (!row) return parseLegacyStatus(null);
+  const base = parseLegacyStatus(row.state);
+  const blockedCol = row.blocked as BlockedReason | null;
+  return blockedCol ? { state: base.state, blocked: blockedCol } : base;
 }
 
 export function recordRun(
@@ -1732,6 +1779,7 @@ export interface IssueRow {
   title: string;
   role: string;
   state: string;
+  blocked: string | null;
   updated_at: string;
   pr_number: number | null;
   pr_url: string | null;
@@ -1772,7 +1820,7 @@ export function getIssueRow(repo: string, number: number): IssueRow | null {
   if (!d) return null;
   try {
     return (d
-      .prepare(`SELECT repo, number, title, role, state, updated_at, pr_number, pr_url FROM issues WHERE repo = ? AND number = ?`)
+      .prepare(`SELECT repo, number, title, role, state, blocked, updated_at, pr_number, pr_url FROM issues WHERE repo = ? AND number = ?`)
       .get(repo, number) as unknown as IssueRow | null) ?? null;
   } catch {
     return null;
@@ -1785,7 +1833,7 @@ export function recentIssues(limit = 40): IssueRow[] {
   try {
     return d
       .prepare(
-        `SELECT i.repo, i.number, i.title, i.role, i.state, i.updated_at, i.pr_number, i.pr_url FROM issues i
+        `SELECT i.repo, i.number, i.title, i.role, i.state, i.blocked, i.updated_at, i.pr_number, i.pr_url FROM issues i
          WHERE NOT EXISTS (SELECT 1 FROM archived a WHERE a.repo = i.repo AND a.number = i.number)
          ORDER BY i.updated_at DESC LIMIT ?`,
       )

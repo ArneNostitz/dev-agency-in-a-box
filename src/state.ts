@@ -167,6 +167,49 @@ export function labelsFor(status: IssueStatus): string[] {
 }
 
 /**
+ * The DB `state` column value for a status. Encodes the blocked reason into the legacy
+ * `agency:*` composite so the FRONTEND (which reads `state` directly via /data and matches
+ * `agency:in-progress`/`agency:ready`/`agency:awaiting-answer`/… in web/core.js, board.js,
+ * detail.js) keeps rendering the right chip without a frontend change. This is the inverse
+ * of parseLegacyStatus.
+ *
+ * The `blocked` COLUMN is the authoritative source for new code (getIssueStatus prefers
+ * it); this composite is the back-compat projection onto the single column the UI still
+ * reads. Once the frontend migrates to read `blocked`, this can collapse to the lifecycle
+ * label only.
+ */
+export function stateColumnFor(status: IssueStatus): string {
+  switch (status.blocked) {
+    case "awaitingApproval":
+      return "agency:awaiting-approval";
+    case "awaitingAnswer":
+      return "agency:awaiting-answer";
+    case "needsAttention":
+      return "agency:needs-attention";
+    case "rateLimited":
+      return "agency:rate-limited";
+    case "budgetExceeded":
+      return "agency:needs-attention"; // same chip; blocked column disambiguates
+    case "conflict":
+      return "agency:in-progress"; // conflict is shown via the separate `conflict` field
+    case null:
+    default:
+      switch (status.state) {
+        case "planned":
+          return "agency:planned";
+        case "working":
+          return "agency:in-progress";
+        case "review":
+          return "agency:ready";
+        case "done":
+          return "merged";
+        default:
+          return ""; // notPlanned — untouched issue
+      }
+  }
+}
+
+/**
  * Loss-free migration of the old single-value representation onto the new vocabulary.
  * The old `issues.state` column (and the old labels) flattened state + blocked into one
  * string; this splits them back out. Limitation: when the old value was `agency:needs-
@@ -191,13 +234,17 @@ export function parseLegacyStatus(raw: string | null | undefined): IssueStatus {
     case "planned":
       return { state: "planned", blocked: null };
     case "agency:in-progress":
+    case "working":
       return { state: "working", blocked: null };
     case "agency:ready":
+    case "review":
       return { state: "review", blocked: null };
     case "done":
     case "merged":
     case "closed":
       return { state: "done", blocked: null };
+    case "notPlanned":
+      return STATUS_NOT_PLANNED;
     default:
       return STATUS_NOT_PLANNED;
   }
