@@ -280,10 +280,12 @@ async function processIssue(cfg: Config, repo: string, issue: Issue): Promise<vo
   // silent while we clone (and the GitNexus index now builds in the background, off this path).
   setActive(repo, issue.number, "issue", role, issue.title);
   try {
-    pushActivity(repo, issue.number, role, "tool", `📥 cloning ${repo}…`);
+    pushActivity(repo, issue.number, role, "tool", `📥 cloning ${repo}… 0%`);
     await rm(workdir, { recursive: true, force: true });
     await mkdir(join(workdir, ".."), { recursive: true });
-    await cloneRepo(repo, workdir);
+    await cloneRepo(repo, workdir, (percent, phase) => {
+      pushActivity(repo, issue.number, role, "tool", `📥 cloning ${repo}… ${phase === "cloned" ? "done" : percent + "%"}`);
+    });
     await indexRepo(workdir, repo, (s) => pushActivity(repo, issue.number, role, "tool", s));
     await runPipeline(cfg, repo, issue, role, workdir, thread);
   } catch (err) {

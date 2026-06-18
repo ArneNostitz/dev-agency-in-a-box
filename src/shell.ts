@@ -145,6 +145,11 @@ input,select,textarea{font-size:16px}
 .card-repo{font-size:11px;color:var(--ink-3);font-weight:540}
 .card-title{font-weight:540;font-size:14.5px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .card-chips{display:flex;align-items:center;gap:6px;flex-wrap:wrap;color:var(--ink-3);font-size:12px}
+/* workspace setup progress bar (clone + index) — real % streamed from the backend */
+.setupbar{margin:2px 0}
+.setupbar-track{height:6px;border-radius:999px;background:var(--surface-2);overflow:hidden}
+.setupbar-fill{height:100%;background:var(--accent);border-radius:999px;transition:width .25s ease}
+.setupbar-lbl{display:inline-flex;align-items:center;gap:4px;margin-top:3px;font-size:11px;color:var(--ink-3)}
 .card-f{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end;border-top:1px solid var(--line);padding-top:8px}
 .card-f .cardbtn{margin-left:0}
 .card-subs{display:flex;flex-direction:column;border-top:1px solid var(--line);padding-top:5px}

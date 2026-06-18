@@ -3,7 +3,7 @@
  * REST client because `gh` handles auth, pagination, and is the same tool the
  * agents themselves use inside their working copies.
  */
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { writeFileSync, unlinkSync, appendFileSync, existsSync } from "node:fs";
 import { rm } from "node:fs/promises";
@@ -618,9 +618,40 @@ export async function commentThread(repo: string, issue: number, lastN = 8, perC
 }
 
 /** Configure git to authenticate through gh, then clone `repo` to `dest`. */
-export async function cloneRepo(repo: string, dest: string): Promise<void> {
+export async function cloneRepo(repo: string, dest: string, onProgress?: (percent: number, phase: string) => void): Promise<void> {
   await gh(["auth", "setup-git"]);
-  await gh(["repo", "clone", repo, dest, "--", "--depth", "50"]);
+  // Use a raw streaming `git clone` (not `gh repo clone`) so we can parse git's own progress
+  // lines ("Receiving objects: NN%") and report real progress instead of a stuck spinner.
+  await new Promise<void>((resolve, reject) => {
+    const token = ghBotToken();
+    const env = token ? { ...process.env, GH_TOKEN: token, GITHUB_TOKEN: token } : process.env;
+    const url = `https://github.com/${repo}.git`;
+    const p = spawn("git", ["clone", "--progress", "--depth", "50", url, dest], { env });
+    let stderr = "";
+    const emit = (line: string) => {
+      if (!onProgress) return;
+      // git progress lines, e.g.: "Receiving objects:  42% (d/n)" or "Resolving deltas: 80%"
+      let m = line.match(/Receiving objects:\s+(\d+)%/);
+      if (m) { onProgress(Math.min(95, Number(m[1])), "cloning"); return; }
+      m = line.match(/Resolving deltas:\s+(\d+)%/);
+      if (m) { onProgress(95, "resolving"); return; }
+      m = line.match(/Compressing objects:\s+(\d+)%/);
+      if (m) { onProgress(Math.min(20, Number(m[1]) / 5), "compressing"); return; }
+      m = line.match(/Counting objects:\s+(\d+)%/);
+      if (m) { onProgress(Math.min(5, Number(m[1]) / 20), "counting"); return; }
+    };
+    p.stderr.on("data", (chunk: Buffer) => {
+      const s = chunk.toString();
+      stderr += s;
+      // Progress lines are \r-separated within a single line; split on both so we catch each.
+      for (const line of s.split(/[\r\n]/)) if (line.trim()) emit(line);
+    });
+    p.on("error", reject);
+    p.on("exit", (code) => {
+      if (code === 0) { if (onProgress) onProgress(100, "cloned"); resolve(); }
+      else reject(new Error(`git clone exited ${code}: ${stderr.trim().slice(-300)}`));
+    });
+  });
   // Safety net for the deterministic `git add -A` finalize: never sweep generated dirs even if
   // the repo lacks a .gitignore for them.
   try {

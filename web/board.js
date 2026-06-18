@@ -1,6 +1,6 @@
 // Dev Agency dashboard — board module (split from app.js; Preact + htm, no build step).
 import { html, useState, useEffect } from "/web/vendor/standalone.mjs";
-import { Avatar, COLS, Icon, Spinner, ago, api, boardSortCmp, classify, filterByTime, fmtTok, ghUrl, isDone, shortModel, statusChip, toast, usageTitle } from "./core.js";
+import { Avatar, COLS, Icon, Spinner, ago, api, boardSortCmp, classify, filterByTime, fmtTok, getSetupProgress, ghUrl, isDone, shortModel, statusChip, toast, usageTitle } from "./core.js";
 
 // ---------- sort / group / time options ----------
 const SORT_OPTS = [
@@ -212,6 +212,19 @@ function Card({ i, subs, multi, onOpen, onOpenChild, act, data }) {
       ${engaged && i.role && avatarsOn ? html`<${Avatar} role=${i.role} size=${28} crop="head"/>` : null}
     </div>
     <div class="card-title">${(i.active || tmp) ? html`<${Spinner} size=${13}/> ` : null}${i.title || "#" + i.number}</div>
+    ${(() => {
+      // While the agent is preparing the workspace (clone + index), show a real progress bar
+      // driven by the backend's streamed `📥 … NN%` lines — not a stuck spinner.
+      if (!i.active && !tmp) return null;
+      const stream = (data && data.activity && data.activity.filter((a) => a.repo === i.repo && a.number === i.number)) || [];
+      const sp = getSetupProgress(stream);
+      if (!sp) return null;
+      const pct = sp.percent == null ? null : sp.percent;
+      return html`<div class="setupbar" title=${sp.phase}>
+        <div class="setupbar-track"><div class="setupbar-fill" style=${pct == null ? "width:100%" : "width:" + pct + "%"}></div></div>
+        <span class="setupbar-lbl">${pct == null ? html`<${Spinner} size=${11}/> ` : pct + "% · "}${sp.phase}</span>
+      </div>`;
+    })()}
     <div class="card-chips">
       ${tmp
         ? html`<span class="statuschip s-working"><${Spinner} size=${12}/> ${i.state === "agency:in-progress" ? "creating & starting…" : "creating…"}</span>`

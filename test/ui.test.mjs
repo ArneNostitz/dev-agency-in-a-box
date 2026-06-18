@@ -257,6 +257,42 @@ test("continueMarkdownList continues `- ` and `1. ` at line end, exits on empty 
   assert.equal(el.selectionStart, "1. first\n2. ".length, "caret after new ordered prefix");
 });
 
+// Unit tests for getSetupProgress (web/core.js): derives the real clone/setup % from the live
+// activity stream. The backend streams `📥 cloning <repo>… NN%` (real git progress) and `🧭 …`
+// indexing lines; any later agent tool/text/start event ends the setup phase.
+test("getSetupProgress parses real clone % and ends setup on agent activity", async () => {
+  const vendorUrl = pathToFileURL(join(HERE, "..", "web", "vendor", "standalone.mjs")).href;
+  const tmpDir = mkdtempSync(join(tmpdir(), "dacore-sp-"));
+  const src = readFileSync(join(HERE, "..", "web", "core.js"), "utf8").split("/web/vendor/standalone.mjs").join(vendorUrl);
+  writeFileSync(join(tmpDir, "core.js"), src);
+  const { getSetupProgress } = await import(pathToFileURL(join(tmpDir, "core.js")).href);
+
+  const ev = (kind, text) => ({ kind, text });
+
+  // No stream → no setup progress.
+  assert.equal(getSetupProgress([]), null, "empty stream → null");
+  assert.equal(getSetupProgress(null), null, "null stream → null");
+
+  // Latest line is a clone-with-real-percent → that % + phase.
+  assert.deepEqual(getSetupProgress([ev("tool", "📥 cloning foo/bar… 0%")]), { percent: 0, phase: "cloning foo/bar…" }, "0% parsed");
+  assert.deepEqual(getSetupProgress([ev("tool", "📥 cloning foo/bar… 42%")]), { percent: 42, phase: "cloning foo/bar…" }, "mid % parsed");
+  assert.deepEqual(getSetupProgress([ev("tool", "📥 cloning foo/bar… done")]), { percent: 100, phase: "cloning foo/bar…" }, "done → 100%");
+
+  // Clone line without a number (e.g. first emit before % arrives) → null percent, phase kept.
+  assert.deepEqual(getSetupProgress([ev("tool", "📥 cloning foo/bar…")]), { percent: null, phase: "cloning foo/bar…" }, "no-number clone line");
+
+  // Indexing line → null percent, indexing phase.
+  assert.deepEqual(getSetupProgress([ev("tool", "🧭 using cached GitNexus index (refreshing in the background)")]), { percent: null, phase: "using cached GitNexus index (refreshing in the background)" }, "indexing line");
+
+  // Once a real agent tool/text/start event appears after the setup line, setup is done → null.
+  assert.equal(getSetupProgress([ev("tool", "📥 cloning foo/bar… 42%"), ev("start", "started (claude)"), ]), null, "start event ends setup");
+  assert.equal(getSetupProgress([ev("tool", "📥 cloning foo/bar… 42%"), ev("text", "🤖 LLM Call: claude")]), null, "text event ends setup");
+  assert.equal(getSetupProgress([ev("tool", "📥 cloning foo/bar… 42%"), ev("tool", "$ npm install")]), null, "non-setup tool event ends setup");
+
+  // Setup line is the latest (no agent activity yet) → still in setup.
+  assert.deepEqual(getSetupProgress([ev("start", "started (claude)"), ev("tool", "📥 cloning foo/bar… 80%")]), { percent: 80, phase: "cloning foo/bar…" }, "latest setup line wins");
+});
+
 // Offline queue: pre-populate localStorage and verify the status-line indicator renders.
 test("offline queue indicator shows when dab_offline_q has entries", async () => {
   const SAMPLE = {
