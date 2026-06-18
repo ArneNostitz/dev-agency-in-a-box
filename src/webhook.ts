@@ -19,6 +19,7 @@ import type { Config } from "./config.js";
 import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordIssueStatus, recordPr, tokensSince, tokensByModelSince, tokensByRoleSince, tokensByDaySince, topIssuesByTokensSince, tokensByIssueAll, toolStatsSince, runStepCountSince, recentLessons, recordConflict, getConflict, clearConflict, listConflicts, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getGlobalModel, setGlobalModel, getFallbackChain, setFallbackChain, getAutoSwitchOnLimit, setIssueModelOverride, getIssueModelOverride, clearIssueModelOverride, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, getIssueRow, getModelsPresets, listAgentDefs, upsertAgentDef, deleteAgentDef, listSkills, upsertSkill, deleteSkill, listHooks, upsertHook, deleteHook, type AutoKind, type Provider, type AgentDef, type Skill, type Hook } from "./store.js";
 import { mergeEpic, isEpic } from "./epics.js";
 import { parseLegacyStatus, withStatus, setBlocked } from "./state.js";
+import { getIssueBudget, setIssueBudget } from "./budget.js";
 import { renderShell } from "./shell.js";
 import { addLabel, removeLabel } from "./github.js";
 import { authEnabled, userFromReq, setSessionCookie, clearSessionCookie, parseCookies, SESSION_COOKIE, verifyRecoveryKey } from "./auth.js";
@@ -373,6 +374,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               app: getApp(i.repo, i.number),
               review: reviews[`${i.repo}#${i.number}`] ?? null,
               modelOverride: getIssueModelOverride(i.repo, i.number),
+              budget: getIssueBudget(i.repo, i.number),
               // True iff a Claude run is actually executing for this issue right now (abort registry
               // — the precise signal). Drives the Stop button so it's reliably shown only while live.
               running: hasActiveRun(i.repo, i.number),
@@ -827,7 +829,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
     }
 
     // Dashboard actions (auth required), not GitHub webhooks.
-    if (["/archive", "/comment", "/comment-edit", "/run-checks", "/merge", "/close", "/close-not-planned", "/create-pr", "/delete", "/resume", "/stop", "/fix", "/auto", "/start", "/new-issue", "/approve", "/audit", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude", "/model-override", "/agent-def-save", "/agent-def-delete", "/skill-save", "/skill-delete", "/hook-save", "/hook-delete", "/analyzer-run", "/refresh", "/refresh-issue", "/cancel"].includes(path)) {
+    if (["/archive", "/comment", "/comment-edit", "/run-checks", "/merge", "/close", "/close-not-planned", "/create-pr", "/delete", "/resume", "/stop", "/fix", "/auto", "/start", "/new-issue", "/approve", "/audit", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude", "/model-override", "/issue-budget", "/agent-def-save", "/agent-def-delete", "/skill-save", "/skill-delete", "/hook-save", "/hook-delete", "/analyzer-run", "/refresh", "/refresh-issue", "/cancel"].includes(path)) {
       const actor = userFromReq(req);
       if (!actor) return void res.writeHead(401, { "content-type": "application/json" }).end('{"error":"auth required"}');
       void readBody(req).then(async (body) => {
@@ -1210,6 +1212,23 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
             setIssueModelOverride(repo, number, p.model.providerId, p.model.model);
           } else {
             clearIssueModelOverride(repo, number);
+          }
+          return ok();
+        }
+        if (path === "/issue-budget") {
+          // Set or clear a per-issue budget override { maxCostUsd?, maxTurns?, maxTokensPerRun?, unlimited? }.
+          if (!repo || !number) return res.writeHead(400).end("{}");
+          if (p.budget && typeof p.budget === "object") {
+            const budget = p.budget as Record<string, unknown>;
+            const b: Record<string, number | boolean> = {};
+            for (const k of ["maxCostUsd", "maxTurns", "maxTokensPerRun"]) {
+              const v = budget[k];
+              if (typeof v === "number" && Number.isFinite(v) && v >= 0) b[k] = v;
+            }
+            if (budget.unlimited === true) b.unlimited = true;
+            setIssueBudget(repo, number, Object.keys(b).length ? b : null);
+          } else {
+            setIssueBudget(repo, number, null);
           }
           return ok();
         }

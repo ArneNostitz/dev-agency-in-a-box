@@ -102,7 +102,7 @@ import { startPreviewSweeper, killAllApps } from "./apprun.js";
 import { setActive, clearActive, getActive } from "./activity.js";
 import { stopRuns } from "./abort.js";
 import { dispatch, drain, stop as stopPool, poolStatus, inFlightKeys } from "./pool.js";
-import { loadBudget, overBudget, UNLIMITED_LABEL } from "./budget.js";
+import { loadBudget, overBudget, effectiveLimits } from "./budget.js";
 import { maybeSelfImprove } from "./reflect.js";
 import { parseLegacyStatus } from "./state.js";
 import {
@@ -254,19 +254,22 @@ async function processIssue(cfg: Config, repo: string, issue: Issue): Promise<vo
     : roleForText(`${issue.title}\n${issue.body}`, loadHandleRoleMap()) ?? "developer";
   console.log(`[agency] ${repo} #${issue.number}: ${issue.title} -> role:${role}${resuming ? " (resume)" : ""}`);
 
-  // Budget gate: park runaway issues instead of silently burning more.
-  if (!issue.labels.includes(UNLIMITED_LABEL)) {
-    const reason = overBudget(issueSpend(repo, issue.number), loadBudget());
+  // Budget gate: park runaway issues instead of silently burning more. Per-issue override +
+  // unlimited flag live in the DB now (ADR-0001: labels have no power); the old agency:unlimited
+  // label is no longer read here.
+  const limits = effectiveLimits(repo, issue.number);
+  if (!limits.unlimited) {
+    const reason = overBudget(issueSpend(repo, issue.number), limits);
     if (reason) {
       await addLabel(repo, issue.number, "agency:needs-attention");
       await commentOnIssue(
         repo,
         issue.number,
         `⛔ **Budget exceeded** — this issue has ${reason} across all agent runs. ` +
-          `To continue anyway, add the \`${UNLIMITED_LABEL}\` label and remove \`agency:needs-attention\`, then re-pin. ` +
+          `Set a higher per-issue budget or toggle unlimited in the dashboard, then re-start. ` +
           `Or split the work into smaller issues.`,
       );
-      recordIssueStatus(repo, issue.number, setBlocked(withStatus("working"), "needsAttention"));
+      recordIssueStatus(repo, issue.number, setBlocked(withStatus("working"), "budgetExceeded"));
       console.log(`[agency] ${repo} #${issue.number}: over budget (${reason}) — parked.`);
       return;
     }

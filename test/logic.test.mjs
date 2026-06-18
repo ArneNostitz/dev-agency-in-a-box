@@ -8,7 +8,7 @@ import { roleForText, loadHandleRoleMap, modelFor, ROLES, MODELS } from "../dist
 import { parsePlannerDecision, isApproval, parseSubIssues } from "../dist/pipeline.js";
 import { parseControlCommand } from "../dist/commands.js";
 import { dispatch, drain } from "../dist/pool.js";
-import { overBudget, loadBudget, UNLIMITED_LABEL } from "../dist/budget.js";
+import { overBudget, loadBudget, effectiveLimits, setIssueBudget } from "../dist/budget.js";
 import { parseLessons } from "../dist/reflect.js";
 import { decideThreadAction } from "../dist/route.js";
 import { isNoOpComment } from "../dist/github.js";
@@ -158,7 +158,11 @@ test("overBudget enforces cost + turn limits; 0 disables", () => {
   assert.ok(overBudget({ costUsd: 12, turns: 30 }, limits)); // over cost
   assert.ok(overBudget({ costUsd: 2, turns: 150 }, limits)); // over turns
   assert.equal(overBudget({ costUsd: 999, turns: 9999 }, { ...limits, maxIssueCostUsd: 0, maxIssueTurns: 0 }), null);
-  assert.equal(UNLIMITED_LABEL, "agency:unlimited");
+  // per-issue override + unlimited flag (replaces the old agency:unlimited label — #67)
+  setIssueBudget("x/y", 1, { unlimited: true });
+  assert.equal(effectiveLimits("x/y", 1).unlimited, true);
+  setIssueBudget("x/y", 1, { maxCostUsd: 2 });
+  assert.equal(effectiveLimits("x/y", 1).maxIssueCostUsd, 2);
   // defaults load and are sane
   const b = loadBudget();
   assert.ok(b.maxTurnsPerRun > 0);
