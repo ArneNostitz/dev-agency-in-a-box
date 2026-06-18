@@ -348,10 +348,15 @@ textarea{resize:vertical;min-height:64px}
 .att img{height:28px;border-radius:5px}
 .muted{color:var(--ink-2)}
 .toast-stack{position:fixed;bottom:calc(74px + var(--safe-b));right:16px;z-index:80;display:flex;flex-direction:column-reverse;gap:8px;max-width:min(340px,calc(100vw - 32px));pointer-events:none}
-.toast-item{display:flex;align-items:center;gap:8px;background:var(--ink);color:var(--bg);padding:9px 13px;border-radius:10px;font-size:13px;line-height:1.4;box-shadow:var(--shadow-md);animation:toastin .18s ease;pointer-events:auto}
+.toast-item{position:relative;overflow:visible;display:flex;align-items:center;gap:8px;background:var(--ink);color:var(--bg);padding:9px 13px;border-radius:10px;font-size:13px;line-height:1.4;box-shadow:var(--shadow-md);animation:toastin .18s ease;pointer-events:auto}
 .toast-item.t-error{background:var(--red);color:#fff}
-.toast-x{margin-left:auto;background:transparent;border:none;color:inherit;opacity:.75;cursor:pointer;padding:0 0 0 8px;font-size:15px;line-height:1;flex-shrink:0}
-.toast-x:hover{opacity:1}
+.toast-item>span{min-width:0;overflow-wrap:anywhere;word-break:break-word;padding-left:12px}
+.toast-x{position:absolute;top:-7px;left:-7px;width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;background:var(--surface);color:var(--ink-2);border:1.5px solid var(--line);border-radius:50%;font-size:11px;line-height:1;cursor:pointer;padding:0;box-shadow:var(--shadow)}
+.toast-x:hover{background:var(--surface-2);color:var(--ink);border-color:var(--line-2)}
+.toast-msg-link{color:inherit;text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+.toast-msg-link:hover{opacity:.85}
+.toast-msg-path{font-family:ui-monospace,Menlo,monospace;cursor:pointer}
+.toast-msg-path:hover{opacity:.85}
 @keyframes toastin{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
 .cmdbox{display:flex;gap:6px;align-items:center;margin-top:6px}
 .cmdbox code{flex:1;background:#0d1117;color:#d6deeb;border-radius:8px;padding:7px 9px;font:12px ui-monospace,Menlo,monospace;overflow:auto;white-space:nowrap}

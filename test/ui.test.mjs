@@ -161,6 +161,54 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
   dom.window.close();
 });
 
+// Pure unit tests for shapeToastMsg (web/core.js) — the toast-message tokenizer that splits a
+// string into text/url/path segments. core.js imports the vendor bundle via an absolute path, so
+// copy it to a temp dir rewriting that import, then import only the named export (no jsdom needed).
+test("shapeToastMsg tokenizes text, urls, paths and mixed messages", async () => {
+  const vendorUrl = pathToFileURL(join(HERE, "..", "web", "vendor", "standalone.mjs")).href;
+  const tmpDir = mkdtempSync(join(tmpdir(), "dacore-"));
+  const src = readFileSync(join(HERE, "..", "web", "core.js"), "utf8").split("/web/vendor/standalone.mjs").join(vendorUrl);
+  writeFileSync(join(tmpDir, "core.js"), src);
+  const { shapeToastMsg } = await import(pathToFileURL(join(tmpDir, "core.js")).href);
+
+  const seg = (msg) => shapeToastMsg(msg);
+
+  // Empty/falsy → single empty text segment (the render path relies on this).
+  assert.deepEqual(seg(""), [{ t: "text", v: "" }], "empty message → one empty text segment");
+  assert.deepEqual(seg(undefined), [{ t: "text", v: "" }], "falsy message → one empty text segment");
+
+  // Plain text → one text segment, unchanged.
+  assert.deepEqual(seg("hello world"), [{ t: "text", v: "hello world" }], "plain text is one segment");
+
+  // URL only → one url segment carrying the raw URL.
+  assert.deepEqual(seg("https://github.com/foo/bar/issues/49"), [{ t: "url", v: "https://github.com/foo/bar/issues/49" }], "url-only message → one url segment");
+
+  // Absolute unix path only → one path segment.
+  assert.deepEqual(seg("/home/user/src/app/file.js"), [{ t: "path", v: "/home/user/src/app/file.js" }], "path-only message → one path segment");
+
+  // Mixed: text before, url in the middle, text after.
+  assert.deepEqual(seg("see https://example.com/x/y for docs"), [
+    { t: "text", v: "see " }, { t: "url", v: "https://example.com/x/y" }, { t: "text", v: " for docs" },
+  ], "mixed text+url+text tokenizes in order");
+
+  // Leading path (no preceding space) is still matched.
+  assert.deepEqual(seg("/etc/hosts is next"), [
+    { t: "path", v: "/etc/hosts" }, { t: "text", v: " is next" },
+  ], "leading absolute path tokenizes");
+
+  // Path preceded by a space: the leading whitespace stays with the text, the path segment is the
+  // matched path only (no trailing/leading space), per the capture group.
+  assert.deepEqual(seg("see /var/log/app.log done"), [
+    { t: "text", v: "see " }, { t: "path", v: "/var/log/app.log" }, { t: "text", v: " done" },
+  ], "space-prefixed path splits correctly");
+
+  // URL wins over a path at the same position (tie-break: uNext <= pNext).
+  assert.deepEqual(seg("https://x.io/a/b/c"), [{ t: "url", v: "https://x.io/a/b/c" }], "url beats path interpretation of the same substring");
+
+  // Message with no recognizable segments → single text segment with the full string.
+  assert.deepEqual(seg("no segments here at all"), [{ t: "text", v: "no segments here at all" }], "no-segment message → one text segment");
+});
+
 // Offline queue: pre-populate localStorage and verify the status-line indicator renders.
 test("offline queue indicator shows when dab_offline_q has entries", async () => {
   const SAMPLE = {

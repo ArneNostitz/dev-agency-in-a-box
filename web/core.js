@@ -145,10 +145,56 @@ let toastFn = () => {};
 export function toast(t, kind) { toastFn(t, kind || "info"); }
 export function setToastFn(fn) { toastFn = fn; }
 
+// ---------- toast message shaping (pure) ----------
+// Tokenize a message into segments. URLs and file paths become clickable:
+//   URLs  → shortened (scheme + host + shortened path) open in a new tab on click
+//   paths → shortened (/head/…/tail) copy to clipboard on click
+// Everything else is plain text and wraps normally.
+function shortenPath(p) { const parts = p.split("/"); if (parts.length <= 3) return p; return parts.slice(0, 2).join("/") + "/…/" + parts[parts.length - 1]; }
+function shortenUrl(u) { try { const p = new URL(u); return p.protocol + "//" + (p.host || "") + shortenPath(p.pathname || ""); } catch (e) { return u; } }
+// Regex: http(s) URLs, then unix-like absolute paths (with at least one slash segment).
+const URL_RE = /https?:\/\/[^\s)]+/g;
+const PATH_RE = /(^|\s)((?:\/|[A-Za-z]:[\\/])[\w@.\-/]+)(?=[\s)]|$)/g;
+export function shapeToastMsg(msg) {
+  if (!msg) return [{ t: "text", v: "" }];
+  const out = [];
+  let i = 0;
+  const pushText = (s) => { if (s) out.push({ t: "text", v: s }); };
+  while (i < msg.length) {
+    URL_RE.lastIndex = i; const um = URL_RE.exec(msg);
+    PATH_RE.lastIndex = i; const pm = PATH_RE.exec(msg);
+    const uNext = um ? um.index : Infinity;
+    const pNext = pm ? pm.index + (pm[1] ? pm[1].length : 0) : Infinity;
+    if (uNext === Infinity && pNext === Infinity) { pushText(msg.slice(i)); break; }
+    if (uNext <= pNext) {
+      pushText(msg.slice(i, uNext));
+      out.push({ t: "url", v: um[0] });
+      i = uNext + um[0].length;
+    } else {
+      pushText(msg.slice(i, pNext));
+      out.push({ t: "path", v: pm[2] });
+      i = pNext + pm[2].length;
+    }
+  }
+  return out;
+}
+
+// copyPath is module-level: it has no component state and its only side effect is a clipboard
+// write + a toast — keeping it out of the render body lets Toasts stay purely presentational.
+function copyPath(v) { try { navigator.clipboard.writeText(v); } catch (e) {} toast("Copied"); }
+// Render the shaped segments: URLs as links, paths as click-to-copy spans, the rest as text.
+function renderSegs(msg) {
+  return shapeToastMsg(msg).map((s, i) => {
+    if (s.t === "url") return html`<a key=${i} class="toast-msg-link" href=${s.v} target="_blank" rel="noopener" title=${s.v}>${shortenUrl(s.v)}</a>`;
+    if (s.t === "path") return html`<span key=${i} class="toast-msg-path" title=${"Copy: " + s.v} onClick=${() => copyPath(s.v)}>${shortenPath(s.v)}</span>`;
+    return s.v;
+  });
+}
+
 // ---------- Toasts molecule ----------
 export function Toasts({ toasts, onDismiss }) {
   if (!toasts || !toasts.length) return null;
-  return html`<div class="toast-stack">${toasts.map((t) => html`<div key=${t.id} class=${"toast-item" + (t.kind === "error" ? " t-error" : "")}><span>${t.msg}</span>${t.kind === "error" ? html`<button class="toast-x" onClick=${() => onDismiss(t.id)} aria-label="Dismiss">✕</button>` : null}</div>`)}</div>`;
+  return html`<div class="toast-stack">${toasts.map((t) => html`<div key=${t.id} class=${"toast-item" + (t.kind === "error" ? " t-error" : "")}><button class="toast-x" onClick=${() => onDismiss(t.id)} aria-label="Dismiss">✕</button><span>${renderSegs(t.msg)}</span></div>`)}</div>`;
 }
 
 // Reactive desktop/mobile breakpoint (matches the CSS @media min-width:880px). Computing this
