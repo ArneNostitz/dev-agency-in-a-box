@@ -13,7 +13,9 @@ export function Settings({ data, onClose, reload, openGithubTokens, openModels }
   const [maxTok, setMaxTok] = useState(cfg.maxTokensPerRun || 600000);
   const [revRounds, setRevRounds] = useState(cfg.maxReviseRounds != null ? cfg.maxReviseRounds : 1);
   const [avatarsOn, setAvatarsOn] = useState(cfg.avatars !== "off");
-  function save() { api("/settings", { skipArchitect: skipArch ? "on" : "off", gitnexus: gitnexus ? "on" : "off", maxTokensPerRun: Number(maxTok) || 0, maxReviseRounds: Number(revRounds) || 0, avatars: avatarsOn ? "on" : "off" }).then(() => { toast("Saved"); onClose(); reload(); }); }
+  const [runner, setRunner] = useState(cfg.agentRunner || "claude-sdk");
+  const [cliCmd, setCliCmd] = useState(cfg.agentCliCommand || "");
+  function save() { api("/settings", { skipArchitect: skipArch ? "on" : "off", gitnexus: gitnexus ? "on" : "off", maxTokensPerRun: Number(maxTok) || 0, maxReviseRounds: Number(revRounds) || 0, avatars: avatarsOn ? "on" : "off", agentRunner: runner, agentCliCommand: cliCmd }).then(() => { toast("Saved"); onClose(); reload(); }); }
   function changePw() { const np = window.prompt("New password (8+ characters)"); if (np == null) return; if (np.length < 8) { toast("8+ characters"); return; } api("/set-password", { value: np }).then(() => toast("Password changed")).catch((e) => toast((e && e.message) || "Couldn’t change", "error")); }
   return html`<${Sheet} title="Settings" onClose=${onClose} footer=${html`<button class="btn" onClick=${onClose}>Cancel</button><button class="btn primary" onClick=${save}>Save</button>`}>
 
@@ -47,6 +49,14 @@ export function Settings({ data, onClose, reload, openGithubTokens, openModels }
       <label class="ckline"><input type="checkbox" checked=${gitnexus} onChange=${(e) => setGitnexus(e.target.checked)}/> Use the GitNexus code index</label>
       <label>Max tokens per run (0 = off)</label><input type="number" min="0" step="50000" value=${maxTok} onInput=${(e) => setMaxTok(e.target.value)}/>
       <label>Reviewer revise rounds before it asks you</label><input type="number" min="0" max="3" value=${revRounds} onInput=${(e) => setRevRounds(e.target.value)}/>
+      <label>Agent runner — how roles execute</label>
+      <select value=${runner} onChange=${(e) => setRunner(e.target.value)}>
+        <option value="claude-sdk">Claude SDK (default — in-process, your subscription/key)</option>
+        <option value="pi-cli">pi CLI (subprocess — use pi as a tool)</option>
+        <option value="claude-cli">claude CLI (subprocess)</option>
+        <option value="custom-cli">Custom CLI (set command below)</option>
+      </select>
+      ${runner === "custom-cli" || runner === "pi-cli" || runner === "claude-cli" ? html`<label>CLI command template — <code>{model}</code> <code>{systemPrompt}</code> <code>{task}</code> <code>{workdir}</code> (blank = built-in default)</label><input type="text" value=${cliCmd} placeholder=${runner === "pi-cli" ? "pi --mode print --model {model} --system-prompt {systemPrompt} {task}" : runner === "claude-cli" ? "claude -p {task}" : ""} onInput=${(e) => setCliCmd(e.target.value)}/>` : null}
     </div>
 
     ${admin && data.opsMeta ? html`<div class="setgrp"><${Operations} meta=${data.opsMeta} values=${data.ops || {}} reload=${reload}/></div>` : null}
