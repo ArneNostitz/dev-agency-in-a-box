@@ -9,5 +9,6 @@ logs/
 memory/agency.db
 memory/agency.db-*
 
-# Cloned working copies of target repos
-.work/
+# Runtime data volume — DB_PATH points here by default (src/store.ts). Holds the live SQLite DB,
+# the auto-generated MASTER_KEY file (data/.masterkey — a SECRET), and GitNexus caches. Never commit.
+data/
