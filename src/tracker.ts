@@ -152,9 +152,11 @@ export function syncInIssue(repo: string, number: number, title: string, body: s
 }
 
 /** Local-first mode is opt-in (default GitHub) so the inversion can be enabled deliberately. */
+/** Local-first mode is the default (ADR-0001 / #69): the DB is authoritative; GitHub is a
+ *  mirror. Set tracker=github (or TRACKER=github) to fall back to GitHub-authoritative tracking. */
 export function trackerMode(): "local" | "github" {
   const s = (getSetting("tracker") || process.env.TRACKER || "").trim().toLowerCase();
-  return s === "local" ? "local" : "github";
+  return s === "github" ? "github" : "local";
 }
 
 /** The active tracker — GitHub by default; LocalTracker (DB-authoritative) when enabled. */

@@ -462,7 +462,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
                 avatars: getSetting("avatars") === "off" ? "off" : "on",
                 agentRunner: (getSetting("agent_runner") ?? process.env.AGENT_RUNNER?.trim() ?? "claude-sdk"),
                 agentCliCommand: (getSetting("agent_cli_command") ?? process.env.AGENT_CLI_COMMAND?.trim() ?? ""),
-                tracker: (getSetting("tracker") ?? process.env.TRACKER?.trim() ?? "github"),
+                tracker: (getSetting("tracker") ?? process.env.TRACKER?.trim() ?? "local"),
               },
             }),
           );

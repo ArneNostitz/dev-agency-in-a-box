@@ -44,7 +44,13 @@ test("nextLocalIssueNumber goes negative (avoids GitHub collisions until pushed)
   assert.ok(n < 0);
 });
 
-test("trackerMode defaults to github; getTracker returns the matching adapter", () => {
+test("trackerMode defaults to local; tracker=github selects the GitHub adapter", () => {
+  // local-first is the default (ADR-0001 / #69)
+  s.setSetting("tracker", "");
+  assert.equal(tk.trackerMode(), "local");
+  assert.equal(tk.getTracker().kind, "local");
+  s.setSetting("tracker", "github");
   assert.equal(tk.trackerMode(), "github");
   assert.equal(tk.getTracker().kind, "github");
+  s.setSetting("tracker", "");
 });
