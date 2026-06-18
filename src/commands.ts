@@ -19,7 +19,7 @@ import {
   mergePrForBranch,
   AGENCY_MARKER,
 } from "./github.js";
-import { addWatchedRepo, listWatchedRepos, recordIssueStatus } from "./store.js";
+import { addWatchedRepo, listWatchedRepos, recordIssueStatus, getIssueStatus } from "./store.js";
 import { withStatus } from "./state.js";
 
 export type ControlCommand = { type: "add-repo"; repo: string } | { type: "list-repos" };
@@ -84,7 +84,7 @@ const MERGE_RE = /^\s*(\/merge|merge it|merge|ship it|🚀)\s*$/i;
  */
 export async function handleMergeCommands(cfg: Config, repo: string): Promise<void> {
   for (const i of await listAllOpenIssues(repo)) {
-    if (!i.labels.includes("agency:ready")) continue; // only issues with an open PR
+    if (getIssueStatus(repo, i.number).state !== "review") continue; // only issues whose PR is up (DB truth, not labels)
     const comments = await listComments(repo, i.number);
     const last = comments[comments.length - 1];
     if (!last || last.body.includes(AGENCY_MARKER)) continue; // last word must be yours
@@ -112,7 +112,7 @@ export async function recoverOrphans(cfg: Config): Promise<void> {
   for (const repo of effectiveRepos(cfg)) {
     try {
       for (const i of await listAllOpenIssues(repo)) {
-        if (i.labels.includes("agency:in-progress")) {
+        if (getIssueStatus(repo, i.number).state === "working") {
           // Park it — don't auto-requeue (that loops if restarts keep happening / a run keeps
           // failing). The human re-pins when ready.
           await removeLabel(repo, i.number, "agency:in-progress");
