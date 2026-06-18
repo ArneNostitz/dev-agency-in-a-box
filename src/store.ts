@@ -14,6 +14,8 @@ import { getSetting, setSetting, setSecretSetting, getSecretSetting } from "./db
 // Re-export the connection-layer symbols the rest of the app imports from store.ts (back-compat).
 export { getDb, now, migrateIssueStates } from "./db/connection.js";
 export { getSetting, setSetting, setSecretSetting, getSecretSetting } from "./db/settings.js";
+export { getAutoRaw, setAuto, autoEnabled, autoAttempts, bumpAutoAttempts, resetAutoAttempts } from "./db/auto.js";
+export type { AutoKind, AutoValue } from "./db/auto.js";
 export { upsertSkill, getSkill, listSkills, deleteSkill, skillsPrompt, upsertHook, listHooks, deleteHook } from "./db/skills_hooks.js";
 export type { Skill, Hook } from "./db/skills_hooks.js";
 export {
@@ -131,42 +133,10 @@ export type { ActivityRow } from "./db/activity.js";
 /** Decrypt a global secret, or null if unset/undecryptable. */
 
 // ---- auto-mode (auto-resume / auto-merge), resolved issue → repo → global ----
-export type AutoKind = "resume" | "merge";
-export type AutoValue = "on" | "off" | ""; // "" = inherit (or, at global level, default off)
-function autoKey(kind: AutoKind, repo?: string, number?: number): string {
-  if (repo && number) return `auto.${kind}.${repo}#${number}`;
-  if (repo) return `auto.${kind}.${repo}`;
-  return `auto.${kind}`;
-}
 /** The raw on/off/inherit value set at one scope (for rendering the toggle's current state). */
-export function getAutoRaw(kind: AutoKind, repo?: string, number?: number): AutoValue {
-  const v = getSetting(autoKey(kind, repo, number));
-  return v === "on" || v === "off" ? v : "";
-}
 /** Set (or clear, with "") the auto value at a scope. */
-export function setAuto(kind: AutoKind, value: AutoValue, repo?: string, number?: number): void {
-  setSetting(autoKey(kind, repo, number), value === "on" || value === "off" ? value : "");
-}
 /** Effective on/off for an issue: issue override → repo override → global default (off). */
-export function autoEnabled(kind: AutoKind, repo: string, number: number): boolean {
-  const i = getAutoRaw(kind, repo, number);
-  if (i) return i === "on";
-  const r = getAutoRaw(kind, repo);
-  if (r) return r === "on";
-  return getAutoRaw(kind) === "on";
-}
 /** Bounded auto-retries so auto-resume can't loop forever on a broken issue. */
-export function autoAttempts(repo: string, number: number): number {
-  return Number(getSetting(`auto.attempts.${repo}#${number}`)) || 0;
-}
-export function bumpAutoAttempts(repo: string, number: number): number {
-  const n = autoAttempts(repo, number) + 1;
-  setSetting(`auto.attempts.${repo}#${number}`, String(n));
-  return n;
-}
-export function resetAutoAttempts(repo: string, number: number): void {
-  setSetting(`auto.attempts.${repo}#${number}`, "0");
-}
 
 // ---- users / sessions / invites / per-user secrets (multi-user mode) ----
 
