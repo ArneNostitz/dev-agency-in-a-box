@@ -460,6 +460,9 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
                 maxReviseRounds: getSetting("max_revise_rounds") !== null ? Number(getSetting("max_revise_rounds")) : (Number(process.env.MAX_REVISE_ROUNDS?.trim()) || 1),
                 auditThreshold: Number(getSetting("audit_threshold")) || Number(process.env.AUDIT_THRESHOLD?.trim()) || 10,
                 avatars: getSetting("avatars") === "off" ? "off" : "on",
+                agentRunner: (getSetting("agent_runner") ?? process.env.AGENT_RUNNER?.trim() ?? "claude-sdk"),
+                agentCliCommand: (getSetting("agent_cli_command") ?? process.env.AGENT_CLI_COMMAND?.trim() ?? ""),
+                tracker: (getSetting("tracker") ?? process.env.TRACKER?.trim() ?? "github"),
               },
             }),
           );
@@ -833,7 +836,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
       const actor = userFromReq(req);
       if (!actor) return void res.writeHead(401, { "content-type": "application/json" }).end('{"error":"auth required"}');
       void readBody(req).then(async (body) => {
-        let p: { repo?: string; number?: number; commentId?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; pctNow?: number; tracker?: string; agentDef?: Partial<AgentDef> & { name: string }; agentName?: string; skill?: Partial<Skill> & { name: string }; skillName?: string; hook?: { id?: number; target: string; phase: "pre" | "post"; command: string; enabled?: boolean }; hookId?: number; dataUrl?: string; name?: string; providers?: Provider[]; roleModels?: Record<string, { providerId: string; model: string }>; globalModel?: { providerId: string; model: string } | null; fallbackChain?: Array<{ providerId: string; model: string }>; autoSwitchOnLimit?: boolean; model?: { providerId: string; model: string } | null; kind?: string; value?: string; skipArchitect?: string; gitnexus?: string; maxTokensPerRun?: number; maxReviseRounds?: number; auditThreshold?: number; start?: boolean; email?: string; key?: string; ops?: Record<string, string | number | boolean>; webhookSecret?: string; analyzerUrl?: string; avatars?: string } = {};
+        let p: { repo?: string; number?: number; commentId?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; pctNow?: number; tracker?: string; agentDef?: Partial<AgentDef> & { name: string }; agentName?: string; skill?: Partial<Skill> & { name: string }; skillName?: string; hook?: { id?: number; target: string; phase: "pre" | "post"; command: string; enabled?: boolean }; hookId?: number; dataUrl?: string; name?: string; providers?: Provider[]; roleModels?: Record<string, { providerId: string; model: string }>; globalModel?: { providerId: string; model: string } | null; fallbackChain?: Array<{ providerId: string; model: string }>; autoSwitchOnLimit?: boolean; model?: { providerId: string; model: string } | null; kind?: string; value?: string; skipArchitect?: string; gitnexus?: string; maxTokensPerRun?: number; maxReviseRounds?: number; auditThreshold?: number; start?: boolean; email?: string; key?: string; ops?: Record<string, string | number | boolean>; agentRunner?: string; agentCliCommand?: string; webhookSecret?: string; analyzerUrl?: string; avatars?: string } = {};
         try {
           p = JSON.parse(body.toString("utf8"));
         } catch {
@@ -1005,6 +1008,9 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           if (p.maxReviseRounds !== undefined && p.maxReviseRounds >= 0) setSetting("max_revise_rounds", String(Math.round(p.maxReviseRounds)));
           if (p.auditThreshold !== undefined && p.auditThreshold >= 1) setSetting("audit_threshold", String(Math.round(p.auditThreshold)));
           if (p.avatars === "on" || p.avatars === "off") setSetting("avatars", p.avatars);
+          // Default runner backend (#63): claude-sdk (default) | claude-cli | pi-cli | custom-cli.
+          if (p.agentRunner === "claude-sdk" || p.agentRunner === "claude-cli" || p.agentRunner === "pi-cli" || p.agentRunner === "custom-cli") setSetting("agent_runner", p.agentRunner);
+          if (typeof p.agentCliCommand === "string") setSetting("agent_cli_command", p.agentCliCommand);
           // Operations panel (global, admin-only when multi-user is on).
           if (p.ops && typeof p.ops === "object" && actor.role === "admin") {
             for (const [k, v] of Object.entries(p.ops)) {

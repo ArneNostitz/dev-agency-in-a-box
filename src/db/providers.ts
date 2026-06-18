@@ -16,6 +16,10 @@ export interface Provider {
   baseUrl: string;
   apiKey: string;
   models: string[];
+  /** Which runner executes roles on this provider. Default claude-sdk. pi/claude/gemini CLIs via cli. */
+  runner?: "claude-sdk" | "claude-cli" | "pi-cli" | "custom-cli";
+  /** Command template for custom-cli / cli runners: {model} {systemPrompt} {task} {workdir}. */
+  cliCommand?: string;
 }
 
 let _modelsPresetCache: Record<string, string[]> | null = null;

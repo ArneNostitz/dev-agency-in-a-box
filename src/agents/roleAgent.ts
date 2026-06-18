@@ -4,6 +4,8 @@
  * configured tools and model. This is the single entry point every specialist uses.
  */
 import { query } from "@anthropic-ai/claude-agent-sdk";
+import { getRunner, defaultRunnerKind, summarizeTool } from "../runners/registry.js";
+import type { RunRequest } from "../runners/interface.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join as pathJoin } from "node:path";
@@ -50,30 +52,7 @@ function resolveRoute(role: RoleName, repo: string, issueNumber: number): { mode
   return { model: assignment.model, env };
 }
 
-/** A short, meaningful one-liner for a tool call (the command/file, not just the tool name). */
-function summarizeTool(name: string, input: Record<string, unknown> = {}): string {
-  const s = (v: unknown) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, 140);
-  switch (name) {
-    case "Bash":
-      return `$ ${s(input.command)}`;
-    case "Write":
-      return `✏️ write ${s(input.file_path)}`;
-    case "Edit":
-      return `✏️ edit ${s(input.file_path)}`;
-    case "Read":
-      return `📖 read ${s(input.file_path)}`;
-    case "Grep":
-      return `🔎 grep ${s(input.pattern)}`;
-    case "Glob":
-      return `🔎 glob ${s(input.pattern)}`;
-    case "WebSearch":
-      return `🌐 search ${s(input.query)}`;
-    case "WebFetch":
-      return `🌐 fetch ${s(input.url)}`;
-    default:
-      return `🔧 ${name}${input.description ? `: ${s(input.description)}` : ""}`;
-  }
-}
+// summarizeTool now lives in src/runners/registry.ts (the one shared copy — issue #61).
 
 /** Pull readable text + tool summaries out of an assistant message's content blocks. */
 function emitAssistant(repo: string, number: number, role: RoleName, message: unknown): void {
@@ -237,74 +216,39 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
       ? ` — auth failed using ${credVia}. Re-check it in Settings (no spaces, correct type), and confirm MASTER_KEY hasn't changed since you saved it (a changed key makes stored tokens undecryptable, then it silently falls back to a stale env token).`
       : "";
 
-  const n = (u: Record<string, unknown>, k: string) => (typeof u[k] === "number" ? (u[k] as number) : 0);
-  // Full usage incl. cache reads — for accurate cost/recordTokens.
-  const sumUsage = (u: Record<string, unknown>): number =>
-    n(u, "input_tokens") + n(u, "output_tokens") + n(u, "cache_creation_input_tokens") + n(u, "cache_read_input_tokens");
-  // Forward-progress only — drives the runaway kill-switch. EXCLUDES cache_read_input_tokens,
-  // which the SDK re-reports every turn (the whole cached prefix is re-read each call) and would
-  // otherwise inflate the running total to the cap in ~20 turns and force-kill mid-work, leaving
-  // no diff. Cache reads are the cheap 0.1x tier; real spend is input+output+cache_creation.
-  const sumBillable = (u: Record<string, unknown>): number =>
-    n(u, "input_tokens") + n(u, "output_tokens") + n(u, "cache_creation_input_tokens");
-
   /** One attempt; pass a session id to resume an interrupted run, else a fresh run. */
-  async function runQuery(resumeId?: string): Promise<{ text: string; turns: number; costUsd: number; tokens: number; stopped: string }> {
-    let text = "";
-    let turns = 0;
-    let costUsd = 0;
-    let tokens = 0;
-    let capTokens = 0; // forward-progress tokens (excl. cache reads) — what the kill-switch checks
-    let stopped = "";
-    let stderrBuf = "";
-    try {
-      for await (const message of query({
-        prompt: input.task,
-        options: {
-          cwd: input.workdir,
-          systemPrompt,
-          model,
-          allowedTools: [...def.tools, ...(gn?.tools ?? []), ...rc.tools],
-          mcpServers: { ...(gn?.servers ?? {}), ...rc.servers },
-          ...(runEnv ? { env: runEnv } : {}),
-          ...(resumeId ? { resume: resumeId } : {}),
-          // Fully autonomous. Requires the container to run as a NON-root user (Claude Code
-          // refuses --dangerously-skip-permissions as root) — see Dockerfile `USER node`.
-          permissionMode: "bypassPermissions",
-          maxTurns,
-          abortController: abortRun.controller, // dashboard "Stop" aborts the SDK subprocess
-          stderr: (data: string) => {
-            stderrBuf += data;
-          },
-          settingSources: [],
-        },
-      })) {
-        const sid = (message as { session_id?: string }).session_id;
-        if (sid) sessionId = sid;
-        if (message.type === "assistant") {
-          turns += 1;
-          emitAssistant(repo, issueNumber, role, message);
-          const au = (message as unknown as { message?: { usage?: Record<string, unknown> } }).message?.usage;
-          if (au) {
-            tokens += sumUsage(au);
-            capTokens += sumBillable(au);
-          }
-        }
-        if ("result" in message && typeof (message as { result?: unknown }).result === "string") {
-          text = (message as { result: string }).result;
-        }
-        const cost = (message as { total_cost_usd?: unknown }).total_cost_usd;
-        if (typeof cost === "number" && Number.isFinite(cost)) costUsd = cost;
-        if (tokenCap > 0 && capTokens > tokenCap) {
-          stopped = `token cap (${Math.round(capTokens / 1000)}k > ${Math.round(tokenCap / 1000)}k)`;
-          break;
-        }
+  async function runQuery(resumeId?: string): Promise<{ text: string; turns: number; costUsd: number; tokens: number; stopped: string; sessionId?: string }> {
+    // Route through the AgentRunner seam (#63): the backend is a swappable adapter. Default
+    // claude-sdk (the verbatim port of this loop into ClaudeSdkRunner); per-provider / global
+    // setting can switch to a CLI runner (pi, claude-cli, gemini, custom).
+    const providerForRunner = (input.model ? null : getIssueModelOverride(repo, issueNumber) ?? getRoleModels()[role] ?? getGlobalModel()) ?? getSessionFallback();
+    const providerRow = providerForRunner?.providerId ? getProviders().find((x) => x.id === providerForRunner.providerId) : null;
+    const runnerKind = (providerRow && (providerRow as { runner?: string }).runner) || defaultRunnerKind();
+    const cliCommand = (providerRow && (providerRow as { cliCommand?: string }).cliCommand) || undefined;
+    const runner = getRunner(runnerKind, cliCommand);
+    const req: RunRequest = {
+      task: input.task,
+      cwd: input.workdir,
+      model,
+      allowedTools: [...def.tools, ...(gn?.tools ?? []), ...rc.tools],
+      mcpServers: { ...(gn?.servers ?? {}), ...rc.servers },
+      env: runEnv,
+      systemPrompt,
+      abort: abortRun.controller,
+      resumeId,
+      maxTurns,
+      tokenCap,
+    };
+    const r = await runner.run(req, (message) => {
+      // emitAssistant callback: same side-effects the old inline loop had.
+      const sid = (message as { session_id?: string }).session_id;
+      if (sid) sessionId = sid;
+      if ((message as { type?: string }).type === "assistant") {
+        emitAssistant(repo, issueNumber, role, message);
       }
-    } catch (err) {
-      const detail = stderrBuf.trim().split("\n").slice(-3).join(" ").slice(-400);
-      throw new Error(`${(err as Error).message ?? String(err)}${detail ? ` | ${detail}` : ""}`);
-    }
-    return { text, turns, costUsd, tokens, stopped };
+    });
+    if (r.sessionId) sessionId = r.sessionId;
+    return r;
   }
 
   /** User pressed Stop: the SDK throws an AbortError — return cleanly, never retry. */
