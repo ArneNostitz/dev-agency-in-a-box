@@ -17,6 +17,10 @@ import { getSetting, setSetting, setSecretSetting, getSecretSetting } from "./db
 // Re-export the connection-layer symbols the rest of the app imports from store.ts (back-compat).
 export { getDb, now, migrateIssueStates } from "./db/connection.js";
 export { getSetting, setSetting, setSecretSetting, getSecretSetting } from "./db/settings.js";
+export { searchMemory } from "./db/memory.js";
+export type { MemoryHit } from "./db/memory.js";
+export { getAgentOverride, setAgentOverride, listAgentRevisions, getAgentRevision, deleteAgentOverride, listAgentOverridePaths } from "./db/agent_overrides.js";
+export type { AgentRevision } from "./db/agent_overrides.js";
 export { addWatchedRepo, removeWatchedRepo, listWatchedRepos } from "./db/watched.js";
 // Re-export the users aggregate (Candidate 3, #70).
 export {
@@ -104,88 +108,12 @@ export type { ActivityRow } from "./db/activity.js";
 // ---- live agent overrides (dashboard edits, applied without a redeploy) ----
 
 /** The edited content for an agent file, or null if it uses the on-disk default. */
-export function getAgentOverride(path: string): string | null {
-  const d = getDb();
-  if (!d) return null;
-  try {
-    const row = d.prepare(`SELECT content FROM agent_overrides WHERE path = ?`).get(path) as { content?: string } | undefined;
-    return row?.content ?? null;
-  } catch {
-    return null;
-  }
-}
-export function setAgentOverride(path: string, content: string, source = "dashboard", note = ""): void {
-  const d = getDb();
-  if (!d) return;
-  try {
-    d.prepare(
-      `INSERT INTO agent_overrides (path, content, updated_at) VALUES (?, ?, ?)
-       ON CONFLICT(path) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at`,
-    ).run(path, content, now());
-    // Keep a full history so every change (dashboard or self-improvement) is auditable/revertible.
-    d.prepare(`INSERT INTO agent_revisions (path, content, source, note, created_at) VALUES (?, ?, ?, ?, ?)`).run(
-      path,
-      content,
-      source,
-      note,
-      now(),
-    );
-  } catch {
-    /* best effort */
-  }
-}
 
-export interface AgentRevision {
-  id: number;
-  path: string;
-  source: string;
-  note: string;
-  created_at: string;
-}
 
 /** Revision history for one agent file (metadata only — newest first). */
-export function listAgentRevisions(path: string, limit = 20): AgentRevision[] {
-  const d = getDb();
-  if (!d) return [];
-  try {
-    return d
-      .prepare(`SELECT id, path, source, note, created_at FROM agent_revisions WHERE path = ? ORDER BY id DESC LIMIT ?`)
-      .all(path, limit) as unknown as AgentRevision[];
-  } catch {
-    return [];
-  }
-}
 
 /** The content of a specific revision (for viewing/reverting). */
-export function getAgentRevision(id: number): string | null {
-  const d = getDb();
-  if (!d) return null;
-  try {
-    const row = d.prepare(`SELECT content FROM agent_revisions WHERE id = ?`).get(id) as { content?: string } | undefined;
-    return row?.content ?? null;
-  } catch {
-    return null;
-  }
-}
 /** Remove an override so the file reverts to its on-disk default. */
-export function deleteAgentOverride(path: string): void {
-  const d = getDb();
-  if (!d) return;
-  try {
-    d.prepare(`DELETE FROM agent_overrides WHERE path = ?`).run(path);
-  } catch {
-    /* best effort */
-  }
-}
-export function listAgentOverridePaths(): string[] {
-  const d = getDb();
-  if (!d) return [];
-  try {
-    return (d.prepare(`SELECT path FROM agent_overrides`).all() as Array<{ path: string }>).map((r) => r.path);
-  } catch {
-    return [];
-  }
-}
 
 // ---- model providers + per-role assignment (dashboard "Models" panel) ----
 
@@ -542,47 +470,12 @@ export function deleteHook(id: number): void { const d = getDb(); if (!d) return
 // ---- run_step telemetry (v3): tool-call log for the Process Analyzer ----
 
 
-export interface MemoryHit { kind: "lesson" | "plan" | "review" | "issue"; repo: string; number: number; text: string; at: string }
-
 /**
  * Search the agency's OWN memory (past lessons, plans, code-review notes, prior issue titles) for
  * relevant prior work — the retrieval backend for the `recall` agent tool. Keyword-scored over
  * recent rows (no FTS dependency): an agent that's stuck can pull "how did we do X before" instead
  * of re-reading files or re-asking the human.
  */
-export function searchMemory(query: string, opts: { repo?: string; limit?: number } = {}): MemoryHit[] {
-  const d = getDb();
-  if (!d) return [];
-  const repo = opts.repo;
-  const limit = opts.limit ?? 8;
-  const terms = String(query || "").toLowerCase().split(/[^a-z0-9_]+/).filter((t) => t.length > 2).slice(0, 8);
-  if (!terms.length) return [];
-  const rows: MemoryHit[] = [];
-  try {
-    const grab = (kind: MemoryHit["kind"], sql: string) => {
-      for (const r of d.prepare(sql).all() as unknown as Array<{ repo: string; number: number; text: string | null; at: string | null }>) {
-        if (r.text) rows.push({ kind, repo: r.repo, number: r.number, text: r.text, at: r.at ?? "" });
-      }
-    };
-    grab("lesson", `SELECT repo, number, lesson AS text, created_at AS at FROM lessons ORDER BY id DESC LIMIT 300`);
-    grab("plan", `SELECT repo, number, plan AS text, created_at AS at FROM plans ORDER BY id DESC LIMIT 200`);
-    grab("review", `SELECT repo, number, summary AS text, updated_at AS at FROM pr_review WHERE summary IS NOT NULL ORDER BY updated_at DESC LIMIT 200`);
-    grab("issue", `SELECT repo, number, title AS text, updated_at AS at FROM issues WHERE title IS NOT NULL ORDER BY updated_at DESC LIMIT 300`);
-  } catch {
-    return [];
-  }
-  const scored = rows
-    .map((r) => {
-      const t = r.text.toLowerCase();
-      let s = 0;
-      for (const term of terms) if (t.includes(term)) s++;
-      if (repo && r.repo === repo) s += 0.5; // prefer this repo's memory
-      return { r, s };
-    })
-    .filter((x) => x.s > 0);
-  scored.sort((a, b) => b.s - a.s || (new Date(b.r.at || 0).getTime() - new Date(a.r.at || 0).getTime()));
-  return scored.slice(0, limit).map((x) => ({ ...x.r, text: x.r.text.slice(0, 800) }));
-}
 
 // ---- local-first tracking (Phase 4): DB as source of truth, GitHub as a synced adapter ----
 
