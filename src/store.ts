@@ -11,7 +11,7 @@ import { mkdirSync, readFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hashPassword, verifyPassword, newToken, encryptSecret, tryDecrypt } from "./crypto.js";
-import { parseLegacyStatus, stateColumnFor, STATUS_NOT_PLANNED, type IssueStatus, type BlockedReason } from "./state.js";
+import { parseLegacyStatus, stateColumnFor, isIssueState, STATUS_NOT_PLANNED, type IssueStatus, type BlockedReason } from "./state.js";
 
 let db: DatabaseSync | null = null;
 
@@ -167,7 +167,18 @@ function getDb(): DatabaseSync | null {
         /* column already there */
       }
     }
-    db = d;
+    db = d; // set early so the data migration below can use getDb()
+    // One-time data migration: legacy agency:* composite state → canonical enum + blocked column.
+    // Guarded by a settings flag so it runs exactly once per database. Idempotent regardless.
+    try {
+      if (!d.prepare("SELECT value FROM settings WHERE key = ?").get("state_migration_v2")) {
+        const r = migrateIssueStates();
+        if (r.migrated) console.log(`[agency] migrated ${r.migrated} issue row(s) to canonical IssueState (${r.skipped} already canonical)`);
+        d.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").run("state_migration_v2", "1");
+      }
+    } catch {
+      /* best effort — never block startup */
+    }
     console.log(`[agency] memory: SQLite at ${path}`);
     return db;
   } catch (err) {
@@ -303,6 +314,46 @@ export function getIssueStatus(repo: string, number: number): IssueStatus {
   // The state column holds the canonical enum directly (ADR-0001). parseLegacyStatus is
   // only a safety net for the rare pre-flush row; valid enum values pass through it as-is.
   return { state: parseLegacyStatus(row.state).state, blocked: (row.blocked as BlockedReason | null) ?? null };
+}
+
+/**
+ * One-time data migration: convert legacy `agency:*` composite state values in the issues
+ * table to the canonical lifecycle enum, lifting the blocked reason into its own column.
+ * Idempotent — rows already in canonical form (or carrying a kind label like agency:epic)
+ * are skipped. Reuses parseLegacyStatus as the single source of truth for the mapping.
+ *
+ * Runs automatically on boot behind a settings guard (see getDb); also exported so a
+ * dashboard "re-adopt" action or a test can call it directly. Zero data loss: touches only
+ * the issues.state / issues.blocked columns.
+ */
+export function migrateIssueStates(): { migrated: number; skipped: number } {
+  const d = getDb();
+  if (!d) return { migrated: 0, skipped: 0 };
+  let migrated = 0;
+  let skipped = 0;
+  try {
+    const rows = d.prepare("SELECT repo, number, state, blocked FROM issues").all() as Array<{
+      repo: string;
+      number: number;
+      state: string;
+      blocked: string | null;
+    }>;
+    for (const r of rows) {
+      // Kind labels (epic) are not lifecycle — leave for the IssueKind module.
+      if (r.state === "agency:epic") { skipped++; continue; }
+      // Already canonical (working/review/done/planned/notPlanned) — nothing to do.
+      if (isIssueState(r.state)) { skipped++; continue; }
+      const status = parseLegacyStatus(r.state);
+      // Preserve an existing blocked column value when the parse doesn't yield one.
+      const newBlocked = status.blocked ?? (r.blocked as BlockedReason | null);
+      d.prepare("UPDATE issues SET state = ?, blocked = ? WHERE repo = ? AND number = ?")
+        .run(status.state, newBlocked, r.repo, r.number);
+      migrated++;
+    }
+  } catch (err) {
+    console.warn("[agency] issue-state migration failed:", (err as Error).message);
+  }
+  return { migrated, skipped };
 }
 
 export function recordRun(
