@@ -27,12 +27,13 @@ import {
   getEpicMeta,
   setEpicMeta,
   recordIssueState,
+  recordIssueStatus,
   recordRun,
   type EpicChild,
 } from "./store.js";
 import { runRole } from "./agents/roleAgent.js";
 import { setActive, clearActive } from "./activity.js";
-import { LABEL_READY as READY, LABEL_IN_PROGRESS as IN_PROGRESS } from "./state.js";
+import { LABEL_READY as READY, LABEL_IN_PROGRESS as IN_PROGRESS, withStatus } from "./state.js";
 
 export const EPIC_LABEL = "agency:epic"; // kind label — moves to IssueKind when that module exists
 
@@ -133,7 +134,7 @@ async function runEpicReview(repo: string, parent: number, children: EpicChild[]
     await removeLabel(repo, parent, EPIC_LABEL).catch(() => {});
     await removeLabel(repo, parent, IN_PROGRESS).catch(() => {});
     await addLabel(repo, parent, READY).catch(() => {});
-    recordIssueState(repo, parent, { state: READY });
+    recordIssueStatus(repo, parent, withStatus("review"));
     console.log(`[agency] epic #${parent} reviewed -> ready`);
   } finally {
     clearActive(repo, parent);
@@ -154,7 +155,7 @@ export async function mergeEpic(repo: string, parent: number): Promise<{ ok: boo
   }
   if (failed.length) return { ok: false, msg: `merged ${merged.length}; could not merge ${failed.join("; ")}` };
   await closeIssue(repo, parent, `🚀 Epic complete — merged all sub-issues (${children.map((c) => `#${c.child}`).join(", ")}).`);
-  recordIssueState(repo, parent, { state: "merged" });
+  recordIssueStatus(repo, parent, withStatus("done"));
   return { ok: true, msg: `merged ${merged.length} sub-issue PR(s)` };
 }
 

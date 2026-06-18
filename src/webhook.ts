@@ -16,9 +16,9 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { Config } from "./config.js";
-import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, tokensByRoleSince, tokensByDaySince, topIssuesByTokensSince, tokensByIssueAll, toolStatsSince, runStepCountSince, recentLessons, recordConflict, getConflict, clearConflict, listConflicts, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getGlobalModel, setGlobalModel, getFallbackChain, setFallbackChain, getAutoSwitchOnLimit, setIssueModelOverride, getIssueModelOverride, clearIssueModelOverride, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, getIssueRow, getModelsPresets, listAgentDefs, upsertAgentDef, deleteAgentDef, listSkills, upsertSkill, deleteSkill, listHooks, upsertHook, deleteHook, type AutoKind, type Provider, type AgentDef, type Skill, type Hook } from "./store.js";
+import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordIssueStatus, recordPr, tokensSince, tokensByModelSince, tokensByRoleSince, tokensByDaySince, topIssuesByTokensSince, tokensByIssueAll, toolStatsSince, runStepCountSince, recentLessons, recordConflict, getConflict, clearConflict, listConflicts, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getGlobalModel, setGlobalModel, getFallbackChain, setFallbackChain, getAutoSwitchOnLimit, setIssueModelOverride, getIssueModelOverride, clearIssueModelOverride, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, getIssueRow, getModelsPresets, listAgentDefs, upsertAgentDef, deleteAgentDef, listSkills, upsertSkill, deleteSkill, listHooks, upsertHook, deleteHook, type AutoKind, type Provider, type AgentDef, type Skill, type Hook } from "./store.js";
 import { mergeEpic, isEpic } from "./epics.js";
-import { parseLegacyStatus } from "./state.js";
+import { parseLegacyStatus, withStatus, setBlocked } from "./state.js";
 import { renderShell } from "./shell.js";
 import { addLabel, removeLabel } from "./github.js";
 import { authEnabled, userFromReq, setSessionCookie, clearSessionCookie, parseCookies, SESSION_COOKIE, verifyRecoveryKey } from "./auth.js";
@@ -1055,7 +1055,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           const r = await mergePrForBranch(repo, `agency/issue-${number}`);
           if (r.ok) {
             await closeIssue(repo, number, `🚀 Merged ${r.msg} from the dashboard.`).catch(() => {});
-            recordIssueState(repo, number, { state: "merged" });
+            recordIssueStatus(repo, number, withStatus("done"));
             clearConflict(repo, number);
             return ok();
           }
@@ -1084,7 +1084,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               // some child PR couldn't merge — the user still asked to close, so close the parent.
             }
             await closeIssue(repo, number, "✅ Closed from the dashboard.").catch(() => {});
-            recordIssueState(repo, number, { state: "closed" }); // closed ≠ merged — keep the chip honest
+            recordIssueStatus(repo, number, withStatus("done")); // closed ≠ merged — keep the chip honest
             return ok();
           } catch (err) {
             return res.writeHead(500).end(JSON.stringify({ error: (err as Error).message }));
@@ -1118,7 +1118,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           // it in Planned (DB is the source of truth; the branch/PR stays on GitHub untouched).
           if (!repo || !number) return res.writeHead(400).end("{}");
           if (stop) await stop(repo, number).catch(() => {});
-          recordIssueState(repo, number, { state: "planned" });
+          recordIssueStatus(repo, number, withStatus("planned"));
           return ok();
         }
         if (path === "/close-not-planned") {
@@ -1126,7 +1126,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           // and hide it from the board. No PR/merge logic — it was never started.
           if (!repo || !number) return res.writeHead(400).end("{}");
           await closeIssue(repo, number, "🗂 Closed as **not planned** from the dashboard.", "not planned").catch(() => {});
-          recordIssueState(repo, number, { state: "closed" });
+          recordIssueStatus(repo, number, withStatus("done"));
           archiveIssue(repo, number);
           return ok();
         }
@@ -1320,11 +1320,11 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               setIssueModelOverride(repo, created.number, p.model.providerId, p.model.model);
             }
             if (p.start) {
-              recordIssueState(repo, created.number, { title: p.title.trim(), state: "agency:in-progress" });
+              recordIssueStatus(repo, created.number, withStatus("working"), { title: p.title.trim() });
               void trigger("dashboard-new-issue");
             } else {
               await addLabel(repo, created.number, "agency:planned").catch(() => {});
-              recordIssueState(repo, created.number, { title: p.title.trim(), state: "planned" });
+              recordIssueStatus(repo, created.number, withStatus("planned"), { title: p.title.trim() });
             }
             return ok(JSON.stringify({ ok: true, number: created.number, url: created.url }));
           } catch (err) {
@@ -1411,7 +1411,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         const full = payload.repository?.full_name ?? "";
         const m = /^agency\/issue-(\d+)$/.exec(ref);
         if (payload.pull_request?.merged && full && m) {
-          recordIssueState(full, Number(m[1]), { state: "merged" });
+          recordIssueStatus(full, Number(m[1]), withStatus("done"));
           console.log(`[agency] ${full} #${m[1]} -> merged (PR closed)`);
         }
         void trigger("pull_request.closed");
