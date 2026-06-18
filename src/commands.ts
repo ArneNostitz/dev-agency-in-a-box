@@ -19,7 +19,7 @@ import {
   mergePrForBranch,
   AGENCY_MARKER,
 } from "./github.js";
-import { addWatchedRepo, listWatchedRepos, recordIssueState, recordIssueStatus } from "./store.js";
+import { addWatchedRepo, listWatchedRepos, recordIssueStatus } from "./store.js";
 import { withStatus } from "./state.js";
 
 export type ControlCommand = { type: "add-repo"; repo: string } | { type: "list-repos" };
