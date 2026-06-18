@@ -62,6 +62,7 @@ import { runChatAgent } from "./agents/chat.js";
 import { parseAuditProposals } from "./auditparse.js";
 import {
   recordIssueState,
+  recordIssueStatus,
   recordPr,
   getIssueRole,
   getAutofixCount,
@@ -116,6 +117,8 @@ import {
   LABEL_READY as READY,
   LABEL_NEEDS_ATTENTION as NEEDS_ATTENTION,
   LABEL_RATE_LIMITED as RATE_LIMITED,
+  withStatus,
+  setBlocked,
 } from "./state.js";
 const MAX_AUTOFIX = 2;
 
@@ -187,7 +190,7 @@ async function maybeParkRateLimited(repo: string, number: number, msg: string, i
     await commentOnPr(repo, number, `⏳ Hit the Claude usage limit — I'll retry automatically after the window resets (~${when}).`).catch(() => {});
   } else {
     setRateLimited(repo, number, new Date(resetAt).toISOString());
-    recordIssueState(repo, number, { state: RATE_LIMITED });
+    recordIssueStatus(repo, number, setBlocked(withStatus("working"), "rateLimited"));
     await removeLabel(repo, number, IN_PROGRESS).catch(() => {});
     await addLabel(repo, number, RATE_LIMITED).catch(() => {});
     await commentOnIssue(repo, number, `⏳ Hit the Claude usage limit. I'll **auto-resume** this after the window resets (~${when}) — no action needed.`).catch(() => {});
@@ -231,7 +234,7 @@ async function processIssue(cfg: Config, repo: string, issue: Issue): Promise<vo
     void cfg;
     await addLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
     for (const l of AWAITING_LABELS) await removeLabel(repo, issue.number, l).catch(() => {});
-    recordIssueState(repo, issue.number, { title: issue.title, role: chatDef.name, state: IN_PROGRESS });
+    recordIssueStatus(repo, issue.number, withStatus("working"), { title: issue.title, role: chatDef.name });
     try {
       await runChatAgent(chatDef, repo, issue.number, await commentThread(repo, issue.number));
     } catch (err) {
@@ -240,7 +243,7 @@ async function processIssue(cfg: Config, repo: string, issue: Issue): Promise<vo
     // Interactive: park as awaiting so the next human reply re-engages (resumes the session).
     await removeLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
     await addLabel(repo, issue.number, AWAITING_LABEL).catch(() => {});
-    recordIssueState(repo, issue.number, { state: AWAITING_LABEL });
+    recordIssueStatus(repo, issue.number, setBlocked(withStatus("working"), "awaitingAnswer"));
     return;
   }
 
@@ -262,7 +265,7 @@ async function processIssue(cfg: Config, repo: string, issue: Issue): Promise<vo
           `To continue anyway, add the \`${UNLIMITED_LABEL}\` label and remove \`agency:needs-attention\`, then re-pin. ` +
           `Or split the work into smaller issues.`,
       );
-      recordIssueState(repo, issue.number, { state: "agency:needs-attention" });
+      recordIssueStatus(repo, issue.number, setBlocked(withStatus("working"), "needsAttention"));
       console.log(`[agency] ${repo} #${issue.number}: over budget (${reason}) — parked.`);
       return;
     }
@@ -271,7 +274,7 @@ async function processIssue(cfg: Config, repo: string, issue: Issue): Promise<vo
   await addLabel(repo, issue.number, IN_PROGRESS);
   await removeLabel(repo, issue.number, cfg.queueLabel);
   for (const l of AWAITING_LABELS) await removeLabel(repo, issue.number, l);
-  recordIssueState(repo, issue.number, { title: issue.title, role, state: IN_PROGRESS });
+  recordIssueStatus(repo, issue.number, withStatus("working"), { title: issue.title, role });
   await acknowledge(repo, issue.number); // 👀 on your last comment (or the issue)
   if (!resuming) {
     await commentOnIssue(repo, issue.number, `🏗️ On it (role: **${role}**) — branch \`agency/issue-${issue.number}\`.`);
@@ -306,7 +309,7 @@ async function processIssue(cfg: Config, repo: string, issue: Issue): Promise<vo
         await removeLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
         await addLabel(repo, issue.number, NEEDS_ATTENTION).catch(() => {});
         await addLabel(repo, issue.number, "🚧 blocked").catch(() => {});
-        recordIssueState(repo, issue.number, { state: NEEDS_ATTENTION });
+        recordIssueStatus(repo, issue.number, setBlocked(withStatus("working"), "needsAttention"));
         await commentOnIssue(repo, issue.number, `❌ Run failed even after model switch: ${msg2.slice(0, 300)} — fix and re-pin.`).catch(() => {});
       }
       return;
@@ -315,7 +318,7 @@ async function processIssue(cfg: Config, repo: string, issue: Issue): Promise<vo
     await removeLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
     await addLabel(repo, issue.number, NEEDS_ATTENTION).catch(() => {});
     await addLabel(repo, issue.number, "🚧 blocked").catch(() => {});
-    recordIssueState(repo, issue.number, { state: NEEDS_ATTENTION });
+    recordIssueStatus(repo, issue.number, setBlocked(withStatus("working"), "needsAttention"));
     await commentOnIssue(repo, issue.number, `❌ Run failed: ${msg.slice(0, 300)} — fix and re-pin.`).catch(() => {});
   } finally {
     clearActive(repo, issue.number);
@@ -420,7 +423,7 @@ async function processFollowUp(cfg: Config, repo: string, issue: Issue): Promise
   for (const l of [READY, NEEDS_ATTENTION, "🚧 blocked", ...AWAITING_LABELS]) {
     await removeLabel(repo, issue.number, l);
   }
-  recordIssueState(repo, issue.number, { title: issue.title, role: "developer", state: IN_PROGRESS });
+  recordIssueStatus(repo, issue.number, withStatus("working"), { title: issue.title, role: "developer" });
   await acknowledge(repo, issue.number);
 
   const thread = await commentThread(repo, issue.number);
@@ -440,7 +443,7 @@ async function processFollowUp(cfg: Config, repo: string, issue: Issue): Promise
     await removeLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
     await addLabel(repo, issue.number, NEEDS_ATTENTION).catch(() => {});
     await addLabel(repo, issue.number, "🚧 blocked").catch(() => {});
-    recordIssueState(repo, issue.number, { state: NEEDS_ATTENTION });
+    recordIssueStatus(repo, issue.number, setBlocked(withStatus("working"), "needsAttention"));
     await commentOnIssue(repo, issue.number, `❌ Follow-up failed: ${msg.slice(0, 300)} — comment again to retry.`).catch(() => {});
   } finally {
     clearActive(repo, issue.number);
@@ -459,7 +462,7 @@ export async function forceResume(cfg: Config, repo: string, number: number, add
   if (agentsArePaused()) {
     const until = new Date(pausedUntil()).toLocaleString();
     setRateLimited(repo, number, new Date(pausedUntil()).toISOString());
-    recordIssueState(repo, number, { state: RATE_LIMITED });
+    recordIssueStatus(repo, number, setBlocked(withStatus("working"), "rateLimited"));
     await commentOnIssue(
       repo,
       number,
@@ -493,7 +496,7 @@ export async function forceResume(cfg: Config, repo: string, number: number, add
       return forceFix(cfg, repo, number);
     }
     await addLabel(repo, number, READY).catch(() => {});
-    recordIssueState(repo, number, { state: READY });
+    recordIssueStatus(repo, number, withStatus("review"));
     await commentOnIssue(repo, number, `✅ PR ${existingPr.url} is already open${review?.verdict === "approved" ? " and approved" : ""} — nothing to rebuild. Press **Merge** on the dashboard.`).catch(() => {});
     console.log(`[agency] resume → existing PR ${existingPr.url}; routed to READY (no rerun)`);
     return;
@@ -520,7 +523,7 @@ export async function forceResume(cfg: Config, repo: string, number: number, add
 async function processResume(cfg: Config, repo: string, issue: Issue): Promise<void> {
   void cfg;
   await addLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
-  recordIssueState(repo, issue.number, { title: issue.title, role: "developer", state: IN_PROGRESS });
+  recordIssueStatus(repo, issue.number, withStatus("working"), { title: issue.title, role: "developer" });
   await acknowledge(repo, issue.number);
   const thread = await commentThread(repo, issue.number);
   const workdir = workdirFor(repo, `${issue.number}`);
@@ -537,7 +540,7 @@ async function processResume(cfg: Config, repo: string, issue: Issue): Promise<v
     if (await maybeParkRateLimited(repo, issue.number, msg)) return;
     await removeLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
     await addLabel(repo, issue.number, NEEDS_ATTENTION).catch(() => {});
-    recordIssueState(repo, issue.number, { state: NEEDS_ATTENTION });
+    recordIssueStatus(repo, issue.number, setBlocked(withStatus("working"), "needsAttention"));
     await commentOnIssue(repo, issue.number, `❌ Resume failed: ${msg.slice(0, 300)} — press Resume again.`).catch(() => {});
   } finally {
     clearActive(repo, issue.number);
@@ -554,7 +557,7 @@ export async function forceFix(cfg: Config, repo: string, number: number): Promi
   if (!issue) return;
   if (agentsArePaused()) {
     setRateLimited(repo, number, new Date(pausedUntil()).toISOString());
-    recordIssueState(repo, number, { state: RATE_LIMITED });
+    recordIssueStatus(repo, number, setBlocked(withStatus("working"), "rateLimited"));
     await addLabel(repo, number, RATE_LIMITED).catch(() => {});
     await commentOnIssue(repo, number, `⏳ Rate-limited — I'll run the fix automatically after the usage window resets (~${new Date(pausedUntil()).toLocaleString()}).`).catch(() => {});
     return;
@@ -564,7 +567,7 @@ export async function forceFix(cfg: Config, repo: string, number: number): Promi
   const conflict = ms?.mergeable === "conflict";
   for (const l of [READY, NEEDS_ATTENTION, "🚧 blocked", ...AWAITING_LABELS]) await removeLabel(repo, number, l).catch(() => {});
   await addLabel(repo, number, IN_PROGRESS).catch(() => {});
-  recordIssueState(repo, number, { state: IN_PROGRESS });
+  recordIssueStatus(repo, number, withStatus("working"));
   console.log(`[agency] fix ${repo} #${number} (conflict=${conflict})`);
   dispatch(`${repo}#${number}`, () => processFix(cfg, repo, issue, conflict));
 }
@@ -573,7 +576,7 @@ export async function forceFix(cfg: Config, repo: string, number: number): Promi
 async function processFix(cfg: Config, repo: string, issue: Issue, conflict: boolean): Promise<void> {
   void cfg;
   await addLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
-  recordIssueState(repo, issue.number, { title: issue.title, role: "developer", state: IN_PROGRESS });
+  recordIssueStatus(repo, issue.number, withStatus("working"), { title: issue.title, role: "developer" });
   await acknowledge(repo, issue.number).catch(() => {});
   const workdir = workdirFor(repo, `${issue.number}`);
   await rm(workdir, { recursive: true, force: true });
@@ -590,7 +593,7 @@ async function processFix(cfg: Config, repo: string, issue: Issue, conflict: boo
     if (await maybeParkRateLimited(repo, issue.number, msg)) return;
     await removeLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
     await addLabel(repo, issue.number, NEEDS_ATTENTION).catch(() => {});
-    recordIssueState(repo, issue.number, { state: NEEDS_ATTENTION });
+    recordIssueStatus(repo, issue.number, setBlocked(withStatus("working"), "needsAttention"));
     await commentOnIssue(repo, issue.number, `❌ Fix run failed: ${msg.slice(0, 300)} — press Fix again.`).catch(() => {});
   } finally {
     clearActive(repo, issue.number);
@@ -607,13 +610,13 @@ export async function forceStart(cfg: Config, repo: string, number: number): Pro
   await removeLabel(repo, number, "agency:planned").catch(() => {});
   if (agentsArePaused()) {
     setRateLimited(repo, number, new Date(pausedUntil()).toISOString());
-    recordIssueState(repo, number, { state: RATE_LIMITED });
+    recordIssueStatus(repo, number, setBlocked(withStatus("working"), "rateLimited"));
     await addLabel(repo, number, RATE_LIMITED).catch(() => {});
     await commentOnIssue(repo, number, `⏳ Rate-limited — I'll start this automatically after the usage window resets (~${new Date(pausedUntil()).toLocaleString()}).`).catch(() => {});
     return;
   }
   await addLabel(repo, number, IN_PROGRESS).catch(() => {});
-  recordIssueState(repo, number, { title: issue.title, state: IN_PROGRESS });
+  recordIssueStatus(repo, number, withStatus("working"), { title: issue.title });
   console.log(`[agency] start (play) ${repo} #${number}`);
   dispatch(`${repo}#${number}`, () => processIssue(cfg, repo, issue));
 }
@@ -632,7 +635,7 @@ export async function forceApprove(cfg: Config, repo: string, number: number): P
   // (so you can approve anytime, even rate-limited).
   if (agentsArePaused()) {
     setRateLimited(repo, number, new Date(pausedUntil()).toISOString());
-    recordIssueState(repo, number, { state: RATE_LIMITED });
+    recordIssueStatus(repo, number, setBlocked(withStatus("working"), "rateLimited"));
     await addLabel(repo, number, RATE_LIMITED).catch(() => {});
     await commentOnIssue(
       repo,
@@ -644,7 +647,7 @@ export async function forceApprove(cfg: Config, repo: string, number: number): P
   }
   // Instant UI: show it as working even if the pool is at capacity (it'll be queued).
   await addLabel(repo, number, IN_PROGRESS).catch(() => {});
-  recordIssueState(repo, number, { state: IN_PROGRESS });
+  recordIssueStatus(repo, number, withStatus("working"));
   console.log(`[agency] approve+build ${repo} #${number}`);
   dispatch(`${repo}#${number}`, () => processIssue(cfg, repo, issue));
 }
@@ -672,7 +675,7 @@ export async function forceStop(_cfg: Config, repo: string, number: number): Pro
     setAuto("resume", "off", repo, number); // stop auto from re-running it
     for (const l of [IN_PROGRESS, NEEDS_ATTENTION, RATE_LIMITED, "🚧 blocked", ...AWAITING_LABELS]) await removeLabel(repo, number, l).catch(() => {});
     await addLabel(repo, number, READY).catch(() => {});
-    recordIssueState(repo, number, { state: READY });
+    recordIssueStatus(repo, number, withStatus("review"));
     clearRateLimited(repo, number);
     await commentOnIssue(repo, number, `⏹ Stopped${abortedNote}. PR ${existingPr.url} is open — press **Merge** when you're ready.`).catch(() => {});
     console.log(`[agency] stop ${repo} #${number} → kept PR ${existingPr.url} (Review)`);
@@ -684,7 +687,7 @@ export async function forceStop(_cfg: Config, repo: string, number: number): Pro
     await removeLabel(repo, number, l).catch(() => {});
   }
   await addLabel(repo, number, "agency:planned").catch(() => {});
-  recordIssueState(repo, number, { state: "planned" });
+  recordIssueStatus(repo, number, withStatus("planned"));
   clearRateLimited(repo, number);
   await commentOnIssue(
     repo,
@@ -711,7 +714,7 @@ export async function forceCreatePr(_cfg: Config, repo: string, number: number):
   }
   for (const l of [IN_PROGRESS, NEEDS_ATTENTION, "🚧 blocked", ...AWAITING_LABELS]) await removeLabel(repo, number, l).catch(() => {});
   await addLabel(repo, number, READY).catch(() => {});
-  recordIssueState(repo, number, { state: READY });
+  recordIssueStatus(repo, number, withStatus("review"));
   recordPr(repo, number, pr.number, pr.url);
   await commentOnIssue(repo, number, `📎 Opened PR ${pr.url} from the dashboard (reviewer-approved). Press **Merge** when you're ready.`).catch(() => {});
   console.log(`[agency] create-pr ${repo} #${number} -> ${pr.url}`);
@@ -767,7 +770,7 @@ export async function runAuditOn(cfg: Config, repo: string, number: number): Pro
     setActive(repo, number, "issue", "auditor", "Codebase audit");
     for (const l of [NEEDS_ATTENTION, RATE_LIMITED, ...AWAITING_LABELS]) await removeLabel(repo, number, l).catch(() => {});
     await addLabel(repo, number, IN_PROGRESS).catch(() => {});
-    recordIssueState(repo, number, { title: "🔎 Codebase audit", state: IN_PROGRESS });
+    recordIssueStatus(repo, number, withStatus("working"), { title: "🔎 Codebase audit" });
     try {
       await cloneRepo(repo, workdir);
       const res = await runRole("auditor", { task: AUDIT_TASK, workdir, repo, issueNumber: number });
@@ -784,7 +787,7 @@ export async function runAuditOn(cfg: Config, repo: string, number: number): Pro
         if (!issue || !issue.number) continue;
         await addLabel(repo, issue.number, "agency:planned").catch(() => {});
         await addLabel(repo, issue.number, "agency:audit-finding").catch(() => {}); // NOT agency:audit — these are normal build issues
-        recordIssueState(repo, issue.number, { title: p.title, state: "planned" });
+        recordIssueStatus(repo, issue.number, withStatus("planned"), { title: p.title });
         created.push(`#${issue.number}`);
       }
       const summary = created.length
@@ -792,7 +795,7 @@ export async function runAuditOn(cfg: Config, repo: string, number: number): Pro
         : "🔎 **Audit complete** — no issues to propose; the codebase looks healthy.";
       await commentOnIssue(repo, number, summary).catch(() => {});
       await closeIssue(repo, number, "Audit complete.").catch(() => {});
-      recordIssueState(repo, number, { state: "merged" }); // → Done
+      recordIssueStatus(repo, number, withStatus("done")); // → Done
       await removeLabel(repo, number, IN_PROGRESS).catch(() => {});
       console.log(`[agency] audit ${repo} #${number}: opened ${created.length} issue(s)`);
     } catch (err) {
@@ -802,7 +805,7 @@ export async function runAuditOn(cfg: Config, repo: string, number: number): Pro
       if (!(await maybeParkRateLimited(repo, number, msg))) {
         await removeLabel(repo, number, IN_PROGRESS).catch(() => {});
         await addLabel(repo, number, NEEDS_ATTENTION).catch(() => {});
-        recordIssueState(repo, number, { state: NEEDS_ATTENTION });
+        recordIssueStatus(repo, number, setBlocked(withStatus("working"), "needsAttention"));
         await commentOnIssue(repo, number, `❌ Audit run failed: ${msg.slice(0, 300)} — press **Resume** to retry.`).catch(() => {});
       }
       console.error(`[agency] audit ${repo} #${number} failed:`, msg);
@@ -848,7 +851,7 @@ async function scanRepo(cfg: Config, repo: string): Promise<void> {
       const had = t.labels.filter((l) => LIVE_LABELS.includes(l));
       if (had.length) {
         const merged = await prMerged(repo, `agency/issue-${t.number}`).catch(() => false);
-        recordIssueState(repo, t.number, { title: t.title, state: merged ? "merged" : "closed" });
+        recordIssueStatus(repo, t.number, withStatus("done"), { title: t.title });
         for (const l of had) await removeLabel(repo, t.number, l).catch(() => {});
         t.labels = t.labels.filter((l) => !LIVE_LABELS.includes(l));
       }
@@ -905,7 +908,7 @@ async function scanRepo(cfg: Config, repo: string): Promise<void> {
       // Surface EVERY untouched, still-open issue on the board as "Planned" (a play button starts
       // them) — tagged or not. GitHub is just an input here; nothing auto-starts.
       if (!owned && !t.closed) {
-        recordIssueState(repo, t.number, { title: t.title, state: "planned" });
+        recordIssueStatus(repo, t.number, withStatus("planned"), { title: t.title });
       }
       continue;
     }
@@ -985,7 +988,7 @@ async function sweepStuck(): Promise<void> {
     const running = getActive().some((a) => a.repo === i.repo && a.number === i.number);
     const idleMs = i.updated_at ? Date.now() - new Date(i.updated_at).getTime() : Infinity;
     if (running || idleMs <= ORPHAN_GRACE_MS) continue;
-    recordIssueState(i.repo, i.number, { state: NEEDS_ATTENTION });
+    recordIssueStatus(i.repo, i.number, setBlocked(withStatus("working"), "needsAttention"));
     await removeLabel(i.repo, i.number, IN_PROGRESS).catch(() => {});
     await addLabel(i.repo, i.number, NEEDS_ATTENTION).catch(() => {});
     await commentOnIssue(
@@ -1066,7 +1069,7 @@ async function reconcileRateLimited(cfg: Config): Promise<void> {
         const rl = parseRateLimit(hit.body);
         const at = rl.resetAt && rl.resetAt > Date.now() ? rl.resetAt : nextResetMs();
         setRateLimited(repo, issue.number, new Date(at).toISOString());
-        recordIssueState(repo, issue.number, { state: RATE_LIMITED });
+        recordIssueStatus(repo, issue.number, setBlocked(withStatus("working"), "rateLimited"));
         await removeLabel(repo, issue.number, NEEDS_ATTENTION).catch(() => {});
         await removeLabel(repo, issue.number, "🚧 blocked").catch(() => {});
         await addLabel(repo, issue.number, RATE_LIMITED).catch(() => {});
@@ -1143,7 +1146,7 @@ function startAutoMode(cfg: Config): void {
             const r = await mergePrForBranch(repo, pr.branch);
             if (r.ok) {
               await closeIssue(repo, n, `🤖 **Auto-merged** ${r.msg} — review approved, no conflicts, checks green.`).catch(() => {});
-              recordIssueState(repo, n, { state: "merged" });
+              recordIssueStatus(repo, n, withStatus("done"));
               clearReview(repo, n);
               resetAutoAttempts(repo, n);
               console.log(`[agency] auto-merged ${repo} #${n}`);
