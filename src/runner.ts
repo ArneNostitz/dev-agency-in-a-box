@@ -102,6 +102,7 @@ import { stopRuns } from "./abort.js";
 import { dispatch, drain, stop as stopPool, poolStatus, inFlightKeys } from "./pool.js";
 import { loadBudget, overBudget, UNLIMITED_LABEL } from "./budget.js";
 import { maybeSelfImprove } from "./reflect.js";
+import { parseLegacyStatus } from "./state.js";
 import {
   handleControlCommands,
   handleMergeCommands,
@@ -971,7 +972,14 @@ async function scanRepo(cfg: Config, repo: string): Promise<void> {
  */
 async function sweepStuck(): Promise<void> {
   for (const i of recentIssues(100)) {
-    if (i.state !== "agency:in-progress") continue;
+    // "stuck" = working with NO blocked reason and no live run. The old exact-string
+    // check ('agency:in-progress') only matched the un-blocked working label, which is
+    // equivalent to IssueState 'working' + blocked == null on consistently-stored rows
+    // (the writers remove the in-progress label when they block). This is strictly
+    // tighter on drifted data: an issue parked as needs-attention / awaiting-answer is
+    // NOT swept as stuck. See src/state.ts (#66).
+    const st = parseLegacyStatus(i.state);
+    if (st.state !== "working" || st.blocked != null) continue;
     const running = getActive().some((a) => a.repo === i.repo && a.number === i.number);
     const idleMs = i.updated_at ? Date.now() - new Date(i.updated_at).getTime() : Infinity;
     if (running || idleMs <= ORPHAN_GRACE_MS) continue;

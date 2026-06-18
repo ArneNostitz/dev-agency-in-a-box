@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import type { Config } from "./config.js";
 import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordPr, tokensSince, tokensByModelSince, tokensByRoleSince, tokensByDaySince, topIssuesByTokensSince, tokensByIssueAll, toolStatsSince, runStepCountSince, recentLessons, recordConflict, getConflict, clearConflict, listConflicts, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getGlobalModel, setGlobalModel, getFallbackChain, setFallbackChain, getAutoSwitchOnLimit, setIssueModelOverride, getIssueModelOverride, clearIssueModelOverride, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, getIssueRow, getModelsPresets, listAgentDefs, upsertAgentDef, deleteAgentDef, listSkills, upsertSkill, deleteSkill, listHooks, upsertHook, deleteHook, type AutoKind, type Provider, type AgentDef, type Skill, type Hook } from "./store.js";
 import { mergeEpic, isEpic } from "./epics.js";
+import { parseLegacyStatus } from "./state.js";
 import { renderShell } from "./shell.js";
 import { addLabel, removeLabel } from "./github.js";
 import { authEnabled, userFromReq, setSessionCookie, clearSessionCookie, parseCookies, SESSION_COOKIE, verifyRecoveryKey } from "./auth.js";
@@ -931,7 +932,10 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           // NOT kick off a run automatically. The human will start it explicitly when ready.
           const issueRow = getIssueRow(repo, number);
           const issueState = issueRow?.state ?? "";
-          const isPlanned = issueState === "planned" || issueState === "agency:planned" || issueState === "agency:awaiting-approval";
+          // "planned, no branch yet" — the three legacy spellings (bare 'planned', the
+          // 'agency:planned' label, and 'agency:awaiting-approval' which is planned+blocked)
+          // all parse to IssueState 'planned'. See src/state.ts (#66).
+          const isPlanned = parseLegacyStatus(issueState).state === "planned";
           const reengage = isPlanned ? null : (onComment ?? resume);
           if (hasActiveRun(repo, number) && reengage) {
             // QUEUE: don't interrupt the current run. The comment is already posted; re-engage once the
