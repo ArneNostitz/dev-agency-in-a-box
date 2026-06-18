@@ -32,6 +32,13 @@ export {
   recordRun, issueSpend, recordTokens, tokensByRoleSince, tokensByDaySince,
   topIssuesByTokensSince, tokensByIssueAll, tokensSince, tokensByModelSince, spendSince,
 } from "./db/tokens.js";
+export { recordPlan, lastPlan } from "./db/plans.js";
+export { recordRunStep, toolStatsSince, recordIncident, recentFailuresSince, runStepCountSince } from "./db/telemetry.js";
+export type { ToolStat, FailureStat } from "./db/telemetry.js";
+export { recordLesson, recentLessons, unprocessedLessons, markLessonsProcessed } from "./db/lessons.js";
+export type { LessonRow } from "./db/lessons.js";
+export { recordActivity, recentActivity, issueActivity } from "./db/activity.js";
+export type { ActivityRow } from "./db/activity.js";
 
 
 export function addWatchedRepo(repo: string): void {
@@ -159,7 +166,6 @@ export function getIssueStatus(repo: string, number: number): IssueStatus {
   // only a safety net for the rare pre-flush row; valid enum values pass through it as-is.
   return { state: parseLegacyStatus(row.state).state, blocked: (row.blocked as BlockedReason | null) ?? null };
 }
-
 
 
 /** Total spend + turns for one issue (the per-issue budget gate). */
@@ -514,43 +520,10 @@ export function resetAutoAttempts(repo: string, number: number): void {
 
 // ---- lessons (the reflection / self-improvement memory) ----
 
-export interface LessonRow {
-  id: number;
-  repo: string;
-  number: number;
-  lesson: string;
-  created_at: string;
-}
 
 /** Store one distilled lesson from a finished run. */
-export function recordLesson(repo: string, number: number, lesson: string): void {
-  const d = getDb();
-  if (!d) return;
-  try {
-    d.prepare(`INSERT INTO lessons (repo, number, lesson, created_at) VALUES (?, ?, ?, ?)`).run(
-      repo,
-      number,
-      lesson.slice(0, 600),
-      now(),
-    );
-  } catch {
-    /* best effort */
-  }
-}
 
 /** Latest lessons (any state) — injected into every agent's prompt as learned memory. */
-export function recentLessons(limit = 12): string[] {
-  const d = getDb();
-  if (!d) return [];
-  try {
-    const rows = d
-      .prepare(`SELECT lesson FROM lessons ORDER BY id DESC LIMIT ?`)
-      .all(limit) as unknown as Array<{ lesson: string }>;
-    return rows.map((r) => r.lesson).reverse();
-  } catch {
-    return [];
-  }
-}
 
 // ---- pluggable agent registry (v3) ----
 
@@ -702,58 +675,6 @@ export function deleteHook(id: number): void { const d = getDb(); if (!d) return
 
 // ---- run_step telemetry (v3): tool-call log for the Process Analyzer ----
 
-/** Record one tool call from an agent run. Best-effort; never breaks a run. */
-export function recordRunStep(repo: string, number: number, role: string, tool: string, detail: string, ok = true): void {
-  const d = getDb();
-  if (!d) return;
-  try {
-    d.prepare(`INSERT INTO run_step (repo, number, role, tool, detail, ok, ts) VALUES (?, ?, ?, ?, ?, ?, ?)`)
-      .run(repo, number, role, tool, (detail || "").slice(0, 200), ok ? 1 : 0, now());
-  } catch { /* best effort */ }
-}
-
-export interface ToolStat { role: string; tool: string; uses: number; fails: number }
-/** How often each (role, tool) is used since an ISO time — surfaces repeating mechanical work. */
-export function toolStatsSince(sinceIso: string): ToolStat[] {
-  const d = getDb();
-  if (!d) return [];
-  try {
-    return d.prepare(
-      `SELECT role, tool, COUNT(*) AS uses, SUM(CASE WHEN ok=0 THEN 1 ELSE 0 END) AS fails
-       FROM run_step WHERE ts >= ? GROUP BY role, tool ORDER BY uses DESC`,
-    ).all(sinceIso) as unknown as ToolStat[];
-  } catch { return []; }
-}
-
-/** Log an OPERATIONAL incident (e.g. a GitHub rate limit) so the Process Analyzer can see it and
- *  propose a fix. Stored as a run_step with role "system" + ok=0 so it shows up in failure stats. */
-export function recordIncident(kind: string, detail: string): void {
-  recordRunStep("", 0, "system", kind, detail, false);
-}
-
-export interface FailureStat { role: string; tool: string; count: number; sample: string }
-/** Recent FAILURES (ok=0) grouped by role+tool with a sample message — the operational problems the
- *  Analyzer should propose fixes for (rate limits, failing commands, repeated agent tool errors). */
-export function recentFailuresSince(sinceIso: string, limit = 15): FailureStat[] {
-  const d = getDb();
-  if (!d) return [];
-  try {
-    return d.prepare(
-      `SELECT role, tool, COUNT(*) AS count, MAX(detail) AS sample
-       FROM run_step WHERE ts >= ? AND ok = 0 GROUP BY role, tool ORDER BY count DESC LIMIT ?`,
-    ).all(sinceIso, limit) as unknown as FailureStat[];
-  } catch { return []; }
-}
-
-/** Count of run_step rows since an ISO time — the "enough new data?" gate for the analyzer. */
-export function runStepCountSince(sinceIso: string): number {
-  const d = getDb();
-  if (!d) return 0;
-  try {
-    const r = d.prepare(`SELECT COUNT(*) AS n FROM run_step WHERE ts >= ?`).get(sinceIso) as { n?: number } | undefined;
-    return r?.n ?? 0;
-  } catch { return 0; }
-}
 
 export interface MemoryHit { kind: "lesson" | "plan" | "review" | "issue"; repo: string; number: number; text: string; at: string }
 
@@ -966,90 +887,11 @@ export function conversationCount(repo: string, number: number): number {
 }
 
 /** Lessons not yet folded into the playbooks (drives the self-improvement PR). */
-export function unprocessedLessons(): LessonRow[] {
-  const d = getDb();
-  if (!d) return [];
-  try {
-    return d
-      .prepare(`SELECT id, repo, number, lesson, created_at FROM lessons WHERE processed = 0 ORDER BY id`)
-      .all() as unknown as LessonRow[];
-  } catch {
-    return [];
-  }
-}
 
-export function markLessonsProcessed(ids: number[]): void {
-  const d = getDb();
-  if (!d || ids.length === 0) return;
-  try {
-    const stmt = d.prepare(`UPDATE lessons SET processed = 1 WHERE id = ?`);
-    for (const id of ids) stmt.run(id);
-  } catch {
-    /* best effort */
-  }
-}
-
-export function recordPlan(repo: string, number: number, plan: string): void {
-  const d = getDb();
-  if (!d) return;
-  try {
-    d.prepare(`INSERT INTO plans (repo, number, plan, created_at) VALUES (?, ?, ?, ?)`).run(
-      repo,
-      number,
-      plan,
-      now(),
-    );
-  } catch (err) {
-    console.warn("[agency] memory write (plan) failed:", (err as Error).message);
-  }
-}
-
-export interface ActivityRow {
-  repo: string;
-  number: number;
-  role: string;
-  kind: string;
-  text: string;
-  created_at: string;
-}
 
 /** Append one streamed thought/tool event from an agent. */
-export function recordActivity(
-  repo: string,
-  number: number,
-  role: string,
-  kind: string,
-  text: string,
-): void {
-  const d = getDb();
-  if (!d) return;
-  try {
-    d.prepare(`INSERT INTO activity (repo, number, role, kind, text, created_at) VALUES (?, ?, ?, ?, ?, ?)`).run(
-      repo,
-      number,
-      role,
-      kind,
-      text.slice(0, 4000),
-      now(),
-    );
-  } catch {
-    /* best effort */
-  }
-}
 
 /** Recent activity, oldest-first within the latest `limit` (for the stream panel). */
-export function recentActivity(limit = 80): ActivityRow[] {
-  const d = getDb();
-  if (!d) return [];
-  try {
-    const rows = d
-      .prepare(`SELECT repo, number, role, kind, text, created_at FROM activity ORDER BY id DESC LIMIT ?`)
-      .all(limit) as unknown as ActivityRow[];
-    return rows.reverse();
-  } catch {
-    return [];
-  }
-}
 
 export interface RunRow {
   repo: string;
@@ -1190,20 +1032,6 @@ export function getSession(repo: string, number: number, role: string): string |
     return row?.session_id ?? null;
   } catch {
     return null;
-  }
-}
-
-/** Recent activity for one issue (oldest-first), for building a resume digest. */
-export function issueActivity(repo: string, number: number, limit = 40): ActivityRow[] {
-  const d = getDb();
-  if (!d) return [];
-  try {
-    const rows = d
-      .prepare(`SELECT repo, number, role, kind, text, created_at FROM activity WHERE repo = ? AND number = ? ORDER BY id DESC LIMIT ?`)
-      .all(repo, number, limit) as unknown as ActivityRow[];
-    return rows.reverse();
-  } catch {
-    return [];
   }
 }
 
@@ -1370,15 +1198,3 @@ export function getIssueRole(repo: string, number: number): string | null {
 }
 
 /** Most recent plan for an issue, if any — lets a re-engaged planner recall its own thinking. */
-export function lastPlan(repo: string, number: number): string | null {
-  const d = getDb();
-  if (!d) return null;
-  try {
-    const row = d
-      .prepare(`SELECT plan FROM plans WHERE repo = ? AND number = ? ORDER BY id DESC LIMIT 1`)
-      .get(repo, number) as { plan?: string } | undefined;
-    return row?.plan ?? null;
-  } catch {
-    return null;
-  }
-}
