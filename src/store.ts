@@ -23,6 +23,11 @@ export {
   setUserSecret, getUserSecret, getUserSecretStatus, listUserSecretKeys,
 } from "./db/users.js";
 export type { User, UserRow } from "./db/users.js";
+// Re-export the reviews aggregate (Candidate 3, #70).
+export { recordReview, getReview, clearReview, listReviews } from "./db/reviews.js";
+export type { ReviewVerdict } from "./db/reviews.js";
+export { recordConflict, getConflict, clearConflict, listConflicts } from "./db/conflicts.js";
+export { setRateLimited, clearRateLimited, listRateLimited, dueRateLimited } from "./db/ratelimit.js";
 
 
 export function addWatchedRepo(repo: string): void {
@@ -329,162 +334,17 @@ export function tokensByModelSince(sinceIso: string): Array<{ model: string; tok
 }
 
 // ---- rate-limit parking (auto-resume after the usage window resets) ----
-export function setRateLimited(repo: string, number: number, resumeAtIso: string): void {
-  const d = getDb();
-  if (!d) return;
-  try {
-    d.prepare(
-      `INSERT INTO rate_limited (repo, number, resume_at) VALUES (?, ?, ?)
-       ON CONFLICT(repo, number) DO UPDATE SET resume_at = excluded.resume_at`,
-    ).run(repo, number, resumeAtIso);
-  } catch {
-    /* best effort */
-  }
-}
-export function clearRateLimited(repo: string, number: number): void {
-  const d = getDb();
-  if (!d) return;
-  try {
-    d.prepare(`DELETE FROM rate_limited WHERE repo = ? AND number = ?`).run(repo, number);
-  } catch {
-    /* best effort */
-  }
-}
 /** All rate-limited (auto-resume) issues with their reset time, for the dashboard. */
-export function listRateLimited(): Array<{ repo: string; number: number; resumeAt: string }> {
-  const d = getDb();
-  if (!d) return [];
-  try {
-    return d.prepare(`SELECT repo, number, resume_at AS resumeAt FROM rate_limited`).all() as unknown as Array<{
-      repo: string;
-      number: number;
-      resumeAt: string;
-    }>;
-  } catch {
-    return [];
-  }
-}
 
 /** Parked issues whose resume time has passed — ready to re-run, no tokens needed to find them. */
-export function dueRateLimited(nowIso: string): Array<{ repo: string; number: number }> {
-  const d = getDb();
-  if (!d) return [];
-  try {
-    return d
-      .prepare(`SELECT repo, number FROM rate_limited WHERE resume_at <= ? ORDER BY resume_at`)
-      .all(nowIso) as unknown as Array<{ repo: string; number: number }>;
-  } catch {
-    return [];
-  }
-}
 
 // ---- review verdict (so the dashboard knows a PR still has requested changes) ----
-export type ReviewVerdict = "approved" | "changes";
-export function recordReview(repo: string, number: number, verdict: ReviewVerdict, summary: string): void {
-  const d = getDb();
-  if (!d) return;
-  try {
-    d.prepare(
-      `INSERT INTO pr_review (repo, number, verdict, summary, updated_at) VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(repo, number) DO UPDATE SET verdict = excluded.verdict, summary = excluded.summary, updated_at = excluded.updated_at`,
-    ).run(repo, number, verdict, summary.slice(0, 4000), new Date().toISOString());
-  } catch {
-    /* best effort */
-  }
-}
-export function getReview(repo: string, number: number): { verdict: ReviewVerdict; summary: string } | null {
-  const d = getDb();
-  if (!d) return null;
-  try {
-    const r = d.prepare(`SELECT verdict, summary FROM pr_review WHERE repo = ? AND number = ?`).get(repo, number) as
-      | { verdict: ReviewVerdict; summary: string }
-      | undefined;
-    return r ?? null;
-  } catch {
-    return null;
-  }
-}
-export function clearReview(repo: string, number: number): void {
-  const d = getDb();
-  if (!d) return;
-  try {
-    d.prepare(`DELETE FROM pr_review WHERE repo = ? AND number = ?`).run(repo, number);
-  } catch {
-    /* best effort */
-  }
-}
 /** verdict per issue for the board, keyed "repo#number" — cheap DB read for the card badge. */
-export function listReviews(): Record<string, ReviewVerdict> {
-  const d = getDb();
-  if (!d) return {};
-  try {
-    const rows = d.prepare(`SELECT repo, number, verdict FROM pr_review`).all() as Array<{
-      repo: string;
-      number: number;
-      verdict: ReviewVerdict;
-    }>;
-    const out: Record<string, ReviewVerdict> = {};
-    for (const r of rows) out[`${r.repo}#${r.number}`] = r.verdict;
-    return out;
-  } catch {
-    return {};
-  }
-}
 
 // ---- PR merge-conflict tracking (so the UI + conversation can surface which files conflict) ----
 
 /** Remember the conflicting files for a PR at a given head SHA (so we don't recompute/renotify). */
-export function recordConflict(repo: string, number: number, sha: string, files: string[]): void {
-  const d = getDb();
-  if (!d) return;
-  try {
-    d.prepare(
-      `INSERT INTO pr_conflict (repo, number, sha, files, updated_at) VALUES (?, ?, ?, ?, ?)
-       ON CONFLICT(repo, number) DO UPDATE SET sha = excluded.sha, files = excluded.files, updated_at = excluded.updated_at`,
-    ).run(repo, number, sha, JSON.stringify(files), now());
-  } catch {
-    /* best effort */
-  }
-}
-export function getConflict(repo: string, number: number): { sha: string; files: string[] } | null {
-  const d = getDb();
-  if (!d) return null;
-  try {
-    const r = d.prepare(`SELECT sha, files FROM pr_conflict WHERE repo = ? AND number = ?`).get(repo, number) as
-      | { sha: string; files: string }
-      | undefined;
-    if (!r) return null;
-    let files: string[] = [];
-    try { files = JSON.parse(r.files || "[]"); } catch { files = []; }
-    return { sha: r.sha, files };
-  } catch {
-    return null;
-  }
-}
-export function clearConflict(repo: string, number: number): void {
-  const d = getDb();
-  if (!d) return;
-  try {
-    d.prepare(`DELETE FROM pr_conflict WHERE repo = ? AND number = ?`).run(repo, number);
-  } catch {
-    /* best effort */
-  }
-}
 /** Conflicting-file map for the board, keyed "repo#number" — cheap read so cards/detail can flag. */
-export function listConflicts(): Record<string, string[]> {
-  const d = getDb();
-  if (!d) return {};
-  try {
-    const rows = d.prepare(`SELECT repo, number, files FROM pr_conflict`).all() as Array<{ repo: string; number: number; files: string }>;
-    const out: Record<string, string[]> = {};
-    for (const r of rows) {
-      try { out[`${r.repo}#${r.number}`] = JSON.parse(r.files || "[]"); } catch { out[`${r.repo}#${r.number}`] = []; }
-    }
-    return out;
-  } catch {
-    return {};
-  }
-}
 
 // ---- live agent overrides (dashboard edits, applied without a redeploy) ----
 
