@@ -265,6 +265,10 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
   const da = armed === "del", db = bz("del");
   const moreItems = [];
   if (!done) { moreItems.push(autoToggle("resume")); moreItems.push(autoToggle("merge")); }
+  // Per-issue budget override (#67): toggle unlimited, or set a cost cap via prompt.
+  const isUnlimited = !!issue.budget?.unlimited;
+  moreItems.push(html`<button class=${"tbtn wide" + (isUnlimited ? " on" : "")} data-tip=${isUnlimited ? "Unlimited — click to re-enable budget" : "Exempt this issue from budget limits"} onClick=${() => api("/issue-budget", { repo, number, budget: { ...issue.budget, unlimited: !isUnlimited } }).then(() => { toast(isUnlimited ? "Budget re-enabled" : "Unlimited"); loadThread(); }).catch(() => toast("Couldn’t change budget", "error"))}>${html`<${Icon} name="chart" size=${16}/>`}<span class="tlabel">${isUnlimited ? "✓ Unlimited" : "Unlimited"}</span></button>`);
+  moreItems.push(html`<button class="tbtn wide" data-tip="Set a per-issue cost cap (USD)" onClick=${() => { const v = prompt("Max USD for this issue (blank = use global)", issue.budget?.maxCostUsd ?? ""); if (v != null) { const n = Number(v); api("/issue-budget", { repo, number, budget: { ...issue.budget, ...(v === "" ? {} : { maxCostUsd: Number.isFinite(n) && n >= 0 ? n : 0 }) } }).then(() => { toast(v === "" ? "Cost cap cleared" : "Budget set"); loadThread(); }).catch(() => toast("Couldn’t set budget", "error")); } }}>${html`<${Icon} name="chart" size=${16}/>`}<span class="tlabel">${issue.budget?.maxCostUsd != null ? "$" + issue.budget.maxCostUsd + " cap" : "Cost cap"}</span></button>`);
   moreItems.push(html`<button class=${"tbtn danger wide" + (da ? " armed" : "") + (db ? " busy" : "")} disabled=${db} onClick=${() => confirmAct("del", () => act.del(repo, number))}>${db ? html`<${Spinner} size=${18}/>` : html`<${Icon} name="trash"/>`}<span class="tlabel">${db ? "Deleting…" : da ? "Confirm delete" : "Delete"}</span></button>`);
 
   const streamPane = html`<div class="dpane side">
