@@ -35,10 +35,7 @@ import { recordRun, recordPlan, lastPlan, recordIssueState, recordIssueFiles, re
 import { runReflection } from "./reflect.js";
 import { runChecks, parseDiscoveredChecks, rememberChecks } from "./checks.js";
 import { decideNext } from "./orchestrator.js";
-
-const IN_PROGRESS = "agency:in-progress";
-const READY = "agency:ready";
-const NEEDS_ATTENTION = "agency:needs-attention";
+import { LABEL_IN_PROGRESS as IN_PROGRESS, LABEL_READY as READY, LABEL_NEEDS_ATTENTION as NEEDS_ATTENTION } from "./state.js";
 
 /**
  * Run the project's checks the cheap way: deterministic command runner first (zero tokens), and only

@@ -133,6 +133,31 @@ const BLOCKED_LABEL: Record<BlockedReason, string> = {
   budgetExceeded: "agency:needs-attention", // reuses the attention label; split later if useful
 };
 
+/**
+ * Canonical GitHub-label strings — the SINGLE source for the `agency:*` projection
+ * vocabulary (ADR-0001). Every other module imports these instead of redefining the
+ * literals, so the label namespace can't drift. These are write-only projection
+ * strings; reading them back as state is the bug the inversion kills.
+ */
+export const LABEL_PLANNED = STATE_LABEL.planned;
+export const LABEL_IN_PROGRESS = STATE_LABEL.working;
+export const LABEL_READY = STATE_LABEL.review;
+export const LABEL_AWAITING_ANSWER = BLOCKED_LABEL.awaitingAnswer;
+export const LABEL_AWAITING_APPROVAL = BLOCKED_LABEL.awaitingApproval;
+export const LABEL_NEEDS_ATTENTION = BLOCKED_LABEL.needsAttention;
+export const LABEL_RATE_LIMITED = BLOCKED_LABEL.rateLimited;
+export const LABEL_CONFLICT = BLOCKED_LABEL.conflict;
+
+/** Back-compat aliases for the names github.ts historically exported. */
+export const AWAITING_LABEL = LABEL_AWAITING_ANSWER;
+export const APPROVAL_LABEL = LABEL_AWAITING_APPROVAL;
+
+/** Issues already in an agency lifecycle state — skip these when scanning for fresh work. */
+export const STATE_LABELS = [LABEL_IN_PROGRESS, LABEL_READY, LABEL_NEEDS_ATTENTION];
+
+/** Any state where the agency is paused waiting on the human. */
+export const AWAITING_LABELS = [AWAITING_LABEL, APPROVAL_LABEL];
+
 export function labelsFor(status: IssueStatus): string[] {
   const out: string[] = [];
   const s = STATE_LABEL[status.state];

@@ -87,11 +87,10 @@ export async function listQueuedIssues(repo: string, label: string): Promise<Iss
 }
 
 /** Labels that mean "already being handled / handled / parked" — skip these. */
-const STATE_LABELS = ["agency:in-progress", "agency:ready", "agency:needs-attention"];
-export const AWAITING_LABEL = "agency:awaiting-answer";
-export const APPROVAL_LABEL = "agency:awaiting-approval";
-/** Any state where the agency is paused waiting on the human. */
-export const AWAITING_LABELS = [AWAITING_LABEL, APPROVAL_LABEL];
+// Canonical label strings live in src/state.ts (ADR-0001); re-exported here so the
+// historical `import { AWAITING_LABEL, ... } from "./github.js"` call sites are unchanged.
+import { STATE_LABELS, AWAITING_LABELS } from "./state.js";
+export { AWAITING_LABEL, APPROVAL_LABEL, AWAITING_LABELS } from "./state.js";
 
 export interface ActionableOptions {
   triggerMode: "mention" | "label" | "any";

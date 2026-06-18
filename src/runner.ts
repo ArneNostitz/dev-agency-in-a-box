@@ -111,10 +111,12 @@ import {
   recoverOrphans,
 } from "./commands.js";
 
-const IN_PROGRESS = "agency:in-progress";
-const READY = "agency:ready";
-const NEEDS_ATTENTION = "agency:needs-attention";
-const RATE_LIMITED = "agency:rate-limited";
+import {
+  LABEL_IN_PROGRESS as IN_PROGRESS,
+  LABEL_READY as READY,
+  LABEL_NEEDS_ATTENTION as NEEDS_ATTENTION,
+  LABEL_RATE_LIMITED as RATE_LIMITED,
+} from "./state.js";
 const MAX_AUTOFIX = 2;
 
 // ---- usage-limit handling (pure script — works with zero tokens) ----

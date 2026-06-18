@@ -32,10 +32,9 @@ import {
 } from "./store.js";
 import { runRole } from "./agents/roleAgent.js";
 import { setActive, clearActive } from "./activity.js";
+import { LABEL_READY as READY, LABEL_IN_PROGRESS as IN_PROGRESS } from "./state.js";
 
-export const EPIC_LABEL = "agency:epic";
-const READY = "agency:ready";
-const IN_PROGRESS = "agency:in-progress";
+export const EPIC_LABEL = "agency:epic"; // kind label — moves to IssueKind when that module exists
 
 /** Human label for a child's status, from its labels/closed state. */
 export function childStatus(t: RecentThread): string {
