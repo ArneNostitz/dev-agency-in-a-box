@@ -209,6 +209,54 @@ test("shapeToastMsg tokenizes text, urls, paths and mixed messages", async () =>
   assert.deepEqual(seg("no segments here at all"), [{ t: "text", v: "no segments here at all" }], "no-segment message → one text segment");
 });
 
+// Pure unit tests for the live-markdown composer helpers (web/core.js): mdOverlay renders a
+// line-preserving preview (one <div> per source line, markers visible so the caret aligns), and
+// continueMarkdownList auto-continues `- `/`1. ` on Enter.
+test("mdOverlay renders one div per line with list/header markers preserved", async () => {
+  const vendorUrl = pathToFileURL(join(HERE, "..", "web", "vendor", "standalone.mjs")).href;
+  const tmpDir = mkdtempSync(join(tmpdir(), "dacore-md-"));
+  const src = readFileSync(join(HERE, "..", "web", "core.js"), "utf8").split("/web/vendor/standalone.mjs").join(vendorUrl);
+  writeFileSync(join(tmpDir, "core.js"), src);
+  const { mdOverlay } = await import(pathToFileURL(join(tmpDir, "core.js")).href);
+
+  assert.equal(mdOverlay(""), "", "empty input → empty preview");
+  assert.equal(mdOverlay("hello world"), "<div>hello world</div>", "plain text is one div");
+  assert.equal(mdOverlay("## Title"), '<div class="mdh mdh2">## Title</div>', "header preserves marker count");
+  assert.equal(mdOverlay("- item"), '<div class="mdb">- item</div>', "bullet line classed");
+  assert.equal(mdOverlay("1. first"), '<div class="mdo">1. first</div>', "ordered line classed");
+  const multi = mdOverlay("- a\n- b\n\ntext");
+  assert.equal(multi.match(/<div/g).length, 4, "one div per source line, blanks included as spacer");
+  assert.match(multi, /<div class="mde">/, "blank line renders as a spacer div");
+});
+
+test("continueMarkdownList continues `- ` and `1. ` at line end, exits on empty item", async () => {
+  const vendorUrl = pathToFileURL(join(HERE, "..", "web", "vendor", "standalone.mjs")).href;
+  const tmpDir = mkdtempSync(join(tmpdir(), "dacore-md2-"));
+  const src = readFileSync(join(HERE, "..", "web", "core.js"), "utf8").split("/web/vendor/standalone.mjs").join(vendorUrl);
+  writeFileSync(join(tmpDir, "core.js"), src);
+  const { continueMarkdownList } = await import(pathToFileURL(join(tmpDir, "core.js")).href);
+
+  const mk = (value, pos) => ({ value, selectionStart: pos, selectionEnd: pos });
+
+  let el = mk("hello", 5);
+  assert.equal(continueMarkdownList(el), false, "no list → not handled");
+
+  el = mk("- item", 6);
+  assert.equal(continueMarkdownList(el), true, "bullet line handled");
+  assert.equal(el.value, "- item\n- ", "bullet continues with new prefix");
+  assert.equal(el.selectionStart, "- item\n- ".length, "caret lands after the new prefix");
+
+  el = mk("- ", 2);
+  assert.equal(continueMarkdownList(el), true, "empty bullet handled (exit)");
+  assert.equal(el.value, "", "empty bullet removed");
+  assert.equal(el.selectionStart, 0, "caret at start after exit");
+
+  el = mk("1. first", 8);
+  assert.equal(continueMarkdownList(el), true, "ordered line handled");
+  assert.equal(el.value, "1. first\n2. ", "ordered list increments");
+  assert.equal(el.selectionStart, "1. first\n2. ".length, "caret after new ordered prefix");
+});
+
 // Offline queue: pre-populate localStorage and verify the status-line indicator renders.
 test("offline queue indicator shows when dab_offline_q has entries", async () => {
   const SAMPLE = {

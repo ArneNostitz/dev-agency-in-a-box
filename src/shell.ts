@@ -334,6 +334,23 @@ textarea{resize:vertical;min-height:64px}
 .composer:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-weak,rgba(47,109,246,.12))}
 .composer textarea{border:none;background:transparent;resize:none;outline:none;width:100%;font:inherit;font-size:14.5px;line-height:1.5;color:var(--ink);min-height:22px;max-height:200px;padding:0;overflow-y:auto}
 .composer textarea::placeholder{color:var(--ink-3)}
+/* MarkdownArea: rendered-markdown overlay behind a transparent-text textarea (live inline preview). */
+.mdarea{position:relative}
+.mdarea-preview{position:absolute;inset:0;z-index:0;pointer-events:none;color:var(--ink);font:inherit;font-family:inherit;font-size:14.5px;line-height:1.5;letter-spacing:normal;white-space:pre-wrap;word-break:break-word;overflow:hidden;padding:0;margin:0;border:0}
+.mdarea-preview>div{min-height:1.5em}
+.mdarea-preview .mde{visibility:hidden}
+.mdarea-preview .mdh{font-weight:700;color:var(--accent)}
+.mdarea-preview .mdh2{opacity:.92}.mdarea-preview .mdh3{opacity:.84}.mdarea-preview .mdh4{opacity:.76}.mdarea-preview .mdh5{opacity:.68}.mdarea-preview .mdh6{opacity:.6}
+.mdarea-preview .mdb,.mdarea-preview .mdo{color:var(--ink-2)}
+.mdarea-preview .mdq{color:var(--ink-2);font-style:italic}
+.mdarea-preview .mdc{color:var(--ink-3);font-family:ui-monospace,Menlo,monospace}
+.mdarea-preview a{color:var(--accent);text-decoration:underline;text-underline-offset:2px}
+.mdarea-preview code{background:var(--surface-2);padding:1px 5px;border-radius:5px;font-size:.9em;font-family:ui-monospace,Menlo,monospace}
+.mdarea-preview strong{font-weight:700}
+.mdarea-preview img{max-width:100%;border-radius:8px}
+.mdarea textarea{position:relative;z-index:1;background:transparent;color:transparent!important;caret-color:var(--ink)}
+.mdarea textarea::selection{background:var(--accent-weak)}
+.mdarea textarea::placeholder{color:var(--ink-3)}
 .composer-row{display:flex;align-items:center;gap:8px}
 .composer-row .spacer{flex:1}
 .composer-icon{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:9px;color:var(--ink-2);cursor:pointer;flex:0 0 auto}

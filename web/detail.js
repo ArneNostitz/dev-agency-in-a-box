@@ -1,6 +1,6 @@
 // Dev Agency dashboard — detail module (split from app.js; Preact + htm, no build step).
 import { html, useState, useEffect, useRef } from "/web/vendor/standalone.mjs";
-import { Avatar, Icon, Sheet, Spinner, ago, api, fmtTok, getJSON, ghUrl, isDone, md, readAttach, roleFromComment, shortModel, toast, usageTitle } from "./core.js";
+import { Avatar, Icon, Sheet, Spinner, ago, api, fmtTok, getJSON, ghUrl, isDone, md, MarkdownArea, readAttach, roleFromComment, shortModel, toast, usageTitle } from "./core.js";
 
 
 // ---------- Detail ----------
@@ -29,7 +29,6 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
   const chatRef = useRef(null);
   const taRef = useRef(null); // compose textarea (auto-grows with content)
   const didScrollRef = useRef(false); // scroll the conversation to the newest message once, on open
-  function autosize() { const el = taRef.current; if (!el) return; el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, 200) + "px"; }
   const updateModelOverride = (val) => {
     setModelOverride(val);
     let mo = null;
@@ -346,8 +345,7 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
     <div class="dcompose">
       <div class="composer">
         ${atts.length ? html`<div class="composer-atts">${atts.map((a, idx) => html`<span class="att" key=${idx}>${a.img ? html`<img src=${a.d}/>` : html`<span><${Icon} name="paperclip" size=${12}/> ${a.name}</span>`}<button class="iconbtn" style="width:18px;height:18px;border:none" onClick=${() => setAtts((x) => x.filter((_, j) => j !== idx))}>×</button></span>`)}</div>` : null}
-        <textarea ref=${taRef} rows="1" placeholder=${running ? "Message the agent…  (queued until the run finishes)" : "Reply…  (Cmd+Enter sends, paste image to embed)"} value=${reply} onInput=${(e) => { setReply(e.target.value); autosize(); }} onPaste=${onPaste} onKeyDown=${(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); send(); } }}></textarea>
-        ${reply.trim() ? html`<div class="b" dangerouslySetInnerHTML=${{ __html: md(reply) }}></div>` : null}
+        <${MarkdownArea} value=${reply} taRef=${taRef} placeholder=${running ? "Message the agent…  (queued until the run finishes)" : "Reply…  (Cmd+Enter sends, paste image to embed)"} onInput=${(v) => setReply(v)} onPaste=${onPaste} onKeyDown=${(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); send(); } }}/>
         <div class="composer-row">
           <label class="composer-icon" title="Attach a file"><${Icon} name="paperclip" size=${18}/><input type="file" multiple style="display:none" onChange=${pickFiles}/></label>
           ${modelOpts && modelOpts.length ? html`<select title="Override model for this run" class="modelsel" value=${modelOverride} onChange=${(e) => updateModelOverride(e.target.value)}>
@@ -436,7 +434,6 @@ export function Composer({ repos, repo, setRepo, onClose, onCreate, data }) {
     data?.globalModel ? data.globalModel.providerId + "/" + data.globalModel.model : ""
   );
   const taRef = useRef(null);
-  function autosize() { const el = taRef.current; if (!el) return; el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, 200) + "px"; }
   function submit(start) {
     if (!repo || !title.trim()) { toast("Repo + title needed"); return; }
     let modelOverride = null;
@@ -487,8 +484,7 @@ export function Composer({ repos, repo, setRepo, onClose, onCreate, data }) {
     <input value=${title} onInput=${(e) => setTitle(e.target.value)} placeholder="What should it do?" style="margin-bottom:10px"/>
     <div class="composer">
       ${atts.length ? html`<div class="composer-atts">${atts.map((a, idx) => html`<span class="att" key=${idx}>${a.img ? html`<img src=${a.d}/>` : html`<span><${Icon} name="paperclip" size=${12}/> ${a.name}</span>`}<button class="iconbtn" style="width:18px;height:18px;border:none" onClick=${() => setAtts((x) => x.filter((_, j) => j !== idx))}>×</button></span>`)}</div>` : null}
-      <textarea ref=${taRef} rows="1" placeholder="Details, context, acceptance criteria…  (Cmd+Enter starts, paste image to embed)" value=${body} onInput=${(e) => { setBody(e.target.value); autosize(); }} onPaste=${onPaste} onKeyDown=${(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); submit(true); } }}></textarea>
-      ${body.trim() ? html`<div class="b" dangerouslySetInnerHTML=${{ __html: md(body) }}></div>` : null}
+      <${MarkdownArea} value=${body} taRef=${taRef} placeholder="Details, context, acceptance criteria…  (Cmd+Enter starts, paste image to embed)" onInput=${(v) => setBody(v)} onPaste=${onPaste} onKeyDown=${(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); submit(true); } }}/>
       <div class="composer-row">
         <label class="composer-icon" title="Attach a file"><${Icon} name="paperclip" size=${18}/><input type="file" multiple style="display:none" onChange=${pick}/></label>
         <span class="spacer"></span>
