@@ -137,8 +137,8 @@ input,select,textarea{font-size:16px}
 .colbtn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 .colbtn:disabled{opacity:.5;cursor:default}
 .colhead .n{color:var(--ink-3);font-weight:500}
-.cards{display:flex;flex-direction:column;gap:8px;align-items:center}
-.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:10px 12px;cursor:pointer;display:flex;flex-direction:column;gap:7px;width:100%;max-width:560px}
+.cards{display:flex;flex-direction:column;gap:8px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:10px 12px;cursor:pointer;display:flex;flex-direction:column;gap:7px;width:100%;max-width:560px;margin-inline:auto}
 .card:active{transform:scale(.992)}
 .card.active-now{border-left:3px solid var(--accent)}
 .card-h{display:flex;align-items:center;gap:6px;min-height:18px;overflow:hidden;white-space:nowrap}
@@ -149,9 +149,9 @@ input,select,textarea{font-size:16px}
 .card-hicon{display:inline-flex;align-items:center;color:var(--ink-3)}
 .card-m{display:flex;flex-direction:column;gap:3px}
 .card-title{font-weight:560;font-size:14.5px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.card-meta{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink-3);overflow:hidden;white-space:nowrap;min-height:20px}
+.card-meta{display:flex;align-items:flex-start;gap:6px;font-size:11.5px;color:var(--ink-3);min-height:20px}
 .card-meta .role{flex:0 0 auto;font-weight:560;color:var(--ink-2);text-transform:capitalize}
-.card-excerpt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.card-excerpt{flex:1;min-width:0;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;line-height:1.35}
 .card-time{margin-left:auto;color:var(--ink-3);font-size:12px}
 /* instant custom tooltip — pops the moment you hover, no delay */
 .tip{position:relative}
@@ -172,8 +172,11 @@ input,select,textarea{font-size:16px}
 .setupbar-track{height:6px;border-radius:999px;background:var(--surface-2);overflow:hidden}
 .setupbar-fill{height:100%;background:var(--accent);border-radius:999px;transition:width .25s ease}
 .setupbar-lbl{display:inline-flex;align-items:center;gap:4px;margin-top:3px;font-size:11px;color:var(--ink-3)}
-.card-f{display:flex;align-items:center;gap:6px;flex-wrap:nowrap;border-top:1px solid var(--line);padding-top:8px;overflow:visible}
-.cardbtn.cta{margin-left:auto}
+.card-f{display:flex;align-items:center;justify-content:space-between;gap:6px;flex-wrap:nowrap;border-top:1px solid var(--line);padding-top:8px}
+.card-f-l{display:flex;align-items:center;gap:6px}
+.card-f-r{display:flex;align-items:center;gap:6px}
+.card-pr{display:inline-flex;align-items:center;gap:3px;font-size:11px;color:var(--ink-3);text-decoration:none;border:1px solid var(--line);border-radius:999px;padding:1px 7px}
+.card-pr:hover{color:var(--accent);border-color:var(--accent)}
 .card-f .cardbtn{margin-left:0}
 .card-subs{display:flex;flex-direction:column;border-top:1px solid var(--line);padding-top:5px}
 .subtoggle{display:flex;align-items:center;gap:6px;width:100%;text-align:left;border:none;background:transparent;color:var(--ink-2);font-size:12px;font-weight:560;cursor:pointer;padding:2px}

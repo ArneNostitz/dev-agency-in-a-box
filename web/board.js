@@ -180,20 +180,20 @@ function Card({ i, subs, multi, onOpen, onOpenChild, act, data }) {
 
   return html`<div class=${"card" + (tmp ? " busy" : "") + (i.active ? " active-now" : "")} onClick=${tmp ? null : () => onOpen(i)}>
     <div class="card-h">
-      <span class="statusdot tip" data-tip=${tmp ? "creating…" : st.label} style=${"background:" + dotColor}>${tmp ? html`<${Spinner} size=${10}/>` : html`<${Icon} name=${st.icon} size=${11}/>`}</span>
+      <span class="statusdot tip" data-tip=${tmp ? "creating…" : statusTip(i, st)} style=${"background:" + dotColor}>${tmp ? html`<${Spinner} size=${10}/>` : html`<${Icon} name=${st.icon} size=${11}/>`}</span>
       <span class="card-repo">${i.repo.split("/").pop()}</span>
       <span class="card-num">#${i.number > 0 ? i.number : "…"}</span>
       <span class="card-hicons">
         ${i.conflict ? html`<span class="card-hicon tip" data-tip=${(i.conflict.files || []).join(", ") || "Merge conflict"} style="color:var(--amber)"><${Icon} name="merge" size=${14}/></span>` : null}
         ${autoOn ? html`<span class="card-hicon tip" data-tip=${"Auto-" + (i.auto.merge ? "merge" : "resume") + " on"} style="color:var(--green)"><${Icon} name=${i.auto.merge ? "merge" : "refresh"} size=${13}/></span>` : null}
-        ${i.pr_number ? html`<a class="card-hicon tip" data-tip=${"PR #" + i.pr_number} href=${i.pr_url || ghUrl(i.repo, i.pr_number)} target="_blank" rel="noopener" onClick=${(e) => e.stopPropagation()}><${Icon} name="pr" size=${13}/></a>` : null}
+        ${i.pr_number ? html`<a class="card-pr tip" data-tip=${"Open PR #" + i.pr_number} href=${i.pr_url || ghUrl(i.repo, i.pr_number)} target="_blank" rel="noopener" onClick=${(e) => e.stopPropagation()}><${Icon} name="pr" size=${12}/> #${i.pr_number}</a>` : null}
       </span>
     </div>
 
     <div class="card-m">
       <div class="card-title">${i.title || "#" + i.number}</div>
       <div class="card-meta">
-        ${engaged && i.role && avatarsOn ? html`<${Avatar} role=${i.role} size=${20} crop="head"/>` : null}
+        ${engaged && i.role && avatarsOn ? html`<span class="tip" data-tip=${i.role + " agent"} style="display:inline-flex"><${Avatar} role=${i.role} size=${20} crop="head"/></span>` : null}
         ${engaged && i.role ? html`<span class="role">${i.role}</span>` : null}
         <span class="card-excerpt">${excerpt || (i.usage && i.usage.tokens ? fmtTok(i.usage.tokens) + " tok" + (i.usage.model ? " · " + shortModel(i.usage.model) : "") : ago(i.updated_at))}</span>
       </div>
@@ -207,14 +207,36 @@ function Card({ i, subs, multi, onOpen, onOpenChild, act, data }) {
 
     ${!tmp && subs && subs.length ? html`<${SubList} subs=${subs} repo=${i.repo} onOpenChild=${onOpenChild}/>` : null}
 
-    ${tmp ? null : html`<div class="card-f" onClick=${(e) => e.stopPropagation()}>
-      ${modelOpts.length && (!quick || quick.action !== "stop") ? html`<${ModelPicker} opts=${modelOpts} value=${modelSel} onPick=${onPickModel}/>` : null}
-      ${quick && i.state === "planned" ? html`<button class="iconbtn-sm tip" data-tip="Close as not planned" disabled=${act.isBusy("close-not-planned", i.repo, i.number)} onClick=${(e) => { e.stopPropagation(); act.closeNotPlanned(i.repo, i.number); }}>${act.isBusy("close-not-planned", i.repo, i.number) ? html`<${Spinner} size=${13}/>` : html`<${Icon} name="x" size=${14}/>`}</button>` : null}
-      ${quick
-        ? html`<button class=${"cardbtn cta " + quick.cls + (qBusy ? " busy" : "")} disabled=${qBusy} onClick=${runQuick}>${qBusy ? html`<${Spinner} size=${13}/>` : html`<${Icon} name=${quick.icon} size=${13}/>`} ${qBusy ? "working…" : quick.label}</button>`
-        : html`<span class="card-time">${ago(i.updated_at)}</span>`}
-    </div>`}
+    ${tmp ? null : (() => {
+      const isStop = quick && quick.action === "stop";
+      const notPlanned = quick && i.state === "planned";
+      return html`<div class="card-f" onClick=${(e) => e.stopPropagation()}>
+        <div class="card-f-l">
+          ${notPlanned ? html`<button class="iconbtn-sm tip" data-tip="Close as not planned" disabled=${act.isBusy("close-not-planned", i.repo, i.number)} onClick=${(e) => { e.stopPropagation(); act.closeNotPlanned(i.repo, i.number); }}>${act.isBusy("close-not-planned", i.repo, i.number) ? html`<${Spinner} size=${13}/>` : html`<${Icon} name="x" size=${14}/>`}</button>` : null}
+          ${isStop ? html`<button class=${"cardbtn cta stop" + (qBusy ? " busy" : "")} disabled=${qBusy} onClick=${runQuick}>${qBusy ? html`<${Spinner} size=${13}/>` : html`<${Icon} name="stop" size=${13}/>`} ${qBusy ? "working…" : quick.label}</button>` : null}
+        </div>
+        <div class="card-f-r">
+          ${modelOpts.length && !isStop ? html`<${ModelPicker} opts=${modelOpts} value=${modelSel} onPick=${onPickModel}/>` : null}
+          ${quick && !isStop
+            ? html`<button class=${"cardbtn cta " + quick.cls + (qBusy ? " busy" : "")} disabled=${qBusy} onClick=${runQuick}>${qBusy ? html`<${Spinner} size=${13}/>` : html`<${Icon} name=${quick.icon} size=${13}/>`} ${qBusy ? "working…" : quick.label}</button>`
+            : (!quick ? html`<span class="card-time">${ago(i.updated_at)}</span>` : null)}
+        </div>
+      </div>`;
+    })()}
   </div>`;
+}
+
+// Friendly one-line explanation of a status, for the dot tooltip.
+const STATUS_TIP = {
+  working: "Working on it now", ready: "Ready to merge — reviewer approved",
+  changes: "Changes requested by the reviewer", "needs you": "Needs your attention — stalled",
+  "approve?": "Plan posted — approve it to build", reply: "Waiting for your reply",
+  planned: "Planned — not started yet", merged: "Merged", done: "Done / closed",
+  closed: "Closed", queued: "Queued", "auto-resume": "Rate-limited — auto-resumes",
+};
+function statusTip(i, st) {
+  if (st.cls === "s-epic" && i.epic) return `Epic — ${i.epic.done}/${i.epic.total} sub-issues done`;
+  return STATUS_TIP[st.label] || st.label;
 }
 
 // Solid status-dot colour per status-chip class (the header dot replaces the old chip).

@@ -1,6 +1,6 @@
 // Dev Agency dashboard — detail module (split from app.js; Preact + htm, no build step).
 import { html, useState, useEffect, useRef } from "/web/vendor/standalone.mjs";
-import { Avatar, Icon, Sheet, Spinner, ago, api, fmtTok, getJSON, getSetupProgress, ghUrl, isDone, md, MarkdownArea, readAttach, roleFromComment, shortModel, toast, usageTitle } from "./core.js";
+import { Avatar, Icon, ProviderLogo, Select, Sheet, Spinner, ago, api, fmtTok, getJSON, getSetupProgress, ghUrl, isDone, md, MarkdownArea, readAttach, roleFromComment, shortModel, toast, usageTitle } from "./core.js";
 
 
 // ---------- Detail ----------
@@ -18,7 +18,8 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
     issue.modelOverride ? issue.modelOverride.providerId + "/" + issue.modelOverride.model : ""
   );
   const providers = data?.providers || [];
-  const modelOpts = providers.flatMap((p) => (p.models || []).map((m) => ({ value: p.id + "/" + m, label: p.name + " / " + m })));
+  const modelOpts = providers.flatMap((p) => (p.models || []).map((m) => ({ value: p.id + "/" + m, label: p.name + " · " + m, short: m, provider: p.name })));
+  const modelSelOpts = [{ value: "", label: "Default model", icon: "flask" }].concat(modelOpts.map((o) => ({ value: o.value, label: o.short, logo: o.provider, hint: o.provider })));
   const [pendingComments, setPendingComments] = useState([]); // optimistic skeleton comments
   const [chatAtBottom, setChatAtBottom] = useState(true);
   const [chatAtTop, setChatAtTop] = useState(true);
@@ -329,12 +330,7 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
     <div class="dtoolbar">
       ${tb}
       <span style="flex:1"></span>
-      ${modelOpts.length ? html`
-        <select title="Override model for next run" class="modelsel" value=${modelOverride} onChange=${(e) => updateModelOverride(e.target.value)}>
-          <option value="">Default model</option>
-          ${modelOpts.map((o) => html`<option key=${o.value} value=${o.value}>${o.label}</option>`)}
-        </select>
-      ` : null}
+      ${modelOpts.length ? html`<${Select} value=${modelOverride} options=${modelSelOpts} onChange=${updateModelOverride} menuAlign="right"/>` : null}
       ${moreItems.length ? html`<span class="dropwrap">
         <button class="tbtn" data-tip="More" onClick=${() => setMoreOpen((o) => !o)}><${Icon} name="dots"/></button>
         ${moreOpen ? html`<div class="dropscrim" onClick=${() => setMoreOpen(false)}></div><div class="dropmenu toolmore">${moreItems.map((it, i) => html`<div key=${i} class="toolmore-row">${it}</div>`)}</div>` : null}
@@ -353,10 +349,7 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
         <${MarkdownArea} value=${reply} taRef=${taRef} placeholder=${running ? "Message the agent…  (queued until the run finishes)" : "Reply…  (Cmd+Enter sends, paste image to embed)"} onInput=${(v) => setReply(v)} onPaste=${onPaste} onKeyDown=${(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); send(); } }}/>
         <div class="composer-row">
           <label class="composer-icon" title="Attach a file"><${Icon} name="paperclip" size=${18}/><input type="file" multiple style="display:none" onChange=${pickFiles}/></label>
-          ${modelOpts && modelOpts.length ? html`<select title="Override model for this run" class="modelsel" value=${modelOverride} onChange=${(e) => updateModelOverride(e.target.value)}>
-            <option value="">Default model</option>
-            ${modelOpts.map((o) => html`<option key=${o.value} value=${o.value}>${o.label}</option>`)}
-          </select>` : null}
+          ${modelOpts && modelOpts.length ? html`<${Select} value=${modelOverride} options=${modelSelOpts} onChange=${updateModelOverride}/>` : null}
           <span class="spacer"></span>
           ${running ? html`<button class=${"btn warn" + (bz("stop") ? " busy" : "")} title="Stop the running agent" disabled=${bz("stop")} onClick=${() => act.stop(repo, number)}>${bz("stop") ? html`<${Spinner} size=${15}/>` : html`<${Icon} name="stop" size=${15}/>`} Stop</button>` : null}
           <button class=${"btn primary" + (busy ? " busy" : "")} disabled=${busy} onClick=${send}>${busy ? html`<${Spinner} size=${15}/>` : running ? html`<${Icon} name="clock" size=${15}/>` : html`<${Icon} name="send" size=${15}/>`} ${running ? "Queue" : "Send"}</button>
@@ -434,7 +427,7 @@ export function Composer({ repos, repo, setRepo, onClose, onCreate, data }) {
   const [role, setRole] = useState("@dev");
   const [atts, setAtts] = useState([]);
   const providers = data?.providers || [];
-  const modelOpts = providers.flatMap((p) => (p.models || []).map((m) => ({ providerId: p.id, model: m, label: p.name + " / " + m })));
+  const modelOpts = providers.flatMap((p) => (p.models || []).map((m) => ({ providerId: p.id, model: m, label: p.name + " · " + m, short: m, provider: p.name })));
   const [model, setModel] = useState(
     data?.globalModel ? data.globalModel.providerId + "/" + data.globalModel.model : ""
   );
@@ -473,18 +466,9 @@ export function Composer({ repos, repo, setRepo, onClose, onCreate, data }) {
   }
   return html`<${Sheet} title="New issue" onClose=${onClose}>
     <div style="display:flex;gap:8px;margin-bottom:10px">
-      <select style="flex:1.5;width:auto" value=${repo || ""} onChange=${(e) => setRepo(e.target.value)}>${repos.map((r) => html`<option key=${r} value=${r}>${r.split("/").pop()}</option>`)}</select>
-      <select style="flex:1;width:auto" value=${role} onChange=${(e) => setRole(e.target.value)}>
-        <option value="@dev">@dev</option>
-        <option value="@plan">@plan</option>
-        <option value="@arch">@arch</option>
-        <option value="@review">@review</option>
-        <option value="@test">@test</option>
-      </select>
-      ${modelOpts.length ? html`<select style="flex:1.5;width:auto" value=${model} onChange=${(e) => setModel(e.target.value)}>
-        <option value="">Default model</option>
-        ${modelOpts.map((o) => html`<option key=${o.providerId + "/" + o.model} value=${o.providerId + "/" + o.model}>${o.label}</option>`)}
-      </select>` : null}
+      <${Select} value=${repo || ""} options=${repos.map((r) => ({ value: r, label: r.split("/").pop() }))} onChange=${setRepo}/>
+      <${Select} value=${role} options=${[{ value: "@dev", label: "@dev" }, { value: "@plan", label: "@plan" }, { value: "@arch", label: "@arch" }, { value: "@review", label: "@review" }, { value: "@test", label: "@test" }]} onChange=${setRole}/>
+      ${modelOpts.length ? html`<${Select} value=${model} options=${[{ value: "", label: "Default model", icon: "flask" }].concat(modelOpts.map((o) => ({ value: o.providerId + "/" + o.model, label: o.short, logo: o.provider })))} onChange=${setModel}/>` : null}
     </div>
     <input value=${title} onInput=${(e) => setTitle(e.target.value)} placeholder="What should it do?" style="margin-bottom:10px"/>
     <div class="composer">
