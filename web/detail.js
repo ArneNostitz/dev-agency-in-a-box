@@ -43,6 +43,10 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
     });
   };
   const repo = issue.repo, number = issue.number;
+  // Persist the reply draft per-issue so it survives navigating away and reopening.
+  const draftKey = "draft:reply:" + repo + "#" + number;
+  useEffect(() => { try { setReply(localStorage.getItem(draftKey) || ""); } catch (e) {} }, [draftKey]);
+  useEffect(() => { try { if (reply) localStorage.setItem(draftKey, reply); else localStorage.removeItem(draftKey); } catch (e) {} }, [reply, draftKey]);
   useEffect(() => {
     if (thread && !didScrollRef.current && chatRef.current) {
       didScrollRef.current = true;
@@ -424,6 +428,9 @@ function RunApp({ repo, number, appInfo, issue, done }) {
 export function Composer({ repos, repo, setRepo, onClose, onCreate, data }) {
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
+  const ndraftKey = "draft:newissue:" + (repo || "_");
+  useEffect(() => { try { const d = JSON.parse(localStorage.getItem(ndraftKey) || "{}"); if (d.title) setTitle(d.title); if (d.body) setBody(d.body); } catch (e) {} }, [ndraftKey]);
+  useEffect(() => { try { if (title || body) localStorage.setItem(ndraftKey, JSON.stringify({ title, body })); else localStorage.removeItem(ndraftKey); } catch (e) {} }, [title, body, ndraftKey]);
   const [role, setRole] = useState("@dev");
   const [atts, setAtts] = useState([]);
   const providers = data?.providers || [];
@@ -440,6 +447,7 @@ export function Composer({ repos, repo, setRepo, onClose, onCreate, data }) {
       modelOverride = { providerId, model: mName };
     }
     onCreate(repo, role, title.trim(), body.trim(), start, atts.map((a) => ({ dataUrl: a.d, name: a.name })), modelOverride);
+    try { localStorage.removeItem(ndraftKey); } catch (e) {}
   }
   function pick(e) { const fs = e.target.files || []; for (let i = 0; i < fs.length; i++) readAttach(fs[i], (a) => setAtts((x) => x.concat(a))); e.target.value = ""; }
   function onPaste(e) {

@@ -261,7 +261,7 @@ test("mdOverlay renders one div per line with list/header markers preserved", as
   assert.equal(mdOverlay(""), "", "empty input → empty preview");
   assert.equal(mdOverlay("hello world"), "<div>hello world</div>", "plain text is one div");
   assert.equal(mdOverlay("## Title"), '<div class="mdh mdh2">## Title</div>', "header preserves marker count");
-  assert.equal(mdOverlay("- item"), '<div class="mdb">- item</div>', "bullet line classed");
+  assert.equal(mdOverlay("- item"), '<div class="mdb">\u2022 item</div>', "bullet marker shown as a dot");
   assert.equal(mdOverlay("1. first"), '<div class="mdo">1. first</div>', "ordered line classed");
   const multi = mdOverlay("- a\n- b\n\ntext");
   assert.equal(multi.match(/<div/g).length, 4, "one div per source line, blanks included as spacer");

@@ -142,7 +142,7 @@ function mdOverlayLine(ln, inCode) {
   if (inCode) return '<div class="mdc">' + escHtml(ln) + '</div>';
   let m;
   if ((m = /^(#{1,6})\s+(.*)$/.exec(ln))) return '<div class="mdh mdh' + m[1].length + '">' + m[1] + ' ' + mdInline(escHtml(m[2])) + '</div>';
-  if (/^\s*[-*+]\s+/.test(ln)) return '<div class="mdb">' + mdInline(escHtml(ln)) + '</div>';
+  if (/^\s*[-*+]\s+/.test(ln)) return '<div class="mdb">' + mdInline(escHtml(ln.replace(/^(\s*)[-*+](\s)/, "$1\u2022$2"))) + '</div>';
   if (/^\d+\.\s+/.test(ln)) return '<div class="mdo">' + mdInline(escHtml(ln)) + '</div>';
   if (/^>\s?/.test(ln)) return '<div class="mdq">' + mdInline(escHtml(ln)) + '</div>';
   if (ln === "") return '<div class="mde">&nbsp;</div>';
