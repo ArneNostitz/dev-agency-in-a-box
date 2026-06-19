@@ -133,6 +133,17 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
   const q = (s) => window.document.querySelector(s);
   const click = (el) => { if (!el) throw new Error("element not found"); el.dispatchEvent(new window.MouseEvent("click", { bubbles: true })); };
 
+  // Step through the simplified onboarding: welcome → models → github (device-flow connect).
+  const getStarted = Array.from(window.document.querySelectorAll(".ob .btn")).find((b) => /Get started/.test(b.textContent));
+  if (getStarted) {
+    click(getStarted); await tick(40);
+    assert.match(root.innerHTML, /Add your models/, "onboarding models step renders");
+    const cont = Array.from(window.document.querySelectorAll(".ob .obnav .btn.primary")).find((b) => /Continue/.test(b.textContent));
+    click(cont); await tick(40);
+    assert.match(root.innerHTML, /Give it GitHub access/, "onboarding github step renders");
+    assert.match(root.innerHTML, /Connect GitHub/, "onboarding uses the device-flow connect");
+  }
+
   // Composer (uses hooks) — opening it would crash if invoked as a function not an element.
   // "Add Issue" lives in the Planned column header now (top + button was removed).
   const addBtn = Array.from(window.document.querySelectorAll(".colbtn.primary")).find((b) => /Add Issue/.test(b.textContent));

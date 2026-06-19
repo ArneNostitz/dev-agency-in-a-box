@@ -163,7 +163,7 @@ export function GithubTokensModal({ secretKeys, github, onClose, reload }) {
 // One-click GitHub login via the OAuth device flow: click → authorize on github.com → done. The
 // single token is both the bot and the owner (commits attributed to the connected account), so
 // there's no separate bot to invite. The client ID is public; the device flow needs no secret.
-function GitHubConnect({ github, reload }) {
+export function GitHubConnect({ github, reload }) {
   const [clientId, setClientId] = useState("");
   const [flow, setFlow] = useState(null);
   const [busy, setBusy] = useState(false);

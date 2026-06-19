@@ -237,7 +237,7 @@ function App() {
       ${sheet === "usage" && html`<${Usage} onClose=${() => setSheet(null)} onOpenIssue=${openIssue}/>`}
       ${sheet === "agents" && html`<${AgentEditor} data=${data} onClose=${() => setSheet(null)} onSkills=${() => setSheet("skills")} reload=${load}/>`}
       ${sheet === "skills" && html`<${SkillEditor} data=${data} onClose=${() => setSheet("agents")} reload=${load}/>`}
-      ${data.user && data.onboarded === false && html`<${Onboarding} repos=${repos} reload=${load}/>`}
+      ${data.user && data.onboarded === false && html`<${Onboarding} repos=${repos} github=${data.github} reload=${load}/>`}
       <${Toasts} toasts=${toasts} onDismiss=${dismissToast}/>
     </div>`;
 }

@@ -1,7 +1,7 @@
 // Dev Agency dashboard — onboarding module (split from app.js; Preact + htm, no build step).
 import { html, useState, useEffect } from "/web/vendor/standalone.mjs";
 import { Icon, Sheet, Spinner, api, getJSON, toast } from "./core.js";
-import { Settings } from "./settings.js";
+import { Settings, GitHubConnect } from "./settings.js";
 
 
 // ---------- onboarding wizard ----------
@@ -104,18 +104,66 @@ function ObTokenStep({ def, existing, onDone, onBack }) {
     </div>`;
 }
 
-export function Onboarding({ repos, reload }) {
-  const [picked, setPicked] = useState(["claude_sub"]);
+// Dead-simple model add for onboarding: pick a provider, app sets its CLI/baseURL/models, paste key.
+function ObAddModels({ onNext, onBack }) {
+  const [providers, setProviders] = useState([]);
+  const [secretKeys, setSecretKeys] = useState([]);
+  const [pid, setPid] = useState("");
+  const [val, setVal] = useState("");
+  const [baseUrl, setBaseUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  function refresh() {
+    getJSON("/models").then((d) => setProviders(d.providers || [])).catch(() => {});
+    getJSON("/data").then((d) => setSecretKeys(d.secretKeys || [])).catch(() => {});
+  }
+  useEffect(refresh, []);
+  const def = OB_PROVIDERS.find((x) => x.id === pid);
+  const added = [];
+  if (secretKeys.includes("claude_token")) added.push("Claude — subscription");
+  if (secretKeys.includes("anthropic_api_key")) added.push("Claude — API key");
+  providers.forEach((x) => added.push(x.name));
+  function add() {
+    if (!def) return;
+    if ((def.kind !== "secret" && def.custom && !baseUrl.trim())) { toast("Enter the base URL"); return; }
+    if (!val.trim()) { toast(def.kind === "secret" ? "Paste the token" : "Paste the key"); return; }
+    setBusy(true);
+    const done = () => { setBusy(false); setPid(""); setVal(""); setBaseUrl(""); refresh(); toast("Added"); };
+    const fail = () => { setBusy(false); toast("Couldn’t save", "error"); };
+    if (def.kind === "secret") api("/user-secret", { key: def.secretKey, value: val.trim() }).then(done).catch(fail);
+    else {
+      const prov = { id: def.id + "-" + Date.now().toString(36), name: def.preset?.name || "Custom", baseUrl: def.custom ? baseUrl.trim() : def.preset.baseUrl, apiKey: val.trim(), models: def.preset?.models || [] };
+      api("/models", { providers: providers.concat(prov) }).then(done).catch(fail);
+    }
+  }
+  return html`
+    <div class="obki"><${Icon} name="flask" size=${26}/></div>
+    <div class="obh">Add your models</div>
+    <div class="obsub">Pick a provider, paste its key — done. Claude (subscription) is the recommended default; add more anytime in Settings.</div>
+    ${added.length ? html`<div style="display:flex;flex-direction:column;gap:5px;margin:4px 0 10px">${added.map((n, ix) => html`<div key=${ix} style="display:flex;align-items:center;gap:7px;font-size:13px"><span class="statuschip s-ready"><${Icon} name="check" size=${12}/></span> ${n}</div>`)}</div>` : null}
+    <label>+ Add a provider</label>
+    <select value=${pid} onChange=${(e) => { setPid(e.target.value); setVal(""); setBaseUrl(""); }}>
+      <option value="">Select a provider…</option>
+      ${OB_PROVIDERS.map((x) => html`<option key=${x.id} value=${x.id}>${x.label}</option>`)}
+    </select>
+    ${def ? html`
+      ${def.how ? html`<div class="muted" style="font-size:11px;white-space:pre-wrap;margin:6px 2px">${def.how}</div>` : null}
+      ${def.link ? html`<a class="oblink" href=${def.link} target="_blank" rel="noopener">${def.linkLabel || "Get a key"} <${Icon} name="link" size=${14}/></a>` : null}
+      ${def.custom ? html`<label>Base URL (Anthropic-compatible)</label><input placeholder="https://…/anthropic" value=${baseUrl} onInput=${(e) => setBaseUrl(e.target.value)}/>` : null}
+      <label>${def.kind === "secret" ? "Token" : "API key"}</label>
+      <input type="password" autocomplete="off" placeholder=${def.placeholder} value=${val} onInput=${(e) => setVal(e.target.value)}/>
+      <button class="btn primary" style="width:100%;margin-top:8px;justify-content:center" disabled=${busy} onClick=${add}>${busy ? html`<${Spinner} size=${15}/>` : html`<${Icon} name="plus" size=${15}/>`} Add ${def.label}</button>
+    ` : null}
+    <div class="obnav"><button class="btn" onClick=${onBack}>Back</button><button class="btn primary" onClick=${onNext}>Continue</button></div>`;
+}
+
+export function Onboarding({ repos, github, reload }) {
   const [i, setI] = useState(0);
-  const [existing, setExisting] = useState([]);
   const [repo, setRepo] = useState("");
-  useEffect(() => { getJSON("/models").then((d) => setExisting(d.providers || [])).catch(() => {}); }, []);
-  const steps = ["welcome", "providers", ...picked.map((id) => "p:" + id), "bot", "owner", "repo", "done"];
+  const steps = ["welcome", "models", "github", "repo", "done"];
   const step = steps[Math.min(i, steps.length - 1)];
   const next = () => setI((x) => Math.min(steps.length - 1, x + 1));
   const back = () => setI((x) => Math.max(0, x - 1));
   const finish = () => api("/onboarded", { value: "1" }).then(() => { toast("You're all set!"); reload(); });
-  function toggle(id) { setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : p.concat(id))); }
   function addRepo() {
     if (!/^[\w.-]+\/[\w.-]+$/.test(repo.trim())) { toast("Use owner/name"); return; }
     api("/add-repo", { repo: repo.trim() }).then(() => { toast("Repo added"); setRepo(""); reload(); next(); }).catch(() => toast("Couldn’t add"));
@@ -128,18 +176,13 @@ export function Onboarding({ repos, reload }) {
     <div class="obh">Welcome to Dev Agency in a Box</div>
     <div class="obsub">Three quick things and your AI team is ready: pick your models, give it GitHub access, and add a repo. Takes about 2 minutes — you can change anything later in Settings.</div>
     <div class="obnav"><button class="btn primary" onClick=${next}>Get started</button></div>`;
-  else if (step === "providers") body = html`
-    <div class="obki"><${Icon} name="flask" size=${26}/></div>
-    <div class="obh">Which models do you want to use?</div>
-    <div class="obsub">Claude (subscription) is the recommended default. Add others to run cheaper models for some agents — you can assign them per-agent later.</div>
-    <div class="obpick">${OB_PROVIDERS.map((p) => html`<div key=${p.id} class=${"obchip " + (picked.includes(p.id) ? "on" : "")} onClick=${() => toggle(p.id)}>
-      <${Icon} name=${p.icon} size=${18}/><div>${p.label}${p.note ? html`<small>${p.note}</small>` : null}</div>${picked.includes(p.id) ? html`<span class="ck"><${Icon} name="check" size=${16}/></span>` : null}</div>`)}</div>
+  else if (step === "models") body = html`<${ObAddModels} onNext=${next} onBack=${back}/>`;
+  else if (step === "github") body = html`
+    <div class="obki"><${Icon} name="pr" size=${26}/></div>
+    <div class="obh">Give it GitHub access</div>
+    <div class="obsub">One click — connect with GitHub. The agency commits, opens PRs, and comments as this account. No bot account or tokens to manage.</div>
+    <${GitHubConnect} github=${github} reload=${reload}/>
     <div class="obnav"><button class="btn" onClick=${back}>Back</button><button class="btn primary" onClick=${next}>Continue</button></div>`;
-  else if (step.startsWith("p:")) {
-    const def = OB_PROVIDERS.find((p) => p.id === step.slice(2));
-    body = html`<${ObTokenStep} key=${step} def=${def} existing=${existing} onDone=${next} onBack=${back}/>`;
-  } else if (step === "bot") body = html`<${ObTokenStep} key="bot" def=${OB_GH_BOT} onDone=${next} onBack=${back}/>`;
-  else if (step === "owner") body = html`<${ObTokenStep} key="owner" def=${OB_GH_OWNER} onDone=${next} onBack=${back}/>`;
   else if (step === "repo") body = html`
     <div class="obki"><${Icon} name="pr" size=${26}/></div>
     <div class="obh">Add your first repo</div>
