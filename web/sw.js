@@ -2,7 +2,7 @@
    Strategy: never cache the API (/data, /events, …); network-first for the shell + code
    (so a redeploy's new UI shows immediately when online, with a cached fallback offline);
    cache-first for rarely-changing static assets (icons, manifest). */
-const CACHE = "devagency-v1";
+const CACHE = "devagency-v2";
 const PRECACHE = ["/web/vendor/standalone.mjs", "/web/app.js", "/web/icons/icon.svg", "/manifest.webmanifest"];
 const NEVER_CACHE = ["/data", "/events", "/thread", "/pr-status", "/app-info", "/agents", "/agent", "/models", "/repos-available"];
 
@@ -46,7 +46,9 @@ self.addEventListener("fetch", (e) => {
     e.respondWith(cacheFirst(req));
     return;
   }
-  if (req.mode === "navigate" || url.pathname === "/web/app.js" || url.pathname.endsWith(".mjs")) {
+  // Code modules (app.js + every split ./*.js + the vendor .mjs) → network-first so a redeploy's
+  // new UI shows immediately online, with a cached fallback offline.
+  if (req.mode === "navigate" || (url.pathname.startsWith("/web/") && (url.pathname.endsWith(".js") || url.pathname.endsWith(".mjs")))) {
     e.respondWith(networkFirst(req));
     return;
   }

@@ -138,7 +138,10 @@ function serveStatic(pathname: string, res: ServerResponse): boolean {
   if (!file.startsWith(WEB_DIR) || !existsSync(file) || !statSync(file).isFile()) { res.writeHead(404).end("not found"); return true; }
   const ext = file.slice(file.lastIndexOf("."));
   // sw.js must not be long-cached; other assets are network-first in the SW anyway.
-  const cache = pathname === "/sw.js" || pathname === "/web/app.js" || pathname === "/web/version.json" ? "no-cache" : "public, max-age=3600";
+  // Code modules (app.js + every split ./*.js + the vendor .mjs) must revalidate each load, or a
+  // redeploy serves stale UI for up to an hour. Static assets (logos/icons/manifest) stay cached.
+  const isModule = /\.(mjs|js)$/.test(pathname);
+  const cache = pathname === "/sw.js" || pathname === "/web/version.json" || isModule ? "no-cache" : "public, max-age=3600";
   res.writeHead(200, { "content-type": MIME[ext] || "application/octet-stream", "cache-control": cache });
   res.end(readFileSync(file));
   return true;
