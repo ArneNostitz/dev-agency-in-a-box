@@ -199,7 +199,9 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
       <span class="autotog-sw"><span class="autotog-knob"></span></span>
     </button>`;
   };
-  const tb = [];
+  const tb = []; // info buttons (left)
+  const tbLeft = []; // destructive actions (stop / cancel / park)
+  const tbRight = []; // positive CTAs (start / approve / fix / merge / …)
   // A toolbar icon that swaps to a spinner + disables while its action is in flight.
   const bz = (a) => act.isBusy(a, repo, number);
   const tico = (a, name) => bz(a) ? html`<${Spinner} size=${18}/>` : html`<${Icon} name=${name}/>`;
@@ -237,33 +239,32 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
     // Cancel → reset to Planned even when there's a PR / work in flight (the branch/PR stays on GitHub).
     const bCancel = () => html`<button class=${"tbtn warn" + (bz("cancel") ? " busy" : "")} disabled=${bz("cancel")} data-tip="Reset to Planned — discards the agency state but keeps the branch/PR on GitHub" onClick=${() => act.cancel(repo, number).then(onClose)}>${tico("cancel", "planned")}${lbl(bz("cancel") ? "Cancelling…" : "Cancel")}</button>`;
 
+    // CTA rule: positive actions go right (with the model select); stop/cancel/park go left.
     if (running) {
-      tb.push(bStop()); // the only meaningful action while it's executing
+      tbLeft.push(bStop()); // the only meaningful action while it's executing
     } else if (hasPr) {
-      // A PR exists → merge it (or unblock it). Never Create PR / Close here.
-      if (conflict) tb.push(bFix());
-      else if (needsFix) { tb.push(bFix()); tb.push(bMerge(true)); }
-      else tb.push(bMerge(false));
-      tb.push(bResume());
-      tb.push(bCancel());
+      if (conflict) tbRight.push(bFix());
+      else if (needsFix) { tbRight.push(bFix()); tbRight.push(bMerge(true)); }
+      else tbRight.push(bMerge(false));
+      tbRight.push(bResume());
+      tbLeft.push(bCancel());
     } else if (parked) {
-      tb.push(bStart());
+      tbRight.push(bStart());
     } else if (awaiting) {
-      tb.push(bApprove());
-      tb.push(bToPlanned());
+      tbRight.push(bApprove());
+      tbLeft.push(bToPlanned());
     } else if (issue.epic) {
-      tb.push(bClose(true)); // master issue → complete/close (merges remaining sub-PRs)
-      tb.push(bResume());
-      tb.push(bCancel());
+      tbRight.push(bClose(true));
+      tbRight.push(bResume());
+      tbLeft.push(bCancel());
     } else if (approved) {
-      tb.push(bCreatePr());
-      tb.push(bResume());
-      tb.push(bCancel());
+      tbRight.push(bCreatePr());
+      tbRight.push(bResume());
+      tbLeft.push(bCancel());
     } else {
-      // ready / needs-attention / answered, no PR → re-engage, or close, or park
-      tb.push(bResume());
-      tb.push(bClose(false));
-      tb.push(bCancel());
+      tbRight.push(bResume());
+      tbRight.push(bClose(false));
+      tbLeft.push(bCancel());
     }
   }
   // Less-frequent controls live behind a "More" menu so the bar stays tidy.
@@ -333,8 +334,10 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
     </div>
     <div class="dtoolbar">
       ${tb}
+      ${tbLeft}
       <span style="flex:1"></span>
       ${modelOpts.length ? html`<${Select} value=${modelOverride} options=${modelSelOpts} onChange=${updateModelOverride} menuAlign="right"/>` : null}
+      ${tbRight}
       ${moreItems.length ? html`<span class="dropwrap">
         <button class="tbtn" data-tip="More" onClick=${() => setMoreOpen((o) => !o)}><${Icon} name="dots"/></button>
         ${moreOpen ? html`<div class="dropscrim" onClick=${() => setMoreOpen(false)}></div><div class="dropmenu toolmore">${moreItems.map((it, i) => html`<div key=${i} class="toolmore-row">${it}</div>`)}</div>` : null}
