@@ -5,7 +5,7 @@ import { OB_PROVIDERS } from "./onboarding.js";
 
 
 // ---------- Settings ----------
-export function Settings({ data, onClose, reload, openGithubTokens, openModels }) {
+export function Settings({ data, onClose, reload, openGithubTokens, openModels, openAgents }) {
   const cfg = data.config || {};
   const admin = Boolean(data.user && data.user.role === "admin");
   const [skipArch, setSkipArch] = useState(cfg.skipArchitect !== "off");
@@ -21,19 +21,19 @@ export function Settings({ data, onClose, reload, openGithubTokens, openModels }
 
     ${data.user ? html`
       <div class="setgrp">
-        <div class="sec">Account</div>
-        <div class="muted" style="margin-bottom:8px">Signed in as <b>${data.user.username}</b> · ${data.user.role}</div>
+        <div class="sec">Connections</div>
         <div style="display:flex;gap:8px">
-          <button class="btn ghost" style="flex:1;justify-content:center" onClick=${changePw}><${Icon} name="lock" size=${15}/> Change password</button>
-          <a class="btn ghost" href="/logout" style="flex:1;justify-content:center"><${Icon} name="arrowleft" size=${15}/> Sign out</a>
+          <button class="btn" style="flex:1;justify-content:center" onClick=${openGithubTokens}><${Icon} name="link" size=${15}/> GitHub</button>
+          <button class="btn" style="flex:1;justify-content:center" onClick=${openModels}><${Icon} name="flask" size=${15}/> Models & API keys</button>
         </div>
       </div>
 
       <div class="setgrp">
-        <div class="sec">Connections</div>
+        <div class="sec">Agents & workflows</div>
+        <div class="muted" style="font-size:12px;margin-bottom:8px"><b>Agents</b> are the roles (planner, developer, reviewer…). <b>Workflows</b> arrange agents into a pipeline with their own instructions.</div>
         <div style="display:flex;gap:8px">
-          <button class="btn" style="flex:1;justify-content:center" onClick=${openGithubTokens}><${Icon} name="link" size=${15}/> GitHub tokens</button>
-          <button class="btn" style="flex:1;justify-content:center" onClick=${openModels}><${Icon} name="flask" size=${15}/> Models & API keys</button>
+          <button class="btn" style="flex:1;justify-content:center" onClick=${openAgents}><${Icon} name="users" size=${15}/> Edit agents</button>
+          <button class="btn tip" data-tip="Drag-and-drop workflow builder — coming soon" style="flex:1;justify-content:center" onClick=${() => window.open("https://github.com/ArneNostitz/dev-agency/issues/83", "_blank", "noopener")}><${Icon} name="layers" size=${15}/> Workflows</button>
         </div>
       </div>
     ` : null}
@@ -44,7 +44,8 @@ export function Settings({ data, onClose, reload, openGithubTokens, openModels }
     </div>
 
     <div class="setgrp">
-      <div class="sec">Pipeline</div>
+      <div class="sec">Agent pipeline</div>
+      <div class="muted" style="font-size:12px;margin-bottom:6px">How the agent team runs each issue.</div>
       <label class="ckline"><input type="checkbox" checked=${skipArch} onChange=${(e) => setSkipArch(e.target.checked)}/> Skip the architect step (faster, fewer tokens)</label>
       <label class="ckline"><input type="checkbox" checked=${gitnexus} onChange=${(e) => setGitnexus(e.target.checked)}/> Use the GitNexus code index</label>
       <label>Max tokens per run (0 = off)</label><input type="number" min="0" step="50000" value=${maxTok} onInput=${(e) => setMaxTok(e.target.value)}/>
@@ -58,9 +59,18 @@ export function Settings({ data, onClose, reload, openGithubTokens, openModels }
       <div class="setgrp">
         <div class="sec">Setup</div>
         <div class="muted" style="font-size:12px;margin-bottom:7px">Re-run the guided walkthrough to add or update tokens, models, and repos.</div>
-        <button class="btn primary" style="width:100%" onClick=${() => api("/onboarded", { value: "0" }).then(() => { onClose(); reload(); })}><${Icon} name="play" size=${15}/> Run the setup wizard</button>
+        <button class="btn" style="width:100%;justify-content:center" onClick=${() => api("/onboarded", { value: "0" }).then(() => { onClose(); reload(); })}><${Icon} name="play" size=${15}/> Run the setup wizard</button>
       </div>
       ${admin ? html`<div class="setgrp"><${Admin} users=${data.users || []} invites=${data.invites || []} webhookSecretSet=${data.webhookSecretSet} reload=${reload}/></div>` : null}
+
+      <div class="setgrp">
+        <div class="sec">Account</div>
+        <div class="muted" style="margin-bottom:8px">Signed in as <b>${data.user.username}</b> · ${data.user.role}</div>
+        <div style="display:flex;gap:8px">
+          <button class="btn ghost" style="flex:1;justify-content:center" onClick=${changePw}><${Icon} name="lock" size=${15}/> Change password</button>
+          <a class="btn ghost" href="/logout" style="flex:1;justify-content:center"><${Icon} name="arrowleft" size=${15}/> Sign out</a>
+        </div>
+      </div>
     ` : null}
   <//>`;
 }
@@ -121,7 +131,8 @@ function Operations({ meta, values, reload }) {
   function save() { api("/settings", { ops: vals }).then(() => { toast("Operations saved"); reload(); }).catch(() => toast("Couldn’t save")); }
   const visibleMeta = meta.filter(m => m.key === "self_improve");
   if (!visibleMeta.length) return null;
-  return html`<div class="sec">Operations</div>
+  return html`<div class="sec">Automation</div>
+    <div class="muted" style="font-size:12px;margin-bottom:8px">Let the agency open PRs that improve its own codebase.</div>
     ${visibleMeta.map((m) => html`<div key=${m.key}>
       ${m.type === "bool"
         ? html`<label class="ckline"><input type="checkbox" checked=${!!vals[m.key]} onChange=${(e) => set(m.key, e.target.checked)}/> ${m.label}</label>`

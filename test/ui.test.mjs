@@ -160,11 +160,11 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
   click(q('[aria-label="Settings"]'));
   await tick(40);
   assert.match(root.innerHTML, /Settings/, "settings opens");
-  assert.match(root.innerHTML, /Pipeline/, "settings shows pipeline knobs");
+  assert.match(root.innerHTML, /Agent pipeline/, "settings shows the agent pipeline knobs");
   assert.match(root.innerHTML, /Connections/, "connections section renders for a signed-in user");
   assert.match(root.innerHTML, /Show agent avatars/, "appearance section has the avatars toggle");
   assert.match(root.innerHTML, /Team \(admin\)/, "admin team section renders");
-  assert.match(root.innerHTML, /Operations/, "operations panel renders");
+  assert.match(root.innerHTML, /Automation/, "automation panel renders");
   assert.match(root.innerHTML, /Agent runner/, "runner picker renders in settings");
   assert.match(root.innerHTML, /arne/, "signed-in user shown");
   // Models & runners modal (redesigned picker): list of added models + per-row runner + Add.
