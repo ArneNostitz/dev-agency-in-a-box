@@ -437,7 +437,17 @@ export function Select({ value, options, onChange, trigger, btnClass, menuAlign,
     left = Math.max(8, Math.min(left, vw - w - 8));
     const below = vh - r.bottom;
     const up = below < 260 && r.top > below; // flip up near the bottom edge
-    setPos({ left, width: w, up, top: up ? null : Math.round(r.bottom + 5), bottom: up ? Math.round(vh - r.top + 5) : null });
+    // position:fixed anchors to the nearest TRANSFORMED ancestor (sheets/modals/detail use a
+    // transform), not the viewport — so offset our viewport coords by that ancestor's box.
+    let cb = null, node = el.parentElement;
+    while (node && node !== document.body) {
+      const cs = getComputedStyle(node);
+      if (cs.transform !== "none" || cs.perspective !== "none" || cs.filter !== "none") { cb = node.getBoundingClientRect(); break; }
+      node = node.parentElement;
+    }
+    const ox = cb ? cb.left : 0, cbBottom = cb ? cb.bottom : vh;
+    const oy = cb ? cb.top : 0;
+    setPos({ left: Math.round(left - ox), width: w, up, top: up ? null : Math.round(r.bottom + 5 - oy), bottom: up ? Math.round(cbBottom - r.top + 5) : null });
   }
   function toggle(e) { e.stopPropagation(); if (disabled) return; if (!open) place(); setOpen((o) => !o); }
   function pick(e, v) { e.stopPropagation(); setOpen(false); onChange(v); }
@@ -469,5 +479,23 @@ export function Select({ value, options, onChange, trigger, btnClass, menuAlign,
     ${open && pos ? html`<div ref=${menuRef} class="sel-menu" style=${"left:" + pos.left + "px;min-width:" + pos.width + "px;" + (pos.up ? "bottom:" + pos.bottom + "px" : "top:" + pos.top + "px")}>
         ${(options || []).map((o) => html`<button key=${o.value} class=${"sel-item" + (o.value === value ? " on" : "")} onClick=${(e) => pick(e, o.value)}>${itemInner(o)}</button>`)}
       </div>` : null}
+  </div>`;
+}
+
+// ---------- atomic Modal/Dialog ----------
+// Centered dialog with a unified header (title, no ✕), scrollable body, and a footer for CTA
+// buttons. Esc and backdrop-click close it. `footer` is the CTA row (e.g. Close + Save).
+export function Modal({ title, onClose, footer, children, size }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); onClose && onClose(); } };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, []);
+  return html`<div class="modal-scrim" onClick=${() => onClose && onClose()}>
+    <div class=${"modal " + (size === "lg" ? "modal-lg" : size === "sm" ? "modal-sm" : "")} onClick=${(e) => e.stopPropagation()}>
+      <div class="modal-h">${title}</div>
+      <div class="modal-b">${children}</div>
+      ${footer ? html`<div class="modal-f">${footer}</div>` : null}
+    </div>
   </div>`;
 }
