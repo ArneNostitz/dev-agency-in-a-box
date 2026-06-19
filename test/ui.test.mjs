@@ -152,7 +152,8 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
   await tick(40);
   assert.match(root.innerHTML, /Add to Planned/, "composer opens with two-button submit");
   assert.match(root.innerHTML, /Start now/, "composer has Start now");
-  click(q(".sheet .sh .iconbtn")); // close
+  assert.ok(window.document.querySelector(".modal"), "composer uses the atomic Modal");
+  click(q(".modal-scrim")); // close via backdrop
   await tick(40);
 
   // Settings (uses hooks).

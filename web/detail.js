@@ -1,6 +1,6 @@
 // Dev Agency dashboard — detail module (split from app.js; Preact + htm, no build step).
 import { html, useState, useEffect, useRef } from "/web/vendor/standalone.mjs";
-import { Avatar, Icon, ProviderLogo, Select, Sheet, Spinner, ago, api, fmtTok, getJSON, getSetupProgress, ghUrl, isDone, md, MarkdownArea, readAttach, roleFromComment, shortModel, toast, usageTitle } from "./core.js";
+import { Avatar, Icon, Modal, ProviderLogo, Select, Sheet, Spinner, ago, api, fmtTok, getJSON, getSetupProgress, ghUrl, isDone, md, MarkdownArea, readAttach, roleFromComment, shortModel, toast, usageTitle } from "./core.js";
 
 
 // ---------- Detail ----------
@@ -464,8 +464,12 @@ export function Composer({ repos, repo, setRepo, onClose, onCreate, data }) {
       }
     }
   }
-  return html`<${Sheet} title="New issue" onClose=${onClose}>
-    <div style="display:flex;gap:8px;margin-bottom:10px">
+  const footer = html`
+    <label class="composer-icon tip" data-tip="Attach a file" style="margin-right:auto"><${Icon} name="paperclip" size=${18}/><input type="file" multiple style="display:none" onChange=${pick}/></label>
+    <button class="btn" onClick=${() => submit(false)}>Add to Planned</button>
+    <button class="btn primary" onClick=${() => submit(true)}><${Icon} name="play" size=${15}/> Start now</button>`;
+  return html`<${Modal} title="New issue" onClose=${onClose} footer=${footer}>
+    <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
       <${Select} value=${repo || ""} options=${repos.map((r) => ({ value: r, label: r.split("/").pop() }))} onChange=${setRepo}/>
       <${Select} value=${role} options=${[{ value: "@dev", label: "@dev" }, { value: "@plan", label: "@plan" }, { value: "@arch", label: "@arch" }, { value: "@review", label: "@review" }, { value: "@test", label: "@test" }]} onChange=${setRole}/>
       ${modelOpts.length ? html`<${Select} value=${model} options=${[{ value: "", label: "Default model", icon: "flask" }].concat(modelOpts.map((o) => ({ value: o.providerId + "/" + o.model, label: o.short, logo: o.provider })))} onChange=${setModel}/>` : null}
@@ -474,12 +478,6 @@ export function Composer({ repos, repo, setRepo, onClose, onCreate, data }) {
     <div class="composer">
       ${atts.length ? html`<div class="composer-atts">${atts.map((a, idx) => html`<span class="att" key=${idx}>${a.img ? html`<img src=${a.d}/>` : html`<span><${Icon} name="paperclip" size=${12}/> ${a.name}</span>`}<button class="iconbtn" style="width:18px;height:18px;border:none" onClick=${() => setAtts((x) => x.filter((_, j) => j !== idx))}>×</button></span>`)}</div>` : null}
       <${MarkdownArea} value=${body} taRef=${taRef} placeholder="Details, context, acceptance criteria…  (Cmd+Enter starts, paste image to embed)" onInput=${(v) => setBody(v)} onPaste=${onPaste} onKeyDown=${(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); submit(true); } }}/>
-      <div class="composer-row">
-        <label class="composer-icon" title="Attach a file"><${Icon} name="paperclip" size=${18}/><input type="file" multiple style="display:none" onChange=${pick}/></label>
-        <span class="spacer"></span>
-        <button class="btn ghost" onClick=${() => submit(false)}>Add to Planned</button>
-        <button class="btn primary" onClick=${() => submit(true)}><${Icon} name="play" size=${15}/> Start now</button>
-      </div>
     </div>
   <//>`;
 }
