@@ -18,6 +18,8 @@ import { fileURLToPath } from "node:url";
 import type { Config } from "./config.js";
 import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordIssueStatus, recordPr, tokensSince, tokensByModelSince, tokensByRoleSince, tokensByDaySince, topIssuesByTokensSince, tokensByIssueAll, toolStatsSince, runStepCountSince, recentLessons, recordConflict, getConflict, clearConflict, listConflicts, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getGlobalModel, setGlobalModel, getFallbackChain, setFallbackChain, getAutoSwitchOnLimit, setIssueModelOverride, getIssueModelOverride, clearIssueModelOverride, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, getIssueRow, getModelsPresets, listAgentDefs, upsertAgentDef, deleteAgentDef, listSkills, upsertSkill, deleteSkill, listHooks, upsertHook, deleteHook, type AutoKind, type Provider, type AgentDef, type Skill, type Hook } from "./store.js";
 import { mergeEpic, isEpic } from "./epics.js";
+import { binaryAvailable } from "./runners/registry.js";
+import { installSpec, installCli, RUNNER_PACKAGES } from "./runners/install.js";
 import { parseLegacyStatus, withStatus, setBlocked } from "./state.js";
 import { getIssueBudget, setIssueBudget } from "./budget.js";
 import { renderShell } from "./shell.js";
@@ -526,6 +528,18 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         return;
       }
 
+      // Which CLI runners are installed (binary on PATH) — drives the Settings runner picker so the
+      // user sees ✓ / "Install" instead of discovering a missing binary mid-run.
+      if (url === "/runner-status") {
+        const cli = Object.entries(RUNNER_PACKAGES).map(([kind, r]) => ({
+          kind, label: r.label, binary: r.binary, pkg: r.pkg, available: binaryAvailable(r.binary),
+        }));
+        res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
+          runners: [{ kind: "claude-sdk", label: "Claude Agent SDK (built-in)", binary: null, available: true }, ...cli],
+        }));
+        return;
+      }
+
       // Repo picker: all repos your token can access, minus the ones already watched.
       if (url === "/repos-available") {
         const token = ghUserToken() || ghBotToken() || cfg.adminToken || cfg.githubToken || "";
@@ -832,7 +846,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
     }
 
     // Dashboard actions (auth required), not GitHub webhooks.
-    if (["/archive", "/comment", "/comment-edit", "/run-checks", "/merge", "/close", "/close-not-planned", "/create-pr", "/delete", "/resume", "/stop", "/fix", "/auto", "/start", "/new-issue", "/approve", "/audit", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude", "/model-override", "/issue-budget", "/agent-def-save", "/agent-def-delete", "/skill-save", "/skill-delete", "/hook-save", "/hook-delete", "/analyzer-run", "/refresh", "/refresh-issue", "/cancel"].includes(path)) {
+    if (["/archive", "/comment", "/comment-edit", "/run-checks", "/merge", "/close", "/close-not-planned", "/create-pr", "/delete", "/resume", "/stop", "/fix", "/auto", "/start", "/new-issue", "/approve", "/audit", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude", "/model-override", "/issue-budget", "/agent-def-save", "/agent-def-delete", "/skill-save", "/skill-delete", "/hook-save", "/hook-delete", "/analyzer-run", "/refresh", "/refresh-issue", "/cancel", "/install-cli"].includes(path)) {
       const actor = userFromReq(req);
       if (!actor) return void res.writeHead(401, { "content-type": "application/json" }).end('{"error":"auth required"}');
       void readBody(req).then(async (body) => {
@@ -1246,6 +1260,14 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           if (Array.isArray(p.fallbackChain)) setFallbackChain(p.fallbackChain);
           if (typeof p.autoSwitchOnLimit === "boolean") setSetting("auto_switch_on_limit", p.autoSwitchOnLimit ? "on" : "off");
           return ok();
+        }
+        if (path === "/install-cli") {
+          if (!actor || actor.role !== "admin") return void res.writeHead(403, { "content-type": "application/json" }).end('{"error":"admin only"}');
+          const spec = installSpec(String(p.kind ?? ""), p.value);
+          if (!spec) return void res.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({ error: "Unknown runner, or invalid package name." }));
+          const r = await installCli(spec.pkg);
+          const available = spec.binary ? binaryAvailable(spec.binary) : r.ok;
+          return void res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ ok: r.ok, available, pkg: spec.pkg, log: r.log }));
         }
         if (path === "/agent-def-save") {
           // Create/edit a custom agent (v3 agent editor).

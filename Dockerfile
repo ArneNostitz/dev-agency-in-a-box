@@ -49,6 +49,12 @@ RUN corepack enable || true
 RUN GITNEXUS_SKIP_OPTIONAL_GRAMMARS=1 npm install -g gitnexus@latest \
     || echo "gitnexus not installed (optional) — set GITNEXUS=true only if this succeeds"
 
+# pi (https://github.com/earendil-works/pi) — the coding-agent CLI used by the `pi-cli` runner so
+# the agency can drive ANY model/provider pi supports (Claude, GLM, DeepSeek, Codex, …). Baked into
+# the image at the default prefix; runtime on-the-fly installs go to the data-volume prefix below.
+RUN npm install -g --prefix /usr/local --ignore-scripts @earendil-works/pi-coding-agent \
+    || echo "pi not installed (optional) — the pi-cli runner falls back to the built-in SDK runner"
+
 # Pre-install LadybugDB's FTS (full-text search) extension at BUILD time. GitNexus runs LadybugDB
 # "load-only" during analyze — it won't download the extension itself — so at runtime full-text
 # search is silently disabled with "FTS extension unavailable". The maintainer confirms a one-time
@@ -95,6 +101,11 @@ ENV RUN_MODE=watch \
     HOME=/home/node \
     NODE_ENV=production
 
+# Runtime-installed CLIs (dashboard "install runner") persist on the data volume and take PATH
+# precedence over the baked-in copies.
+ENV NPM_CONFIG_PREFIX=/app/data/npm-global \
+    PATH=/app/data/npm-global/bin:$PATH
+
 # Run as a NON-root user: Claude Code refuses --dangerously-skip-permissions (bypassPermissions)
 # when running as root, which is exactly what the agents need. The `node` user ships with the
 # base image. Owning /app (incl. the data dir an empty named volume inherits ownership from)
@@ -110,8 +121,9 @@ ENV RUN_MODE=watch \
 # readable by default), so leaving it untouched is correct and far cheaper. The /app dir entry
 # itself is chowned (non-recursively) so the node user can create paths directly under it.
 RUN set -eux; mkdir -p /app/data /app/.work /app/data/claude
+RUN set -eux; mkdir -p /app/data/npm-global
 RUN set -eux; rm -rf /home/node/.claude; ln -sfn /app/data/claude /home/node/.claude
-RUN set -eux; chown node:node /app; chown -R node:node /app/data /app/.work
+RUN set -eux; chown node:node /app; chown -R node:node /app/data /app/.work /app/data/npm-global
 RUN set -eux; chown -h node:node /home/node/.claude
 USER node
 
