@@ -107,24 +107,31 @@ export function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, onOpe
       })}
     </div>`;
   } else {
-    // --- group by repo ---
+    // --- group by repo: one horizontal BAND per repo, each with the 4 workflow columns
+    // (cards capped at ~4 then scroll) ---
     const repoList = repos.filter((r) => !repoFilter || r === repoFilter);
     sortedAll
       .filter((i) => !nested.has(i.repo + "#" + i.number))
       .forEach((i) => { if (!repoList.includes(i.repo)) repoList.push(i.repo); });
-    boardContent = html`<div class="board group-repo">
+    const bandCols = isDesktop ? COLS : COLS.filter((c) => c.k === tab);
+    boardContent = html`<div class="board-bands">
       ${repoList.map((r) => {
-        const allItems = sortedAll.filter((i) => i.repo === r && !nested.has(i.repo + "#" + i.number));
+        const repoItems = sortedAll.filter((i) => i.repo === r && !nested.has(i.repo + "#" + i.number));
+        const byCol = {}; COLS.forEach((c) => (byCol[c.k] = []));
+        repoItems.forEach((i) => byCol[classify(i)].push(i));
         const short = r.split("/").pop();
         const rAnalyzing = (auditRepos || []).includes(r);
-        return html`<div class="col" key=${r}>
-          <div class="colhead"><${Icon} name="pr" size=${15}/> ${short} <span class="n">${allItems.length || ""}</span></div>
-          <div class="planned-actions">
+        return html`<div class="band" key=${r}>
+          <div class="band-head"><${Icon} name="pr" size=${15}/> <b>${short}</b> <span class="n">${repoItems.length || ""}</span>
+            <span style="flex:1"></span>
             <button class="colbtn primary" onClick=${() => onAddIssue(r)}><${Icon} name="plus" size=${14}/> Add Issue</button>
             <button class="colbtn" disabled=${rAnalyzing} onClick=${() => onAnalyze(r)}>${rAnalyzing ? html`<${Spinner} size=${14}/>` : html`<${Icon} name="search" size=${14}/>`} Analyze</button>
           </div>
-          <div class="cards">
-            ${allItems.length ? allItems.map(renderCard) : html`<div class="empty">—</div>`}
+          <div class="band-cols">
+            ${bandCols.map((c) => html`<div class="col" key=${c.k}>
+              <div class="colhead"><${Icon} name=${c.icon} size=${14}/> ${c.label} <span class="n">${byCol[c.k].length || ""}</span></div>
+              <div class="cards band-cards">${byCol[c.k].length ? byCol[c.k].map(renderCard) : html`<div class="empty">—</div>`}</div>
+            </div>`)}
           </div>
         </div>`;
       })}

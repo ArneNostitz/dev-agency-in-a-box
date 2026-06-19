@@ -128,6 +128,12 @@ input,select,textarea{font-size:16px}
 
 /* board */
 .board{padding:8px}
+.board-bands{max-width:1500px;margin:0 auto;padding:14px;display:flex;flex-direction:column;gap:16px}
+.band{border:1px solid var(--line);border-radius:14px;background:var(--surface-2);padding:10px 12px}
+.band-head{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink);margin:0 2px 8px}
+.band-head .n{color:var(--ink-3);font-weight:500}
+.band-cols{display:flex;flex-direction:column;gap:10px}
+.band-cards{max-height:520px;overflow-y:auto;padding-right:2px}
 .col{margin-bottom:14px}
 .colhead{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-2);padding:6px 8px}
 .planned-actions{display:flex;gap:8px;padding:2px 8px 8px}
@@ -416,6 +422,7 @@ textarea{resize:vertical;min-height:64px}
   .tabbar{display:none}
   .board{max-width:1500px;margin:0 auto;display:grid;grid-template-columns:repeat(4,1fr);gap:12px;align-items:start;padding:14px}
   .board.group-repo{grid-template-columns:repeat(auto-fill,minmax(260px,1fr))}
+  .band-cols{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
   .col{margin:0}
   .cards{max-height:calc(100dvh - 200px);overflow-y:auto;padding-right:2px}
   .detail{left:auto;right:0;width:min(1080px,92vw);box-shadow:-8px 0 30px rgba(0,0,0,.18)}
