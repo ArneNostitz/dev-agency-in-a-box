@@ -4,7 +4,7 @@
  * configured tools and model. This is the single entry point every specialist uses.
  */
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import { getRunner, defaultRunnerKind, summarizeTool } from "../runners/registry.js";
+import { getRunner, defaultRunnerKind, summarizeTool, runnerBinary, binaryAvailable } from "../runners/registry.js";
 import type { RunRequest } from "../runners/interface.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -223,8 +223,16 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
     // setting can switch to a CLI runner (pi, claude-cli, gemini, custom).
     const providerForRunner = (input.model ? null : getIssueModelOverride(repo, issueNumber) ?? getRoleModels()[role] ?? getGlobalModel()) ?? getSessionFallback();
     const providerRow = providerForRunner?.providerId ? getProviders().find((x) => x.id === providerForRunner.providerId) : null;
-    const runnerKind = (providerRow && (providerRow as { runner?: string }).runner) || defaultRunnerKind();
+    let runnerKind = (providerRow && (providerRow as { runner?: string }).runner) || defaultRunnerKind();
     const cliCommand = (providerRow && (providerRow as { cliCommand?: string }).cliCommand) || undefined;
+    // Preflight: a CLI runner needs its binary on PATH. If it's missing (e.g. `pi` isn't installed
+    // in the deploy), fall back to the built-in SDK runner — which drives ANY Anthropic-compatible
+    // provider (incl. GLM/Zhipu) directly — instead of dying with a raw "spawn <cmd> ENOENT".
+    const wantBin = runnerBinary(runnerKind, cliCommand);
+    if (wantBin && !binaryAvailable(wantBin)) {
+      pushActivity(repo, issueNumber, role, "tool", `⚠️ "${wantBin}" not found on PATH — using the built-in SDK runner instead (install ${wantBin}, or set the runner to "claude-sdk" in Settings → Pipeline).`);
+      runnerKind = "claude-sdk";
+    }
     const runner = getRunner(runnerKind, cliCommand);
     const req: RunRequest = {
       task: input.task,

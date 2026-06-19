@@ -3,6 +3,8 @@
  * (default claude-sdk), with an optional custom CLI template. Provider.runner overrides per
  * provider; the global agent_runner / agent_cli_command settings are the fallback.
  */
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { sStr } from "../settings.js";
 import type { AgentRunner, RunnerKind } from "./interface.js";
 import { ClaudeSdkRunner } from "./sdk-claude.js";
@@ -46,8 +48,6 @@ export function getRunner(kind: RunnerKind | string, customCliCommand?: string):
       return new PiCliRunner();
     case "claude-cli":
       return new CliRunner(customCliCommand || CLI_TEMPLATES["claude-cli"]);
-    case "pi-cli":
-      return new CliRunner(customCliCommand || CLI_TEMPLATES["pi-cli"]);
     case "custom-cli":
     default:
       // custom-cli falls back to the pi template if no command is configured (sensible default
@@ -60,4 +60,26 @@ export function getRunner(kind: RunnerKind | string, customCliCommand?: string):
 export function defaultRunnerKind(): RunnerKind {
   const k = sStr("agent_runner", "AGENT_RUNNER", "claude-sdk");
   return k === "claude-sdk" || k === "claude-cli" || k === "pi-cli" || k === "custom-cli" ? (k as RunnerKind) : "claude-sdk";
+}
+
+/**
+ * The executable a runner of this kind would spawn, or null for the in-process SDK runner.
+ * Lets the caller preflight that the binary exists before launching (avoids a raw ENOENT).
+ */
+export function runnerBinary(kind: RunnerKind | string, customCliCommand?: string): string | null {
+  if (kind === "claude-sdk") return null;
+  let template: string;
+  if (kind === "pi-cli") template = customCliCommand || PI_TEMPLATE;
+  else if (kind === "claude-cli") template = customCliCommand || CLI_TEMPLATES["claude-cli"];
+  else template = customCliCommand || sStr("agent_cli_command", "AGENT_CLI_COMMAND", CLI_TEMPLATES["pi-cli"]);
+  const first = template.trim().split(/\s+/)[0];
+  return first || null;
+}
+
+/** True if `cmd` is runnable: a path that exists, or a bare name found on $PATH. */
+export function binaryAvailable(cmd: string): boolean {
+  if (!cmd) return false;
+  if (cmd.includes("/")) return existsSync(cmd);
+  const dirs = (process.env.PATH || "").split(":").filter(Boolean);
+  return dirs.some((d) => existsSync(join(d, cmd)));
 }
