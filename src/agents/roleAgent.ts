@@ -17,6 +17,7 @@ import { loadBudget } from "../budget.js";
 import { gitnexusWiring, GITNEXUS_PROMPT } from "../gitnexus.js";
 import { recallWiring, RECALL_PROMPT } from "./recall.js";
 import { claudeToken, anthropicApiKey, ghBotToken } from "../creds.js";
+import { providerAuth } from "./provider-auth.js";
 import { registerRun } from "../abort.js";
 import { runHooks } from "../hooks.js";
 
@@ -42,13 +43,35 @@ function resolveRoute(role: RoleName, repo: string, issueNumber: number): { mode
   const assignment = explicit?.providerId ? explicit : getSessionFallback();
   if (!assignment?.providerId || !assignment.model) return null;
   const p = getProviders().find((x) => x.id === assignment.providerId);
-  if (!p?.baseUrl || !p.apiKey) return null;
+  const ct = claudeToken();
+  const ak = anthropicApiKey();
+  const auth = providerAuth(p, Boolean(ct || ak));
+  if (auth === "missing") return null; // preflight explains what's wrong
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) if (typeof v === "string") env[k] = v;
+  if (auth === "subscription") {
+    // Claude-native provider (e.g. "Claude (Subscription)"): honor the SELECTED model but auth via
+    // the stored Claude OAuth token (or Anthropic API key) on the default endpoint — NOT a key on
+    // the provider row (it has none). Clear any conflicting third-party env so the cred is the only
+    // one the SDK sees.
+    if (ct) {
+      env.CLAUDE_CODE_OAUTH_TOKEN = ct;
+      delete env.ANTHROPIC_API_KEY;
+      delete env.ANTHROPIC_AUTH_TOKEN;
+      delete env.ANTHROPIC_BASE_URL;
+    } else {
+      env.ANTHROPIC_API_KEY = ak;
+      delete env.CLAUDE_CODE_OAUTH_TOKEN;
+      delete env.ANTHROPIC_AUTH_TOKEN;
+      delete env.ANTHROPIC_BASE_URL;
+    }
+    return { model: assignment.model, env };
+  }
+  // Third-party Anthropic-compatible provider: its own key + endpoint.
   delete env.CLAUDE_CODE_OAUTH_TOKEN; // don't use the Claude subscription for this provider
-  env.ANTHROPIC_BASE_URL = p.baseUrl;
-  env.ANTHROPIC_AUTH_TOKEN = p.apiKey;
-  env.ANTHROPIC_API_KEY = p.apiKey;
+  env.ANTHROPIC_BASE_URL = p!.baseUrl;
+  env.ANTHROPIC_AUTH_TOKEN = p!.apiKey;
+  env.ANTHROPIC_API_KEY = p!.apiKey;
   return { model: assignment.model, env };
 }
 
@@ -144,8 +167,19 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
     const sel = getIssueModelOverride(input.repo, input.issueNumber) ?? getRoleModels()[role] ?? getGlobalModel();
     if (sel?.providerId && sel.model) {
       const p = getProviders().find((x) => x.id === sel.providerId);
-      const why = !p ? "its provider no longer exists" : !p.apiKey ? `no API key is saved for "${p.name}"` : !p.baseUrl ? `no base URL is set for "${p.name}"` : "the provider is misconfigured";
-      const msg = `Selected model "${sel.model}" can't run — ${why}. Add the provider's API key in Settings → Models (or pick a different model).`;
+      // route is null only when providerAuth() == "missing". Distinguish a Claude-native provider
+      // (needs a subscription token / Anthropic key) from a third-party one (needs key + baseUrl).
+      const claudeNative = !p || (!p.apiKey && !p.baseUrl);
+      const why = !p
+        ? "its provider no longer exists"
+        : claudeNative
+          ? `no Claude subscription token or Anthropic API key is saved — add it in Settings → Models`
+          : !p.apiKey
+            ? `no API key is saved for "${p.name}"`
+            : !p.baseUrl
+              ? `no base URL is set for "${p.name}"`
+              : "the provider is misconfigured";
+      const msg = `Selected model "${sel.model}" can't run — ${why} (or pick a different model).`;
       pushActivity(input.repo, input.issueNumber, role, "done", `❌ ${msg}`);
       throw new Error(msg);
     }
