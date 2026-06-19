@@ -95,6 +95,7 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
     if (u.includes("/thread")) return { author: "arne", createdAt: new Date().toISOString(), body: "hello", comments: [] };
     if (u.includes("/app-info")) return { kind: "none" };
     if (u.includes("/pr-status")) return { review: { verdict: "approved" }, merge: { mergeable: "clean" } };
+    if (u.includes("/models")) return { providers: [{ id: "glm-1", name: "GLM (Zhipu)", baseUrl: "https://open.bigmodel.cn/api/anthropic", apiKey: "x", models: ["glm-4.6"] }], roleModels: {}, globalModel: null, fallbackChain: [], autoSwitchOnLimit: false, roles: [] };
     if (u.includes("/runner-status")) return { runners: [{ kind: "claude-sdk", label: "Claude Agent SDK (built-in)", binary: null, available: true }, { kind: "pi-cli", label: "pi", binary: "pi", pkg: "@earendil-works/pi-coding-agent", available: false }] };
     return {};
   };
@@ -152,6 +153,17 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
   assert.match(root.innerHTML, /Operations/, "operations panel renders");
   assert.match(root.innerHTML, /Agent runner/, "runner picker renders in settings");
   assert.match(root.innerHTML, /arne/, "signed-in user shown");
+  // Models & runners modal (redesigned picker): list of added models + per-row runner + Add.
+  const modelsBtn = Array.from(window.document.querySelectorAll(".btn")).find((b) => /Models & API keys/.test(b.textContent));
+  if (modelsBtn) {
+    click(modelsBtn); await tick(60);
+    assert.match(root.innerHTML, /Your models/, "redesigned models modal renders");
+    assert.match(root.innerHTML, /GLM \(Zhipu\)/, "an added provider is listed");
+    assert.match(root.innerHTML, /Add model/, "has the Add model button");
+    const closeBtns = window.document.querySelectorAll(".sheet .sh .iconbtn");
+    click(closeBtns[closeBtns.length - 1]); await tick(40);
+  }
+
   click(q(".sheet .sh .iconbtn"));
   await tick(40);
 

@@ -179,6 +179,8 @@ input,select,textarea{font-size:16px}
 .cardbtn.play{color:var(--green);border-color:var(--green-weak);background:var(--green-weak)}
 .cardbtn.fix{color:var(--red);border-color:var(--red-weak);background:var(--red-weak)}
 .cardbtn.stop{color:var(--amber);border-color:var(--amber)}
+.modelrow{display:flex;align-items:center;gap:8px;padding:8px 2px;border-bottom:1px solid var(--line)}
+.modelrow-main{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;align-items:center;gap:6px}
 .testres{font-size:12px;margin:6px 2px 0;line-height:1.4}
 .testres.ok{color:var(--green)}
 .testres.bad{color:var(--red)}
