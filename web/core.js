@@ -423,27 +423,50 @@ export function Select({ value, options, onChange, trigger, btnClass, menuAlign,
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState(null);
   const btnRef = useRef(null);
+  const menuRef = useRef(null);
   const cur = (options || []).find((o) => o.value === value);
   function place() {
     const el = btnRef.current; if (!el) return;
     const r = el.getBoundingClientRect();
+    const vw = window.innerWidth || 1200, vh = window.innerHeight || 800;
     const w = Math.max(r.width, 168);
+    // For a narrow icon trigger, hang the menu from the trigger's left but clamp into the viewport;
+    // align right when asked or when a left-anchored menu would overflow.
     let left = menuAlign === "right" ? r.right - w : r.left;
-    left = Math.max(8, Math.min(left, (window.innerWidth || 1200) - w - 8));
-    const below = (window.innerHeight || 800) - r.bottom;
-    const up = below < 240 && r.top > below;
-    setPos({ left, width: w, up, top: up ? null : r.bottom + 4, bottom: up ? (window.innerHeight || 800) - r.top + 4 : null });
+    if (left + w > vw - 8) left = r.right - w;
+    left = Math.max(8, Math.min(left, vw - w - 8));
+    const below = vh - r.bottom;
+    const up = below < 260 && r.top > below; // flip up near the bottom edge
+    setPos({ left, width: w, up, top: up ? null : Math.round(r.bottom + 5), bottom: up ? Math.round(vh - r.top + 5) : null });
   }
   function toggle(e) { e.stopPropagation(); if (disabled) return; if (!open) place(); setOpen((o) => !o); }
   function pick(e, v) { e.stopPropagation(); setOpen(false); onChange(v); }
+  // Close on a click/tap OUTSIDE (without a blocking scrim — the underlying click still lands), and
+  // on scroll/resize (the fixed menu would otherwise detach from its trigger).
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e) => {
+      if ((menuRef.current && menuRef.current.contains(e.target)) || (btnRef.current && btnRef.current.contains(e.target))) return;
+      setOpen(false);
+    };
+    const onMove = () => setOpen(false);
+    document.addEventListener("mousedown", onDown, true);
+    document.addEventListener("touchstart", onDown, true);
+    window.addEventListener("scroll", onMove, true);
+    window.addEventListener("resize", onMove);
+    return () => {
+      document.removeEventListener("mousedown", onDown, true);
+      document.removeEventListener("touchstart", onDown, true);
+      window.removeEventListener("scroll", onMove, true);
+      window.removeEventListener("resize", onMove);
+    };
+  }, [open]);
   const itemInner = (o) => html`${o.logo ? html`<${ProviderLogo} name=${o.logo} size=${15}/>` : o.icon ? html`<${Icon} name=${o.icon} size=${14}/>` : null}<span class="sel-itxt">${o.label}</span>${o.hint ? html`<span class="sel-hint">${o.hint}</span>` : null}`;
   return html`<div class="sel">
     <button ref=${btnRef} class=${"sel-btn " + (btnClass || "")} disabled=${disabled} onClick=${toggle}>
       ${trigger ? trigger(cur) : html`<span class="sel-cur">${cur ? cur.label : (placeholder || "Select…")}</span><${Icon} name="chevdown" size=${13} cls="sel-caret"/>`}
     </button>
-    ${open && pos ? html`
-      <div class="sel-scrim" onClick=${(e) => { e.stopPropagation(); setOpen(false); }}></div>
-      <div class="sel-menu" style=${"left:" + pos.left + "px;min-width:" + pos.width + "px;" + (pos.up ? "bottom:" + pos.bottom + "px" : "top:" + pos.top + "px")}>
+    ${open && pos ? html`<div ref=${menuRef} class="sel-menu" style=${"left:" + pos.left + "px;min-width:" + pos.width + "px;" + (pos.up ? "bottom:" + pos.bottom + "px" : "top:" + pos.top + "px")}>
         ${(options || []).map((o) => html`<button key=${o.value} class=${"sel-item" + (o.value === value ? " on" : "")} onClick=${(e) => pick(e, o.value)}>${itemInner(o)}</button>`)}
       </div>` : null}
   </div>`;
