@@ -231,7 +231,7 @@ function App() {
       ${open && html`<${Detail} key=${openKey} issue=${open} activity=${activity} act=${act} isDesktop=${isDesktop} startError=${detailError} onClose=${() => { setOpenKey(null); setDetailError(null); }} onOpenIssue=${openIssue} data=${data} isOnline=${isOnline} onQueueComment=${oqPush}/>`}
       ${sheet === "composer" && html`<${Composer} repos=${repos} repo=${composerRepo} setRepo=${setComposerRepo} onClose=${() => setSheet(null)} onCreate=${createIssue} data=${data}/>`}
       ${sheet === "settings" && html`<${Settings} data=${data} onClose=${() => setSheet(null)} reload=${load} openGithubTokens=${() => setSheet("github")} openModels=${() => setSheet("models")}/>`}
-      ${sheet === "github" && html`<${GithubTokensModal} secretKeys=${data.secretKeys || []} onClose=${() => setSheet("settings")} reload=${load}/>`}
+      ${sheet === "github" && html`<${GithubTokensModal} secretKeys=${data.secretKeys || []} github=${data.github} onClose=${() => setSheet("settings")} reload=${load}/>`}
       ${sheet === "models" && html`<${ModelsModal} onClose=${() => setSheet("settings")} reload=${load}/>`}
       ${sheet === "addrepo" && html`<${AddRepo} repos=${repos} onClose=${() => setSheet(null)} reload=${load}/>`}
       ${sheet === "usage" && html`<${Usage} onClose=${() => setSheet(null)} onOpenIssue=${openIssue}/>`}

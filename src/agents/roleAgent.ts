@@ -16,7 +16,8 @@ import { recentLessons, recordTokens, recordRunStep, getProviders, getRoleModels
 import { loadBudget } from "../budget.js";
 import { gitnexusWiring, GITNEXUS_PROMPT } from "../gitnexus.js";
 import { recallWiring, RECALL_PROMPT } from "./recall.js";
-import { claudeToken, anthropicApiKey, ghBotToken } from "../creds.js";
+import { claudeToken, anthropicApiKey, ghBotToken, githubIdentity } from "../creds.js";
+import { noreplyEmail } from "../github-oauth.js";
 import { providerAuth } from "./provider-auth.js";
 import { registerRun } from "../abort.js";
 import { runHooks } from "../hooks.js";
@@ -215,6 +216,16 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
     if (bot) {
       runEnv.GH_TOKEN = bot;
       runEnv.GITHUB_TOKEN = bot;
+      // Attribute the agent's commits to the connected GitHub account (overrides the image's default
+      // git identity) so commits/PRs link to it — no separate bot identity needed.
+      const ident = githubIdentity();
+      if (ident) {
+        const email = noreplyEmail(ident.id, ident.login);
+        runEnv.GIT_AUTHOR_NAME = ident.name;
+        runEnv.GIT_AUTHOR_EMAIL = email;
+        runEnv.GIT_COMMITTER_NAME = ident.name;
+        runEnv.GIT_COMMITTER_EMAIL = email;
+      }
     }
   }
   const budget = loadBudget();

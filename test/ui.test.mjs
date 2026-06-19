@@ -79,6 +79,7 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
     ],
     ops: { trigger_mode: "mention", concurrency: 3, self_improve: true },
     repos: ["acme/app"], auto: { resume: "", merge: "" }, autoRepos: { "acme/app": {} },
+    github: { connected: false, user: null, clientIdSet: false },
     active: [], inflight: [], rateLimited: [], runs: [], activity: [], spendToday: { costUsd: 0 },
     session: { tokens: 0, budget: 0 }, config: {},
     issues: [
@@ -162,6 +163,16 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
     assert.match(root.innerHTML, /Add model/, "has the Add model button");
     const closeBtns = window.document.querySelectorAll(".sheet .sh .iconbtn");
     click(closeBtns[closeBtns.length - 1]); await tick(40);
+  }
+
+  // GitHub tokens modal → the one-click device-flow connect (replaces bot+owner PATs).
+  const ghBtn = Array.from(window.document.querySelectorAll(".btn")).find((b) => /GitHub tokens/.test(b.textContent));
+  if (ghBtn) {
+    click(ghBtn); await tick(60);
+    assert.match(root.innerHTML, /Connect GitHub/, "device-flow connect button renders");
+    assert.match(root.innerHTML, /OAuth App client ID/, "prompts for client ID when unset");
+    const cb = window.document.querySelectorAll(".sheet .sh .iconbtn");
+    click(cb[cb.length - 1]); await tick(40);
   }
 
   click(q(".sheet .sh .iconbtn"));

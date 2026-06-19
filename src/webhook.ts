@@ -19,6 +19,8 @@ import type { Config } from "./config.js";
 import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordIssueStatus, recordPr, tokensSince, tokensByModelSince, tokensByRoleSince, tokensByDaySince, topIssuesByTokensSince, tokensByIssueAll, toolStatsSince, runStepCountSince, recentLessons, recordConflict, getConflict, clearConflict, listConflicts, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getGlobalModel, setGlobalModel, getFallbackChain, setFallbackChain, getAutoSwitchOnLimit, setIssueModelOverride, getIssueModelOverride, clearIssueModelOverride, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, getIssueRow, getModelsPresets, listAgentDefs, upsertAgentDef, deleteAgentDef, listSkills, upsertSkill, deleteSkill, listHooks, upsertHook, deleteHook, type AutoKind, type Provider, type AgentDef, type Skill, type Hook } from "./store.js";
 import { mergeEpic, isEpic } from "./epics.js";
 import { versionInfo } from "./version.js";
+import { startDeviceFlow, pollDeviceToken, fetchGitHubUser } from "./github-oauth.js";
+import { githubOAuthClientId, githubOAuthToken, githubIdentity } from "./creds.js";
 import { binaryAvailable } from "./runners/registry.js";
 import { installSpec, installCli, RUNNER_PACKAGES } from "./runners/install.js";
 import { parseLegacyStatus, withStatus, setBlocked } from "./state.js";
@@ -152,6 +154,8 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
   const safetyPollMs = Math.max(30, cfg.pollIntervalSeconds) * 1000;
 
   // Serialize processing: a single chain, with a "pending" flag to coalesce bursts.
+  // In-flight GitHub device-flow login (single admin at a time).
+  let ghDevice: { deviceCode: string; adminId: number; at: number } | null = null;
   let running = false;
   let pending = false;
   async function trigger(reason: string): Promise<void> {
@@ -426,6 +430,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               users: sessionUser && sessionUser.role === "admin" ? listUsers() : [],
               invites: sessionUser && sessionUser.role === "admin" ? listInvites() : [],
               webhookSecretSet: sessionUser && sessionUser.role === "admin" ? Boolean(getSecretSetting("github_webhook_secret") || process.env.GITHUB_WEBHOOK_SECRET) : false,
+              github: { connected: Boolean(githubOAuthToken()), user: githubIdentity(), clientIdSet: Boolean(githubOAuthClientId()) },
               repos: effectiveRepos(cfg),
               scanning: running, // a GitHub scan/refresh is in progress (drives the reload spinner)
               auto: { resume: getAutoRaw("resume"), merge: getAutoRaw("merge") },
@@ -854,7 +859,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
     }
 
     // Dashboard actions (auth required), not GitHub webhooks.
-    if (["/archive", "/comment", "/comment-edit", "/run-checks", "/merge", "/close", "/close-not-planned", "/create-pr", "/delete", "/resume", "/stop", "/fix", "/auto", "/start", "/new-issue", "/approve", "/audit", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude", "/model-override", "/issue-budget", "/agent-def-save", "/agent-def-delete", "/skill-save", "/skill-delete", "/hook-save", "/hook-delete", "/analyzer-run", "/refresh", "/refresh-issue", "/cancel", "/install-cli"].includes(path)) {
+    if (["/archive", "/comment", "/comment-edit", "/run-checks", "/merge", "/close", "/close-not-planned", "/create-pr", "/delete", "/resume", "/stop", "/fix", "/auto", "/start", "/new-issue", "/approve", "/audit", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude", "/model-override", "/issue-budget", "/agent-def-save", "/agent-def-delete", "/skill-save", "/skill-delete", "/hook-save", "/hook-delete", "/analyzer-run", "/refresh", "/refresh-issue", "/cancel", "/install-cli", "/gh-connect", "/gh-connect-poll", "/gh-disconnect"].includes(path)) {
       const actor = userFromReq(req);
       if (!actor) return void res.writeHead(401, { "content-type": "application/json" }).end('{"error":"auth required"}');
       void readBody(req).then(async (body) => {
@@ -1276,6 +1281,44 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           const r = await installCli(spec.pkg);
           const available = spec.binary ? binaryAvailable(spec.binary) : r.ok;
           return void res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ ok: r.ok, available, pkg: spec.pkg, log: r.log }));
+        }
+        if (path === "/gh-connect") {
+          if (!actor || actor.role !== "admin") return void res.writeHead(403, { "content-type": "application/json" }).end('{"error":"admin only"}');
+          if (typeof p.value === "string" && p.value.trim()) setSetting("github_oauth_client_id", p.value.trim());
+          const clientId = githubOAuthClientId();
+          if (!clientId) return void res.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({ error: "Set the OAuth App client ID first." }));
+          try {
+            const d = await startDeviceFlow(clientId);
+            ghDevice = { deviceCode: d.device_code, adminId: actor.id, at: Date.now() };
+            return void res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ user_code: d.user_code, verification_uri: d.verification_uri, interval: d.interval, expires_in: d.expires_in }));
+          } catch (e) {
+            return void res.writeHead(502, { "content-type": "application/json" }).end(JSON.stringify({ error: (e as Error).message }));
+          }
+        }
+        if (path === "/gh-connect-poll") {
+          if (!actor || actor.role !== "admin") return void res.writeHead(403, { "content-type": "application/json" }).end('{"error":"admin only"}');
+          if (!ghDevice) return void res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ error: "No pending login." }));
+          const r = await pollDeviceToken(githubOAuthClientId(), ghDevice.deviceCode);
+          if (r.status === "ok") {
+            setUserSecret(ghDevice.adminId, "github_oauth_token", r.token);
+            try {
+              const u = await fetchGitHubUser(r.token);
+              setSetting("github_user_login", u.login);
+              setSetting("github_user_name", u.name);
+              setSetting("github_user_id", String(u.id));
+            } catch { /* token saved; identity best-effort */ }
+            ghDevice = null;
+            return void res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ ok: true, user: githubIdentity() }));
+          }
+          if (r.status === "error") { ghDevice = null; return void res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ error: r.error })); }
+          return void res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ pending: true, ...(r.status === "slow_down" ? { interval: r.interval } : {}) }));
+        }
+        if (path === "/gh-disconnect") {
+          if (!actor || actor.role !== "admin") return void res.writeHead(403, { "content-type": "application/json" }).end('{"error":"admin only"}');
+          setUserSecret(actor.id, "github_oauth_token", "");
+          setSetting("github_user_login", ""); setSetting("github_user_name", ""); setSetting("github_user_id", "");
+          ghDevice = null;
+          return void ok();
         }
         if (path === "/agent-def-save") {
           // Create/edit a custom agent (v3 agent editor).

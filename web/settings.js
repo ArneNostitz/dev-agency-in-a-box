@@ -1,5 +1,5 @@
 // Dev Agency dashboard — settings module (split from app.js; Preact + htm, no build step).
-import { html, useState, useEffect } from "/web/vendor/standalone.mjs";
+import { html, useState, useEffect, useRef } from "/web/vendor/standalone.mjs";
 import { Icon, Sheet, Spinner, api, getJSON, md, toast } from "./core.js";
 import { OB_PROVIDERS } from "./onboarding.js";
 
@@ -147,16 +147,74 @@ function Operations({ meta, values, reload }) {
 }
 
 // ---------- per-user credentials (write-only, encrypted server-side) ----------
-export function GithubTokensModal({ secretKeys, onClose, reload }) {
-  return html`<${Sheet} title="GitHub Tokens" onClose=${onClose} footer=${html`<button class="btn" onClick=${onClose}>Close</button>`}>
-    <div class="muted" style="font-size:12px;margin-bottom:12px">Stored encrypted (AES-256-GCM). The agency uses them to run on your behalf. Write-only — never shown back.</div>
-    <div style="margin-bottom:16px">
-      <${SecretField} field=${{key: "github_bot_token", label: "GitHub bot token", hint: "The account the agency ACTS as — its commits and pull requests."}} isSet=${secretKeys.includes("github_bot_token")} reload=${reload}/>
-    </div>
-    <div style="margin-bottom:16px">
-      <${SecretField} field=${{key: "github_user_token", label: "Your GitHub token", hint: "Lets the agency comment and open issues under YOUR name."}} isSet=${secretKeys.includes("github_user_token")} reload=${reload}/>
-    </div>
+export function GithubTokensModal({ secretKeys, github, onClose, reload }) {
+  const [adv, setAdv] = useState(false);
+  return html`<${Sheet} title="GitHub" onClose=${onClose} footer=${html`<button class="btn" onClick=${onClose}>Close</button>`}>
+    <${GitHubConnect} github=${github} reload=${reload}/>
+    <button class="btn ghost" style="width:100%;justify-content:center;margin-top:10px" onClick=${() => setAdv((a) => !a)}><${Icon} name=${adv ? "chevdown" : "chevron"} size=${14}/> Advanced — paste tokens manually</button>
+    ${adv ? html`<div style="margin-top:10px">
+      <div class="muted" style="font-size:11.5px;margin-bottom:10px">Optional fallback to fine-grained PATs (the OAuth connection above covers both). Stored encrypted; write-only.</div>
+      <div style="margin-bottom:14px"><${SecretField} field=${{ key: "github_bot_token", label: "GitHub bot token", hint: "The account the agency ACTS as — commits & pull requests." }} isSet=${secretKeys.includes("github_bot_token")} reload=${reload}/></div>
+      <div><${SecretField} field=${{ key: "github_user_token", label: "Your GitHub token", hint: "Comment & open issues under YOUR name." }} isSet=${secretKeys.includes("github_user_token")} reload=${reload}/></div>
+    </div>` : null}
   <//>`;
+}
+
+// One-click GitHub login via the OAuth device flow: click → authorize on github.com → done. The
+// single token is both the bot and the owner (commits attributed to the connected account), so
+// there's no separate bot to invite. The client ID is public; the device flow needs no secret.
+function GitHubConnect({ github, reload }) {
+  const [clientId, setClientId] = useState("");
+  const [flow, setFlow] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const pollRef = useRef(null);
+  const connected = github && github.connected;
+  const user = github && github.user;
+  const needClientId = github && !github.clientIdSet;
+  function stop() { if (pollRef.current) clearTimeout(pollRef.current); pollRef.current = null; }
+  useEffect(() => stop, []);
+  function poll(interval) {
+    let secs = interval || 5;
+    const tick = () => api("/gh-connect-poll", {}).then((r) => {
+      if (r.ok) { stop(); setFlow(null); setBusy(false); toast("GitHub connected" + (r.user ? " as @" + r.user.login : "")); reload(); return; }
+      if (r.error) { stop(); setFlow(null); setBusy(false); setErr(r.error); return; }
+      if (r.interval) secs = r.interval;
+      pollRef.current = setTimeout(tick, secs * 1000);
+    }).catch(() => { pollRef.current = setTimeout(tick, secs * 1000); });
+    pollRef.current = setTimeout(tick, secs * 1000);
+  }
+  function connect() {
+    setErr(""); setBusy(true);
+    api("/gh-connect", needClientId ? { value: clientId.trim() } : {}).then((d) => {
+      if (d.error) { setErr(d.error); setBusy(false); return; }
+      setFlow(d);
+      try { window.open(d.verification_uri, "_blank", "noopener"); } catch (e) {}
+      poll(d.interval);
+    }).catch((e) => { setErr((e && e.message) || "Couldn’t start login"); setBusy(false); });
+  }
+  function disconnect() { api("/gh-disconnect", {}).then(() => { toast("Disconnected"); reload(); }); }
+  if (connected) return html`<div>
+    <div class="sec">GitHub</div>
+    <div style="display:flex;align-items:center;gap:8px">
+      <span class="statuschip s-ready"><${Icon} name="check" size=${12}/> Connected${user ? " as @" + user.login : ""}</span>
+      <button class="btn ghost" style="margin-left:auto;padding:3px 10px;font-size:12px" onClick=${disconnect}>Disconnect</button>
+    </div>
+    <div class="muted" style="font-size:11.5px;margin-top:6px">One login runs everything — commits, PRs and issues are authored by this account. No separate bot needed.</div>
+  </div>`;
+  return html`<div>
+    <div class="sec">GitHub</div>
+    <div class="muted" style="font-size:12px;margin-bottom:8px">Connect once — replaces the bot + owner tokens. You just click Authorize on GitHub.</div>
+    ${needClientId ? html`<label>OAuth App client ID</label>
+      <input placeholder="Iv1.… (your GitHub OAuth App)" value=${clientId} onInput=${(e) => setClientId(e.target.value)}/>
+      <a class="oblink" href="https://github.com/settings/applications/new" target="_blank" rel="noopener">Register an OAuth App — enable “Device Flow” <${Icon} name="link" size=${14}/></a>` : null}
+    ${flow ? html`<div class="cmdbox" style="flex-direction:column;align-items:flex-start;gap:6px">
+      <div>1 · Open <a href=${flow.verification_uri} target="_blank" rel="noopener">${flow.verification_uri}</a></div>
+      <div>2 · Enter code <code style="font-size:16px;letter-spacing:2px">${flow.user_code}</code></div>
+      <div class="muted" style="font-size:11px;display:flex;align-items:center;gap:6px"><${Spinner} size=${12}/> waiting for you to authorize…</div>
+    </div>` : html`<button class="btn primary" style="width:100%;justify-content:center" disabled=${busy || (needClientId && !clientId.trim())} onClick=${connect}>${busy ? html`<${Spinner} size=${15}/>` : html`<${Icon} name="link" size=${15}/>`} Connect GitHub</button>`}
+    ${err ? html`<div class="testres bad" style="margin-top:6px">✗ ${err}</div>` : null}
+  </div>`;
 }
 
 export function ModelsModal({ onClose, reload }) {

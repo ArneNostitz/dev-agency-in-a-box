@@ -7,6 +7,9 @@
 import { listUsers, getUserSecret } from "./store.js";
 import { sStr } from "./settings.js";
 
+/** Public OAuth App client id for the device flow. Empty = set it once in Settings → GitHub. */
+export const DEFAULT_GITHUB_OAUTH_CLIENT_ID = "";
+
 function agencyAdminId(): number | null {
   try {
     const admin = listUsers().find((u) => u.role === "admin");
@@ -20,13 +23,27 @@ function adminSecret(key: string): string | null {
   return id ? getUserSecret(id, key) : null;
 }
 
-/** Bot token for the agency's own GitHub actions (commits, PRs, labels). */
-export function ghBotToken(): string {
-  return adminSecret("github_bot_token") || process.env.GITHUB_TOKEN?.trim() || "";
+/** Single OAuth-device-flow token. When present it IS the bot AND the owner — no separate bot. */
+export function githubOAuthToken(): string {
+  return adminSecret("github_oauth_token") || process.env.GITHUB_OAUTH_TOKEN?.trim() || "";
 }
-/** "Acts as you" owner token (comment/create issues under the human's account, invite the bot). */
+/** The OAuth App client id for the device flow (public). Setting/env override the shipped default. */
+export function githubOAuthClientId(): string {
+  return sStr("github_oauth_client_id", "GITHUB_OAUTH_CLIENT_ID", DEFAULT_GITHUB_OAUTH_CLIENT_ID).trim();
+}
+/** The connected account, for the "connected as" label + commit attribution (author = its noreply). */
+export function githubIdentity(): { login: string; name: string; id: string } | null {
+  const login = sStr("github_user_login", "", "").trim();
+  if (!login) return null;
+  return { login, name: sStr("github_user_name", "", login).trim() || login, id: sStr("github_user_id", "", "").trim() };
+}
+/** Bot token for the agency's own GitHub actions (commits, PRs, labels). OAuth token wins. */
+export function ghBotToken(): string {
+  return githubOAuthToken() || adminSecret("github_bot_token") || process.env.GITHUB_TOKEN?.trim() || "";
+}
+/** "Acts as you" owner token. With OAuth the single token is both — falls back to a separate PAT. */
 export function ghUserToken(): string {
-  return adminSecret("github_user_token") || process.env.ADMIN_GITHUB_TOKEN?.trim() || "";
+  return githubOAuthToken() || adminSecret("github_user_token") || process.env.ADMIN_GITHUB_TOKEN?.trim() || "";
 }
 /** Claude subscription token for the Agent SDK (subscription auth). */
 export function claudeToken(): string {
