@@ -230,6 +230,7 @@ function AddProvider({ existing, status, onClose, onSaved }) {
       ${provs.map((p) => html`<option key=${p.id} value=${p.id}>${p.label}</option>`)}
     </select>
     ${def && def.how ? html`<div class="muted" style="font-size:11px;white-space:pre-wrap;margin:6px 2px">${def.how}</div>` : null}
+    ${def && def.link ? html`<a class="oblink" href=${def.link} target="_blank" rel="noopener">${def.linkLabel || "Get an API key"} <${Icon} name="link" size=${14}/></a>` : null}
     ${def && def.custom ? html`<label style="margin-top:8px">Base URL (Anthropic-compatible)</label><input placeholder="https://…/anthropic" value=${baseUrl} onInput=${(e) => setBaseUrl(e.target.value)}/>` : null}
     <label style="margin-top:8px">3 · API key</label>
     <input type="password" autocomplete="off" placeholder=${def ? def.placeholder : "API key"} value=${val} onInput=${(e) => setVal(e.target.value)}/>
