@@ -170,11 +170,12 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
   const modelsBtn = Array.from(window.document.querySelectorAll(".btn")).find((b) => /Models & API keys/.test(b.textContent));
   if (modelsBtn) {
     click(modelsBtn); await tick(60);
-    assert.match(root.innerHTML, /Your models/, "redesigned models modal renders");
+    assert.match(root.innerHTML, /Models.{1,8}runners/, "redesigned models modal renders");
     assert.match(root.innerHTML, /GLM \(Zhipu\)/, "an added provider is listed");
-    assert.match(root.innerHTML, /Add model/, "has the Add model button");
-    const closeBtns = window.document.querySelectorAll(".sheet .sh .iconbtn");
-    click(closeBtns[closeBtns.length - 1]); await tick(40);
+    assert.match(root.innerHTML, /Add provider/, "has the Add provider button");
+    assert.ok(window.document.querySelector(".modal"), "uses the atomic Modal");
+    const closeBtn = Array.from(window.document.querySelectorAll(".modal-f .btn")).find((b) => /Close/.test(b.textContent));
+    if (closeBtn) { click(closeBtn); await tick(40); }
   }
 
   // GitHub tokens modal → the one-click device-flow connect (replaces bot+owner PATs).

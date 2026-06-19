@@ -1,6 +1,6 @@
 // Dev Agency dashboard — settings module (split from app.js; Preact + htm, no build step).
 import { html, useState, useEffect, useRef } from "/web/vendor/standalone.mjs";
-import { Icon, ProviderLogo, Sheet, Spinner, api, getJSON, md, toast } from "./core.js";
+import { Icon, Modal, ProviderLogo, Select, Sheet, Spinner, api, getJSON, md, toast } from "./core.js";
 import { OB_PROVIDERS } from "./onboarding.js";
 
 
@@ -86,7 +86,8 @@ function ModelsPanel() {
   if (!md) return null;
   const providers = md.providers || [];
   // Flat list of {providerId, model, label} choices for the fallback select
-  const modelOpts = providers.flatMap((p) => (p.models || []).map((m) => ({ providerId: p.id, model: m, label: p.name + " / " + m })));
+  const modelOpts = providers.flatMap((p) => (p.models || []).map((m) => ({ providerId: p.id, model: m, label: p.name + " · " + m, provider: p.name })));
+  const modelSelOpts = modelOpts.map((o) => ({ value: o.providerId + "/" + o.model, label: o.model, logo: o.provider, hint: o.provider }));
   function addFallback() {
     if (!modelOpts.length) { toast("Add a provider in Models & agents first"); return; }
     setChain((c) => c.concat(modelOpts[0]));
@@ -103,25 +104,12 @@ function ModelsPanel() {
   }
   return html`<div class="sec">Models & rate limit</div>
     <label style="margin-top:6px;display:block">Global Default Model</label>
-    <select style="width:100%;margin-bottom:12px" value=${globalModel ? globalModel.providerId + "/" + globalModel.model : ""} onChange=${(e) => {
-      const val = e.target.value;
-      if (!val) {
-        setGlobalModel(null);
-      } else {
-        const [providerId, model] = val.split("/");
-        setGlobalModel({ providerId, model });
-      }
-    }}>
-      <option value="">Default (Claude subscription / role defaults)</option>
-      ${modelOpts.map((o) => html`<option key=${o.providerId + "/" + o.model} value=${o.providerId + "/" + o.model}>${o.label}</option>`)}
-    </select>
+    <div style="margin-bottom:12px"><${Select} value=${globalModel ? globalModel.providerId + "/" + globalModel.model : ""} options=${[{ value: "", label: "Default (Claude / role defaults)", icon: "flask" }].concat(modelSelOpts)} onChange=${(v) => { if (!v) setGlobalModel(null); else { const parts = v.split("/"); setGlobalModel({ providerId: parts[0], model: parts.slice(1).join("/") }); } }}/></div>
     <label class="ckline"><input type="checkbox" checked=${autoSwitch} onChange=${(e) => setAutoSwitch(e.target.checked)}/> Auto-switch to fallback model on Claude usage limit</label>
     <div class="muted" style="font-size:12px;margin:3px 2px 7px">When enabled, hitting the Claude credit/session limit switches all unassigned roles to the first fallback below and retries — instead of stalling.</div>
     <label>Fallback chain (order of models to try when primary is rate-limited)</label>
     ${chain.map((entry, idx) => html`<div key=${idx} style="display:flex;gap:6px;align-items:center;margin-bottom:5px">
-      <select style="flex:1" value=${entry.providerId + "/" + entry.model} onChange=${(e) => setFallbackEntry(idx, e.target.value)}>
-        ${modelOpts.map((o) => html`<option key=${o.providerId + "/" + o.model} value=${o.providerId + "/" + o.model}>${o.label}</option>`)}
-      </select>
+      <${Select} value=${entry.providerId + "/" + entry.model} options=${modelSelOpts} onChange=${(v) => setFallbackEntry(idx, v)}/>
       <button class="iconbtn" title="Remove" onClick=${() => removeFallback(idx)}><${Icon} name="trash" size=${15}/></button>
     </div>`)}
     ${modelOpts.length ? html`<button class="btn ghost" style="margin-bottom:4px" onClick=${addFallback}><${Icon} name="plus" size=${14}/> Add fallback</button>` : html`<div class="muted" style="font-size:12px">No alternative providers configured — add one under <b>Models & API keys</b> first.</div>`}
@@ -218,94 +206,78 @@ export function GitHubConnect({ github, reload }) {
 }
 
 export function ModelsModal({ onClose, reload }) {
-  const [providers, setProviders] = useState([]);
+  const [providers, setProvidersState] = useState([]);
   const [secretKeys, setSecretKeys] = useState([]);
   const [status, setStatus] = useState(null);
   const [adding, setAdding] = useState(false);
-  const [keys, setKeys] = useState(false);
   function refresh() {
-    getJSON("/models").then((d) => setProviders(d.providers || [])).catch(() => {});
+    getJSON("/models").then((d) => setProvidersState(d.providers || [])).catch(() => {});
     getJSON("/data").then((d) => setSecretKeys(d.secretKeys || [])).catch(() => {});
     getJSON("/runner-status").then(setStatus).catch(() => {});
   }
   useEffect(refresh, []);
-  function saveProviders(list) { return api("/models", { providers: list }).then(() => { toast("Saved"); reload(); refresh(); }).catch(() => toast("Couldn’t save", "error")); }
+  function saveProviders(list) { return api("/models", { providers: list }).then(() => { reload(); refresh(); }).catch(() => toast("Couldn’t save", "error")); }
   function setRunner(id, runner) { saveProviders(providers.map((p) => (p.id === id ? { ...p, runner: runner || undefined } : p))); }
-  function remove(id, name) { if (window.confirm("Remove " + name + "?")) saveProviders(providers.filter((p) => p.id !== id)); }
+  function removeProvider(id, name) { if (window.confirm("Remove " + name + "?")) saveProviders(providers.filter((p) => p.id !== id)); }
+  function clearSecret(key, name) { if (window.confirm("Remove " + name + "?")) api("/user-secret", { key, value: "" }).then(() => { toast("Removed"); reload(); refresh(); }); }
+  const RUNNER_OPTS = [{ value: "", label: "SDK" }, { value: "pi-cli", label: "pi" }, { value: "claude-cli", label: "claude" }, { value: "custom-cli", label: "custom" }];
+  // Dedupe: a Claude-native provider (no key, no/anthropic base URL) IS the subscription secret below.
+  const isClaudeNative = (p) => !p.apiKey && (!p.baseUrl || /anthropic\.com/i.test(p.baseUrl));
+  const thirdParty = providers.filter((p) => !isClaudeNative(p));
   const claudeSub = secretKeys.includes("claude_token"), claudeApi = secretKeys.includes("anthropic_api_key");
-  const empty = !providers.length && !claudeSub && !claudeApi;
-  return html`<${Sheet} title="Models & runners" onClose=${onClose} footer=${html`<button class="btn" onClick=${onClose}>Close</button>`}>
-    <div class="sec">Your models</div>
-    <div class="muted" style="font-size:12px;margin-bottom:8px">Only the providers you’ve added. The dropdown picks which CLI runs each one — SDK is the default.</div>
-    ${claudeSub || claudeApi ? html`<div class="modelrow">
-      <div class="modelrow-main"><${Icon} name="crown" size=${15}/> <b>Claude</b> <span class="muted" style="font-size:11px">${[claudeSub ? "subscription" : "", claudeApi ? "API key" : ""].filter(Boolean).join(" + ")}</span></div>
-      <button class="btn ghost" style="padding:3px 10px;font-size:12px" onClick=${() => setKeys(true)}>Keys</button>
-    </div>` : null}
-    ${providers.map((p) => html`<div class="modelrow" key=${p.id}>
+  const empty = !thirdParty.length && !claudeSub && !claudeApi;
+  const claudeRow = (label, key) => html`<div class="modelrow"><div class="modelrow-main"><${ProviderLogo} name="claude" size=${16}/> <b>Claude</b> <span class="muted" style="font-size:11px">${label}</span></div>
+    <button class="iconbtn tip" data-tip="Remove" style="width:30px;height:30px;border:none" onClick=${() => clearSecret(key, "Claude " + label)}><${Icon} name="trash" size=${15}/></button></div>`;
+  return html`<${Modal} title="Models & runners" onClose=${onClose} footer=${html`<button class="btn" onClick=${onClose}>Close</button>`}>
+    <div class="muted" style="font-size:12px;margin-bottom:10px">Only the providers you’ve added. The dropdown picks which CLI runs each one — SDK is the default.</div>
+    ${claudeSub ? claudeRow("subscription", "claude_token") : null}
+    ${claudeApi ? claudeRow("API key", "anthropic_api_key") : null}
+    ${thirdParty.map((p) => html`<div class="modelrow" key=${p.id}>
       <div class="modelrow-main"><${ProviderLogo} name=${p.name} size=${16}/> <b>${p.name}</b> <span class="muted" style="font-size:11px">${(p.models || []).length} model${(p.models || []).length === 1 ? "" : "s"}</span></div>
-      <select class="modelsel sm" value=${p.runner || ""} title="Runner (CLI) for this provider" onChange=${(e) => setRunner(p.id, e.target.value)}>
-        <option value="">SDK</option><option value="pi-cli">pi</option><option value="claude-cli">claude</option><option value="custom-cli">custom</option>
-      </select>
-      <button class="iconbtn" style="width:30px;height:30px;border:none" title="Remove" onClick=${() => remove(p.id, p.name)}><${Icon} name="trash" size=${15}/></button>
+      <${Select} value=${p.runner || ""} options=${RUNNER_OPTS} onChange=${(v) => setRunner(p.id, v)} menuAlign="right"/>
+      <button class="iconbtn tip" data-tip="Remove" style="width:30px;height:30px;border:none" onClick=${() => removeProvider(p.id, p.name)}><${Icon} name="trash" size=${15}/></button>
     </div>`)}
     ${empty ? html`<div class="muted" style="font-size:12.5px;padding:10px 2px">No models added yet — add one below.</div>` : null}
-    <div style="display:flex;gap:8px;margin:14px 0 4px">
-      <button class="btn primary" style="flex:1;justify-content:center" onClick=${() => setAdding(true)}><${Icon} name="plus" size=${15}/> Add model</button>
-      <button class="btn" style="flex:1;justify-content:center" onClick=${() => setKeys(true)}><${Icon} name="lock" size=${15}/> Add key / token</button>
-    </div>
+    <button class="btn primary" style="width:100%;justify-content:center;margin:14px 0 6px" onClick=${() => setAdding(true)}><${Icon} name="plus" size=${15}/> Add provider</button>
     <${ModelsPanel}/>
-    ${adding ? html`<${AddProvider} existing=${providers} status=${status} onClose=${() => setAdding(false)} onSaved=${() => { setAdding(false); refresh(); }}/>` : null}
-    ${keys ? html`<${KeyModal} secretKeys=${secretKeys} onClose=${() => setKeys(false)} reload=${() => { reload(); refresh(); }}/>` : null}
+    ${adding ? html`<${AddProvider} existing=${providers} onClose=${() => setAdding(false)} onSaved=${() => { setAdding(false); refresh(); reload(); }}/>` : null}
   <//>`;
 }
 
-// pi-style "add a provider" flow: 1) pick the CLI runner, 2) pick the provider, 3) paste its key.
-// (LLM providers are API-key based; OAuth/subscription logins live under "Keys".)
-function AddProvider({ existing, status, onClose, onSaved }) {
-  const provs = OB_PROVIDERS.filter((p) => p.kind === "provider");
-  const [runner, setRunner] = useState("");
-  const [pid, setPid] = useState(provs[0] ? provs[0].id : "");
+// Add a provider: pick it first (logo dropdown), then paste its key — with a single "Get key" button
+// that opens the right page. Runs on the SDK by default (best for Anthropic-compatible providers);
+// change the per-provider CLI later in the list. Claude subscription/API are stored as secrets.
+function AddProvider({ existing, onClose, onSaved }) {
+  const [pid, setPid] = useState(OB_PROVIDERS[0].id);
   const [val, setVal] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
-  const def = provs.find((p) => p.id === pid);
-  const ravail = {}; (status && status.runners || []).forEach((r) => (ravail[r.kind] = r));
-  const sel = ravail[runner];
+  const def = OB_PROVIDERS.find((p) => p.id === pid);
+  const opts = OB_PROVIDERS.map((p) => ({ value: p.id, label: p.label, logo: p.preset && p.preset.name ? p.preset.name : p.label }));
   function save() {
     if (!def) return;
+    if (def.kind === "secret") {
+      if (!val.trim()) { toast("Paste the token"); return; }
+      api("/user-secret", { key: def.secretKey, value: val.trim() }).then(() => { toast("Saved " + def.label); onSaved(); }).catch(() => toast("Couldn’t save", "error"));
+      return;
+    }
     if (def.custom && !baseUrl.trim()) { toast("Enter the base URL"); return; }
     if (!val.trim()) { toast("Paste the API key"); return; }
-    const prov = { id: def.id + "-" + Date.now().toString(36), name: def.preset?.name || "Custom", baseUrl: def.custom ? baseUrl.trim() : def.preset.baseUrl, apiKey: val.trim(), models: def.preset?.models || [], ...(runner ? { runner } : {}) };
+    const prov = { id: def.id + "-" + Date.now().toString(36), name: def.preset && def.preset.name ? def.preset.name : "Custom", baseUrl: def.custom ? baseUrl.trim() : def.preset.baseUrl, apiKey: val.trim(), models: (def.preset && def.preset.models) || [] };
     api("/models", { providers: (existing || []).concat(prov) }).then(() => { toast("Added " + prov.name); onSaved(); }).catch(() => toast("Couldn’t save", "error"));
   }
-  return html`<${Sheet} title="Add model" onClose=${onClose} footer=${html`<button class="btn" onClick=${onClose}>Cancel</button><button class="btn primary" onClick=${save}>Add</button>`}>
-    <label>1 · Runner (CLI)</label>
-    <select value=${runner} onChange=${(e) => setRunner(e.target.value)}>
-      <option value="">SDK (default — in-process)</option><option value="pi-cli">pi CLI</option><option value="claude-cli">claude CLI</option><option value="custom-cli">Custom CLI</option>
-    </select>
-    ${sel && sel.binary && !sel.available ? html`<div style="margin:5px 2px"><span class="statuschip s-attn"><${Icon} name="alert" size=${12}/> ${sel.binary} not installed — install it in Settings → Pipeline</span></div>` : null}
-    <label style="margin-top:10px">2 · Provider ${def ? html`<${ProviderLogo} name=${def.preset?.name || def.label} size=${15}/>` : null}</label>
-    <select value=${pid} onChange=${(e) => { setPid(e.target.value); setVal(""); }}>
-      ${provs.map((p) => html`<option key=${p.id} value=${p.id}>${p.label}</option>`)}
-    </select>
-    ${def && def.how ? html`<div class="muted" style="font-size:11px;white-space:pre-wrap;margin:6px 2px">${def.how}</div>` : null}
-    ${def && def.link ? html`<a class="oblink" href=${def.link} target="_blank" rel="noopener">${def.linkLabel || "Get an API key"} <${Icon} name="link" size=${14}/></a>` : null}
-    ${def && def.custom ? html`<label style="margin-top:8px">Base URL (Anthropic-compatible)</label><input placeholder="https://…/anthropic" value=${baseUrl} onInput=${(e) => setBaseUrl(e.target.value)}/>` : null}
-    <label style="margin-top:8px">3 · API key</label>
-    <input type="password" autocomplete="off" placeholder=${def ? def.placeholder : "API key"} value=${val} onInput=${(e) => setVal(e.target.value)}/>
+  return html`<${Modal} title="Add provider" size="sm" onClose=${onClose} footer=${html`<button class="btn" onClick=${onClose}>Cancel</button><button class="btn primary" onClick=${save}>Add</button>`}>
+    <label>Provider</label>
+    <${Select} value=${pid} options=${opts} onChange=${(v) => { setPid(v); setVal(""); setBaseUrl(""); }}/>
+    ${def && def.custom ? html`<label style="margin-top:10px">Base URL (Anthropic-compatible)</label><input placeholder="https://…/anthropic" value=${baseUrl} onInput=${(e) => setBaseUrl(e.target.value)}/>` : null}
+    <label style="margin-top:10px">${def && def.kind === "secret" ? "Token" : "API key"}</label>
+    <div style="display:flex;gap:8px">
+      <input type="password" autocomplete="off" style="flex:1" placeholder=${def ? def.placeholder : "key"} value=${val} onInput=${(e) => setVal(e.target.value)}/>
+      ${def && def.link ? html`<button class="btn" onClick=${() => window.open(def.link, "_blank", "noopener")}><${Icon} name="link" size=${14}/> Get key</button>` : null}
+    </div>
+    <div class="muted" style="font-size:11px;margin-top:8px">Runs on the built-in SDK by default — change the CLI per provider in the list after adding.</div>
   <//>`;
 }
 
-// Claude subscription token / API key (the OAuth-style logins). Paste once; stored encrypted.
-function KeyModal({ secretKeys, onClose, reload }) {
-  return html`<${Sheet} title="Keys & tokens" onClose=${onClose} footer=${html`<button class="btn" onClick=${onClose}>Close</button>`}>
-    <div style="margin-bottom:14px"><${SecretField} field=${{ key: "claude_token", label: "Claude subscription token", hint: "Runs Claude roles on your plan. Get it with: npm i -g @anthropic-ai/claude-code && claude setup-token" }} isSet=${secretKeys.includes("claude_token")} reload=${reload}/></div>
-    <div><${SecretField} field=${{ key: "anthropic_api_key", label: "Claude API key", hint: "Pay-as-you-go (sk-ant-…)" }} isSet=${secretKeys.includes("anthropic_api_key")} reload=${reload}/></div>
-  <//>`;
-}
-
-// Agent-runner picker with live install status. CLI runners (pi, claude) need a binary on PATH;
-// if it's missing an admin can install it on the fly (POST /install-cli → npm -g to the data-volume
-// prefix, so it persists across redeploys). Closes the loop on "spawn pi ENOENT".
 function RunnerPicker({ runner, setRunner, cliCmd, setCliCmd, admin }) {
   const [status, setStatus] = useState(null);
   const [installing, setInstalling] = useState("");
@@ -325,12 +297,12 @@ function RunnerPicker({ runner, setRunner, cliCmd, setCliCmd, admin }) {
   }
   return html`
     <label>Agent runner — how roles execute</label>
-    <select value=${runner} onChange=${(e) => setRunner(e.target.value)}>
-      <option value="claude-sdk">Claude SDK (default — in-process, your subscription/key)</option>
-      <option value="pi-cli">pi CLI (subprocess — drives any model pi supports)</option>
-      <option value="claude-cli">claude CLI (subprocess)</option>
-      <option value="custom-cli">Custom CLI (set command below)</option>
-    </select>
+    <${Select} value=${runner} onChange=${setRunner} options=${[
+      { value: "claude-sdk", label: "Claude SDK (default — in-process)" },
+      { value: "pi-cli", label: "pi CLI (subprocess)" },
+      { value: "claude-cli", label: "claude CLI (subprocess)" },
+      { value: "custom-cli", label: "Custom CLI" },
+    ]}/>
     ${sel && sel.binary ? html`<div style="display:flex;align-items:center;gap:8px;margin:7px 2px;flex-wrap:wrap">
       ${sel.available
         ? html`<span class="statuschip s-ready"><${Icon} name="check" size=${12}/> ${sel.binary} installed</span>`

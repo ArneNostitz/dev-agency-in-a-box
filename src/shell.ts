@@ -449,6 +449,14 @@ textarea{resize:vertical;min-height:64px}
 .sel-itxt{flex:1}
 .sel-hint{color:var(--ink-3);font-size:11px}
 /* one global fixed tooltip for every [data-tip] (escapes every scroll container) */
+.modal-scrim{position:fixed;inset:0;z-index:120;background:rgba(0,0,0,.42);display:flex;align-items:center;justify-content:center;padding:20px}
+.modal{background:var(--surface);border:1px solid var(--line);border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);width:min(560px,94vw);max-height:88vh;display:flex;flex-direction:column;overflow:hidden;animation:modalpop .14s ease-out}
+.modal-sm{width:min(440px,94vw)}
+.modal-lg{width:min(820px,94vw)}
+@keyframes modalpop{from{opacity:0;transform:scale(.97)}to{opacity:1;transform:none}}
+.modal-h{padding:15px 18px;border-bottom:1px solid var(--line);font-weight:600;font-size:15px}
+.modal-b{padding:16px 18px;overflow-y:auto}
+.modal-f{padding:12px 18px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end;background:var(--surface)}
 .gtip{position:fixed;z-index:400;transform:translate(-50%,-100%);background:var(--ink);color:var(--bg);font-size:11px;font-weight:500;padding:3px 7px;border-radius:6px;white-space:nowrap;pointer-events:none;max-width:280px;overflow:hidden;text-overflow:ellipsis;box-shadow:var(--shadow)}
 .onboard{position:fixed;inset:0;z-index:60;background:var(--bg);overflow-y:auto;-webkit-overflow-scrolling:touch}
 .ob{max-width:580px;margin:0 auto;width:100%;padding:calc(28px + var(--safe-t)) 20px calc(28px + var(--safe-b))}
