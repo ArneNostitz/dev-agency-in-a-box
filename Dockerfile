@@ -83,12 +83,15 @@ COPY config ./config
 COPY web ./web
 COPY scripts ./scripts
 
+# Coolify injects the deployed commit here when 'Include Source Commit in Build' is enabled (an
+# ARG is also readable as an env var by the RUN below, so scripts/version.mjs stamps the SHA).
+ARG SOURCE_COMMIT=""
 RUN npm run build
 
-# Build stamp. The graspable version (`0.<minor>.<commit-count>`) + short SHA are written into the
-# committed web/version.json by the push workflow (the Coolify build context has no .git, so we
-# can't count commits here). At build we only refresh `builtAt` so "built X ago" is accurate.
-RUN node -e "const f='web/version.json';let v={};try{v=require('./'+f)}catch(e){};v.builtAt=new Date().toISOString();if(!v.version){const b=(require('./package.json').version.split('.').slice(0,2).join('.'))||'0.1';v.version=b+'.0'}require('fs').writeFileSync(f,JSON.stringify(v))"
+# Re-stamp builtAt at image build (npm run build above already ran scripts/version.mjs with
+# SOURCE_COMMIT). The running server overlays SOURCE_COMMIT from the ENV below at request time too,
+# so the dashboard shows the real deployed commit even if the build arg wasn't passed.
+RUN node scripts/version.mjs || true
 
 # Webhook mode listens here (ignored in watch/once mode).
 EXPOSE 3000
@@ -105,6 +108,7 @@ ENV RUN_MODE=watch \
 # precedence over the baked-in copies.
 ENV NPM_CONFIG_PREFIX=/app/data/npm-global \
     PATH=/app/data/npm-global/bin:$PATH
+ENV SOURCE_COMMIT=$SOURCE_COMMIT
 
 # Run as a NON-root user: Claude Code refuses --dangerously-skip-permissions (bypassPermissions)
 # when running as root, which is exactly what the agents need. The `node` user ships with the

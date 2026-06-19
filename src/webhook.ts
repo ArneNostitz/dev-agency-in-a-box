@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import type { Config } from "./config.js";
 import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordIssueStatus, recordPr, tokensSince, tokensByModelSince, tokensByRoleSince, tokensByDaySince, topIssuesByTokensSince, tokensByIssueAll, toolStatsSince, runStepCountSince, recentLessons, recordConflict, getConflict, clearConflict, listConflicts, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getGlobalModel, setGlobalModel, getFallbackChain, setFallbackChain, getAutoSwitchOnLimit, setIssueModelOverride, getIssueModelOverride, clearIssueModelOverride, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, getIssueRow, getModelsPresets, listAgentDefs, upsertAgentDef, deleteAgentDef, listSkills, upsertSkill, deleteSkill, listHooks, upsertHook, deleteHook, type AutoKind, type Provider, type AgentDef, type Skill, type Hook } from "./store.js";
 import { mergeEpic, isEpic } from "./epics.js";
+import { versionInfo } from "./version.js";
 import { binaryAvailable } from "./runners/registry.js";
 import { installSpec, installCli, RUNNER_PACKAGES } from "./runners/install.js";
 import { parseLegacyStatus, withStatus, setBlocked } from "./state.js";
@@ -118,6 +119,13 @@ const WEB_DIR = fileURLToPath(new URL("../web/", import.meta.url));
 const MIME: Record<string, string> = { ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8", ".css": "text/css", ".json": "application/json", ".webmanifest": "application/manifest+json", ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon", ".html": "text/html; charset=utf-8" };
 /** Serve a static file from web/ for the PWA (no auth — these carry no secrets). Returns true if handled. */
 function serveStatic(pathname: string, res: ServerResponse): boolean {
+  // Computed at request time so the SHA reflects the deployed commit (SOURCE_COMMIT env) even though
+  // the container's build had no .git to stamp it.
+  if (pathname === "/web/version.json") {
+    res.writeHead(200, { "content-type": "application/json", "cache-control": "no-cache" });
+    res.end(JSON.stringify(versionInfo()));
+    return true;
+  }
   let rel: string | null = null;
   if (pathname === "/sw.js") rel = "sw.js";
   else if (pathname === "/manifest.webmanifest") rel = "manifest.webmanifest";

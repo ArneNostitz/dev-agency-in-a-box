@@ -11,7 +11,7 @@ const run = (cmd) => {
   try { return execSync(cmd, { stdio: ["ignore", "pipe", "ignore"] }).toString().trim(); }
   catch { return ""; }
 };
-const sha = run("git rev-parse --short HEAD");
+const sha = run("git rev-parse --short HEAD") || (process.env.SOURCE_COMMIT || "").trim().slice(0, 7);
 const build = Number(run("git rev-list --count HEAD")) || 0;
 const builtAt = new Date().toISOString();
 
@@ -19,7 +19,7 @@ const builtAt = new Date().toISOString();
 const pad = (n) => String(n).padStart(2, "0");
 const d = new Date(builtAt);
 const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-const label = `v${pkg.version} · build ${build} · ${stamp}${sha ? ` · ${sha}` : ""}`;
+const label = `v${pkg.version}${build ? ` · build ${build}` : ""}${sha ? ` · ${sha}` : ""} · ${stamp}`;
 
 const out = { version: pkg.version, build, builtAt, sha, stamp, label };
 writeFileSync(new URL("../web/version.json", import.meta.url), JSON.stringify(out) + "\n");
