@@ -1,6 +1,6 @@
 // Dev Agency dashboard — board module (split from app.js; Preact + htm, no build step).
 import { html, useState, useEffect } from "/web/vendor/standalone.mjs";
-import { Avatar, COLS, Icon, ProviderLogo, Spinner, ago, api, boardSortCmp, classify, filterByTime, fmtTok, getSetupProgress, ghUrl, isDone, shortModel, statusChip, toast, usageTitle } from "./core.js";
+import { Avatar, COLS, Icon, ProviderLogo, Select, Spinner, ago, api, boardSortCmp, classify, filterByTime, fmtTok, getSetupProgress, ghUrl, isDone, shortModel, statusChip, toast, usageTitle } from "./core.js";
 
 // ---------- sort / group / time options ----------
 const SORT_OPTS = [
@@ -19,26 +19,14 @@ const TIME_OPTS = [
 ];
 
 function BoardControls({ boardSort, setBoardSort, boardGroup, setBoardGroup, boardTime, setBoardTime }) {
+  const opt = (a) => a.map((o) => ({ value: o.v, label: o.label }));
   return html`<div class="bctrl">
-    <span class="bctrl-group">
-      <span class="bctrl-label">Sort</span>
-      <select value=${boardSort} onChange=${(e) => setBoardSort(e.target.value)}>
-        ${SORT_OPTS.map((o) => html`<option key=${o.v} value=${o.v}>${o.label}</option>`)}
-      </select>
-    </span>
-    <span class="bctrl-group">
-      <span class="bctrl-label">Group</span>
-      <select value=${boardGroup} onChange=${(e) => setBoardGroup(e.target.value)}>
-        <option value="state">Workflow state</option>
-        <option value="repo">Repo</option>
-      </select>
-    </span>
-    <span class="bctrl-group">
-      <span class="bctrl-label">Updated</span>
-      <select value=${boardTime} onChange=${(e) => setBoardTime(e.target.value)}>
-        ${TIME_OPTS.map((o) => html`<option key=${o.v} value=${o.v}>${o.label}</option>`)}
-      </select>
-    </span>
+    <span class="bctrl-group"><span class="bctrl-label">Sort</span>
+      <${Select} value=${boardSort} options=${opt(SORT_OPTS)} onChange=${setBoardSort}/></span>
+    <span class="bctrl-group"><span class="bctrl-label">Group</span>
+      <${Select} value=${boardGroup} options=${[{ value: "state", label: "Workflow state" }, { value: "repo", label: "Repo" }]} onChange=${setBoardGroup}/></span>
+    <span class="bctrl-group"><span class="bctrl-label">Updated</span>
+      <${Select} value=${boardTime} options=${opt(TIME_OPTS)} onChange=${setBoardTime}/></span>
   </div>`;
 }
 
@@ -232,18 +220,12 @@ function Card({ i, subs, multi, onOpen, onOpenChild, act, data }) {
 // Solid status-dot colour per status-chip class (the header dot replaces the old chip).
 const DOT_COLOR = { "s-working": "var(--accent)", "s-ready": "var(--green)", "s-changes": "var(--red)", "s-attn": "var(--amber)", "s-auto": "var(--green)", "s-conflict": "var(--amber)", "s-done": "var(--ink-3)", "s-planned": "var(--ink-3)", "s-epic": "var(--purple)" };
 
-// The per-card LLM picker: an icon button (provider logo) that opens a custom dropdown of models.
+// The per-card LLM picker: an icon button (provider logo) + custom Select menu (fixed → unclipped).
 function ModelPicker({ opts, value, onPick }) {
-  const [open, setOpen] = useState(false);
   const cur = opts.find((o) => o.value === value);
-  return html`<div class="mp">
-    <button class="iconbtn-sm tip" data-tip=${cur ? cur.label : "Default model"} onClick=${(e) => { e.stopPropagation(); setOpen((o) => !o); }}><${ProviderLogo} name=${cur ? cur.provider : ""} size=${16}/></button>
-    ${open ? html`<div class="mpscrim" onClick=${(e) => { e.stopPropagation(); setOpen(false); }}></div>
-      <div class="mpmenu">
-        <button class=${"mpitem" + (!value ? " on" : "")} onClick=${(e) => { e.stopPropagation(); onPick(""); setOpen(false); }}><${Icon} name="flask" size=${14}/> Default model</button>
-        ${opts.map((o) => html`<button key=${o.value} class=${"mpitem" + (o.value === value ? " on" : "")} onClick=${(e) => { e.stopPropagation(); onPick(o.value); setOpen(false); }}><${ProviderLogo} name=${o.provider} size=${14}/> ${o.short}</button>`)}
-      </div>` : null}
-  </div>`;
+  const options = [{ value: "", label: "Default model", icon: "flask" }].concat(opts.map((o) => ({ value: o.value, label: o.short, logo: o.provider })));
+  return html`<${Select} value=${value} options=${options} onChange=${onPick} btnClass="iconbtn-sm"
+    trigger=${() => html`<span class="tip" data-tip=${cur ? cur.label : "Default model"} style="display:inline-flex"><${ProviderLogo} name=${cur ? cur.provider : ""} size=${16}/></span>`}/>`;
 }
 
 // Collapsible sub-issue list shown on an epic parent's card. Each row carries the child's live

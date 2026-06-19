@@ -35,6 +35,7 @@ function App() {
   const [tab, setTab] = useState("planned");
   const [openKey, setOpenKey] = useState(null); // "repo#number"
   const [sheet, setSheet] = useState(null); // "composer" | "settings"
+  const [tip, setTip] = useState(null); // global fixed tooltip {text,x,y}
   const [composerRepo, setComposerRepo] = useState(null);
   const [theme, setTheme] = useState(document.documentElement.getAttribute("data-theme") || "light");
   const [toasts, setToasts] = useState([]);
@@ -216,6 +217,21 @@ function App() {
     if (!issues.some((i) => i.repo + "#" + i.number === key)) openIssueRef.current = { repo: r, number: n, title: title || "#" + n, state: "" };
     setOpenKey(key);
   }
+  // Esc closes the top-most overlay (sheet first, else the detail pane).
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") { if (sheet) setSheet(null); else if (openKey) setOpenKey(null); } };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [sheet, openKey]);
+  // One global fixed-position tooltip for every [data-tip] — never clipped by a scroll container.
+  useEffect(() => {
+    const show = (e) => { const el = e.target.closest && e.target.closest("[data-tip]"); if (!el) return; const t = el.getAttribute("data-tip"); if (!t) return setTip(null); const r = el.getBoundingClientRect(); setTip({ text: t, x: r.left + r.width / 2, y: r.top - 7 }); };
+    const hide = (e) => { if (e.target.closest && e.target.closest("[data-tip]")) setTip(null); };
+    document.addEventListener("mouseover", show);
+    document.addEventListener("mouseout", hide);
+    document.addEventListener("click", () => setTip(null), true);
+    return () => { document.removeEventListener("mouseover", show); document.removeEventListener("mouseout", hide); };
+  }, []);
   const working = (data.active || []).length;
 
   return html`
@@ -239,6 +255,7 @@ function App() {
       ${sheet === "skills" && html`<${SkillEditor} data=${data} onClose=${() => setSheet("agents")} reload=${load}/>`}
       ${data.user && data.onboarded === false && html`<${Onboarding} repos=${repos} github=${data.github} reload=${load}/>`}
       <${Toasts} toasts=${toasts} onDismiss=${dismissToast}/>
+      ${tip ? html`<div class="gtip" style=${"left:" + tip.x + "px;top:" + tip.y + "px"}>${tip.text}</div>` : null}
     </div>`;
 }
 

@@ -414,3 +414,37 @@ export function Sheet({ title, onClose, footer, children }) {
 
 // ---------- file read ----------
 export function readAttach(file, cb) { if (!file) return; if (file.size > 25 * 1024 * 1024) { toast("Too big (max 25MB)"); return; } const r = new FileReader(); r.onload = () => cb({ d: r.result, name: file.name || "file", img: /^image\//.test(file.type) }); r.readAsDataURL(file); }
+
+// ---------- atomic Select (custom dropdown) ----------
+// A native-select replacement whose menu renders FIXED-positioned (escapes any overflow:auto
+// scroll container, so it's never clipped inside a card/column/sheet). options: [{value,label,
+// logo?(provider name), icon?(icon name), hint?}]. `trigger(cur)` customises the button content.
+export function Select({ value, options, onChange, trigger, btnClass, menuAlign, placeholder, disabled }) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState(null);
+  const btnRef = useRef(null);
+  const cur = (options || []).find((o) => o.value === value);
+  function place() {
+    const el = btnRef.current; if (!el) return;
+    const r = el.getBoundingClientRect();
+    const w = Math.max(r.width, 168);
+    let left = menuAlign === "right" ? r.right - w : r.left;
+    left = Math.max(8, Math.min(left, (window.innerWidth || 1200) - w - 8));
+    const below = (window.innerHeight || 800) - r.bottom;
+    const up = below < 240 && r.top > below;
+    setPos({ left, width: w, up, top: up ? null : r.bottom + 4, bottom: up ? (window.innerHeight || 800) - r.top + 4 : null });
+  }
+  function toggle(e) { e.stopPropagation(); if (disabled) return; if (!open) place(); setOpen((o) => !o); }
+  function pick(e, v) { e.stopPropagation(); setOpen(false); onChange(v); }
+  const itemInner = (o) => html`${o.logo ? html`<${ProviderLogo} name=${o.logo} size=${15}/>` : o.icon ? html`<${Icon} name=${o.icon} size=${14}/>` : null}<span class="sel-itxt">${o.label}</span>${o.hint ? html`<span class="sel-hint">${o.hint}</span>` : null}`;
+  return html`<div class="sel">
+    <button ref=${btnRef} class=${"sel-btn " + (btnClass || "")} disabled=${disabled} onClick=${toggle}>
+      ${trigger ? trigger(cur) : html`<span class="sel-cur">${cur ? cur.label : (placeholder || "Select…")}</span><${Icon} name="chevdown" size=${13} cls="sel-caret"/>`}
+    </button>
+    ${open && pos ? html`
+      <div class="sel-scrim" onClick=${(e) => { e.stopPropagation(); setOpen(false); }}></div>
+      <div class="sel-menu" style=${"left:" + pos.left + "px;min-width:" + pos.width + "px;" + (pos.up ? "bottom:" + pos.bottom + "px" : "top:" + pos.top + "px")}>
+        ${(options || []).map((o) => html`<button key=${o.value} class=${"sel-item" + (o.value === value ? " on" : "")} onClick=${(e) => pick(e, o.value)}>${itemInner(o)}</button>`)}
+      </div>` : null}
+  </div>`;
+}

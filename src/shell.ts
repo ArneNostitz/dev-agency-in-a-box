@@ -137,8 +137,8 @@ input,select,textarea{font-size:16px}
 .colbtn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 .colbtn:disabled{opacity:.5;cursor:default}
 .colhead .n{color:var(--ink-3);font-weight:500}
-.cards{display:flex;flex-direction:column;gap:8px}
-.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:10px 12px;cursor:pointer;display:flex;flex-direction:column;gap:7px}
+.cards{display:flex;flex-direction:column;gap:8px;align-items:center}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:10px 12px;cursor:pointer;display:flex;flex-direction:column;gap:7px;width:100%;max-width:560px}
 .card:active{transform:scale(.992)}
 .card.active-now{border-left:3px solid var(--accent)}
 .card-h{display:flex;align-items:center;gap:6px;min-height:18px;overflow:hidden;white-space:nowrap}
@@ -155,7 +155,7 @@ input,select,textarea{font-size:16px}
 .card-time{margin-left:auto;color:var(--ink-3);font-size:12px}
 /* instant custom tooltip — pops the moment you hover, no delay */
 .tip{position:relative}
-.tip:hover::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 5px);left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);font-size:11px;font-weight:500;white-space:nowrap;padding:3px 7px;border-radius:6px;z-index:70;pointer-events:none;max-width:240px;overflow:hidden;text-overflow:ellipsis}
+/* tooltip text is rendered by the global fixed .gtip (never clipped); .tip just marks an anchor */
 .iconbtn-sm{flex:0 0 auto;width:28px;height:28px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);border-radius:8px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0}
 .iconbtn-sm:hover{background:var(--surface-2)}
 .iconbtn-sm:disabled{cursor:default;opacity:.6}
@@ -318,7 +318,7 @@ textarea{resize:vertical;min-height:64px}
 .autotog.on .autotog-sw{background:var(--green)}
 .autotog.on .autotog-knob{transform:translateX(14px)}
 .autotog.busy{opacity:.7;cursor:wait}
-.tbtn[data-tip]:hover::after{content:attr(data-tip);position:absolute;top:calc(100% + 6px);left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);font-size:11px;white-space:nowrap;padding:3px 7px;border-radius:6px;z-index:60}
+
 .dpanes{flex:1;display:flex;flex-direction:column;overflow:hidden}
 .dpane{overflow-y:auto;-webkit-overflow-scrolling:touch;padding:12px 14px}
 .dpanes>.dpane{flex:1 1 auto;min-height:0}
@@ -429,6 +429,24 @@ textarea{resize:vertical;min-height:64px}
 .searchrow input:focus{border:none}
 .repolist{max-height:42vh;overflow-y:auto;-webkit-overflow-scrolling:touch}
 /* onboarding wizard */
+
+/* atomic custom Select (native-select replacement; menu is fixed-positioned → never clipped) */
+.sel{position:relative;display:inline-flex}
+.sel-btn{display:inline-flex;align-items:center;gap:6px;font:12.5px inherit;border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:8px;padding:4px 9px;cursor:pointer}
+.sel-btn:hover{border-color:var(--line-2)}
+.sel-btn:disabled{opacity:.6;cursor:default}
+.sel-btn.iconbtn-sm{width:28px;height:28px;padding:0;justify-content:center}
+.sel-cur{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sel-caret{color:var(--ink-3);margin-left:auto}
+.sel-scrim{position:fixed;inset:0;z-index:300}
+.sel-menu{position:fixed;z-index:301;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);padding:5px;max-height:300px;overflow:auto;display:flex;flex-direction:column;gap:1px}
+.sel-item{display:flex;align-items:center;gap:8px;width:100%;text-align:left;border:none;background:transparent;color:var(--ink);padding:6px 9px;border-radius:7px;cursor:pointer;font:13px inherit;white-space:nowrap}
+.sel-item:hover{background:var(--surface-2)}
+.sel-item.on{color:var(--accent);font-weight:560}
+.sel-itxt{flex:1}
+.sel-hint{color:var(--ink-3);font-size:11px}
+/* one global fixed tooltip for every [data-tip] (escapes every scroll container) */
+.gtip{position:fixed;z-index:400;transform:translate(-50%,-100%);background:var(--ink);color:var(--bg);font-size:11px;font-weight:500;padding:3px 7px;border-radius:6px;white-space:nowrap;pointer-events:none;max-width:280px;overflow:hidden;text-overflow:ellipsis;box-shadow:var(--shadow)}
 .onboard{position:fixed;inset:0;z-index:60;background:var(--bg);overflow-y:auto;-webkit-overflow-scrolling:touch}
 .ob{max-width:580px;margin:0 auto;width:100%;padding:calc(28px + var(--safe-t)) 20px calc(28px + var(--safe-b))}
 .obdots{display:flex;gap:6px;justify-content:center;margin-bottom:22px}
