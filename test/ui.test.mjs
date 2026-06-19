@@ -95,6 +95,7 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
     if (u.includes("/thread")) return { author: "arne", createdAt: new Date().toISOString(), body: "hello", comments: [] };
     if (u.includes("/app-info")) return { kind: "none" };
     if (u.includes("/pr-status")) return { review: { verdict: "approved" }, merge: { mergeable: "clean" } };
+    if (u.includes("/runner-status")) return { runners: [{ kind: "claude-sdk", label: "Claude Agent SDK (built-in)", binary: null, available: true }, { kind: "pi-cli", label: "pi", binary: "pi", pkg: "@earendil-works/pi-coding-agent", available: false }] };
     return {};
   };
 
@@ -149,6 +150,7 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
   assert.match(root.innerHTML, /Show agent avatars/, "appearance section has the avatars toggle");
   assert.match(root.innerHTML, /Team \(admin\)/, "admin team section renders");
   assert.match(root.innerHTML, /Operations/, "operations panel renders");
+  assert.match(root.innerHTML, /Agent runner/, "runner picker renders in settings");
   assert.match(root.innerHTML, /arne/, "signed-in user shown");
   click(q(".sheet .sh .iconbtn"));
   await tick(40);

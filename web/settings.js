@@ -49,14 +49,7 @@ export function Settings({ data, onClose, reload, openGithubTokens, openModels }
       <label class="ckline"><input type="checkbox" checked=${gitnexus} onChange=${(e) => setGitnexus(e.target.checked)}/> Use the GitNexus code index</label>
       <label>Max tokens per run (0 = off)</label><input type="number" min="0" step="50000" value=${maxTok} onInput=${(e) => setMaxTok(e.target.value)}/>
       <label>Reviewer revise rounds before it asks you</label><input type="number" min="0" max="3" value=${revRounds} onInput=${(e) => setRevRounds(e.target.value)}/>
-      <label>Agent runner — how roles execute</label>
-      <select value=${runner} onChange=${(e) => setRunner(e.target.value)}>
-        <option value="claude-sdk">Claude SDK (default — in-process, your subscription/key)</option>
-        <option value="pi-cli">pi CLI (subprocess — use pi as a tool)</option>
-        <option value="claude-cli">claude CLI (subprocess)</option>
-        <option value="custom-cli">Custom CLI (set command below)</option>
-      </select>
-      ${runner === "custom-cli" || runner === "pi-cli" || runner === "claude-cli" ? html`<label>CLI command template — <code>{model}</code> <code>{systemPrompt}</code> <code>{task}</code> <code>{workdir}</code> (blank = built-in default)</label><input type="text" value=${cliCmd} placeholder=${runner === "pi-cli" ? "pi --mode print --model {model} --system-prompt {systemPrompt} {task}" : runner === "claude-cli" ? "claude -p {task}" : ""} onInput=${(e) => setCliCmd(e.target.value)}/>` : null}
+      <${RunnerPicker} runner=${runner} setRunner=${setRunner} cliCmd=${cliCmd} setCliCmd=${setCliCmd} admin=${admin}/>
     </div>
 
     ${admin && data.opsMeta ? html`<div class="setgrp"><${Operations} meta=${data.opsMeta} values=${data.ops || {}} reload=${reload}/></div>` : null}
@@ -206,12 +199,56 @@ export function ModelsModal({ onClose, reload }) {
   <//>`;
 }
 
+// Agent-runner picker with live install status. CLI runners (pi, claude) need a binary on PATH;
+// if it's missing an admin can install it on the fly (POST /install-cli → npm -g to the data-volume
+// prefix, so it persists across redeploys). Closes the loop on "spawn pi ENOENT".
+function RunnerPicker({ runner, setRunner, cliCmd, setCliCmd, admin }) {
+  const [status, setStatus] = useState(null);
+  const [installing, setInstalling] = useState("");
+  const [pkg, setPkg] = useState("");
+  const [log, setLog] = useState("");
+  function refresh() { getJSON("/runner-status").then(setStatus).catch(() => {}); }
+  useEffect(refresh, []);
+  const byKind = {}; (status && status.runners || []).forEach((r) => (byKind[r.kind] = r));
+  const sel = byKind[runner];
+  function doInstall(kind, value) {
+    setInstalling(kind); setLog("");
+    api("/install-cli", { kind, value }).then((r) => {
+      setLog(r.log || "");
+      toast(r.available ? "Installed " + (r.pkg || kind) : "Install ran but the binary still isn't found", r.available ? "info" : "error");
+      refresh();
+    }).catch((e) => toast((e && e.message) || "Install failed", "error")).finally(() => setInstalling(""));
+  }
+  return html`
+    <label>Agent runner — how roles execute</label>
+    <select value=${runner} onChange=${(e) => setRunner(e.target.value)}>
+      <option value="claude-sdk">Claude SDK (default — in-process, your subscription/key)</option>
+      <option value="pi-cli">pi CLI (subprocess — drives any model pi supports)</option>
+      <option value="claude-cli">claude CLI (subprocess)</option>
+      <option value="custom-cli">Custom CLI (set command below)</option>
+    </select>
+    ${sel && sel.binary ? html`<div style="display:flex;align-items:center;gap:8px;margin:7px 2px;flex-wrap:wrap">
+      ${sel.available
+        ? html`<span class="statuschip s-ready"><${Icon} name="check" size=${12}/> ${sel.binary} installed</span>`
+        : html`<span class="statuschip s-attn"><${Icon} name="alert" size=${12}/> ${sel.binary} not installed</span>
+            ${admin ? html`<button class="btn" style="padding:2px 10px;font-size:12px" disabled=${installing === runner} onClick=${() => doInstall(runner)}>${installing === runner ? html`<${Spinner} size=${13}/> Installing…` : html`<${Icon} name="plus" size=${13}/> Install ${sel.binary}`}</button>` : null}`}
+    </div>` : null}
+    ${runner === "custom-cli" && admin ? html`<div style="display:flex;gap:8px;margin:7px 0">
+      <input placeholder="npm package to install (e.g. @org/some-cli)" value=${pkg} onInput=${(e) => setPkg(e.target.value)}/>
+      <button class="btn" disabled=${installing === "custom-cli" || !pkg} onClick=${() => doInstall("custom-cli", pkg)}>${installing === "custom-cli" ? html`<${Spinner} size=${13}/>` : "Install"}</button>
+    </div>` : null}
+    ${log ? html`<pre class="cmdbox" style="white-space:pre-wrap;max-height:120px;overflow:auto;font-size:11px;margin:4px 0">${log}</pre>` : null}
+    ${runner === "custom-cli" || runner === "pi-cli" || runner === "claude-cli" ? html`<label>CLI command template — <code>{model}</code> <code>{systemPrompt}</code> <code>{task}</code> <code>{workdir}</code> (blank = built-in default)</label><input type="text" value=${cliCmd} placeholder=${runner === "pi-cli" ? "pi --mode print --model {model} --system-prompt {systemPrompt} {task}" : runner === "claude-cli" ? "claude -p {task}" : ""} onInput=${(e) => setCliCmd(e.target.value)}/>` : null}
+  `;
+}
+
 function ProviderField({ providerDef, existing, reload, custom }) {
   const [val, setVal] = useState("");
   const [baseUrl, setBaseUrl] = useState(providerDef.preset?.baseUrl || "");
+  const [prunner, setPrunner] = useState(""); // "" = use the global runner
   function save() {
     if (!val) { toast("Paste an API key"); return; }
-    const prov = { id: providerDef.id + "-" + Date.now().toString(36), name: providerDef.preset?.name || "Custom", baseUrl: custom ? baseUrl.trim() : providerDef.preset.baseUrl, apiKey: val.trim(), models: providerDef.preset?.models || [] };
+    const prov = { id: providerDef.id + "-" + Date.now().toString(36), name: providerDef.preset?.name || "Custom", baseUrl: custom ? baseUrl.trim() : providerDef.preset.baseUrl, apiKey: val.trim(), models: providerDef.preset?.models || [], ...(prunner ? { runner: prunner } : {}) };
     api("/models", { providers: (existing || []).concat(prov) }).then(() => { toast("Saved"); setVal(""); reload(); }).catch(() => toast("Couldn’t save"));
   }
   return html`
@@ -220,6 +257,14 @@ function ProviderField({ providerDef, existing, reload, custom }) {
       <input type="password" autocomplete="off" placeholder=${providerDef.placeholder || "API Key"} value=${val} onInput=${(e) => setVal(e.target.value)}/>
       <button class="btn" onClick=${save}>Save</button>
     </div>
+    <label style="font-size:11px;margin-top:6px">Runner for this provider</label>
+    <select value=${prunner} onChange=${(e) => setPrunner(e.target.value)}>
+      <option value="">Use the global runner</option>
+      <option value="claude-sdk">Claude SDK (in-process)</option>
+      <option value="pi-cli">pi CLI</option>
+      <option value="claude-cli">claude CLI</option>
+      <option value="custom-cli">Custom CLI</option>
+    </select>
   `;
 }
 function SecretField({ field, isSet, reload }) {
