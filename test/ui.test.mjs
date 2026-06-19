@@ -116,6 +116,7 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
   // Let the data fetch + effects flush, then the cards should appear.
   await new Promise((r) => setTimeout(r, 150));
   assert.match(root.innerHTML, /A planned task/, "planned issue card renders from /data");
+  assert.match(root.innerHTML, /statusdot/, "card uses the new header status dot");
 
   // Verify lane placement for the fix flow: an issue with pr_number AND running:true must go to
   // Working, not Review. The mobile TabBar shows counts per column, so "Working · 1" confirms

@@ -141,16 +141,38 @@ input,select,textarea{font-size:16px}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:10px 12px;cursor:pointer;display:flex;flex-direction:column;gap:7px}
 .card:active{transform:scale(.992)}
 .card.active-now{border-left:3px solid var(--accent)}
-.card-h{display:flex;align-items:center;gap:6px;min-height:18px}
-.card-repo{font-size:11px;color:var(--ink-3);font-weight:540}
-.card-title{font-weight:540;font-size:14.5px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.card-chips{display:flex;align-items:center;gap:6px;flex-wrap:wrap;color:var(--ink-3);font-size:12px}
+.card-h{display:flex;align-items:center;gap:6px;min-height:18px;overflow:hidden;white-space:nowrap}
+.statusdot{flex:0 0 auto;width:18px;height:18px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;color:#fff}
+.card-repo{font-size:11px;color:var(--ink-3);font-weight:540;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.card-num{font-size:11px;color:var(--ink-3);flex:0 0 auto}
+.card-hicons{margin-left:auto;display:flex;align-items:center;gap:6px;flex:0 0 auto}
+.card-hicon{display:inline-flex;align-items:center;color:var(--ink-3)}
+.card-m{display:flex;flex-direction:column;gap:3px}
+.card-title{font-weight:560;font-size:14.5px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.card-meta{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink-3);overflow:hidden;white-space:nowrap;min-height:20px}
+.card-meta .role{flex:0 0 auto;font-weight:560;color:var(--ink-2);text-transform:capitalize}
+.card-excerpt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.card-time{margin-left:auto;color:var(--ink-3);font-size:12px}
+/* instant custom tooltip — pops the moment you hover, no delay */
+.tip{position:relative}
+.tip:hover::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 5px);left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);font-size:11px;font-weight:500;white-space:nowrap;padding:3px 7px;border-radius:6px;z-index:70;pointer-events:none;max-width:240px;overflow:hidden;text-overflow:ellipsis}
+.iconbtn-sm{flex:0 0 auto;width:28px;height:28px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);border-radius:8px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;padding:0}
+.iconbtn-sm:hover{background:var(--surface-2)}
+.iconbtn-sm:disabled{cursor:default;opacity:.6}
+/* per-card LLM picker (custom dropdown) */
+.mp{position:relative;display:inline-flex;flex:0 0 auto}
+.mpscrim{position:fixed;inset:0;z-index:44}
+.mpmenu{position:absolute;bottom:calc(100% + 6px);left:0;z-index:46;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);padding:5px;min-width:170px;max-height:240px;overflow:auto;display:flex;flex-direction:column;gap:1px}
+.mpitem{display:flex;align-items:center;gap:7px;width:100%;text-align:left;border:none;background:transparent;color:var(--ink);padding:6px 8px;border-radius:7px;cursor:pointer;font-size:12.5px;white-space:nowrap}
+.mpitem:hover{background:var(--surface-2)}
+.mpitem.on{color:var(--accent);font-weight:560}
 /* workspace setup progress bar (clone + index) — real % streamed from the backend */
 .setupbar{margin:2px 0}
 .setupbar-track{height:6px;border-radius:999px;background:var(--surface-2);overflow:hidden}
 .setupbar-fill{height:100%;background:var(--accent);border-radius:999px;transition:width .25s ease}
 .setupbar-lbl{display:inline-flex;align-items:center;gap:4px;margin-top:3px;font-size:11px;color:var(--ink-3)}
-.card-f{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end;border-top:1px solid var(--line);padding-top:8px}
+.card-f{display:flex;align-items:center;gap:6px;flex-wrap:nowrap;border-top:1px solid var(--line);padding-top:8px;overflow:visible}
+.cardbtn.cta{margin-left:auto}
 .card-f .cardbtn{margin-left:0}
 .card-subs{display:flex;flex-direction:column;border-top:1px solid var(--line);padding-top:5px}
 .subtoggle{display:flex;align-items:center;gap:6px;width:100%;text-align:left;border:none;background:transparent;color:var(--ink-2);font-size:12px;font-weight:560;cursor:pointer;padding:2px}
