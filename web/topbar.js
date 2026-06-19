@@ -116,8 +116,14 @@ export function StatusLine({ working, session, spend, analyzer, reload, sort, se
   const [anBusy, setAnBusy] = useState(false);
 
   useEffect(() => { getJSON("/web/version.json").then(setVer).catch(() => setVer(null)); }, []);
-  const verTitle = ver ? (ver.label || ("Build " + (ver.version || "?") + (ver.sha ? " · commit " + ver.sha : "") + (ver.builtAt ? " · built " + new Date(ver.builtAt).toLocaleString() : ""))) : "Development build (not from a Docker image)";
-  const verLabel = ver ? (ver.label || ("v" + (ver.version || "?") + (ver.builtAt ? " · " + ago(ver.builtAt) : ""))) : "dev";
+  // Label shows a relative "built X ago"; the hover popup shows the absolute date+time in the
+  // BROWSER's local zone (builtAt is ISO-UTC — new Date(...).toLocaleString() converts it).
+  const verLabel = ver
+    ? "v" + (ver.version || "?") + (ver.sha ? " · " + ver.sha : "") + (ver.builtAt ? " · " + ago(ver.builtAt) + " ago" : "")
+    : "dev";
+  const verTitle = ver
+    ? "v" + (ver.version || "?") + (ver.build ? " · build " + ver.build : "") + (ver.sha ? " · " + ver.sha : "") + (ver.builtAt ? " · built " + new Date(ver.builtAt).toLocaleString() : "")
+    : "Development build (not from a Docker image)";
 
   function openUsage() { setBud(s.budget || 0); setPctNow(pct); setPop(pop === "usage" ? null : "usage"); }
   function openWindow() { setWin(s.windowHours || 5); setStart(toLocalInput(s.windowStart ? new Date(s.windowStart) : new Date())); setPop(pop === "window" ? null : "window"); }
