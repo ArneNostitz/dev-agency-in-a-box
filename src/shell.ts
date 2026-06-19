@@ -166,6 +166,7 @@ input,select,textarea{font-size:16px}
 .mpitem{display:flex;align-items:center;gap:7px;width:100%;text-align:left;border:none;background:transparent;color:var(--ink);padding:6px 8px;border-radius:7px;cursor:pointer;font-size:12.5px;white-space:nowrap}
 .mpitem:hover{background:var(--surface-2)}
 .mpitem.on{color:var(--accent);font-weight:560}
+.plogo{display:inline-block;object-fit:contain;border-radius:4px;vertical-align:middle;flex:0 0 auto}
 /* workspace setup progress bar (clone + index) — real % streamed from the backend */
 .setupbar{margin:2px 0}
 .setupbar-track{height:6px;border-radius:999px;background:var(--surface-2);overflow:hidden}

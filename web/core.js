@@ -47,6 +47,31 @@ const ICONS = {
   dots: '<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>',
 };
 export const Icon = ({ name, size = 18, cls }) => html`<svg class=${"lic " + (cls || "")} width=${size} height=${size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{ __html: ICONS[name] || "" }}></svg>`;
+
+// Real provider/brand logos (@lobehub/icons-static-svg, MIT) vendored under /web/logos. Maps a
+// provider/model name to its colored SVG; ProviderLogo renders it as an <img>, falling back to a
+// generic icon for anything we don't have a logo for.
+const PROVIDER_LOGOS = [
+  [/claude|anthropic/i, "claude-color"],
+  [/zhipu|chatglm|\bglm\b/i, "chatglm-color"],
+  [/deepseek/i, "deepseek-color"],
+  [/kimi|moonshot/i, "kimi-color"],
+  [/gemini|google/i, "gemini-color"],
+  [/mistral/i, "mistral-color"],
+  [/qwen/i, "qwen-color"],
+  [/openai|gpt|custom/i, "openai"],
+];
+export function providerLogoSrc(name) {
+  const n = String(name || "");
+  for (const [re, file] of PROVIDER_LOGOS) if (re.test(n)) return "/web/logos/" + file + ".svg";
+  return null;
+}
+export function ProviderLogo({ name, size = 16 }) {
+  const src = providerLogoSrc(name);
+  return src
+    ? html`<img class="plogo" src=${src} width=${size} height=${size} alt=${name || "model"} loading="lazy"/>`
+    : html`<${Icon} name="flask" size=${size}/>`;
+}
 // Spinning loader to show an action is in flight (blocks "did my click register?" ambiguity).
 export const Spinner = ({ size = 18 }) => html`<svg class="lic spin" width=${size} height=${size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9" opacity="0.25"/><path d="M21 12a9 9 0 0 0-9-9"/></svg>`;
 

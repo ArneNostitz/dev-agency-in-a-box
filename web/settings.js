@@ -1,6 +1,6 @@
 // Dev Agency dashboard — settings module (split from app.js; Preact + htm, no build step).
 import { html, useState, useEffect, useRef } from "/web/vendor/standalone.mjs";
-import { Icon, Sheet, Spinner, api, getJSON, md, toast } from "./core.js";
+import { Icon, ProviderLogo, Sheet, Spinner, api, getJSON, md, toast } from "./core.js";
 import { OB_PROVIDERS } from "./onboarding.js";
 
 
@@ -242,7 +242,7 @@ export function ModelsModal({ onClose, reload }) {
       <button class="btn ghost" style="padding:3px 10px;font-size:12px" onClick=${() => setKeys(true)}>Keys</button>
     </div>` : null}
     ${providers.map((p) => html`<div class="modelrow" key=${p.id}>
-      <div class="modelrow-main"><b>${p.name}</b> <span class="muted" style="font-size:11px">${(p.models || []).length} model${(p.models || []).length === 1 ? "" : "s"}</span></div>
+      <div class="modelrow-main"><${ProviderLogo} name=${p.name} size=${16}/> <b>${p.name}</b> <span class="muted" style="font-size:11px">${(p.models || []).length} model${(p.models || []).length === 1 ? "" : "s"}</span></div>
       <select class="modelsel sm" value=${p.runner || ""} title="Runner (CLI) for this provider" onChange=${(e) => setRunner(p.id, e.target.value)}>
         <option value="">SDK</option><option value="pi-cli">pi</option><option value="claude-cli">claude</option><option value="custom-cli">custom</option>
       </select>
@@ -283,7 +283,7 @@ function AddProvider({ existing, status, onClose, onSaved }) {
       <option value="">SDK (default — in-process)</option><option value="pi-cli">pi CLI</option><option value="claude-cli">claude CLI</option><option value="custom-cli">Custom CLI</option>
     </select>
     ${sel && sel.binary && !sel.available ? html`<div style="margin:5px 2px"><span class="statuschip s-attn"><${Icon} name="alert" size=${12}/> ${sel.binary} not installed — install it in Settings → Pipeline</span></div>` : null}
-    <label style="margin-top:10px">2 · Provider</label>
+    <label style="margin-top:10px">2 · Provider ${def ? html`<${ProviderLogo} name=${def.preset?.name || def.label} size=${15}/>` : null}</label>
     <select value=${pid} onChange=${(e) => { setPid(e.target.value); setVal(""); }}>
       ${provs.map((p) => html`<option key=${p.id} value=${p.id}>${p.label}</option>`)}
     </select>

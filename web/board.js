@@ -1,6 +1,6 @@
 // Dev Agency dashboard — board module (split from app.js; Preact + htm, no build step).
 import { html, useState, useEffect } from "/web/vendor/standalone.mjs";
-import { Avatar, COLS, Icon, Spinner, ago, api, boardSortCmp, classify, filterByTime, fmtTok, getSetupProgress, ghUrl, isDone, shortModel, statusChip, toast, usageTitle } from "./core.js";
+import { Avatar, COLS, Icon, ProviderLogo, Spinner, ago, api, boardSortCmp, classify, filterByTime, fmtTok, getSetupProgress, ghUrl, isDone, shortModel, statusChip, toast, usageTitle } from "./core.js";
 
 // ---------- sort / group / time options ----------
 const SORT_OPTS = [
@@ -232,25 +232,16 @@ function Card({ i, subs, multi, onOpen, onOpenChild, act, data }) {
 // Solid status-dot colour per status-chip class (the header dot replaces the old chip).
 const DOT_COLOR = { "s-working": "var(--accent)", "s-ready": "var(--green)", "s-changes": "var(--red)", "s-attn": "var(--amber)", "s-auto": "var(--green)", "s-conflict": "var(--amber)", "s-done": "var(--ink-3)", "s-planned": "var(--ink-3)", "s-epic": "var(--purple)" };
 
-// A rough provider logo (we don't ship brand SVGs) for the model picker icon button.
-function providerLogo(name) {
-  const n = (name || "").toLowerCase();
-  if (!n) return "flask";
-  if (n.includes("claude") || n.includes("anthropic")) return "crown";
-  if (n.includes("custom")) return "settings";
-  return "globe";
-}
-
 // The per-card LLM picker: an icon button (provider logo) that opens a custom dropdown of models.
 function ModelPicker({ opts, value, onPick }) {
   const [open, setOpen] = useState(false);
   const cur = opts.find((o) => o.value === value);
   return html`<div class="mp">
-    <button class="iconbtn-sm tip" data-tip=${cur ? cur.label : "Default model"} onClick=${(e) => { e.stopPropagation(); setOpen((o) => !o); }}><${Icon} name=${providerLogo(cur ? cur.provider : null)} size=${15}/></button>
+    <button class="iconbtn-sm tip" data-tip=${cur ? cur.label : "Default model"} onClick=${(e) => { e.stopPropagation(); setOpen((o) => !o); }}><${ProviderLogo} name=${cur ? cur.provider : ""} size=${16}/></button>
     ${open ? html`<div class="mpscrim" onClick=${(e) => { e.stopPropagation(); setOpen(false); }}></div>
       <div class="mpmenu">
-        <button class=${"mpitem" + (!value ? " on" : "")} onClick=${(e) => { e.stopPropagation(); onPick(""); setOpen(false); }}><${Icon} name="flask" size=${13}/> Default model</button>
-        ${opts.map((o) => html`<button key=${o.value} class=${"mpitem" + (o.value === value ? " on" : "")} onClick=${(e) => { e.stopPropagation(); onPick(o.value); setOpen(false); }}><${Icon} name=${providerLogo(o.provider)} size=${13}/> ${o.short}</button>`)}
+        <button class=${"mpitem" + (!value ? " on" : "")} onClick=${(e) => { e.stopPropagation(); onPick(""); setOpen(false); }}><${Icon} name="flask" size=${14}/> Default model</button>
+        ${opts.map((o) => html`<button key=${o.value} class=${"mpitem" + (o.value === value ? " on" : "")} onClick=${(e) => { e.stopPropagation(); onPick(o.value); setOpen(false); }}><${ProviderLogo} name=${o.provider} size=${14}/> ${o.short}</button>`)}
       </div>` : null}
   </div>`;
 }

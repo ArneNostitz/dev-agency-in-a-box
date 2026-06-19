@@ -1,6 +1,6 @@
 // Dev Agency dashboard — onboarding module (split from app.js; Preact + htm, no build step).
 import { html, useState, useEffect } from "/web/vendor/standalone.mjs";
-import { Icon, Sheet, Spinner, api, getJSON, toast } from "./core.js";
+import { Icon, ProviderLogo, Sheet, Spinner, api, getJSON, toast } from "./core.js";
 import { Settings, GitHubConnect } from "./settings.js";
 
 
@@ -139,13 +139,14 @@ function ObAddModels({ onNext, onBack }) {
     <div class="obki"><${Icon} name="flask" size=${26}/></div>
     <div class="obh">Add your models</div>
     <div class="obsub">Pick a provider, paste its key — done. Claude (subscription) is the recommended default; add more anytime in Settings.</div>
-    ${added.length ? html`<div style="display:flex;flex-direction:column;gap:5px;margin:4px 0 10px">${added.map((n, ix) => html`<div key=${ix} style="display:flex;align-items:center;gap:7px;font-size:13px"><span class="statuschip s-ready"><${Icon} name="check" size=${12}/></span> ${n}</div>`)}</div>` : null}
+    ${added.length ? html`<div style="display:flex;flex-direction:column;gap:5px;margin:4px 0 10px">${added.map((n, ix) => html`<div key=${ix} style="display:flex;align-items:center;gap:7px;font-size:13px"><span class="statuschip s-ready"><${Icon} name="check" size=${12}/></span> <${ProviderLogo} name=${n} size=${15}/> ${n}</div>`)}</div>` : null}
     <label>+ Add a provider</label>
     <select value=${pid} onChange=${(e) => { setPid(e.target.value); setVal(""); setBaseUrl(""); }}>
       <option value="">Select a provider…</option>
       ${OB_PROVIDERS.map((x) => html`<option key=${x.id} value=${x.id}>${x.label}</option>`)}
     </select>
     ${def ? html`
+      ${def ? html`<div style="display:flex;align-items:center;gap:7px;margin:6px 2px;font-weight:560"><${ProviderLogo} name=${def.preset?.name || def.label} size=${18}/> ${def.label}</div>` : null}
       ${def.how ? html`<div class="muted" style="font-size:11px;white-space:pre-wrap;margin:6px 2px">${def.how}</div>` : null}
       ${def.link ? html`<a class="oblink" href=${def.link} target="_blank" rel="noopener">${def.linkLabel || "Get a key"} <${Icon} name="link" size=${14}/></a>` : null}
       ${def.custom ? html`<label>Base URL (Anthropic-compatible)</label><input placeholder="https://…/anthropic" value=${baseUrl} onInput=${(e) => setBaseUrl(e.target.value)}/>` : null}
