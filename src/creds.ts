@@ -8,7 +8,7 @@ import { listUsers, getUserSecret } from "./store.js";
 import { sStr } from "./settings.js";
 
 /** Public OAuth App client id for the device flow. Empty = set it once in Settings → GitHub. */
-export const DEFAULT_GITHUB_OAUTH_CLIENT_ID = "";
+export const DEFAULT_GITHUB_OAUTH_CLIENT_ID = "Ov23liNogL9IoN7aB25e";
 
 function agencyAdminId(): number | null {
   try {
