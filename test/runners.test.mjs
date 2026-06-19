@@ -60,8 +60,8 @@ test("summarizeTool truncates long values", () => {
 
 test("getRunner returns the right adapter per kind", () => {
   assert.equal(reg.getRunner("claude-sdk").kind, "claude-sdk");
+  assert.equal(reg.getRunner("pi-cli").kind, "pi-cli");
   assert.equal(reg.getRunner("claude-cli").kind, "cli");
-  assert.equal(reg.getRunner("pi-cli").kind, "cli");
   assert.equal(reg.getRunner("custom-cli", "mycli --x {task}").kind, "cli");
 });
 

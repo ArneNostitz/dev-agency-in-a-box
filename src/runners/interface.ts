@@ -33,6 +33,8 @@ export interface RunRequest {
   maxTurns: number;
   /** Forward-progress token kill-switch (0 disables). */
   tokenCap: number;
+  /** Command template (CLI runners). The registry fills the default per kind. */
+  template?: string;
 }
 
 /** What a runner returns. roleAgent does the accounting (recordTokens/setSession/pushActivity). */

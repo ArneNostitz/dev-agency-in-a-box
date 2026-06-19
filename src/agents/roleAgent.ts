@@ -238,13 +238,20 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
       resumeId,
       maxTurns,
       tokenCap,
+      template: cliCommand,
     };
     const r = await runner.run(req, (message) => {
-      // emitAssistant callback: same side-effects the old inline loop had.
+      // emitAssistant callback: same side-effects the old inline loop had (SDK path),
+      // plus pi-cli streaming (text deltas + tool summaries → live activity feed).
       const sid = (message as { session_id?: string }).session_id;
       if (sid) sessionId = sid;
-      if ((message as { type?: string }).type === "assistant") {
+      const m = message as { type?: string; delta?: string; summary?: string };
+      if (m.type === "assistant") {
         emitAssistant(repo, issueNumber, role, message);
+      } else if (m.type === "text_delta" && typeof m.delta === "string") {
+        pushActivity(repo, issueNumber, role, "text", m.delta);
+      } else if (m.type === "tool" && typeof m.summary === "string") {
+        pushActivity(repo, issueNumber, role, "tool", m.summary);
       }
     });
     if (r.sessionId) sessionId = r.sessionId;

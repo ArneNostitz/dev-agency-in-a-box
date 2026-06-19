@@ -36,10 +36,9 @@ export function parseCommandLine(cmdLine: string): string[] {
   return args;
 }
 
-/** Default command templates per CLI kind. */
+/** Default command templates per CLI kind. pi-cli has its own runner (sdk-pi.ts). */
 export const CLI_TEMPLATES: Record<string, string> = {
   "claude-cli": "claude -p {task}",
-  "pi-cli": "pi --mode print --model {model} --system-prompt {systemPrompt} {task}",
 };
 
 export class CliRunner implements AgentRunner {

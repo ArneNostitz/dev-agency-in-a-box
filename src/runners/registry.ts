@@ -7,6 +7,7 @@ import { sStr } from "../settings.js";
 import type { AgentRunner, RunnerKind } from "./interface.js";
 import { ClaudeSdkRunner } from "./sdk-claude.js";
 import { CliRunner, CLI_TEMPLATES } from "./cli.js";
+import { PiCliRunner, PI_TEMPLATE } from "./sdk-pi.js";
 
 /**
  * The one-liner tool-call summary for the activity stream. Single source (issue #61 dedup) —
@@ -41,6 +42,8 @@ export function getRunner(kind: RunnerKind | string, customCliCommand?: string):
   switch (kind) {
     case "claude-sdk":
       return new ClaudeSdkRunner();
+    case "pi-cli":
+      return new PiCliRunner();
     case "claude-cli":
       return new CliRunner(customCliCommand || CLI_TEMPLATES["claude-cli"]);
     case "pi-cli":
