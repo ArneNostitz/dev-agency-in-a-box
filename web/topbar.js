@@ -116,8 +116,8 @@ export function StatusLine({ working, session, spend, analyzer, reload, sort, se
   const [anBusy, setAnBusy] = useState(false);
 
   useEffect(() => { getJSON("/web/version.json").then(setVer).catch(() => setVer(null)); }, []);
-  const verTitle = ver ? "Build " + (ver.version || "?") + (ver.sha ? " · commit " + ver.sha : "") + (ver.builtAt ? " · built " + new Date(ver.builtAt).toLocaleString() : "") : "Development build (not from a Docker image)";
-  const verLabel = ver ? "v" + (ver.version || "?") + (ver.builtAt ? " · " + ago(ver.builtAt) : "") : "dev";
+  const verTitle = ver ? (ver.label || ("Build " + (ver.version || "?") + (ver.sha ? " · commit " + ver.sha : "") + (ver.builtAt ? " · built " + new Date(ver.builtAt).toLocaleString() : ""))) : "Development build (not from a Docker image)";
+  const verLabel = ver ? (ver.label || ("v" + (ver.version || "?") + (ver.builtAt ? " · " + ago(ver.builtAt) : ""))) : "dev";
 
   function openUsage() { setBud(s.budget || 0); setPctNow(pct); setPop(pop === "usage" ? null : "usage"); }
   function openWindow() { setWin(s.windowHours || 5); setStart(toLocalInput(s.windowStart ? new Date(s.windowStart) : new Date())); setPop(pop === "window" ? null : "window"); }
