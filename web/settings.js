@@ -8,14 +8,12 @@ import { OB_PROVIDERS } from "./onboarding.js";
 export function Settings({ data, onClose, reload, openGithubTokens, openModels, openAgents, openWorkflows }) {
   const cfg = data.config || {};
   const admin = Boolean(data.user && data.user.role === "admin");
-  const [skipArch, setSkipArch] = useState(cfg.skipArchitect !== "off");
-  const [gitnexus, setGitnexus] = useState(cfg.gitnexus === "on");
   const [maxTok, setMaxTok] = useState(cfg.maxTokensPerRun || 600000);
-  const [revRounds, setRevRounds] = useState(cfg.maxReviseRounds != null ? cfg.maxReviseRounds : 1);
   const [avatarsOn, setAvatarsOn] = useState(cfg.avatars !== "off");
+  const [selfImprove, setSelfImprove] = useState((data.ops || {}).self_improve != null ? !!(data.ops || {}).self_improve : true);
   const [runner, setRunner] = useState(cfg.agentRunner || "claude-sdk");
   const [cliCmd, setCliCmd] = useState(cfg.agentCliCommand || "");
-  function save() { api("/settings", { skipArchitect: skipArch ? "on" : "off", gitnexus: gitnexus ? "on" : "off", maxTokensPerRun: Number(maxTok) || 0, maxReviseRounds: Number(revRounds) || 0, avatars: avatarsOn ? "on" : "off", agentRunner: runner, agentCliCommand: cliCmd }).then(() => { toast("Saved"); onClose(); reload(); }); }
+  function save() { api("/settings", { maxTokensPerRun: Number(maxTok) || 0, avatars: avatarsOn ? "on" : "off", agentRunner: runner, agentCliCommand: cliCmd, ...(admin ? { ops: { self_improve: selfImprove } } : {}) }).then(() => { toast("Saved"); onClose(); reload(); }); }
   function changePw() { const np = window.prompt("New password (8+ characters)"); if (np == null) return; if (np.length < 8) { toast("8+ characters"); return; } api("/set-password", { value: np }).then(() => toast("Password changed")).catch((e) => toast((e && e.message) || "Couldn’t change", "error")); }
   return html`<${Sheet} title="Settings" onClose=${onClose} footer=${html`<button class="btn" onClick=${onClose}>Cancel</button><button class="btn primary" onClick=${save}>Save</button>`}>
 
@@ -44,16 +42,16 @@ export function Settings({ data, onClose, reload, openGithubTokens, openModels, 
     </div>
 
     <div class="setgrp">
-      <div class="sec">Agent pipeline</div>
-      <div class="muted" style="font-size:12px;margin-bottom:6px">How the agent team runs each issue.</div>
-      <label class="ckline"><input type="checkbox" checked=${skipArch} onChange=${(e) => setSkipArch(e.target.checked)}/> Skip the architect step (faster, fewer tokens)</label>
-      <label class="ckline"><input type="checkbox" checked=${gitnexus} onChange=${(e) => setGitnexus(e.target.checked)}/> Use the GitNexus code index</label>
+      <div class="sec">Run defaults</div>
+      <div class="muted" style="font-size:12px;margin-bottom:6px">Pipeline steps & revise rounds are now set per workflow in the builder. GitNexus indexing is always on.</div>
       <label>Max tokens per run (0 = off)</label><input type="number" min="0" step="50000" value=${maxTok} onInput=${(e) => setMaxTok(e.target.value)}/>
-      <label>Reviewer revise rounds before it asks you</label><input type="number" min="0" max="3" value=${revRounds} onInput=${(e) => setRevRounds(e.target.value)}/>
       <${RunnerPicker} runner=${runner} setRunner=${setRunner} cliCmd=${cliCmd} setCliCmd=${setCliCmd} admin=${admin}/>
     </div>
 
-    ${admin && data.opsMeta ? html`<div class="setgrp"><${Operations} meta=${data.opsMeta} values=${data.ops || {}} reload=${reload}/></div>` : null}
+    ${admin ? html`<div class="setgrp">
+      <div class="sec">Automation</div>
+      <label class="ckline"><input type="checkbox" checked=${selfImprove} onChange=${(e) => setSelfImprove(e.target.checked)}/> Allow self-improvement PRs</label>
+    </div>` : null}
 
     ${data.user ? html`
       <div class="setgrp">

@@ -18,7 +18,6 @@ import { promisify } from "node:util";
 import { existsSync, appendFileSync, mkdirSync, readFileSync, writeFileSync, rmSync, cpSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
-import { getSetting } from "./store.js";
 import { sStr, sNum } from "./settings.js";
 import { cloneRepo } from "./github.js";
 
@@ -78,13 +77,10 @@ function cacheDirFor(repo: string): string {
 }
 
 export function gitnexusEnabled(): boolean {
-  const s = getSetting("gitnexus"); // dashboard toggle wins over env
-  if (s === "on") return true;
-  if (s === "off") return false;
+  // Always on — the code index is far cheaper than the agent reading whole files to orient. The
+  // dashboard toggle was removed; only an explicit env kill-switch (GITNEXUS=false) can disable it.
   const env = process.env.GITNEXUS?.trim().toLowerCase();
   if (env === "false" || env === "off" || env === "0") return false;
-  // Default ON: a code-graph query is far cheaper than the agent reading whole files to orient
-  // itself, and the index is cached per-HEAD so building it is a one-off, token-free cost.
   return true;
 }
 

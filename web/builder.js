@@ -198,6 +198,8 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
               <${Select} value=${gateAfter(step).condition} options=${CONDITIONS} onChange=${(v) => setGate(step, { condition: v })}/>
               <label class="bld-lbl">Loop back to</label>
               <${Select} value=${String(Number(gateAfter(step).route.split(":")[1]))} options=${steps.slice(0, step).map((s2, j) => ({ value: String(j), label: (j + 1) + ". " + labelFor(agentOf(s2), agentOpts) }))} onChange=${(v) => setGate(step, { route: "loop:" + v })}/>
+              <label class="bld-lbl">Max revise rounds</label>
+              <input type="number" min="1" max="5" class="bld-num" value=${gateAfter(step).maxLoops ?? 2} onInput=${(e) => setGate(step, { maxLoops: Math.max(1, Number(e.target.value) || 1) })}/>
             ` : null}
           `}
         ` : html`<div class="bld-empty">Add a step to begin.</div>`}

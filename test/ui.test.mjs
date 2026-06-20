@@ -162,7 +162,7 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
   click(q('[aria-label="Settings"]'));
   await tick(40);
   assert.match(root.innerHTML, /Settings/, "settings opens");
-  assert.match(root.innerHTML, /Agent pipeline/, "settings shows the agent pipeline knobs");
+  assert.match(root.innerHTML, /Run defaults/, "settings shows the run-defaults section");
   assert.match(root.innerHTML, /Connections/, "connections section renders for a signed-in user");
   assert.match(root.innerHTML, /Show agent avatars/, "appearance section has the avatars toggle");
   assert.match(root.innerHTML, /Team \(admin\)/, "admin team section renders");

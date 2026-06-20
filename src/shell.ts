@@ -573,6 +573,7 @@ textarea{resize:vertical;min-height:64px}
 .bld-link{border:none;background:none;color:var(--accent);font-size:11.5px;cursor:pointer;padding:0}
 .bld-lbl{display:block;font-size:11px;font-weight:600;color:var(--ink-3);text-transform:uppercase;letter-spacing:.03em;margin:12px 0 6px}
 .bld-ta{width:100%;border:1px solid var(--line);border-radius:9px;background:var(--bg);color:var(--ink);font:13px/1.5 inherit;padding:8px;resize:vertical;box-sizing:border-box}
+.bld-num{width:100%;border:1px solid var(--line);border-radius:9px;background:var(--bg);color:var(--ink);font:13px inherit;padding:7px 9px;box-sizing:border-box}
 .bld-ta:focus{outline:none;border-color:var(--accent)}
 .bld-chips{display:flex;flex-wrap:wrap;gap:5px}
 .bld-chip{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;background:var(--surface-2);border-radius:7px;padding:3px 4px 3px 8px}
