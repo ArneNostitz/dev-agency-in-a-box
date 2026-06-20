@@ -31,7 +31,10 @@ import {
 import { EPIC_LABEL, renderEpicTracker } from "./epics.js";
 import { runRole } from "./agents/roleAgent.js";
 import type { RoleName } from "./agents/roles.js";
-import { recordRun, recordPlan, lastPlan, recordIssueState, recordIssueStatus, recordIssueFiles, recordPr, addEpicChild, listEpicChildren, getSession, issueActivity, recordReview, getReview, recordConflict, clearConflict, getSetting } from "./store.js";
+import { recordRun, recordPlan, lastPlan, recordIssueState, recordIssueStatus, recordIssueFiles, recordPr, addEpicChild, listEpicChildren, getSession, issueActivity, recordReview, getReview, recordConflict, clearConflict, getSetting, skillsPrompt, listHooks, type Workflow } from "./store.js";
+import { conflictFiles } from "./github.js";
+import { pushActivity, setActive } from "./activity.js";
+import { execSync } from "node:child_process";
 import { runReflection } from "./reflect.js";
 import { runChecks, parseDiscoveredChecks, rememberChecks } from "./checks.js";
 import { decideNext } from "./orchestrator.js";
@@ -807,4 +810,92 @@ export async function runFollowUp(
     "Apply the human's latest comment(s) below as the change set. Branch off an up-to-date main so you " +
     "include any already-merged work. Keep the diff focused on what the comment asks for.";
   await build(repo, issue, workdir, planText, thread);
+}
+
+
+// ---- workflow engine (Phase 2): run a custom workflow's steps in order, with forced skills/hooks
+// and gates. The proven full-build path stays on runPipeline; this drives everything else. ----
+const STEP_ROLE: Record<string, RoleName> = { "@dev": "developer", "@plan": "planner", "@arch": "architect", "@review": "reviewer", "@test": "tester" };
+
+async function runStepHooks(ids: number[], phase: "pre" | "post", workdir: string, repo: string, number: number): Promise<void> {
+  if (!ids.length) return;
+  for (const h of listHooks(undefined, phase)) {
+    if (!ids.includes(h.id) || !h.enabled) continue;
+    try {
+      execSync(h.command, { cwd: workdir, stdio: "pipe", timeout: 120_000 });
+      pushActivity(repo, number, "developer", "tool", `🪝 ${phase}-hook: ${h.command.slice(0, 70)}`);
+    } catch (e) {
+      pushActivity(repo, number, "developer", "tool", `🪝 ${phase}-hook failed: ${(e as Error).message.slice(0, 90)}`);
+    }
+  }
+}
+
+async function evalGate(cond: string, repo: string, issue: Issue, workdir: string, branch: string): Promise<boolean> {
+  switch (cond) {
+    case "review:changes": return getReview(repo, issue.number)?.verdict === "changes";
+    case "review:approved": return getReview(repo, issue.number)?.verdict === "approved";
+    case "tests:pass": return (await runTests(repo, issue.number, workdir, branch)).pass;
+    case "tests:fail": return !(await runTests(repo, issue.number, workdir, branch)).pass;
+    case "conflict": return (await conflictFiles(repo, branch).catch(() => [])).length > 0;
+    case "humanApproval": return true;
+    default: return false;
+  }
+}
+
+/** Run a workflow's steps in sequence with gates (review verdict / tests / conflict / human approval). */
+export async function runWorkflowEngine(cfg: Config, repo: string, issue: Issue, wf: Workflow, workdir: string, thread: string): Promise<void> {
+  void cfg;
+  const branch = `agency/issue-${issue.number}`;
+  const loops: Record<number, number> = {};
+  let i = 0, guard = 0;
+  await commentOnIssue(repo, issue.number, say("developer", `🧭 Running workflow **${wf.name}** — ${wf.steps.length} step(s).`));
+  while (i < wf.steps.length && guard++ < 30) {
+    const step = wf.steps[i];
+    const role: RoleName = STEP_ROLE[(step.agent || "").toLowerCase()] ?? "developer";
+    const hookIds = (step.hooks || []).map(Number).filter((n) => Number.isFinite(n));
+    const skills = step.skills && step.skills.length ? `
+
+${skillsPrompt(step.skills)}` : "";
+    setActive(repo, issue.number, "issue", role, issue.title);
+    await commentOnIssue(repo, issue.number, say(role, `▶ **Step ${i + 1}/${wf.steps.length}** · ${(step.instruction || "").split("\n")[0].slice(0, 90)}`));
+    await runStepHooks(hookIds, "pre", workdir, repo, issue.number);
+    const out = await runRole(role, {
+      workdir, repo, issueNumber: issue.number,
+      task: `${step.instruction}
+
+### ${issueHeader(issue)}${thread ? `
+
+### Conversation
+${thread}` : ""}${skills}`,
+      ...(step.model ? { model: step.model } : {}),
+    });
+    recordRun(repo, issue.number, role, out.model, out.turns, "workflow", out.costUsd);
+    await commentOnIssue(repo, issue.number, say(role, out.text));
+    await runStepHooks(hookIds, "post", workdir, repo, issue.number);
+    if (role === "developer") await finalizeWithPr(repo, issue, workdir, branch).catch(() => {});
+
+    const gate = (wf.gates || []).find((g) => g.after === i);
+    let route = "continue";
+    if (gate && (await evalGate(gate.condition, repo, issue, workdir, branch))) {
+      if (gate.condition === "humanApproval") {
+        await removeLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
+        await addLabel(repo, issue.number, APPROVAL_LABEL).catch(() => {});
+        recordIssueStatus(repo, issue.number, setBlocked(withStatus("planned"), "awaitingApproval"));
+        await commentOnIssue(repo, issue.number, say(role, "⏸ **Approval needed** to continue — press **Approve** on the dashboard."));
+        return;
+      }
+      route = gate.route;
+    }
+    if (route === "stop") break;
+    if (route.startsWith("loop:")) {
+      const target = Number(route.slice(5));
+      loops[i] = (loops[i] || 0) + 1;
+      if (Number.isFinite(target) && loops[i] <= (gate?.maxLoops ?? 2)) { i = target; continue; }
+    }
+    i++;
+  }
+  await removeLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
+  await addLabel(repo, issue.number, READY).catch(() => {});
+  recordIssueStatus(repo, issue.number, withStatus("review"));
+  await commentOnIssue(repo, issue.number, say("developer", `✅ Workflow **${wf.name}** complete — ready for your review.`));
 }

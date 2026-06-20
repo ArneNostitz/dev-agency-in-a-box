@@ -57,7 +57,7 @@ import { indexRepo } from "./gitnexus.js";
 import { pushActivity } from "./activity.js";
 import { loadHandleRoleMap, roleForText, ALL_ROLES, type RoleName } from "./agents/roles.js";
 import { resolveWorkflow, workflowLeadRole, workflowTriggers } from "./workflow.js";
-import { runPipeline, runPrFix, runFollowUp, runResumeBuild, runReviewFix } from "./pipeline.js";
+import { runPipeline, runWorkflowEngine, runPrFix, runFollowUp, runResumeBuild, runReviewFix } from "./pipeline.js";
 import { runRole } from "./agents/roleAgent.js";
 import { runChatAgent } from "./agents/chat.js";
 import { parseAuditProposals } from "./auditparse.js";
@@ -303,7 +303,9 @@ async function processIssue(cfg: Config, repo: string, issue: Issue): Promise<vo
       pushActivity(repo, issue.number, role, "tool", `📥 cloning ${repo}… ${phase === "cloned" ? "done" : percent + "%"}`);
     });
     await indexRepo(workdir, repo, (s) => pushActivity(repo, issue.number, role, "tool", s));
-    await runPipeline(cfg, repo, issue, role, workdir, thread);
+    // A custom workflow runs via the step engine; the proven full-build path stays on runPipeline.
+    const runFlow = () => (wf && wf.id !== "full-build") ? runWorkflowEngine(cfg, repo, issue, wf, workdir, thread) : runPipeline(cfg, repo, issue, role, workdir, thread);
+    await runFlow();
   } catch (err) {
     const msg = (err as Error).message ?? String(err);
     console.error(`[agency] pipeline error ${repo} #${issue.number}:`, msg);
@@ -311,7 +313,7 @@ async function processIssue(cfg: Config, repo: string, issue: Issue): Promise<vo
     if (rl === "switch") {
       // Auto-switched to fallback model — retry the pipeline in the same workdir (no re-clone).
       try {
-        await runPipeline(cfg, repo, issue, role, workdir, thread);
+        await ((wf && wf.id !== "full-build") ? runWorkflowEngine(cfg, repo, issue, wf, workdir, thread) : runPipeline(cfg, repo, issue, role, workdir, thread));
       } catch (err2) {
         const msg2 = (err2 as Error).message ?? String(err2);
         console.error(`[agency] pipeline error after model switch ${repo} #${issue.number}:`, msg2);
