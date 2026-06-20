@@ -182,8 +182,23 @@ function App() {
     }
     toast(start ? "Creating & starting…" : "Added to Planned");
     if (start) { setOpenKey(repo + "#" + tmpNum); setDetailError(null); }
-    Promise.all((atts || []).map((a) => api("/upload-file", { repo, number: 0, dataUrl: a.dataUrl, name: a.name }).then((j) => j && j.md).catch(() => null)))
-      .then((mds) => { const full = [body].concat(mds.filter(Boolean)).filter(Boolean).join("\n\n"); return api("/new-issue", { repo, role, title, body: full, start: !!start, ...(model ? { model } : {}) }); })
+    // Sequential upload (concurrent repo commits collide → only one attachment survives), then
+    // swap inline [image N] refs for their markdown and append the rest.
+    (atts || []).reduce((chain, a) => chain.then(async (acc) => {
+      const j = await api("/upload-file", { repo, number: 0, dataUrl: a.dataUrl, name: a.name }).catch(() => null);
+      acc.push(j && j.md ? { md: j.md, refId: a.refId } : null);
+      return acc;
+    }), Promise.resolve([]))
+      .then((results) => {
+        let full = body || "";
+        const appended = [];
+        for (const r of results.filter(Boolean)) {
+          if (r.refId && r.md) full = full.split("[" + r.refId + "]").join(r.md);
+          else if (r.md) appended.push(r.md);
+        }
+        if (appended.length) full = [full].concat(appended).filter(Boolean).join("\n\n");
+        return api("/new-issue", { repo, role, title, body: full, start: !!start, ...(model ? { model } : {}) });
+      })
       .then((d) => {
         if (start && d && d.number) setOpenKey(repo + "#" + d.number);
         setPending((ps) => ps.map((p) => (p === tmp ? Object.assign({}, p, { number: d.number || p.number }) : p)));

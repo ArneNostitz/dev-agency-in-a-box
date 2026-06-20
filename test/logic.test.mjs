@@ -360,3 +360,18 @@ test("parseControlCommand recognizes /add-repo and /list-repos", () => {
   assert.deepEqual(parseControlCommand("/list-repos", ""), { type: "list-repos" });
   assert.equal(parseControlCommand("just a normal issue", "do the thing"), null);
 });
+
+import { canonicalModel } from "../dist/agents/roles.js";
+
+test("canonicalModel: fixes Claude id ordering/aliases, leaves third-party untouched", () => {
+  assert.equal(canonicalModel("claude-4-6-sonnet"), "claude-sonnet-4-6");   // the bug from the screenshots
+  assert.equal(canonicalModel("claude-4-8-opus"), "claude-opus-4-8");
+  assert.equal(canonicalModel("claude-sonnet-4.6"), "claude-sonnet-4-6");   // dots → dashes
+  assert.equal(canonicalModel("sonnet"), "claude-sonnet-4-6");              // bare family
+  assert.equal(canonicalModel("opus"), "claude-opus-4-8");
+  assert.equal(canonicalModel("claude-haiku-4-5"), "claude-haiku-4-5-20251001"); // haiku gets its date
+  assert.equal(canonicalModel("claude-sonnet-4-6"), "claude-sonnet-4-6");   // already canonical
+  assert.equal(canonicalModel("glm-5.2"), "glm-5.2");                       // third-party untouched
+  assert.equal(canonicalModel("gemini-2.5-pro"), "gemini-2.5-pro");
+  assert.equal(canonicalModel(""), "");
+});

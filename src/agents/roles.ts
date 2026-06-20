@@ -17,6 +17,32 @@ export const MODELS = {
   opus: "claude-opus-4-8",
 } as const;
 
+/**
+ * Normalize a Claude model id to a string the API actually accepts. People (and pickers) commonly
+ * type the family/version in the wrong order ("claude-4-6-sonnet"), use dots ("claude-sonnet-4.6"),
+ * drop Haiku's date suffix, or just write "sonnet". All of those should run, not 404. Third-party
+ * ids (glm-…, gemini-…, deepseek-…, kimi-…) are left untouched.
+ */
+export function canonicalModel(m: string): string {
+  if (!m) return m;
+  let s = m.trim();
+  const low = s.toLowerCase();
+  if (!/sonnet|opus|haiku|claude/.test(low)) return s; // not a Claude id → leave it alone
+  // Bare family name (optionally "claude-…") → current canonical id.
+  if (/^(claude[-\s]*)?(sonnet|opus|haiku)$/.test(low)) {
+    const fam = /opus/.test(low) ? "opus" : /haiku/.test(low) ? "haiku" : "sonnet";
+    return MODELS[fam];
+  }
+  // Reorder "claude-<ver>-<family>" → "claude-<family>-<ver>" (e.g. claude-4-6-sonnet).
+  const re = low.match(/^claude-(\d+(?:[-.]\d+)*)-(sonnet|opus|haiku)(.*)$/);
+  if (re) s = `claude-${re[2]}-${re[1].replace(/\./g, "-")}${re[3]}`;
+  // Dots → dashes in the canonical "claude-<family>-4.6" form.
+  s = s.replace(/^(claude-(?:sonnet|opus|haiku))-(\d+)\.(\d+)/i, "$1-$2-$3");
+  // Haiku needs its dated id on the subscription/API.
+  if (/^claude-haiku-4-5$/i.test(s)) s = MODELS.haiku;
+  return s;
+}
+
 export type RoleName = "planner" | "architect" | "developer" | "reviewer" | "tester" | "librarian" | "auditor";
 
 export interface RoleDef {

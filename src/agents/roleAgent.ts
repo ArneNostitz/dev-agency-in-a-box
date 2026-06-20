@@ -9,7 +9,7 @@ import type { RunRequest } from "../runners/interface.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join as pathJoin } from "node:path";
-import { ROLES, modelFor, type RoleName } from "./roles.js";
+import { ROLES, modelFor, canonicalModel, type RoleName } from "./roles.js";
 import { loadConstitution, loadPersona, loadPlaybooks, loadLearned } from "../memory.js";
 import { pushActivity } from "../activity.js";
 import { recentLessons, recordTokens, recordRunStep, getProviders, getRoleModels, getSessionFallback, setSession, getIssueModelOverride, getGlobalModel } from "../store.js";
@@ -185,7 +185,7 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
       throw new Error(msg);
     }
   }
-  const model = input.model ?? route?.model ?? modelFor(def);
+  const model = canonicalModel(input.model ?? route?.model ?? modelFor(def));
   // Build the agent subprocess env: inject the dashboard-stored Claude token (so the SDK
   // authenticates without CLAUDE_CODE_OAUTH_TOKEN in the container env) and the GitHub bot token
   // (so the agent's own `git commit && git push` authenticate via gh's credential helper).

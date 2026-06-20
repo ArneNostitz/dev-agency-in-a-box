@@ -15,7 +15,7 @@ import { pushActivity, setActive, clearActive } from "../activity.js";
 import { commentOnIssue } from "../github.js";
 import { registerRun } from "../abort.js";
 import { recallWiring, RECALL_PROMPT } from "./recall.js";
-import { MODELS } from "./roles.js";
+import { MODELS, canonicalModel } from "./roles.js";
 
 /** Resolve model + subprocess env for a chat agent (global provider route, else Claude default). */
 export function resolveChatExec(modelOverride: string): { model: string; env: Record<string, string> } {
@@ -28,7 +28,7 @@ export function resolveChatExec(modelOverride: string): { model: string; env: Re
     env.ANTHROPIC_BASE_URL = provider.baseUrl;
     env.ANTHROPIC_AUTH_TOKEN = provider.apiKey;
     env.ANTHROPIC_API_KEY = provider.apiKey;
-    return { model: modelOverride || g!.model, env };
+    return { model: canonicalModel(modelOverride || g!.model), env };
   }
   // Default: Claude subscription / API key.
   const ct = claudeToken();
@@ -37,7 +37,7 @@ export function resolveChatExec(modelOverride: string): { model: string; env: Re
   else if (ak) { env.ANTHROPIC_API_KEY = ak; delete env.CLAUDE_CODE_OAUTH_TOKEN; delete env.ANTHROPIC_AUTH_TOKEN; delete env.ANTHROPIC_BASE_URL; }
   const bot = ghBotToken();
   if (bot) { env.GH_TOKEN = bot; env.GITHUB_TOKEN = bot; }
-  return { model: modelOverride || MODELS.sonnet, env };
+  return { model: canonicalModel(modelOverride || MODELS.sonnet), env };
 }
 
 /**

@@ -127,11 +127,14 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
     setPendingComments((ps) => ps.concat({ _skel: true, id: skelId, author: "you", createdAt: new Date().toISOString(), body: textToSend }));
     // Scroll to bottom so the skeleton is visible
     requestAnimationFrame(() => { if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight; });
-    Promise.all(atts.map((a) =>
-      api("/upload-file", { repo, number, dataUrl: a.d, name: a.name })
-        .then((j) => ({ md: j && j.md, refId: a.refId }))
-        .catch(() => null)
-    ))
+    // Upload attachments SEQUENTIALLY — each one commits to the repo via the GitHub Contents API,
+    // and concurrent commits to the same branch collide (non-fast-forward), so a parallel upload
+    // silently drops all but one. One at a time, each commit builds on the last.
+    atts.reduce((chain, a) => chain.then(async (acc) => {
+      const j = await api("/upload-file", { repo, number, dataUrl: a.d, name: a.name }).catch(() => null);
+      acc.push(j && j.md ? { md: j.md, refId: a.refId } : null);
+      return acc;
+    }), Promise.resolve([]))
       .then((results) => {
         // Replace inline [image N] references with their uploaded markdown
         let full = textToSend;
@@ -454,7 +457,7 @@ export function Composer({ repos, repo, setRepo, onClose, onCreate, data }) {
       const [providerId, mName] = model.split("/");
       modelOverride = { providerId, model: mName };
     }
-    onCreate(repo, role, title.trim(), body.trim(), start, atts.map((a) => ({ dataUrl: a.d, name: a.name })), modelOverride);
+    onCreate(repo, role, title.trim(), body.trim(), start, atts.map((a) => ({ dataUrl: a.d, name: a.name, refId: a.refId })), modelOverride);
     try { localStorage.removeItem(ndraftKey); } catch (e) {}
   }
   function pick(e) { const fs = e.target.files || []; for (let i = 0; i < fs.length; i++) readAttach(fs[i], (a) => setAtts((x) => x.concat(a))); e.target.value = ""; }
