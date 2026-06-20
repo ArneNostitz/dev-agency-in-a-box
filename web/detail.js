@@ -217,7 +217,7 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
   if (issue.pr_url) tb.push(html`<a class="tbtn" data-tip="Open PR" href=${issue.pr_url} target="_blank" rel="noopener"><${Icon} name="pr"/></a>`);
   if (issue.previewUrl) tb.push(html`<a class="tbtn primary" data-tip="Open preview" href=${issue.previewUrl} target="_blank" rel="noopener"><${Icon} name="globe"/></a>`);
   // Re-pull this single issue (title + whole conversation) from GitHub.
-  tb.push(html`<button class=${"tbtn" + (bz("update") ? " busy" : "")} disabled=${bz("update")} data-tip="Update this issue from GitHub" onClick=${() => act.updateIssue(repo, number).then(loadThread)}>${tico("update", "refresh")}${lbl(bz("update") ? "Updating…" : "Update")}</button>`);
+  if (isDesktop) tb.push(html`<button class=${"tbtn" + (bz("update") ? " busy" : "")} disabled=${bz("update")} data-tip="Update this issue from GitHub" onClick=${() => act.updateIssue(repo, number).then(loadThread)}>${tico("update", "refresh")}${lbl(bz("update") ? "Updating…" : "Update")}</button>`);
   if (!done) {
     // Decide actions from FACTS, not the (possibly stale) state label:
     //  • running  — something is actually executing right now (live registry), so the only
@@ -277,6 +277,7 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
   // Less-frequent controls live behind a "More" menu so the bar stays tidy.
   const da = armed === "del", db = bz("del");
   const moreItems = [];
+  if (!isDesktop) moreItems.push(html`<button class=${"menu-item" + (bz("update") ? " busy" : "")} disabled=${bz("update")} onClick=${() => act.updateIssue(repo, number).then(loadThread)}>${bz("update") ? html`<${Spinner} size=${15}/>` : html`<${Icon} name="refresh" size=${15}/>`}<span class="mi-label">${bz("update") ? "Updating…" : "Update from GitHub"}</span></button>`);
   if (!done) { moreItems.push(autoToggle("resume")); moreItems.push(autoToggle("merge")); }
   // Per-issue budget (#67) — ONE control: unlimited / a $ cap / default, set from a single prompt.
   const isUnlimited = !!issue.budget?.unlimited;
@@ -344,7 +345,7 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
 
   return html`<div class="detail on">
     <div class="dhead">
-      <button class="iconbtn" aria-label="Close" onClick=${onClose}><${Icon} name="arrowleft"/></button>
+      <button class="iconbtn dclose" aria-label="Close" data-tip="Close" onClick=${onClose}><${Icon} name="x"/></button>
       <div class="tt">${issue.title || "#" + number} <span class="dmeta">· ${repo.split("/").pop()} #${number}${st ? " · " + st.replace("agency:", "") : ""}</span></div>
     </div>
     <div class="dtoolbar">
@@ -354,7 +355,7 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
       ${modelOpts.length ? html`<${Select} value=${modelOverride} options=${modelSelOpts} onChange=${updateModelOverride} menuAlign="right" btnClass="iconbtn-sm" trigger=${modelTrigger}/>` : null}
       ${tbRight}
       ${moreItems.length ? html`<span class="dropwrap">
-        <button class="tbtn" data-tip="More" onClick=${() => setMoreOpen((o) => !o)}><${Icon} name="dots"/></button>
+        <button class="tbtn" data-tip="More actions" onClick=${() => setMoreOpen((o) => !o)}><${Icon} name=${moreOpen ? "x" : "menu"}/></button>
         ${moreOpen ? html`<div class="dropscrim" onClick=${() => setMoreOpen(false)}></div><div class="dropmenu menu">${moreItems.map((it, i) => it && it.sep ? html`<div key=${i} class="menu-sep"></div>` : html`<span key=${i}>${it}</span>`)}</div>` : null}
       </span>` : null}
     </div>

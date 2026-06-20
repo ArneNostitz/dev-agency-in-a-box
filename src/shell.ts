@@ -463,7 +463,7 @@ textarea{resize:vertical;min-height:64px}
   .band-cols{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
   .col{margin:0}
   .cards{max-height:calc(100dvh - 200px);overflow-y:auto;padding-right:2px}
-  .detail{left:auto;right:0;width:min(1080px,92vw);box-shadow:-8px 0 30px rgba(0,0,0,.18)}
+  .detail{left:0;right:0;width:auto;box-shadow:none}
   .dpanes{flex-direction:row}
   .dpane.chat{flex:1 1 auto;border-right:1px solid var(--line)}
   .dpane.side{flex:0 0 46%;width:46%;max-width:520px}
