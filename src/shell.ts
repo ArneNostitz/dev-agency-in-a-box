@@ -388,6 +388,8 @@ textarea{resize:vertical;min-height:64px}
 .avi{display:inline-block;flex:0 0 auto;overflow:hidden;vertical-align:middle;line-height:0}
 .avi img{width:100%;height:100%;display:block}
 .avi.head img{object-fit:contain;object-position:center}
+.avi.custom{border-radius:50%;overflow:hidden}
+.avi.custom img{object-fit:cover;object-position:center}
 .avi.full img{object-fit:contain;object-position:center top}
 .cmt.incoming{border-left:3px solid var(--accent)}
 .cmt .h .cmt-in{display:inline-flex;align-items:center;color:var(--accent);vertical-align:middle}
@@ -576,6 +578,14 @@ textarea{resize:vertical;min-height:64px}
 .bld-lbl{display:block;font-size:11px;font-weight:600;color:var(--ink-3);text-transform:uppercase;letter-spacing:.03em;margin:12px 0 6px}
 .bld-ta{width:100%;border:1px solid var(--line);border-radius:9px;background:var(--bg);color:var(--ink);font:13px/1.5 inherit;padding:8px;resize:vertical;box-sizing:border-box}
 .bld-num{width:100%;border:1px solid var(--line);border-radius:9px;background:var(--bg);color:var(--ink);font:13px inherit;padding:7px 9px;box-sizing:border-box}
+.agm-top{display:flex;gap:14px;align-items:flex-start;margin-bottom:6px}
+.agm-avatar{position:relative;flex:0 0 auto;width:56px;height:56px;border-radius:50%;overflow:hidden;cursor:pointer;border:1px solid var(--line);background:var(--surface-2);display:flex;align-items:center;justify-content:center}
+.agm-avatar img{width:100%;height:100%;object-fit:cover}
+.agm-avatar-edit{position:absolute;right:0;bottom:0;width:20px;height:20px;border-radius:50%;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;border:2px solid var(--surface)}
+.agm-tools{display:flex;flex-wrap:wrap;gap:6px}
+.agm-tool{display:inline-flex;align-items:center;gap:5px;font-size:12.5px;border:1px solid var(--line);border-radius:999px;padding:4px 10px;cursor:pointer;color:var(--ink-2)}
+.agm-tool.on{border-color:var(--accent);background:var(--accent-weak);color:var(--accent)}
+.agm-tool input{display:none}
 .bld-ta:focus{outline:none;border-color:var(--accent)}
 .bld-chips{display:flex;flex-wrap:wrap;gap:5px}
 .bld-chip{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;background:var(--surface-2);border-radius:7px;padding:3px 4px 3px 8px}

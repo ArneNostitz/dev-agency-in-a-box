@@ -2,7 +2,7 @@
 // agents/skills/hooks, a canvas of agent step-nodes wired by real SVG connector lines with gate
 // badges, and a right inspector for the selected node. Replaces the old form-in-a-sheet editor.
 import { html, useState, useEffect, useRef } from "/web/vendor/standalone.mjs";
-import { Avatar, Icon, Select, ProviderLogo, defaultModelLogo, agentOptions, api, toast, Spinner } from "./core.js";
+import { Avatar, Icon, Modal, Select, ProviderLogo, defaultModelLogo, agentOptions, api, toast, readAttach, Spinner } from "./core.js";
 
 const NODE_W = 168, NODE_H = 98, GAP = 60, ROW_GAP = 56, PAD = 30;
 const STEP_ROLE = { "@plan": "planner", "@arch": "architect", "@dev": "developer", "@review": "reviewer", "@test": "tester" };
@@ -28,11 +28,13 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
   const [form, setForm] = useState(null);        // working copy
   const [step, setStep] = useState(0);           // selected step index
   const [saving, setSaving] = useState(false);
+  const [editAgent, setEditAgent] = useState(null); // null | "__new__" | handle
   const canvasRef = useRef(null);
   const [cw, setCw] = useState(960);
   useEffect(() => { const el = canvasRef.current; if (!el) return; const m = () => setCw(el.clientWidth || 960); m(); window.addEventListener("resize", m); return () => window.removeEventListener("resize", m); }, [sel]);
 
   const agentOpts = agentOptions(data && data.agentDefs, []).filter((o) => o.hint !== "workflow");
+  const srcFor = (handle) => (agentOpts.find((o) => o.value === handle) || {}).avatarSrc || "";
   const skillOpts = ((data && data.skills) || []).map((s) => ({ value: s.name, label: s.name, desc: s.description || "" }));
   const hookOpts = ((data && data.hooks) || []).map((h) => ({ value: String(h.id), label: (h.target || "hook"), phase: h.phase || "pre" }));
 
@@ -135,9 +137,9 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
         <div class="bld-rail-sec">Agents</div>
         <div class="bld-pills">
           ${agentOpts.map((o) => html`<button class="bld-pill agent" key=${o.value} title=${"Add " + o.label} onClick=${() => addStep(o.value)}>
-            <${Avatar} role=${o.avatar || roleFor(o.value)} size=${18} crop="head"/><span>${o.label}</span><${Icon} name="plus" size=${12}/>
+            <${Avatar} role=${o.avatar || roleFor(o.value)} src=${o.avatarSrc} size=${18} crop="head"/><span>${o.label}</span><${Icon} name="plus" size=${12}/>
           </button>`)}
-          <button class="bld-pill ghost" onClick=${() => onEditAgent && onEditAgent()}><${Icon} name="plus" size=${13}/><span>New agent</span></button>
+          <button class="bld-pill ghost" onClick=${() => setEditAgent("__new__")}><${Icon} name="plus" size=${13}/><span>New agent</span></button>
         </div>
         <div class="bld-rail-sec">Skills ${cur ? html`<span class="bld-hint">→ ${labelFor(agentOf(cur), agentOpts)}</span>` : null}</div>
         <div class="bld-pills">
@@ -165,7 +167,7 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
             const p = nodePos(i);
             const g = gateAfter(i);
             return html`<div key=${i} class=${"bld-node" + (i === step ? " sel" : "")} style=${"left:" + p.x + "px;top:" + p.y + "px;width:" + NODE_W + "px"} onClick=${() => setStep(i)}>
-                <div class="bld-node-h"><span class="bld-node-num">${i + 1}</span><${Avatar} role=${roleFor(agentOf(s))} size=${26} crop="head"/><span class="bld-node-name">${labelFor(agentOf(s), agentOpts)}</span></div>
+                <div class="bld-node-h"><span class="bld-node-num">${i + 1}</span><${Avatar} role=${roleFor(agentOf(s))} src=${srcFor(agentOf(s))} size=${26} crop="head"/><span class="bld-node-name">${labelFor(agentOf(s), agentOpts)}</span></div>
                 <div class="bld-node-task">${(s.instruction || "").split("\n")[0] || html`<span class="ph">describe this step…</span>`}</div>
                 <div class="bld-node-tags">${(s.skills || []).length ? html`<span class="t skill"><${Icon} name="sparkles" size=${10}/>${s.skills.length}</span>` : null}${(s.hooks || []).length ? html`<span class="t hook">${s.hooks.length} hook</span>` : null}${s.model ? html`<span class="t"><${ProviderLogo} name="claude" size=${10}/></span>` : null}${g ? html`<span class=${"t " + (g.route && g.route.startsWith("loop") ? "loop" : "branch")}>${g.route && g.route.startsWith("loop") ? html`<${Icon} name="refresh" size=${10}/> loop` : html`<${Icon} name="alert" size=${10}/> stop`}</span>` : null}</div>
               </div>`;
@@ -178,10 +180,10 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
       <div class="bld-insp">
         ${cur ? html`
           <div class="bld-insp-h">
-            <${Avatar} role=${roleFor(agentOf(cur))} size=${30} crop="head"/>
+            <${Avatar} role=${roleFor(agentOf(cur))} src=${srcFor(agentOf(cur))} size=${30} crop="head"/>
             <div style="flex:1;min-width:0">
               <div class="bld-insp-name">${labelFor(agentOf(cur), agentOpts)}</div>
-              <button class="bld-link" onClick=${() => onEditAgent && onEditAgent(agentOf(cur))}>Edit agent profile →</button>
+              <button class="bld-link" onClick=${() => setEditAgent(agentOf(cur))}>Edit agent profile →</button>
             </div>
             <button class="iconbtn" title="Remove step" onClick=${() => removeStep(step)} disabled=${steps.length <= 1}><${Icon} name="trash" size=${15}/></button>
           </div>
@@ -208,7 +210,46 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
         ` : html`<div class="bld-empty">Add a step to begin.</div>`}
       </div>
     </div>
+    ${editAgent ? html`<${AgentModal} data=${data} which=${editAgent} onClose=${() => setEditAgent(null)} reload=${reload}/>` : null}
   </div>`;
+}
+
+function AgentModal({ data, which, onClose, reload }) {
+  const defs = (data && data.agentDefs) || [];
+  const existing = which === "__new__" ? null : defs.find((d) => (d.handle || ("@" + d.name)) === which || d.name === String(which).replace(/^@/, ""));
+  const TOOLS = ["Read", "Glob", "Grep", "Edit", "Write", "Bash"];
+  const [f, setF] = useState(existing ? Object.assign({ defaultTask: "", avatar: "", tools: [] }, existing) : { name: "", handle: "", mode: "repo", model: "", tools: ["Read", "Glob", "Grep"], persona: "", defaultTask: "", avatar: "", pushesGithub: true });
+  const [busy, setBusy] = useState(false);
+  const set = (k, v) => setF((o) => Object.assign({}, o, { [k]: v }));
+  const toggleTool = (t) => setF((o) => Object.assign({}, o, { tools: (o.tools || []).includes(t) ? o.tools.filter((x) => x !== t) : (o.tools || []).concat(t) }));
+  function pickAvatar(e) { const file = (e.target.files || [])[0]; if (!file) return; readAttach(file, (a) => { api("/upload-file", { repo: "_agents", number: -1, dataUrl: a.d, name: (f.name || "avatar") }).then((j) => { if (j && j.url) set("avatar", j.url); else toast("Upload failed", "error"); }).catch(() => toast("Upload failed", "error")); }); e.target.value = ""; }
+  function save() { if (!f.name.trim()) { toast("Name required"); return; } setBusy(true); api("/agent-def-save", { agentDef: { name: f.name.trim(), handle: f.handle || "@" + f.name.trim(), mode: f.mode, model: f.model, tools: f.tools, persona: f.persona, defaultTask: f.defaultTask, avatar: f.avatar, pushesGithub: f.pushesGithub !== false } }).then(() => { toast("Agent saved"); reload && reload(); onClose(); }).catch((e) => toast((e && e.message) || "Couldn’t save", "error")).then(() => setBusy(false)); }
+  const footer = html`<button class="btn" onClick=${onClose}>Cancel</button><button class="btn primary" disabled=${busy} onClick=${save}>${busy ? html`<${Spinner} size=${14}/>` : "Save agent"}</button>`;
+  return html`<${Modal} title=${existing ? "Edit agent" : "New agent"} onClose=${onClose} footer=${footer}>
+    <div class="agm-top">
+      <label class="agm-avatar" title="Upload a custom avatar">
+        ${f.avatar ? html`<img src=${f.avatar}/>` : html`<${Avatar} role=${f.name || "agent"} size=${56} crop="head"/>`}
+        <span class="agm-avatar-edit"><${Icon} name="upload" size=${13}/></span>
+        <input type="file" accept="image/*" style="display:none" onChange=${pickAvatar}/>
+      </label>
+      <div style="flex:1;min-width:0">
+        <label class="bld-lbl">Name</label>
+        <input class="bld-num" value=${f.name} disabled=${!!existing} placeholder="e.g. spec-creator" onInput=${(e) => set("name", e.target.value.replace(/[^\w-]/g, ""))}/>
+        <label class="bld-lbl">Handle</label>
+        <input class="bld-num" value=${f.handle} placeholder=${"@" + (f.name || "agent")} onInput=${(e) => set("handle", e.target.value)}/>
+      </div>
+    </div>
+    <label class="bld-lbl">Mode</label>
+    <${Select} value=${f.mode} options=${[{ value: "repo", label: "repo — writes code" }, { value: "chat", label: "chat — conversation, no code" }]} onChange=${(v) => set("mode", v)}/>
+    <label class="bld-lbl">Model <span class="bld-hint">(blank = default)</span></label>
+    <input class="bld-num" value=${f.model} placeholder="e.g. glm-5.1, or blank" onInput=${(e) => set("model", e.target.value)}/>
+    <label class="bld-lbl">Default task <span class="bld-hint">— pre-fills a workflow step</span></label>
+    <textarea class="bld-ta" rows="2" value=${f.defaultTask} placeholder="e.g. Implement the plan and open a PR." onInput=${(e) => set("defaultTask", e.target.value)}></textarea>
+    <label class="bld-lbl">Tools</label>
+    <div class="agm-tools">${TOOLS.map((t) => html`<label class=${"agm-tool" + ((f.tools || []).includes(t) ? " on" : "")} key=${t}><input type="checkbox" checked=${(f.tools || []).includes(t)} onChange=${() => toggleTool(t)}/> ${t}</label>`)}</div>
+    <label class="bld-lbl">Persona <span class="bld-hint">(markdown)</span></label>
+    <textarea class="bld-ta" rows="6" value=${f.persona} placeholder="How this agent thinks and behaves…" onInput=${(e) => set("persona", e.target.value)}></textarea>
+  <//>`;
 }
 
 function modelOpts(data) {

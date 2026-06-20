@@ -47,6 +47,7 @@ const ICONS = {
   incoming: '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/>',
   dots: '<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>',
   menu: '<line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>',
+  upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>',
 };
 export const Icon = ({ name, size = 18, cls }) => html`<svg class=${"lic " + (cls || "")} width=${size} height=${size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" dangerouslySetInnerHTML=${{ __html: ICONS[name] || "" }}></svg>`;
 
@@ -111,10 +112,10 @@ export function commentBadge(body) { const r = roleFromComment(body); return r ?
 // Drop the leading "🧠 **Planner** · _dev-agency_" line (now shown in the header) from a comment body.
 export function stripBadge(body) { return (body || "").replace(/^\s*[^\n]*·\s*_dev-agency_\s*\r?\n+/, ""); }
 // Persona avatar. crop="head" (dashboard: pre-cropped head) | "full" (detail: whole figure).
-export const Avatar = ({ role, size = 24, crop = "head" }) => {
-  const w = crop === "full" ? Math.round(size * 0.82) : size;
+export const Avatar = ({ role, size = 24, crop = "head", src }) => {
+  const w = src ? size : (crop === "full" ? Math.round(size * 0.82) : size);
   const h = size;
-  return html`<span class=${"avi " + crop} style=${"width:" + w + "px;height:" + h + "px"} title=${(role || "agent") + " agent"}><img src=${avatarFile(role, crop)} alt=${(role || "agent") + " avatar"} loading="lazy"/></span>`;
+  return html`<span class=${"avi " + crop + (src ? " custom" : "")} style=${"width:" + w + "px;height:" + h + "px"} title=${(role || "agent") + " agent"}><img src=${src || avatarFile(role, crop)} alt=${(role || "agent") + " avatar"} loading="lazy"/></span>`;
 };
 
 // ---------- helpers ----------
@@ -515,7 +516,7 @@ export function Select({ value, options, onChange, trigger, btnClass, menuAlign,
       window.removeEventListener("resize", onResize);
     };
   }, [open]);
-  const itemInner = (o) => html`${o.avatar ? html`<${Avatar} role=${o.avatar} crop="head" size=${18}/>` : o.logo ? html`<${ProviderLogo} name=${o.logo} size=${15}/>` : o.icon ? html`<${Icon} name=${o.icon} size=${14}/>` : null}<span class="sel-itxt">${o.label}</span>${o.hint ? html`<span class=${"sel-badge" + (o.hintCls ? " " + o.hintCls : "")}>${o.hint}</span>` : null}`;
+  const itemInner = (o) => html`${o.avatar ? html`<${Avatar} role=${o.avatar} src=${o.avatarSrc} crop="head" size=${18}/>` : o.logo ? html`<${ProviderLogo} name=${o.logo} size=${15}/>` : o.icon ? html`<${Icon} name=${o.icon} size=${14}/>` : null}<span class="sel-itxt">${o.label}</span>${o.hint ? html`<span class=${"sel-badge" + (o.hintCls ? " " + o.hintCls : "")}>${o.hint}</span>` : null}`;
   return html`<div class="sel">
     <button ref=${btnRef} class=${"sel-btn " + (btnClass || "")} disabled=${disabled} onClick=${toggle}>
       ${trigger ? trigger(cur) : html`<span class="sel-cur">${cur && cur.avatar ? html`<${Avatar} role=${cur.avatar} crop="head" size=${16}/>` : cur && cur.logo ? html`<${ProviderLogo} name=${cur.logo} size=${15}/>` : null}${cur ? cur.label : (placeholder || "Select…")}</span><${Icon} name="chevdown" size=${13} cls="sel-caret"/>`}
@@ -558,6 +559,6 @@ const WF_AVATAR = { "full-build": "developer", "quick-fix": "developer", "plan-o
 export function agentOptions(agentDefs, workflows) {
   const wf = (workflows || []).filter((w) => w.trigger).map((w) => ({ value: w.trigger, label: w.name, avatar: WF_AVATAR[w.id] || "developer", hint: "workflow", hintCls: "b-wf" }));
   const defs = agentDefs || [];
-  const agents = defs.map((d) => ({ value: d.handle || ("@" + d.name), label: d.name, avatar: d.name, hint: d.mode === "chat" ? "chat" : "code", hintCls: d.mode === "chat" ? "b-chat" : "b-code" }));
+  const agents = defs.map((d) => ({ value: d.handle || ("@" + d.name), label: d.name, avatar: d.name, avatarSrc: d.avatar || "", hint: d.mode === "chat" ? "chat" : "code", hintCls: d.mode === "chat" ? "b-chat" : "b-code" }));
   return wf.concat(ROLE_PINS).concat(agents);
 }

@@ -36,6 +36,6 @@ export function flushOldAttachments(days = 7): number {
   const d = getDb();
   if (!d) return 0;
   const cutoff = new Date(Date.now() - days * 86_400_000).toISOString();
-  const r = d.prepare(`DELETE FROM attachments WHERE created_at < ?`).run(cutoff);
+  const r = d.prepare(`DELETE FROM attachments WHERE created_at < ? AND number >= 0`).run(cutoff); // number<0 = permanent (e.g. agent avatars)
   return Number(r.changes ?? 0);
 }
