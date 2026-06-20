@@ -102,7 +102,7 @@ import { claimFiles, releaseFiles } from "./locks.js";
 import { parseRateLimit, nextWindowReset } from "./ratelimit.js";
 import { startPreviewSweeper, killAllApps } from "./apprun.js";
 import { setActive, clearActive, getActive } from "./activity.js";
-import { stopRuns } from "./abort.js";
+import { stopRuns, requestStop, clearStop, isStopRequested } from "./abort.js";
 import { dispatch, drain, stop as stopPool, poolStatus, inFlightKeys } from "./pool.js";
 import { loadBudget, overBudget, effectiveLimits } from "./budget.js";
 import { maybeSelfImprove } from "./reflect.js";
@@ -231,6 +231,7 @@ function workdirFor(repo: string, key: string): string {
 
 /** Process one actionable issue end to end. */
 async function processIssue(cfg: Config, repo: string, issue: Issue, opts: { fresh?: boolean } = {}): Promise<void> {
+  clearStop(repo, issue.number); // a fresh dispatch clears any prior Stop request
   // Chat agents (v3): interactive, non-repo. Route here and skip the clone/branch/PR machinery.
   const chatDef = chatAgentForText(`${issue.title}\n${issue.body}`);
   if (chatDef) {
@@ -544,6 +545,7 @@ export async function forceResume(cfg: Config, repo: string, number: number, add
 /** Worker: resume a build (plan already exists) — continue the branch, don't redo finished work. */
 async function processResume(cfg: Config, repo: string, issue: Issue): Promise<void> {
   void cfg;
+  clearStop(repo, issue.number); // explicit resume clears any prior Stop request
   await addLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
   recordIssueStatus(repo, issue.number, withStatus("working"), { title: issue.title, role: "developer" });
   await acknowledge(repo, issue.number);
@@ -695,6 +697,7 @@ export async function forceApprove(cfg: Config, repo: string, number: number): P
  * interaction until the user presses ▶ again.
  */
 export async function forceStop(_cfg: Config, repo: string, number: number): Promise<void> {
+  requestStop(repo, number); // authoritative halt — the workflow/pipeline checks this between steps
   const aborted = stopRuns(repo, number); // abort the live SDK subprocess(es)
   clearActive(repo, number);
   if (number === 0) {
@@ -718,20 +721,22 @@ export async function forceStop(_cfg: Config, repo: string, number: number): Pro
     console.log(`[agency] stop ${repo} #${number} → kept PR ${existingPr.url} (Review)`);
     return;
   }
+  // Stop = halt and STAY halted (NOT Planned — that's what Cancel is for). Park at needs-attention,
+  // auto off; nothing re-runs it until the user presses Resume (or Cancel → Planned).
   setAuto("resume", "off", repo, number);
   setAuto("merge", "off", repo, number);
-  for (const l of [IN_PROGRESS, READY, NEEDS_ATTENTION, RATE_LIMITED, "🚧 blocked", ...AWAITING_LABELS]) {
+  for (const l of [IN_PROGRESS, READY, RATE_LIMITED, "🚧 blocked", ...AWAITING_LABELS]) {
     await removeLabel(repo, number, l).catch(() => {});
   }
-  await addLabel(repo, number, "agency:planned").catch(() => {});
-  recordIssueStatus(repo, number, withStatus("planned"));
+  await addLabel(repo, number, NEEDS_ATTENTION).catch(() => {});
+  recordIssueStatus(repo, number, setBlocked(withStatus("working"), "needsAttention"));
   clearRateLimited(repo, number);
   await commentOnIssue(
     repo,
     number,
-    `⏹ Stopped${abortedNote} — moved back to **Planned**. Press ▶ to start it again.`,
+    `⏹ Stopped${abortedNote}. Press **Resume** to continue, or **Cancel** to reset to Planned.`,
   ).catch(() => {});
-  console.log(`[agency] stop ${repo} #${number} (${aborted} aborted)`);
+  console.log(`[agency] stop ${repo} #${number} → needs-attention (${aborted} aborted)`);
 }
 
 /**

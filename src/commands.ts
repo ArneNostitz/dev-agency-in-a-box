@@ -113,7 +113,11 @@ export async function recoverOrphans(cfg: Config): Promise<void> {
   for (const repo of effectiveRepos(cfg)) {
     try {
       for (const i of await listAllOpenIssues(repo)) {
-        if (getIssueStatus(repo, i.number).state === "working") {
+        const st = getIssueStatus(repo, i.number);
+        // Only a genuinely in-flight ("working" with NO blocked reason) issue is an orphan after a
+        // restart. An already-parked one (needs-attention / awaiting / rate-limited) must NOT be
+        // re-parked — that pushed a duplicate "interrupted" notice on every restart.
+        if (st.state === "working" && st.blocked == null) {
           // Park it — don't auto-requeue (that loops if restarts keep happening / a run keeps
           // failing). The human re-pins when ready.
           await removeLabel(repo, i.number, "agency:in-progress");

@@ -124,7 +124,10 @@ function App() {
     const key = i.repo + "#" + i.number;
     const isActive = i.running || activeSet.has(key);
     if (isActive) return Object.assign({}, i, { active: true });
-    if ((i.state || "") === "working") return Object.assign({}, i, { queued: true });
+    // queued = genuinely dispatched, no live run yet. A BLOCKED "working" issue (needs-attention,
+    // awaiting, rate-limited, …) is parked, NOT running — marking it queued hid Resume behind Stop
+    // and showed "queued until run finishes". Only an UNBLOCKED working issue counts as queued.
+    if ((i.state || "") === "working" && !i.blocked) return Object.assign({}, i, { queued: true });
     return i;
   });
   // Repos with a running audit — drives the spinner on the top-bar Audit dropdown. (The audit itself

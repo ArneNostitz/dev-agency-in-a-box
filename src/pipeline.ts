@@ -30,6 +30,7 @@ import {
 } from "./github.js";
 import { EPIC_LABEL, renderEpicTracker } from "./epics.js";
 import { runRole } from "./agents/roleAgent.js";
+import { isStopRequested } from "./abort.js";
 import type { RoleName } from "./agents/roles.js";
 import { recordRun, recordPlan, lastPlan, recordIssueState, recordIssueStatus, recordIssueFiles, recordPr, addEpicChild, listEpicChildren, getSession, issueActivity, recordReview, getReview, recordConflict, clearConflict, getSetting, skillsPrompt, listHooks, type Workflow } from "./store.js";
 import { conflictFiles } from "./github.js";
@@ -372,6 +373,7 @@ async function build(
   };
 
   for (;;) {
+    if (isStopRequested(repo, issue.number)) { console.log(`[agency] build halted by Stop ${repo} #${issue.number}`); return; }
     // 1) Tests failing → fix them (errors only) and re-test before spending a review on broken code.
     if (!testPass) {
       const d = decideNext({ phase: "tested", devChanged: true, testPass: false, round, maxRounds: maxR });
@@ -878,6 +880,7 @@ export async function runDeveloperSolo(repo: string, issue: Issue, workdir: stri
       `made and committed, stop — the orchestrator opens the PR.\n\n### ${issueHeader(issue)}` +
       (thread ? `\n\n### Conversation (latest applies)\n${thread}` : ""),
   });
+  if (isStopRequested(repo, issue.number)) return; // user stopped — don't open a PR
   recordRun(repo, issue.number, "developer", dev.model, dev.turns, "implement", dev.costUsd);
   await commentOnIssue(repo, issue.number, say("developer", dev.text));
   await finalizeWithPr(repo, issue, workdir, branch, false);
@@ -890,6 +893,7 @@ export async function runWorkflowEngine(cfg: Config, repo: string, issue: Issue,
   let i = 0, guard = 0;
   await commentOnIssue(repo, issue.number, say("developer", `🧭 Running workflow **${wf.name}** — ${wf.steps.length} step(s).`));
   while (i < wf.steps.length && guard++ < 30) {
+    if (isStopRequested(repo, issue.number)) { console.log(`[agency] workflow halted by Stop ${repo} #${issue.number}`); return; }
     const step = wf.steps[i];
     const role: RoleName = STEP_ROLE[(step.agent || "").toLowerCase()] ?? "developer";
     const hookIds = (step.hooks || []).map(Number).filter((n) => Number.isFinite(n));
@@ -909,6 +913,7 @@ ${skillsPrompt(step.skills)}` : "";
 ${thread}` : ""}${skills}`,
       ...(step.model ? { model: step.model } : {}),
     });
+    if (isStopRequested(repo, issue.number)) { console.log(`[agency] workflow halted mid-step by Stop ${repo} #${issue.number}`); return; }
     recordRun(repo, issue.number, role, out.model, out.turns, "workflow", out.costUsd);
     await commentOnIssue(repo, issue.number, say(role, out.text));
     await runStepHooks(hookIds, "post", workdir, repo, issue.number);

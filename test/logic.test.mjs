@@ -375,3 +375,15 @@ test("canonicalModel: fixes Claude id ordering/aliases, leaves third-party untou
   assert.equal(canonicalModel("gemini-2.5-pro"), "gemini-2.5-pro");
   assert.equal(canonicalModel(""), "");
 });
+
+import { requestStop, isStopRequested, clearStop } from "../dist/abort.js";
+
+test("stop flag: request → set, clear → unset, isolated per issue", () => {
+  clearStop("o/r", 1); clearStop("o/r", 2);
+  assert.equal(isStopRequested("o/r", 1), false);
+  requestStop("o/r", 1);
+  assert.equal(isStopRequested("o/r", 1), true);
+  assert.equal(isStopRequested("o/r", 2), false); // other issue unaffected
+  clearStop("o/r", 1);
+  assert.equal(isStopRequested("o/r", 1), false);
+});

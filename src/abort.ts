@@ -52,3 +52,17 @@ export function stopRuns(repo: string, number: number): number {
 export function hasActiveRun(repo: string, number: number): boolean {
   return (registry.get(keyOf(repo, number))?.size ?? 0) > 0;
 }
+
+// ---- persistent per-issue STOP flag ----
+// AbortController only kills the CURRENTLY in-flight SDK run; the next workflow/pipeline step would
+// register a fresh (non-aborted) controller and "the next agent takes over". This flag is the
+// authoritative "the user stopped this issue" signal that the workflow engine + pipeline check
+// BETWEEN steps so nothing new starts. Cleared when a fresh run is explicitly started/resumed.
+const stopRequested = new Set<string>();
+
+/** Mark an issue as user-stopped (checked between steps). */
+export function requestStop(repo: string, number: number): void { stopRequested.add(keyOf(repo, number)); }
+/** Has the user pressed Stop on this issue since the last start/resume? */
+export function isStopRequested(repo: string, number: number): boolean { return stopRequested.has(keyOf(repo, number)); }
+/** Clear the stop flag — called when a fresh run is explicitly started/resumed. */
+export function clearStop(repo: string, number: number): void { stopRequested.delete(keyOf(repo, number)); }
