@@ -13,7 +13,10 @@
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { readFileSync, existsSync, statSync } from "node:fs";
+import { readFileSync, existsSync, statSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import type { Config } from "./config.js";
 import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordIssueStatus, recordPr, tokensSince, tokensByModelSince, tokensByRoleSince, tokensByDaySince, topIssuesByTokensSince, tokensByIssueAll, toolStatsSince, runStepCountSince, recentLessons, recordConflict, getConflict, clearConflict, listConflicts, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getGlobalModel, setGlobalModel, getFallbackChain, setFallbackChain, getAutoSwitchOnLimit, setIssueModelOverride, getIssueModelOverride, clearIssueModelOverride, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, getIssueRow, getModelsPresets, listAgentDefs, upsertAgentDef, deleteAgentDef, listWorkflows, upsertWorkflow, deleteWorkflow, listSkills, upsertSkill, deleteSkill, listHooks, upsertHook, deleteHook, type AutoKind, type Provider, type AgentDef, type Skill, type Hook } from "./store.js";
@@ -871,11 +874,11 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
     }
 
     // Dashboard actions (auth required), not GitHub webhooks.
-    if (["/archive", "/comment", "/comment-edit", "/run-checks", "/merge", "/close", "/close-not-planned", "/create-pr", "/delete", "/resume", "/stop", "/fix", "/auto", "/start", "/new-issue", "/approve", "/audit", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude", "/model-override", "/issue-budget", "/agent-def-save", "/agent-def-delete", "/skill-save", "/skill-delete", "/hook-save", "/hook-delete", "/analyzer-run", "/refresh", "/refresh-issue", "/cancel", "/install-cli", "/gh-connect", "/gh-connect-poll", "/gh-disconnect", "/workflow-save", "/workflow-delete"].includes(path)) {
+    if (["/archive", "/comment", "/comment-edit", "/run-checks", "/merge", "/close", "/close-not-planned", "/create-pr", "/delete", "/resume", "/stop", "/fix", "/auto", "/start", "/new-issue", "/approve", "/audit", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude", "/model-override", "/issue-budget", "/agent-def-save", "/agent-def-delete", "/skill-save", "/skill-delete", "/skill-import", "/hook-save", "/hook-delete", "/analyzer-run", "/refresh", "/refresh-issue", "/cancel", "/install-cli", "/gh-connect", "/gh-connect-poll", "/gh-disconnect", "/workflow-save", "/workflow-delete"].includes(path)) {
       const actor = userFromReq(req);
       if (!actor) return void res.writeHead(401, { "content-type": "application/json" }).end('{"error":"auth required"}');
       void readBody(req).then(async (body) => {
-        let p: { repo?: string; number?: number; commentId?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; pctNow?: number; tracker?: string; agentDef?: Partial<AgentDef> & { name: string }; agentName?: string; workflow?: { id: string; name: string; trigger?: string; steps?: unknown[]; gates?: unknown[] }; workflowId?: string; skill?: Partial<Skill> & { name: string }; skillName?: string; hook?: { id?: number; target: string; phase: "pre" | "post"; command: string; enabled?: boolean }; hookId?: number; dataUrl?: string; name?: string; providers?: Provider[]; roleModels?: Record<string, { providerId: string; model: string }>; globalModel?: { providerId: string; model: string } | null; fallbackChain?: Array<{ providerId: string; model: string }>; autoSwitchOnLimit?: boolean; model?: { providerId: string; model: string } | null; kind?: string; value?: string; skipArchitect?: string; gitnexus?: string; maxTokensPerRun?: number; maxReviseRounds?: number; auditThreshold?: number; start?: boolean; email?: string; key?: string; ops?: Record<string, string | number | boolean>; agentRunner?: string; agentCliCommand?: string; webhookSecret?: string; analyzerUrl?: string; avatars?: string } = {};
+        let p: { repo?: string; number?: number; commentId?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; pctNow?: number; tracker?: string; agentDef?: Partial<AgentDef> & { name: string }; agentName?: string; workflow?: { id: string; name: string; trigger?: string; steps?: unknown[]; gates?: unknown[] }; workflowId?: string; skill?: Partial<Skill> & { name: string }; skillName?: string; hook?: { id?: number; target: string; phase: "pre" | "post"; command: string; enabled?: boolean }; hookId?: number; dataUrl?: string; name?: string; providers?: Provider[]; roleModels?: Record<string, { providerId: string; model: string }>; globalModel?: { providerId: string; model: string } | null; fallbackChain?: Array<{ providerId: string; model: string }>; autoSwitchOnLimit?: boolean; model?: { providerId: string; model: string } | null; kind?: string; value?: string; skipArchitect?: string; gitnexus?: string; maxTokensPerRun?: number; maxReviseRounds?: number; auditThreshold?: number; start?: boolean; email?: string; key?: string; ops?: Record<string, string | number | boolean>; agentRunner?: string; agentCliCommand?: string; webhookSecret?: string; analyzerUrl?: string; avatars?: string; source?: string } = {};
         try {
           p = JSON.parse(body.toString("utf8"));
         } catch {
@@ -1360,6 +1363,39 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           return ok();
         }
         if (path === "/skill-delete") { if (p.skillName) deleteSkill(p.skillName); return ok(); }
+        if (path === "/skill-import") {
+          if (actor.role !== "admin") return res.writeHead(403).end(JSON.stringify({ error: "Admins only" }));
+          const src = String(p.source || "").trim();
+          const mm = /github\.com[/:]([\w.-]+\/[\w.-]+)/.exec(src) || /^([\w.-]+\/[\w.-]+)$/.exec(src);
+          if (!mm) return res.writeHead(400).end(JSON.stringify({ error: "Use owner/repo or a GitHub URL" }));
+          const repo = mm[1].replace(/\.git$/, "");
+          const tmp = mkdtempSync(join(tmpdir(), "skillimport-"));
+          try {
+            execSync(`git clone --depth 1 https://github.com/${repo}.git ${tmp}/r`, { stdio: "ignore", timeout: 60_000 });
+            const files: string[] = [];
+            const walk = (dir: string, depth: number): void => { if (depth > 6) return; for (const e of readdirSync(dir, { withFileTypes: true })) { if (e.name === ".git" || e.name === "node_modules") continue; const fp = join(dir, e.name); if (e.isDirectory()) walk(fp, depth + 1); else if (e.name.toLowerCase() === "skill.md") files.push(fp); } };
+            walk(`${tmp}/r`, 0);
+            const names: string[] = [];
+            for (const fp of files) {
+              const text = readFileSync(fp, "utf8");
+              const fm = /^---\s*\n([\s\S]*?)\n---\s*\n?([\s\S]*)$/.exec(text);
+              if (!fm) continue;
+              const nameM = /^\s*name:\s*(.+)$/m.exec(fm[1]);
+              if (!nameM) continue;
+              const name = nameM[1].trim().replace(/^["']|["']$/g, "").replace(/[^\w-]/g, "-").slice(0, 64);
+              const descM = /^\s*description:\s*(.+)$/m.exec(fm[1]);
+              const description = descM ? descM[1].trim().replace(/^["']|["']$/g, "").slice(0, 300) : "";
+              if (!name) continue;
+              upsertSkill({ name, description, body: (fm[2] || "").trim().slice(0, 20000) });
+              names.push(name);
+            }
+            return ok(JSON.stringify({ imported: names.length, names }));
+          } catch (e) {
+            return res.writeHead(500).end(JSON.stringify({ error: "Import failed: " + ((e as Error).message || "").slice(0, 180) }));
+          } finally {
+            try { rmSync(tmp, { recursive: true, force: true }); } catch { /* noop */ }
+          }
+        }
         if (path === "/hook-save") {
           if (!p.hook?.target || !p.hook.command || (p.hook.phase !== "pre" && p.hook.phase !== "post")) return res.writeHead(400).end("{}");
           upsertHook(p.hook);

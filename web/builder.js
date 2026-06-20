@@ -50,6 +50,12 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
   // Persist the working copy of a NEW workflow so leaving the page never loses it.
   useEffect(() => { if (form && !form.id) { try { localStorage.setItem("wf:draft", JSON.stringify({ form, step })); } catch { /* noop */ } } }, [form, step]);
   const clearDraft = () => { try { localStorage.removeItem("wf:draft"); } catch { /* noop */ } };
+  function importSkills() {
+    const src = window.prompt("Import Claude Code skills from a GitHub repo or marketplace (owner/repo or URL):", "anthropics/skills");
+    if (!src) return;
+    toast("Importing skills…");
+    api("/skill-import", { source: src.trim() }).then((r) => { toast((r && r.imported ? r.imported : 0) + " skill(s) imported"); reload && reload(); }).catch((e) => toast((e && e.message) || "Import failed", "error"));
+  }
   const patchStep = (i, p) => setForm((f) => ({ ...f, steps: f.steps.map((s, j) => (j === i ? { ...s, ...p } : s)) }));
   const addStep = (handle) => setForm((f) => { const def = ((data && data.agentDefs) || []).find((d) => (d.handle || ("@" + d.name)) === handle); const instruction = (def && def.defaultTask) || DEFAULT_TASK[(handle || "").toLowerCase()] || ""; const steps = f.steps.concat({ ...blankStep(), agent: handle || "@dev", instruction }); setStep(steps.length - 1); return { ...f, steps }; });
   const removeStep = (i) => setForm((f) => { const steps = f.steps.filter((_, j) => j !== i); setStep(Math.max(0, Math.min(i, steps.length - 1))); return { ...f, steps, gates: (f.gates || []).filter((g) => g.after !== i).map((g) => (g.after > i ? { ...g, after: g.after - 1 } : g)) }; });
@@ -145,6 +151,7 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
         <div class="bld-pills">
           ${skillOpts.length === 0 ? html`<div class="bld-empty sm">No skills yet.</div>` : null}
           ${skillOpts.map((s) => { const on = cur && (cur.skills || []).includes(s.value); return html`<button class=${"bld-pill skill" + (on ? " on" : "")} key=${s.value} title=${s.desc} onClick=${() => cur && toggleChip(step, "skills", s.value)}><${Icon} name=${on ? "check" : "plus"} size=${12}/><span>${s.label}</span></button>`; })}
+          <button class="bld-pill ghost" onClick=${importSkills}><${Icon} name="download" size=${13}/><span>Import from GitHub</span></button>
           <button class="bld-pill ghost" onClick=${() => onEditAgent && onEditAgent("skills")}><${Icon} name="plus" size=${13}/><span>Manage skills</span></button>
         </div>
         <div class="bld-rail-sec">Hooks</div>
