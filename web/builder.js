@@ -4,7 +4,7 @@
 import { html, useState, useEffect, useRef } from "/web/vendor/standalone.mjs";
 import { Avatar, Icon, Modal, Select, ProviderLogo, defaultModelLogo, agentOptions, api, toast, readAttach, Spinner } from "./core.js";
 
-const NODE_W = 168, NODE_H = 98, GAP = 60, ROW_GAP = 56, PAD = 30;
+const NODE_W = 208, NODE_H = 96, ROW_GAP = 60, PAD = 28, SIDE = 96, LOOPM = 46;
 const STEP_ROLE = { "@plan": "planner", "@arch": "architect", "@dev": "developer", "@review": "reviewer", "@test": "tester" };
 const DEFAULT_TASK = { "@plan": "Produce a concrete build plan for this issue.", "@arch": "Turn the plan into a concrete technical design (no code).", "@dev": "Implement the plan; commit and open a PR.", "@review": "Review the PR against the plan and the codebase.", "@test": "Run the project\u2019s checks and fix any failures." };
 const ROUTES = [
@@ -69,7 +69,8 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
       const idx = gates.findIndex((g) => g.after === i);
       const base = idx >= 0 ? gates[idx] : { after: i, condition: "review:changes", route: "continue", maxLoops: 2 };
       const next = { ...base, ...patch };
-      if (next.route === "continue") gates = gates.filter((g) => g.after !== i);      // continue = no gate needed
+      const keep = next.route !== "continue" || next.condition === "humanApproval";
+      if (!keep) gates = gates.filter((g) => g.after !== i);      // plain continue = no gate
       else if (idx >= 0) gates[idx] = next; else gates.push(next);
       return { ...f, gates };
     });
@@ -115,17 +116,19 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
   // ---------- canvas editor ----------
   const steps = form.steps || [];
   const cur = steps[step] || steps[0];
-  // Serpentine (boustrophedon) layout: nodes flow L→R, wrap to the next row, then run R→L, so they
-  // use the screen width and break to a new line to stay on-page. On a narrow screen cols collapses
-  // to 1 → a clean vertical column.
-  const cols = Math.max(1, Math.floor((cw - PAD * 2 + GAP) / (NODE_W + GAP)));
+  // Vertical layout: a single top-to-bottom column. Pre-hooks sit on the LEFT of each agent, post
+  // hooks on the RIGHT; loop-backs arc up the right gutter and point into their target.
+  const hookPhase = Object.fromEntries(hookOpts.map((h) => [h.value, h.phase]));
   const slots = steps.length + 1; // +1 for the "add step" tile
-  const rows = Math.max(1, Math.ceil(slots / cols));
-  const nodePos = (i) => { const row = Math.floor(i / cols), col = i % cols; const vcol = row % 2 === 0 ? col : (cols - 1 - col); return { row, x: PAD + vcol * (NODE_W + GAP), y: PAD + row * (NODE_H + ROW_GAP) }; };
-  const usedCols = Math.min(cols, slots);
-  const gridW = PAD * 2 + usedCols * NODE_W + (usedCols - 1) * GAP;
-  const gridH = PAD * 2 + rows * NODE_H + (rows - 1) * ROW_GAP + 24;
-  const wirePath = (i) => { const p = nodePos(i), q = nodePos(i + 1); if (p.row === q.row) { const ltr = p.row % 2 === 0; const x1 = ltr ? p.x + NODE_W : p.x, x2 = ltr ? q.x : q.x + NODE_W, y = p.y + NODE_H / 2, mx = (x1 + x2) / 2; return `M ${x1} ${y} C ${mx} ${y}, ${mx} ${y}, ${x2} ${y}`; } const cx = p.x + NODE_W / 2, y1 = p.y + NODE_H, y2 = q.y, my = (y1 + y2) / 2; return `M ${cx} ${y1} C ${cx} ${my}, ${cx} ${my}, ${cx} ${y2}`; };
+  const flowW = PAD * 2 + SIDE + NODE_W + SIDE + LOOPM;
+  const cx = PAD + SIDE + NODE_W / 2;        // node centre x
+  const nodeY = (i) => PAD + i * (NODE_H + ROW_GAP);
+  const midY = (i) => nodeY(i) + NODE_H / 2;
+  const gridW = Math.max(flowW, cw - 4);
+  const gridH = PAD * 2 + slots * NODE_H + (slots - 1) * ROW_GAP;
+  const ox = (gridW - flowW) / 2;            // centre the column when the canvas is wider
+  const C = cx + ox;                          // centred node centre
+  const downPath = (i) => { const y1 = nodeY(i) + NODE_H, y2 = nodeY(i + 1); const my = (y1 + y2) / 2; return `M ${C} ${y1} C ${C} ${my}, ${C} ${my}, ${C} ${y2}`; };
 
   return html`<div class="bld">
     <div class="bld-top">
@@ -171,20 +174,27 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
         <div class="bld-flow" style=${"width:" + gridW + "px;height:" + gridH + "px"}>
           <svg class="bld-wires" width=${gridW} height=${gridH} aria-hidden="true">
             <defs><marker id="bld-arrow" markerWidth="9" markerHeight="9" refX="6.5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--line-2)"/></marker><marker id="bld-loop" markerWidth="9" markerHeight="9" refX="6.5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--amber)"/></marker></defs>
-            ${steps.slice(0, -1).map((_, i) => html`<path key=${i} d=${wirePath(i)} fill="none" stroke="var(--line-2)" stroke-width="2" marker-end="url(#bld-arrow)"/>`)}
-            ${steps.length ? html`<path key="toadd" d=${wirePath(steps.length - 1)} fill="none" stroke="var(--line)" stroke-width="2" stroke-dasharray="3 4"/>` : null}
-            ${(form.gates || []).filter((g) => g.route && g.route.startsWith("loop")).map((g, k) => { const t = Number(g.route.split(":")[1]); if (!Number.isFinite(t) || t === g.after) return null; const ps = nodePos(g.after), pt = nodePos(t); const sx = ps.x + NODE_W / 2, sy = ps.y + NODE_H, tx = pt.x + NODE_W / 2, ty = pt.y; const dip = Math.max(38, Math.abs(sy - ty) / 2 + 26); return html`<path key=${"loop" + k} d=${`M ${sx} ${sy} C ${sx} ${sy + dip}, ${tx} ${ty - dip}, ${tx} ${ty}`} fill="none" stroke="var(--amber)" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#bld-loop)"/>`; })}
+            ${steps.slice(0, -1).map((_, i) => html`<path key=${i} d=${downPath(i)} fill="none" stroke="var(--line-2)" stroke-width="2" marker-end="url(#bld-arrow)"/>`)}
+            ${steps.length ? html`<path key="toadd" d=${downPath(steps.length - 1)} fill="none" stroke="var(--line)" stroke-width="2" stroke-dasharray="3 4"/>` : null}
+            ${(form.gates || []).filter((g) => g.route && g.route.startsWith("loop")).map((g, k) => { const t = Number(g.route.split(":")[1]); if (!Number.isFinite(t) || t === g.after || g.after >= steps.length || t >= steps.length) return null; const rx = C + NODE_W / 2, sy = midY(g.after), ty = midY(t), lx = C + NODE_W / 2 + LOOPM; return html`<path key=${"loop" + k} d=${`M ${rx} ${sy} C ${lx} ${sy}, ${lx} ${ty}, ${rx} ${ty}`} fill="none" stroke="var(--amber)" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#bld-loop)"/>`; })}
           </svg>
           ${steps.map((s, i) => {
-            const p = nodePos(i);
+            const y = nodeY(i), left = C - NODE_W / 2;
             const g = gateAfter(i);
-            return html`<div key=${i} class=${"bld-node" + (i === step ? " sel" : "")} style=${"left:" + p.x + "px;top:" + p.y + "px;width:" + NODE_W + "px"} onClick=${() => setStep(i)}>
+            const pre = (s.hooks || []).filter((h) => (hookPhase[h] || "pre") === "pre");
+            const post = (s.hooks || []).filter((h) => (hookPhase[h] || "pre") === "post");
+            const hookChip = (h) => { const ho = hookOpts.find((x) => x.value === h); return html`<span class="bld-hk" key=${h} title=${ho ? ho.label : h}><span class=${"phase " + (hookPhase[h] || "pre")}>${(hookPhase[h] || "pre")}</span>${ho ? ho.label : h}</span>`; };
+            return html`<div key=${"n" + i}>
+              ${pre.length ? html`<div class="bld-hooks left" style=${"left:" + (left - SIDE) + "px;top:" + y + "px;width:" + (SIDE - 10) + "px;height:" + NODE_H + "px"}>${pre.map(hookChip)}</div>` : null}
+              ${post.length ? html`<div class="bld-hooks right" style=${"left:" + (left + NODE_W + 10) + "px;top:" + y + "px;width:" + (SIDE - 10) + "px;height:" + NODE_H + "px"}>${post.map(hookChip)}</div>` : null}
+              <div class=${"bld-node" + (i === step ? " sel" : "")} style=${"left:" + left + "px;top:" + y + "px;width:" + NODE_W + "px"} onClick=${() => setStep(i)}>
                 <div class="bld-node-h"><span class="bld-node-num">${i + 1}</span><${Avatar} role=${roleFor(agentOf(s))} src=${srcFor(agentOf(s))} size=${26} crop="head"/><span class="bld-node-name">${labelFor(agentOf(s), agentOpts)}</span></div>
                 <div class="bld-node-task">${(s.instruction || "").split("\n")[0] || html`<span class="ph">describe this step…</span>`}</div>
-                <div class="bld-node-tags">${(s.skills || []).length ? html`<span class="t skill"><${Icon} name="sparkles" size=${10}/>${s.skills.length}</span>` : null}${(s.hooks || []).length ? html`<span class="t hook">${s.hooks.length} hook</span>` : null}${s.model ? html`<span class="t"><${ProviderLogo} name="claude" size=${10}/></span>` : null}${g ? html`<span class=${"t " + (g.route && g.route.startsWith("loop") ? "loop" : "branch")}>${g.route && g.route.startsWith("loop") ? html`<${Icon} name="refresh" size=${10}/> loop` : html`<${Icon} name="alert" size=${10}/> stop`}</span>` : null}</div>
-              </div>`;
+                <div class="bld-node-tags">${(s.skills || []).length ? html`<span class="t skill"><${Icon} name="sparkles" size=${10}/>${s.skills.length}</span>` : null}${s.model ? html`<span class="t"><${ProviderLogo} name="claude" size=${10}/></span>` : null}${g ? html`<span class=${"t " + (g.condition === "humanApproval" ? "approve" : g.route && g.route.startsWith("loop") ? "loop" : "stop")}>${g.condition === "humanApproval" ? html`<${Icon} name="hourglass" size=${10}/> approval` : g.route && g.route.startsWith("loop") ? html`<${Icon} name="refresh" size=${10}/> loop` : html`<${Icon} name="stop" size=${10}/> stop`}</span>` : null}</div>
+              </div>
+            </div>`;
           })}
-          ${(() => { const p = nodePos(steps.length); return html`<button class="bld-add" style=${"left:" + p.x + "px;top:" + p.y + "px;width:" + NODE_W + "px;height:" + NODE_H + "px"} onClick=${() => addStep("@dev")} title="Add step"><${Icon} name="plus" size=${22}/><span>Add step</span></button>`; })()}
+          ${(() => { const y = nodeY(steps.length), left = C - NODE_W / 2; return html`<button class="bld-add" style=${"left:" + left + "px;top:" + y + "px;width:" + NODE_W + "px;height:" + NODE_H + "px"} onClick=${() => addStep("@dev")} title="Add step"><${Icon} name="plus" size=${22}/><span>Add step</span></button>`; })()}
         </div>
       </div>
 
@@ -209,8 +219,8 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
           ${(cur.hooks || []).length ? html`<label class="bld-lbl">Hooks</label><div class="bld-chips">${cur.hooks.map((h) => { const ho = hookOpts.find((x) => x.value === h); return html`<span class="bld-chip hook" key=${h}>${ho ? ho.phase + " · " + ho.label : h}<button onClick=${() => toggleChip(step, "hooks", h)} aria-label="remove"><${Icon} name="x" size=${10}/></button></span>`; })}</div>` : null}
           ${html`
             <label class="bld-lbl">When this step finishes</label>
-            <${Select} value=${(gateAfter(step) ? gateAfter(step).route.startsWith("loop") ? "loop" : "stop" : "continue")} options=${[{ value: "continue", label: "Continue to next →" }, { value: "loop", label: "Loop back if…" }, { value: "stop", label: "Stop the workflow" }]} onChange=${(v) => v === "continue" ? setGate(step, { route: "continue" }) : v === "stop" ? setGate(step, { route: "stop" }) : setGate(step, { route: "loop:" + Math.max(0, step - 1), condition: (gateAfter(step) || {}).condition || "review:changes" })}/>
-            ${gateAfter(step) && gateAfter(step).route.startsWith("loop") ? html`
+            <${Select} value=${(() => { const g = gateAfter(step); return !g ? "continue" : g.condition === "humanApproval" ? "approve" : g.route && g.route.startsWith("loop") ? "loop" : "stop"; })()} options=${[{ value: "continue", label: "Continue to next →" }, { value: "approve", label: "⏸ Pause for my approval" }, { value: "loop", label: "Loop back if…" }, { value: "stop", label: "Stop the workflow" }]} onChange=${(v) => v === "continue" ? setGate(step, { route: "continue", condition: "review:changes" }) : v === "approve" ? setGate(step, { condition: "humanApproval", route: "continue" }) : v === "stop" ? setGate(step, { route: "stop", condition: "review:changes" }) : setGate(step, { route: "loop:" + Math.max(0, step - 1), condition: ((gateAfter(step) || {}).condition === "humanApproval" ? "review:changes" : (gateAfter(step) || {}).condition) || "review:changes" })}/>
+            ${gateAfter(step) && gateAfter(step).route && gateAfter(step).route.startsWith("loop") && gateAfter(step).condition !== "humanApproval" ? html`
               <label class="bld-lbl">…if</label>
               <${Select} value=${gateAfter(step).condition} options=${CONDITIONS} onChange=${(v) => setGate(step, { condition: v })}/>
               <label class="bld-lbl">Loop back to</label>
