@@ -359,10 +359,10 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
         ${moreOpen ? html`<div class="dropscrim" onClick=${() => setMoreOpen(false)}></div><div class="dropmenu menu">${moreItems.map((it, i) => it && it.sep ? html`<div key=${i} class="menu-sep"></div>` : html`<span key=${i}>${it}</span>`)}</div>` : null}
       </span>` : null}
     </div>
-    ${!isDesktop ? html`<div class="dtoolbar" style="justify-content:center">
-      <button class=${"btn ghost " + (tab === "chat" ? "primary" : "")} onClick=${() => setTab("chat")}>Chat</button>
-      <button class=${"btn ghost " + (tab === "stream" ? "primary" : "")} onClick=${() => setTab("stream")}>Stream</button>
-    </div>` : null}
+    ${!isDesktop ? html`<div class="segwrap"><div class="segctl">
+      <button class=${"segbtn" + (tab === "chat" ? " on" : "")} onClick=${() => setTab("chat")}>Chat</button>
+      <button class=${"segbtn" + (tab === "stream" ? " on" : "")} onClick=${() => setTab("stream")}>Stream</button>
+    </div></div>` : null}
     <div class="dpanes">
       ${isDesktop ? html`${chatPane}${streamPane}` : tab === "chat" ? chatPane : streamPane}
     </div>

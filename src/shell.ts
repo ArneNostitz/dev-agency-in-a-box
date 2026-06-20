@@ -321,7 +321,7 @@ textarea{resize:vertical;min-height:64px}
 .dhead{position:sticky;top:0;background:var(--surface);border-bottom:1px solid var(--line);padding:calc(10px + var(--safe-t)) 12px 10px;display:flex;align-items:center;gap:10px}
 .dhead .tt{font-size:15px;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dmeta{color:var(--ink-3);font-size:12px;font-weight:400}
-.dtoolbar{position:sticky;top:0;background:var(--surface);border-bottom:1px solid var(--line);display:flex;gap:6px;align-items:center;padding:8px 12px;flex-wrap:wrap}
+.dtoolbar{position:sticky;top:0;z-index:20;background:var(--surface);border-bottom:1px solid var(--line);display:flex;gap:6px;align-items:center;padding:8px 12px;flex-wrap:wrap}
 .toolmore{display:flex;flex-direction:column;gap:4px;min-width:200px}
 .toolmore-row{display:flex}
 .toolmore-row>*{flex:1;width:100%}
@@ -368,6 +368,10 @@ textarea{resize:vertical;min-height:64px}
 .autotog.on .autotog-knob{transform:translateX(14px)}
 .autotog.busy{opacity:.7;cursor:wait}
 
+.segwrap{display:flex;justify-content:center;padding:8px 12px;background:var(--surface);border-bottom:1px solid var(--line)}
+.segctl{display:inline-flex;background:var(--surface-2);border-radius:10px;padding:3px;gap:2px}
+.segbtn{border:none;background:transparent;color:var(--ink-2);font:13.5px inherit;font-weight:600;padding:7px 20px;border-radius:8px;cursor:pointer;transition:color .12s}
+.segbtn.on{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.08)}
 .dpanes{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
 .dpane{overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;padding:12px 14px;min-width:0;max-width:100%}
 .dpanes>.dpane{flex:1 1 auto;min-height:0}
