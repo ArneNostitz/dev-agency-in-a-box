@@ -475,10 +475,10 @@ export function Select({ value, options, onChange, trigger, btnClass, menuAlign,
       window.removeEventListener("resize", onResize);
     };
   }, [open]);
-  const itemInner = (o) => html`${o.logo ? html`<${ProviderLogo} name=${o.logo} size=${15}/>` : o.icon ? html`<${Icon} name=${o.icon} size=${14}/>` : null}<span class="sel-itxt">${o.label}</span>${o.hint ? html`<span class="sel-hint">${o.hint}</span>` : null}`;
+  const itemInner = (o) => html`${o.avatar ? html`<${Avatar} role=${o.avatar} crop="head" size=${18}/>` : o.logo ? html`<${ProviderLogo} name=${o.logo} size=${15}/>` : o.icon ? html`<${Icon} name=${o.icon} size=${14}/>` : null}<span class="sel-itxt">${o.label}</span>${o.hint ? html`<span class=${"sel-badge" + (o.hintCls ? " " + o.hintCls : "")}>${o.hint}</span>` : null}`;
   return html`<div class="sel">
     <button ref=${btnRef} class=${"sel-btn " + (btnClass || "")} disabled=${disabled} onClick=${toggle}>
-      ${trigger ? trigger(cur) : html`<span class="sel-cur">${cur ? cur.label : (placeholder || "Select…")}</span><${Icon} name="chevdown" size=${13} cls="sel-caret"/>`}
+      ${trigger ? trigger(cur) : html`<span class="sel-cur">${cur && cur.avatar ? html`<${Avatar} role=${cur.avatar} crop="head" size=${16}/>` : cur && cur.logo ? html`<${ProviderLogo} name=${cur.logo} size=${15}/>` : null}${cur ? cur.label : (placeholder || "Select…")}</span><${Icon} name="chevdown" size=${13} cls="sel-caret"/>`}
     </button>
     ${open && pos ? html`<div ref=${menuRef} class="sel-menu" style=${"left:" + pos.left + "px;min-width:" + pos.width + "px;" + (pos.up ? "bottom:" + pos.bottom + "px" : "top:" + pos.top + "px")}>
         ${(options || []).map((o) => html`<button key=${o.value} class=${"sel-item" + (o.value === value ? " on" : "")} onClick=${(e) => pick(e, o.value)}>${itemInner(o)}</button>`)}
@@ -502,4 +502,24 @@ export function Modal({ title, onClose, footer, children, size }) {
       ${footer ? html`<div class="modal-f">${footer}</div>` : null}
     </div>
   </div>`;
+}
+
+
+// Build the agent picker options: built-in workflow/role pins + chat agents + custom agents,
+// each with a persona avatar and a category badge so chat-only vs workflow vs single-role is clear.
+const AGENT_PINS = [
+  { value: "@dev", label: "Build it", avatar: "developer", hint: "workflow", hintCls: "b-wf" },
+  { value: "@plan", label: "Plan", avatar: "planner", hint: "role", hintCls: "b-role" },
+  { value: "@arch", label: "Architect", avatar: "architect", hint: "role", hintCls: "b-role" },
+  { value: "@review", label: "Review", avatar: "reviewer", hint: "role", hintCls: "b-role" },
+  { value: "@test", label: "Test", avatar: "tester", hint: "role", hintCls: "b-role" },
+];
+export function agentOptions(agentDefs) {
+  const defs = agentDefs || [];
+  const custom = defs.filter((d) => !["spec-creator", "grill-me"].includes(d.name));
+  const chat = defs.filter((d) => d.mode === "chat").concat(custom.filter((d) => d.mode === "chat"));
+  const seen = new Set();
+  const toOpt = (d) => ({ value: d.handle || ("@" + d.name), label: d.name, avatar: d.name, hint: d.mode === "chat" ? "chat" : "code", hintCls: d.mode === "chat" ? "b-chat" : "b-code" });
+  const extra = defs.filter((d) => { if (seen.has(d.name)) return false; seen.add(d.name); return true; }).map(toOpt);
+  return AGENT_PINS.concat(extra);
 }

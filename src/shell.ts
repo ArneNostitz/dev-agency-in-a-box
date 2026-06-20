@@ -454,7 +454,7 @@ textarea{resize:vertical;min-height:64px}
 .sel-btn:hover{border-color:var(--line-2)}
 .sel-btn:disabled{opacity:.6;cursor:default}
 .sel-btn.iconbtn-sm{width:28px;height:28px;padding:0;justify-content:center}
-.sel-cur{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sel-cur{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sel-caret{color:var(--ink-3);margin-left:auto}
 .sel-menu{position:fixed;z-index:301;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 28px rgba(0,0,0,.20),0 3px 8px rgba(0,0,0,.12);padding:5px;max-height:300px;overflow:auto;display:flex;flex-direction:column;gap:1px;animation:selpop .1s ease-out}
 @keyframes selpop{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:none}}
@@ -463,6 +463,11 @@ textarea{resize:vertical;min-height:64px}
 .sel-item.on{color:var(--accent);font-weight:560}
 .sel-itxt{flex:1}
 .sel-hint{color:var(--ink-3);font-size:11px}
+.sel-badge{margin-left:auto;flex:0 0 auto;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;padding:1px 6px;border-radius:999px}
+.b-wf{background:var(--accent-weak);color:var(--accent)}
+.b-role{background:var(--surface-2);color:var(--ink-2)}
+.b-chat{background:var(--amber-weak);color:var(--amber)}
+.b-code{background:var(--green-weak);color:var(--green)}
 /* one global fixed tooltip for every [data-tip] (escapes every scroll container) */
 .modal-scrim{position:fixed;inset:0;z-index:120;background:rgba(0,0,0,.42);display:flex;align-items:center;justify-content:center;padding:20px}
 .modal{background:var(--surface);border:1px solid var(--line);border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,.3);width:min(560px,94vw);max-height:88vh;display:flex;flex-direction:column;overflow:hidden;animation:modalpop .14s ease-out}

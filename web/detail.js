@@ -1,6 +1,6 @@
 // Dev Agency dashboard — detail module (split from app.js; Preact + htm, no build step).
 import { html, useState, useEffect, useRef } from "/web/vendor/standalone.mjs";
-import { Avatar, Icon, Modal, ProviderLogo, Select, Sheet, Spinner, ago, api, fmtTok, getJSON, getSetupProgress, ghUrl, isDone, md, MarkdownArea, readAttach, roleFromComment, shortModel, toast, usageTitle } from "./core.js";
+import { Avatar, Icon, Modal, ProviderLogo, Select, Sheet, Spinner, agentOptions, ago, api, fmtTok, getJSON, getSetupProgress, ghUrl, isDone, md, MarkdownArea, readAttach, roleFromComment, shortModel, toast, usageTitle } from "./core.js";
 
 
 // ---------- Detail ----------
@@ -10,6 +10,7 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
   const [pr, setPr] = useState(null);
   const [appInfo, setAppInfo] = useState(null);
   const [reply, setReply] = useState("");
+  const [replyAgent, setReplyAgent] = useState(""); // address a specific agent in chat
   const [atts, setAtts] = useState([]);
   const [busy, setBusy] = useState(false);
   const [armed, setArmed] = useState(""); // two-tap confirm: which destructive action is armed
@@ -20,6 +21,8 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
   const providers = data?.providers || [];
   const modelOpts = providers.flatMap((p) => (p.models || []).map((m) => ({ value: p.id + "/" + m, label: p.name + " · " + m, short: m, provider: p.name })));
   const modelSelOpts = [{ value: "", label: "Default model", icon: "flask" }].concat(modelOpts.map((o) => ({ value: o.value, label: o.short, logo: o.provider, hint: o.provider })));
+  const modelTrigger = (cur) => html`<span class="tip" data-tip=${cur ? cur.label : "Default model"} style="display:inline-flex"><${ProviderLogo} name=${cur && cur.logo ? cur.logo : ""} size=${16}/></span>`;
+  const agentSelOpts = [{ value: "", label: "Just comment", icon: "messages" }].concat(agentOptions(data && data.agentDefs));
   const [pendingComments, setPendingComments] = useState([]); // optimistic skeleton comments
   const [chatAtBottom, setChatAtBottom] = useState(true);
   const [chatAtTop, setChatAtTop] = useState(true);
@@ -107,7 +110,7 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
 
   function send() {
     if (!reply.trim() && !atts.length) return;
-    const textToSend = reply;
+    const textToSend = (replyAgent ? replyAgent + " " : "") + reply;
     const mo = modelOverride ? (() => { const parts = modelOverride.split("/"); return { providerId: parts[0], model: parts.slice(1).join("/") }; })() : null;
     // If offline, queue without a skeleton (comment appears after flush + thread reload).
     if (!isOnline) {
@@ -336,7 +339,7 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
       ${tb}
       ${tbLeft}
       <span style="flex:1"></span>
-      ${modelOpts.length ? html`<${Select} value=${modelOverride} options=${modelSelOpts} onChange=${updateModelOverride} menuAlign="right"/>` : null}
+      ${modelOpts.length ? html`<${Select} value=${modelOverride} options=${modelSelOpts} onChange=${updateModelOverride} menuAlign="right" btnClass="iconbtn-sm" trigger=${modelTrigger}/>` : null}
       ${tbRight}
       ${moreItems.length ? html`<span class="dropwrap">
         <button class="tbtn" data-tip="More" onClick=${() => setMoreOpen((o) => !o)}><${Icon} name="dots"/></button>
@@ -355,8 +358,9 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
         ${atts.length ? html`<div class="composer-atts">${atts.map((a, idx) => html`<span class="att" key=${idx}>${a.img ? html`<img src=${a.d}/>` : html`<span><${Icon} name="paperclip" size=${12}/> ${a.name}</span>`}<button class="iconbtn" style="width:18px;height:18px;border:none" onClick=${() => setAtts((x) => x.filter((_, j) => j !== idx))}>×</button></span>`)}</div>` : null}
         <${MarkdownArea} value=${reply} taRef=${taRef} placeholder=${running ? "Message the agent…  (queued until the run finishes)" : "Reply…  (Cmd+Enter sends, paste image to embed)"} onInput=${(v) => setReply(v)} onPaste=${onPaste} onKeyDown=${(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); send(); } }}/>
         <div class="composer-row">
-          <label class="composer-icon" title="Attach a file"><${Icon} name="paperclip" size=${18}/><input type="file" multiple style="display:none" onChange=${pickFiles}/></label>
-          ${modelOpts && modelOpts.length ? html`<${Select} value=${modelOverride} options=${modelSelOpts} onChange=${updateModelOverride}/>` : null}
+          <label class="composer-icon tip" data-tip="Attach a file"><${Icon} name="paperclip" size=${18}/><input type="file" multiple style="display:none" onChange=${pickFiles}/></label>
+          <${Select} value=${replyAgent} options=${agentSelOpts} onChange=${setReplyAgent} placeholder="Just comment"/>
+          ${modelOpts && modelOpts.length ? html`<${Select} value=${modelOverride} options=${modelSelOpts} onChange=${updateModelOverride} btnClass="iconbtn-sm" trigger=${modelTrigger}/>` : null}
           <span class="spacer"></span>
           ${running ? html`<button class=${"btn warn" + (bz("stop") ? " busy" : "")} title="Stop the running agent" disabled=${bz("stop")} onClick=${() => act.stop(repo, number)}>${bz("stop") ? html`<${Spinner} size=${15}/>` : html`<${Icon} name="stop" size=${15}/>`} Stop</button>` : null}
           <button class=${"btn primary" + (busy ? " busy" : "")} disabled=${busy} onClick=${send}>${busy ? html`<${Spinner} size=${15}/>` : running ? html`<${Icon} name="clock" size=${15}/>` : html`<${Icon} name="send" size=${15}/>`} ${running ? "Queue" : "Send"}</button>
@@ -482,8 +486,10 @@ export function Composer({ repos, repo, setRepo, onClose, onCreate, data }) {
   return html`<${Modal} title="New issue" onClose=${onClose} footer=${footer}>
     <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
       <${Select} value=${repo || ""} options=${repos.map((r) => ({ value: r, label: r.split("/").pop() }))} onChange=${setRepo}/>
-      <${Select} value=${role} options=${[{ value: "@dev", label: "@dev" }, { value: "@plan", label: "@plan" }, { value: "@arch", label: "@arch" }, { value: "@review", label: "@review" }, { value: "@test", label: "@test" }]} onChange=${setRole}/>
-      ${modelOpts.length ? html`<${Select} value=${model} options=${[{ value: "", label: "Default model", icon: "flask" }].concat(modelOpts.map((o) => ({ value: o.providerId + "/" + o.model, label: o.short, logo: o.provider })))} onChange=${setModel}/>` : null}
+      <${Select} value=${role} options=${agentOptions(data && data.agentDefs)} onChange=${setRole}/>
+      ${modelOpts.length ? html`<${Select} value=${model} btnClass="iconbtn-sm" onChange=${setModel}
+        options=${[{ value: "", label: "Default model", icon: "flask" }].concat(modelOpts.map((o) => ({ value: o.providerId + "/" + o.model, label: o.short, logo: o.provider })))}
+        trigger=${(cur) => html`<span class="tip" data-tip=${cur ? cur.label : "Default model"} style="display:inline-flex"><${ProviderLogo} name=${cur && cur.logo ? cur.logo : ""} size=${16}/></span>`}/>` : null}
     </div>
     <input value=${title} onInput=${(e) => setTitle(e.target.value)} placeholder="What should it do?" style="margin-bottom:10px"/>
     <div class="composer">
