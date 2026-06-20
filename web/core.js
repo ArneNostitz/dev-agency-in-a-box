@@ -460,16 +460,19 @@ export function Select({ value, options, onChange, trigger, btnClass, menuAlign,
       if ((menuRef.current && menuRef.current.contains(e.target)) || (btnRef.current && btnRef.current.contains(e.target))) return;
       setOpen(false);
     };
-    const onMove = () => setOpen(false);
+    // Close on scroll of the page/container BEHIND the menu — but NOT when scrolling inside the
+    // menu's own list (that was closing it the moment you tried to scroll the options).
+    const onScroll = (e) => { if (menuRef.current && menuRef.current.contains(e.target)) return; setOpen(false); };
+    const onResize = () => setOpen(false);
     document.addEventListener("mousedown", onDown, true);
     document.addEventListener("touchstart", onDown, true);
-    window.addEventListener("scroll", onMove, true);
-    window.addEventListener("resize", onMove);
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", onResize);
     return () => {
       document.removeEventListener("mousedown", onDown, true);
       document.removeEventListener("touchstart", onDown, true);
-      window.removeEventListener("scroll", onMove, true);
-      window.removeEventListener("resize", onMove);
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", onResize);
     };
   }, [open]);
   const itemInner = (o) => html`${o.logo ? html`<${ProviderLogo} name=${o.logo} size=${15}/>` : o.icon ? html`<${Icon} name=${o.icon} size=${14}/>` : null}<span class="sel-itxt">${o.label}</span>${o.hint ? html`<span class="sel-hint">${o.hint}</span>` : null}`;
