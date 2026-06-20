@@ -446,7 +446,7 @@ textarea{resize:vertical;min-height:64px}
 .autorow{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .apill{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);border-radius:999px;padding:5px 11px;font-size:13px;cursor:pointer}
 .apill.on{background:var(--green-weak);border-color:var(--green);color:var(--green)}
-.apill.off{color:var(--ink-3);text-decoration:line-through}
+.apill.off{color:var(--ink-3)}
 .att{display:inline-flex;align-items:center;gap:4px;background:var(--surface-2);border-radius:8px;padding:3px 7px;font-size:12px;margin:4px 4px 0 0}
 .att img{height:28px;border-radius:5px}
 .muted{color:var(--ink-2)}

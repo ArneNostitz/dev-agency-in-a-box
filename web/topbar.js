@@ -66,8 +66,9 @@ function RepoDropdown({ repos, repoFilter, setRepoFilter, reload, auto, autoRepo
     api("/remove-repo", { repo: full }).then(() => { toast("Removed " + full); if (repoFilter === full) setRepoFilter(null); reload(); }).catch(() => toast("Couldn’t remove")).then(() => setBusy(false));
   }
   
-  const gpill = (kind) => { const raw = auto[kind] || ""; const on = raw === "on", off = raw === "off"; const order = ["", "on", "off"]; const nx = order[(order.indexOf(raw) + 1) % 3]; return html`<button class=${"apill " + (on ? "on" : off ? "off" : "")} onClick=${(e) => { e.stopPropagation(); setAuto(kind, nx === "" ? "inherit" : nx); }}><${Icon} name=${kind === "resume" ? "refresh" : "merge"} size=${12}/> ${kind}</button>`; };
-  const rpill = (repo, kind) => { const raw = (autoRepos[repo] || {})[kind] || ""; const on = raw === "on", off = raw === "off"; const order = ["", "on", "off"]; const nx = order[(order.indexOf(raw) + 1) % 3]; return html`<button class=${"apill " + (on ? "on" : off ? "off" : "")} onClick=${(e) => { e.stopPropagation(); setAuto(kind, nx === "" ? "inherit" : nx, repo); }}><${Icon} name=${kind === "resume" ? "refresh" : "merge"} size=${12}/> ${kind}</button>`; };
+  // Simple on/off toggle (default = off). Green = auto-on, muted = off.
+  const gpill = (kind) => { const on = (auto[kind] || "") === "on"; return html`<button class=${"apill " + (on ? "on" : "off")} data-tip=${"Auto-" + kind + " for all repos — " + (on ? "ON" : "OFF")} onClick=${(e) => { e.stopPropagation(); setAuto(kind, on ? "off" : "on"); }}><${Icon} name=${kind === "resume" ? "refresh" : "merge"} size=${12}/> ${kind}</button>`; };
+  const rpill = (repo, kind) => { const on = ((autoRepos[repo] || {})[kind] || "") === "on"; return html`<button class=${"apill " + (on ? "on" : "off")} data-tip=${"Auto-" + kind + " — " + (on ? "ON" : "OFF")} onClick=${(e) => { e.stopPropagation(); setAuto(kind, on ? "off" : "on", repo); }}><${Icon} name=${kind === "resume" ? "refresh" : "merge"} size=${12}/> ${kind}</button>`; };
 
   const watching = repos || [];
   const addable = (avail || []).filter((r) => !watching.includes(r.full_name));
