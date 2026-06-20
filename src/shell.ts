@@ -314,6 +314,25 @@ textarea{resize:vertical;min-height:64px}
 .toolmore-row>*{flex:1;width:100%}
 .toolmore .tbtn{width:100%;height:36px;justify-content:flex-start;padding:0 12px;gap:8px}
 .toolmore .autotog{width:100%;justify-content:space-between}
+/* clean dropdown menu (More) */
+.dropmenu.menu{padding:5px;min-width:208px}
+.menu-item{display:flex;align-items:center;gap:9px;width:100%;text-align:left;border:none;background:transparent;color:var(--ink);height:38px;padding:0 10px;border-radius:9px;cursor:pointer;font-size:13.5px;font-weight:500}
+.menu-item:hover{background:var(--surface-2)}
+.menu-item:disabled{cursor:default;opacity:.7}
+.menu-item .ti,.menu-item>svg{flex:0 0 auto;color:var(--ink-2)}
+.menu-item .mi-label{flex:1;white-space:nowrap}
+.menu-item .mi-val{color:var(--ink-3);font-size:12.5px;font-weight:500}
+.menu-item.danger{color:var(--red)}
+.menu-item.danger .ti,.menu-item.danger>svg{color:var(--red)}
+.menu-item.danger:hover{background:var(--red-weak,rgba(220,60,60,.1))}
+.menu-item .mi-switch{position:relative;width:34px;height:19px;border-radius:999px;background:var(--line-2);transition:background .15s;flex:0 0 auto}
+.menu-item .mi-switch.on{background:var(--green)}
+.menu-item .mi-knob{position:absolute;top:2px;left:2px;width:15px;height:15px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25);transition:transform .15s}
+.menu-item .mi-switch.on .mi-knob{transform:translateX(15px)}
+.menu-sep{height:1px;background:var(--line);margin:5px 8px}
+/* card perm-delete X */
+.card-del{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border:none;border-radius:6px;background:transparent;color:var(--ink-3);cursor:pointer;padding:0}
+.card-del:hover{background:var(--red-weak,rgba(220,60,60,.12));color:var(--red)}
 .tbtn{flex:0 0 auto;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);border-radius:9px;width:38px;height:38px;display:inline-flex;align-items:center;justify-content:center;gap:0;cursor:pointer;position:relative}
 .tbtn:has(.tlabel){width:auto;padding:0 13px;gap:7px}
 .tlabel{font-size:13px;font-weight:600;white-space:nowrap}

@@ -201,9 +201,9 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
   const autoToggle = (kind) => {
     const on = kind === "resume" ? au.resume : au.merge;
     const busy = act.isBusy("auto-" + kind, repo, number);
-    return html`<button class=${"autotog" + (on ? " on" : "") + (busy ? " busy" : "")} disabled=${busy} data-tip=${"Auto-" + kind + " is " + (on ? "ON" : "OFF") + " — click to turn " + (on ? "off" : "on")} onClick=${() => act.setAuto(kind, on ? "off" : "on", repo, number)}>
-      <span class="autotog-l"><${Icon} name=${kind === "resume" ? "refresh" : "merge"} size=${13}/> auto-${kind}</span>
-      <span class="autotog-sw"><span class="autotog-knob"></span></span>
+    return html`<button class=${"menu-item" + (busy ? " busy" : "")} disabled=${busy} onClick=${() => act.setAuto(kind, on ? "off" : "on", repo, number)}>
+      <${Icon} name=${kind === "resume" ? "refresh" : "merge"} size=${15}/><span class="mi-label">Auto-${kind}</span>
+      <span class=${"mi-switch" + (on ? " on" : "")}><span class="mi-knob"></span></span>
     </button>`;
   };
   const tb = []; // info buttons (left)
@@ -278,11 +278,19 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
   const da = armed === "del", db = bz("del");
   const moreItems = [];
   if (!done) { moreItems.push(autoToggle("resume")); moreItems.push(autoToggle("merge")); }
-  // Per-issue budget override (#67): toggle unlimited, or set a cost cap via prompt.
+  // Per-issue budget (#67) — ONE control: unlimited / a $ cap / default, set from a single prompt.
   const isUnlimited = !!issue.budget?.unlimited;
-  moreItems.push(html`<button class=${"tbtn wide" + (isUnlimited ? " on" : "")} data-tip=${isUnlimited ? "Unlimited — click to re-enable budget" : "Exempt this issue from budget limits"} onClick=${() => api("/issue-budget", { repo, number, budget: { ...issue.budget, unlimited: !isUnlimited } }).then(() => { toast(isUnlimited ? "Budget re-enabled" : "Unlimited"); loadThread(); }).catch(() => toast("Couldn’t change budget", "error"))}>${html`<${Icon} name="chart" size=${16}/>`}<span class="tlabel">${isUnlimited ? "✓ Unlimited" : "Unlimited"}</span></button>`);
-  moreItems.push(html`<button class="tbtn wide" data-tip="Set a per-issue cost cap (USD)" onClick=${() => { const v = prompt("Max USD for this issue (blank = use global)", issue.budget?.maxCostUsd ?? ""); if (v != null) { const n = Number(v); api("/issue-budget", { repo, number, budget: { ...issue.budget, ...(v === "" ? {} : { maxCostUsd: Number.isFinite(n) && n >= 0 ? n : 0 }) } }).then(() => { toast(v === "" ? "Cost cap cleared" : "Budget set"); loadThread(); }).catch(() => toast("Couldn’t set budget", "error")); } }}>${html`<${Icon} name="chart" size=${16}/>`}<span class="tlabel">${issue.budget?.maxCostUsd != null ? "$" + issue.budget.maxCostUsd + " cap" : "Cost cap"}</span></button>`);
-  moreItems.push(html`<button class=${"tbtn danger wide" + (da ? " armed" : "") + (db ? " busy" : "")} disabled=${db} onClick=${() => confirmAct("del", () => act.del(repo, number))}>${db ? html`<${Spinner} size=${18}/>` : html`<${Icon} name="trash"/>`}<span class="tlabel">${db ? "Deleting…" : da ? "Confirm delete" : "Delete"}</span></button>`);
+  const budgetVal = isUnlimited ? "Unlimited" : (issue.budget?.maxCostUsd != null ? "$" + issue.budget.maxCostUsd : "Default");
+  const setBudget = () => {
+    const v = prompt("Per-issue budget — a max in USD (e.g. 5), \"unlimited\", or blank for the global default:", isUnlimited ? "unlimited" : (issue.budget?.maxCostUsd ?? ""));
+    if (v == null) return;
+    const t = v.trim().toLowerCase();
+    const budget = t === "unlimited" ? { unlimited: true } : t === "" ? {} : (() => { const n = Number(t.replace(/^\$/, "")); return Number.isFinite(n) && n >= 0 ? { maxCostUsd: n } : {}; })();
+    api("/issue-budget", { repo, number, budget }).then(() => { toast("Budget updated"); loadThread(); }).catch(() => toast("Couldn’t set budget", "error"));
+  };
+  moreItems.push(html`<button class="menu-item" onClick=${setBudget}><${Icon} name="chart" size=${15}/><span class="mi-label">Budget</span><span class="mi-val">${budgetVal}</span></button>`);
+  moreItems.push({ sep: true });
+  moreItems.push(html`<button class=${"menu-item danger" + (db ? " busy" : "")} disabled=${db} onClick=${() => confirmAct("del", () => act.del(repo, number))}>${db ? html`<${Spinner} size=${15}/>` : html`<${Icon} name="trash" size=${15}/>`}<span class="mi-label">${db ? "Deleting…" : da ? "Tap again to delete" : "Delete"}</span></button>`);
 
   const streamPane = html`<div class="dpane side">
     <div class="sec">Live stream</div>
@@ -347,7 +355,7 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
       ${tbRight}
       ${moreItems.length ? html`<span class="dropwrap">
         <button class="tbtn" data-tip="More" onClick=${() => setMoreOpen((o) => !o)}><${Icon} name="dots"/></button>
-        ${moreOpen ? html`<div class="dropscrim" onClick=${() => setMoreOpen(false)}></div><div class="dropmenu toolmore">${moreItems.map((it, i) => html`<div key=${i} class="toolmore-row">${it}</div>`)}</div>` : null}
+        ${moreOpen ? html`<div class="dropscrim" onClick=${() => setMoreOpen(false)}></div><div class="dropmenu menu">${moreItems.map((it, i) => it && it.sep ? html`<div key=${i} class="menu-sep"></div>` : html`<span key=${i}>${it}</span>`)}</div>` : null}
       </span>` : null}
     </div>
     ${!isDesktop ? html`<div class="dtoolbar" style="justify-content:center">
