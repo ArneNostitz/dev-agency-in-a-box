@@ -493,9 +493,10 @@ textarea{resize:vertical;min-height:64px}
 .sel-btn:hover{border-color:var(--line-2)}
 .sel-btn:disabled{opacity:.6;cursor:default}
 .sel-btn.iconbtn-sm{width:28px;height:28px;padding:0;justify-content:center}
+.sel-btn.iconbtn{width:36px;height:36px;padding:0;justify-content:center;color:var(--ink-2)}
 .sel-cur{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sel-caret{color:var(--ink-3);margin-left:auto}
-.sel-menu{position:fixed;z-index:301;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 28px rgba(0,0,0,.20),0 3px 8px rgba(0,0,0,.12);padding:5px;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;display:flex;flex-direction:column;gap:1px;animation:selpop .1s ease-out}
+.sel-menu{position:fixed;z-index:301;max-width:calc(100vw - 16px);background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 28px rgba(0,0,0,.20),0 3px 8px rgba(0,0,0,.12);padding:5px;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;display:flex;flex-direction:column;gap:1px;animation:selpop .1s ease-out}
 .sel-menu::-webkit-scrollbar{width:8px}
 .sel-menu::-webkit-scrollbar-thumb{background:var(--line-2,var(--line));border-radius:8px;border:2px solid var(--surface)}
 @keyframes selpop{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:none}}

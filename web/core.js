@@ -1,5 +1,5 @@
 // Dev Agency dashboard — core module (split from app.js; Preact + htm, no build step).
-import { html, render, useState, useEffect, useRef } from "/web/vendor/standalone.mjs";
+import { html, render, useState, useEffect, useLayoutEffect, useRef } from "/web/vendor/standalone.mjs";
 
 
 // ---------- icons (Lucide line paths) ----------
@@ -480,6 +480,17 @@ export function Select({ value, options, onChange, trigger, btnClass, menuAlign,
     setPos({ left: Math.round(left - ox), width: w, up, maxH, top: up ? null : Math.round(r.bottom + 5 - oy), bottom: up ? Math.round(cbBottom - r.top + 5) : null });
   }
   function toggle(e) { e.stopPropagation(); if (disabled) return; if (!open) place(); setOpen((o) => !o); }
+  // After the menu renders we know its REAL width (labels/badges can be wider than the estimate);
+  // re-clamp its left so it never spills past the right (or left) viewport edge.
+  useLayoutEffect(() => {
+    if (!open || !menuRef.current || !pos) return;
+    const m = menuRef.current.getBoundingClientRect();
+    const vw = window.innerWidth || 1200;
+    let shift = 0;
+    if (m.right > vw - 8) shift = (vw - 8) - m.right;
+    if (m.left + shift < 8) shift = 8 - m.left;
+    if (Math.abs(shift) > 1) setPos((p) => (p ? { ...p, left: p.left + shift } : p));
+  }, [open, pos && pos.width, pos && pos.maxH]);
   function pick(e, v) { e.stopPropagation(); setOpen(false); onChange(v); }
   // Close on a click/tap OUTSIDE (without a blocking scrim — the underlying click still lands), and
   // on scroll/resize (the fixed menu would otherwise detach from its trigger).
