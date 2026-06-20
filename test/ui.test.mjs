@@ -80,6 +80,7 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
     ops: { trigger_mode: "mention", concurrency: 3, self_improve: true },
     repos: ["acme/app"], auto: { resume: "", merge: "" }, autoRepos: { "acme/app": {} },
     github: { connected: false, user: null, clientIdSet: false },
+    workflows: [{ id: "full-build", name: "Full build", trigger: "@dev", steps: [], gates: [], builtin: true }],
     active: [], inflight: [], rateLimited: [], runs: [], activity: [], spendToday: { costUsd: 0 },
     session: { tokens: 0, budget: 0 }, config: {},
     issues: [
@@ -152,7 +153,7 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
   await tick(40);
   assert.match(root.innerHTML, /Add to Planned/, "composer opens with two-button submit");
   assert.match(root.innerHTML, /Start now/, "composer has Start now");
-  assert.match(root.innerHTML, /Build it/, "agent picker shows names (not @dev)");
+  assert.match(root.innerHTML, /Full build/, "agent picker shows workflow names");
   assert.ok(window.document.querySelector(".modal"), "composer uses the atomic Modal");
   click(q(".modal-scrim")); // close via backdrop
   await tick(40);

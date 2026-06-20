@@ -20,7 +20,7 @@ test("seedWorkflows installs the built-in templates once", () => {
 });
 
 test("getWorkflowByTrigger resolves the handle", () => {
-  assert.equal(getWorkflowByTrigger("@ship").id, "full-build");
+  assert.equal(getWorkflowByTrigger("@dev").id, "full-build");
   assert.equal(getWorkflowByTrigger("@QUICKFIX").id, "quick-fix");
   assert.equal(getWorkflowByTrigger("@nope"), null);
 });

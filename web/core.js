@@ -520,19 +520,17 @@ export function Modal({ title, onClose, footer, children, size }) {
 
 // Build the agent picker options: built-in workflow/role pins + chat agents + custom agents,
 // each with a persona avatar and a category badge so chat-only vs workflow vs single-role is clear.
-const AGENT_PINS = [
-  { value: "@dev", label: "Build it", avatar: "developer", hint: "workflow", hintCls: "b-wf" },
+// Single-role pins (a workflow is the multi-step path; these run one specialist).
+const ROLE_PINS = [
   { value: "@plan", label: "Plan", avatar: "planner", hint: "role", hintCls: "b-role" },
   { value: "@arch", label: "Architect", avatar: "architect", hint: "role", hintCls: "b-role" },
   { value: "@review", label: "Review", avatar: "reviewer", hint: "role", hintCls: "b-role" },
   { value: "@test", label: "Test", avatar: "tester", hint: "role", hintCls: "b-role" },
 ];
-export function agentOptions(agentDefs) {
+const WF_AVATAR = { "full-build": "developer", "quick-fix": "developer", "plan-only": "planner", "review-only": "reviewer" };
+export function agentOptions(agentDefs, workflows) {
+  const wf = (workflows || []).filter((w) => w.trigger).map((w) => ({ value: w.trigger, label: w.name, avatar: WF_AVATAR[w.id] || "developer", hint: "workflow", hintCls: "b-wf" }));
   const defs = agentDefs || [];
-  const custom = defs.filter((d) => !["spec-creator", "grill-me"].includes(d.name));
-  const chat = defs.filter((d) => d.mode === "chat").concat(custom.filter((d) => d.mode === "chat"));
-  const seen = new Set();
-  const toOpt = (d) => ({ value: d.handle || ("@" + d.name), label: d.name, avatar: d.name, hint: d.mode === "chat" ? "chat" : "code", hintCls: d.mode === "chat" ? "b-chat" : "b-code" });
-  const extra = defs.filter((d) => { if (seen.has(d.name)) return false; seen.add(d.name); return true; }).map(toOpt);
-  return AGENT_PINS.concat(extra);
+  const agents = defs.map((d) => ({ value: d.handle || ("@" + d.name), label: d.name, avatar: d.name, hint: d.mode === "chat" ? "chat" : "code", hintCls: d.mode === "chat" ? "b-chat" : "b-code" }));
+  return wf.concat(ROLE_PINS).concat(agents);
 }

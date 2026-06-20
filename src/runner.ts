@@ -56,6 +56,7 @@ import { reconcileEpics } from "./epics.js";
 import { indexRepo } from "./gitnexus.js";
 import { pushActivity } from "./activity.js";
 import { loadHandleRoleMap, roleForText, ALL_ROLES, type RoleName } from "./agents/roles.js";
+import { resolveWorkflow, workflowLeadRole, workflowTriggers } from "./workflow.js";
 import { runPipeline, runPrFix, runFollowUp, runResumeBuild, runReviewFix } from "./pipeline.js";
 import { runRole } from "./agents/roleAgent.js";
 import { runChatAgent } from "./agents/chat.js";
@@ -250,8 +251,12 @@ async function processIssue(cfg: Config, repo: string, issue: Issue): Promise<vo
   }
 
   const resuming = issue.labels.some((l) => AWAITING_LABELS.includes(l));
+  // A workflow trigger (e.g. @dev → Full build) resolves to its lead role and drives the existing
+  // flow; otherwise fall back to the role-pin handle map.
+  const wf = resuming ? null : resolveWorkflow(`${issue.title}\n${issue.body}`);
   const role: RoleName = resuming
     ? ((getIssueRole(repo, issue.number) as RoleName) ?? "developer")
+    : wf ? workflowLeadRole(wf)
     : roleForText(`${issue.title}\n${issue.body}`, loadHandleRoleMap()) ?? "developer";
   console.log(`[agency] ${repo} #${issue.number}: ${issue.title} -> role:${role}${resuming ? " (resume)" : ""}`);
 
@@ -877,7 +882,7 @@ async function scanRepo(cfg: Config, repo: string): Promise<void> {
     // are an informative mirror. Untagged issues (and mentions from non-members) just surface as
     // Planned and are started from the dashboard. The author check is one API call, only on a match.
     let triggerMatch = false;
-    if (!t.closed && mentionsHandle(`${t.title}\n${t.body}`, cfg.handles)) {
+    if (!t.closed && mentionsHandle(`${t.title}\n${t.body}`, [...cfg.handles, ...workflowTriggers()])) {
       triggerMatch = canTrigger(await issueAuthorAssoc(repo, t.number));
     }
 

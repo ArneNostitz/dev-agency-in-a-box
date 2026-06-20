@@ -23,7 +23,7 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
   const defModelLogo = defaultModelLogo(data);
   const modelSelOpts = [{ value: "", label: "Default model", logo: defModelLogo }].concat(modelOpts.map((o) => ({ value: o.value, label: o.short, logo: o.provider, hint: o.provider })));
   const modelTrigger = (cur) => html`<span class="tip" data-tip=${cur ? cur.label : "Default model"} style="display:inline-flex"><${ProviderLogo} name=${cur && cur.logo ? cur.logo : defModelLogo} size=${16}/></span>`;
-  const agentSelOpts = [{ value: "", label: "Just comment", icon: "messages" }].concat(agentOptions(data && data.agentDefs));
+  const agentSelOpts = [{ value: "", label: "Just comment", icon: "messages" }].concat(agentOptions(data && data.agentDefs, data && data.workflows));
   const [pendingComments, setPendingComments] = useState([]); // optimistic skeleton comments
   const [chatAtBottom, setChatAtBottom] = useState(true);
   const [chatAtTop, setChatAtTop] = useState(true);
@@ -487,7 +487,7 @@ export function Composer({ repos, repo, setRepo, onClose, onCreate, data }) {
   return html`<${Modal} title="New issue" onClose=${onClose} footer=${footer}>
     <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
       <${Select} value=${repo || ""} options=${repos.map((r) => ({ value: r, label: r.split("/").pop() }))} onChange=${setRepo}/>
-      <${Select} value=${role} options=${agentOptions(data && data.agentDefs)} onChange=${setRole}/>
+      <${Select} value=${role} options=${agentOptions(data && data.agentDefs, data && data.workflows)} onChange=${setRole}/>
       ${modelOpts.length ? html`<${Select} value=${model} btnClass="iconbtn-sm" onChange=${setModel}
         options=${[{ value: "", label: "Default model", logo: defaultModelLogo(data) }].concat(modelOpts.map((o) => ({ value: o.providerId + "/" + o.model, label: o.short, logo: o.provider })))}
         trigger=${(cur) => html`<span class="tip" data-tip=${cur ? cur.label : "Default model"} style="display:inline-flex"><${ProviderLogo} name=${cur && cur.logo ? cur.logo : defaultModelLogo(data)} size=${16}/></span>`}/>` : null}
