@@ -3,20 +3,6 @@ import { html, useState, useEffect } from "/web/vendor/standalone.mjs";
 import { Avatar, COLS, Icon, ProviderLogo, Select, Spinner, ago, api, boardSortCmp, classify, filterByTime, fmtTok, getSetupProgress, ghUrl, isDone, shortModel, statusChip, toast, usageTitle } from "./core.js";
 
 // ---------- sort / group / time options ----------
-const SORT_OPTS = [
-  { v: "updated_desc", label: "Recently updated" },
-  { v: "updated_asc",  label: "Oldest updated" },
-  { v: "created_desc", label: "Newest" },
-  { v: "created_asc",  label: "Oldest" },
-  { v: "number_asc",   label: "Issue # ↑" },
-  { v: "number_desc",  label: "Issue # ↓" },
-];
-const TIME_OPTS = [
-  { v: "any", label: "Any time" },
-  { v: "24h", label: "Last 24h" },
-  { v: "7d",  label: "Last 7 days" },
-  { v: "30d", label: "Last 30 days" },
-];
 
 function parseBoardSort(v) { const m = /^([a-z]+)_(asc|desc)$/.exec(v || "updated_desc"); return m ? [m[1], m[2]] : ["updated", "desc"]; }
 const SORT_FIELDS = [
