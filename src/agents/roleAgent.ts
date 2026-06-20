@@ -251,7 +251,19 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
   // it returns, so the live stream can look frozen/"stuck". Emit a line each minute so it's clearly
   // still alive (and tells you how long it's been on the current step).
   const runStartedAt = Date.now();
+  // Inactivity watchdog: a healthy run streams assistant/tool messages; a hung provider (e.g. an
+  // unreachable Anthropic-compatible proxy) connects but emits NOTHING, so the run would spin on
+  // "still working" until a redeploy. If no message arrives for this long, abort with a clear error.
+  let lastMsgAt = Date.now();
+  let inactiveAborted = false;
+  const INACTIVITY_MS = (Number(process.env.RUN_INACTIVITY_MIN?.trim()) || 6) * 60_000;
   const heartbeat = setInterval(() => {
+    if (Date.now() - lastMsgAt > INACTIVITY_MS && !abortRun.controller.signal.aborted) {
+      inactiveAborted = true;
+      pushActivity(repo, issueNumber, role, "done", `⏱ No output from ${route ? `the provider model (${model})` : "Claude"} for ${Math.round(INACTIVITY_MS / 60000)}m — aborting. Likely an unreachable endpoint or wrong model id; check Settings → Models.`);
+      try { abortRun.controller.abort(); } catch { /* noop */ }
+      return;
+    }
     pushActivity(repo, issueNumber, role, "tool", `⏳ still working… (${Math.round((Date.now() - runStartedAt) / 60000)}m on this step)`);
   }, 60_000);
   // For 401s, name the credential actually used + the likely fixes (this is the #1 support issue).
@@ -296,6 +308,7 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
     const r = await runner.run(req, (message) => {
       // emitAssistant callback: same side-effects the old inline loop had (SDK path),
       // plus pi-cli streaming (text deltas + tool summaries → live activity feed).
+      lastMsgAt = Date.now(); // any message = the run is alive (feeds the inactivity watchdog)
       const sid = (message as { session_id?: string }).session_id;
       if (sid) sessionId = sid;
       const m = message as { type?: string; delta?: string; summary?: string };
@@ -323,6 +336,7 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
       r = await runQuery(input.resumeSessionId);
     } catch (err) {
       if (wasAborted()) {
+        if (inactiveAborted) throw new Error(`No response from ${route ? `the provider model (${model})` : "Claude"} for ${Math.round(INACTIVITY_MS / 60000)} minutes — the endpoint may be unreachable or the model id wrong.`);
         pushActivity(repo, issueNumber, role, "done", "⏹ stopped by user");
         return { text: "", turns: 0, model, costUsd: 0 };
       }
@@ -334,6 +348,7 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
           r = await runQuery(undefined);
         } catch (err2) {
           if (wasAborted()) {
+            if (inactiveAborted) throw new Error(`No response from ${route ? `the provider model (${model})` : "Claude"} for ${Math.round(INACTIVITY_MS / 60000)} minutes — the endpoint may be unreachable or the model id wrong.`);
             pushActivity(repo, issueNumber, role, "done", "⏹ stopped by user");
             return { text: "", turns: 0, model, costUsd: 0 };
           }
