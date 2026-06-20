@@ -6,7 +6,7 @@ import { Icon, Sheet, api, toast } from "./core.js";
 const AGENT_TOOLS = ["Read", "Glob", "Grep", "Bash", "Write", "Edit"];
 export function AgentEditor({ data, onClose, onSkills, reload }) {
   const defs = data.agentDefs || [];
-  const blank = { name: "", handle: "", mode: "chat", model: "", tools: ["Read", "Glob", "Grep"], pushesGithub: true, persona: "", builtin: false };
+  const blank = { name: "", handle: "", mode: "chat", model: "", tools: ["Read", "Glob", "Grep"], pushesGithub: true, persona: "", defaultTask: "", builtin: false };
   const [sel, setSel] = useState(null); // null = list, "__new__" or a name = edit
   const [form, setForm] = useState(blank);
   const [busy, setBusy] = useState(false);
@@ -15,7 +15,7 @@ export function AgentEditor({ data, onClose, onSkills, reload }) {
   function save() {
     if (!form.name) { toast("Name required"); return; }
     setBusy(true);
-    api("/agent-def-save", { agentDef: { name: form.name, handle: form.handle || "@" + form.name, mode: form.mode, model: form.model, tools: form.tools, pushesGithub: form.pushesGithub, persona: form.persona } })
+    api("/agent-def-save", { agentDef: { name: form.name, handle: form.handle || "@" + form.name, mode: form.mode, model: form.model, tools: form.tools, pushesGithub: form.pushesGithub, persona: form.persona, defaultTask: form.defaultTask } })
       .then(() => { toast("Saved"); setSel(null); reload(); }).catch(() => toast("Couldn’t save", "error")).then(() => setBusy(false));
   }
   function del() { setBusy(true); api("/agent-def-delete", { agentName: form.name }).then(() => { toast("Deleted"); setSel(null); reload(); }).catch(() => toast("Couldn’t delete", "error")).then(() => setBusy(false)); }
@@ -41,6 +41,8 @@ export function AgentEditor({ data, onClose, onSkills, reload }) {
       <label class="ckline"><input type="checkbox" checked=${form.pushesGithub} onChange=${(e) => set("pushesGithub", e.target.checked)}/> Post the result to GitHub</label>
       ${(data.skills || []).length ? html`<label>Skills</label>
         <div class="toolchips">${(data.skills || []).map((sk) => html`<label class="toolchip" key=${sk.name} title=${sk.description}><input type="checkbox" checked=${(form.skills || []).includes(sk.name)} onChange=${() => set("skills", (form.skills || []).includes(sk.name) ? (form.skills || []).filter((x) => x !== sk.name) : (form.skills || []).concat(sk.name))}/> ${sk.name}</label>`)}</div>` : null}
+      <label>Default task <span class="muted" style="font-weight:400">— pre-fills "what this agent does" when added to a workflow step</span></label>
+      <textarea rows="2" style="width:100%" placeholder="e.g. Implement the plan and open a PR." value=${form.defaultTask || ""} onInput=${(e) => set("defaultTask", e.target.value)}></textarea>
       <label>Persona (markdown)</label>
       <textarea rows="10" style="width:100%;font:13px ui-monospace,Menlo,monospace" value=${form.persona} onInput=${(e) => set("persona", e.target.value)}></textarea>
       <div class="row">

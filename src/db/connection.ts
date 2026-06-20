@@ -144,7 +144,7 @@ export function getDb(): DatabaseSync | null {
       CREATE TABLE IF NOT EXISTS agent_def (
         name TEXT PRIMARY KEY, handle TEXT, persona TEXT, model TEXT, tools TEXT,
         mode TEXT, pushes_github INTEGER NOT NULL DEFAULT 1, skills TEXT, builtin INTEGER NOT NULL DEFAULT 0,
-        updated_at TEXT
+        default_task TEXT, updated_at TEXT
       );
       -- Skills (v3, Claude Code Agent Skill schema): name + description (triggers it) + markdown body.
       CREATE TABLE IF NOT EXISTS skill (name TEXT PRIMARY KEY, description TEXT, body TEXT, updated_at TEXT);
@@ -211,6 +211,7 @@ export function getDb(): DatabaseSync | null {
       `ALTER TABLE token_usage ADD COLUMN number INTEGER`,
       `ALTER TABLE token_usage ADD COLUMN role TEXT`,
       `ALTER TABLE issues ADD COLUMN blocked TEXT`,
+      `ALTER TABLE agent_def ADD COLUMN default_task TEXT`,
     ]) {
       try {
         d.exec(sql);
