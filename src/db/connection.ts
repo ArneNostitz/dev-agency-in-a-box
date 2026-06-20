@@ -153,6 +153,11 @@ export function getDb(): DatabaseSync | null {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         target TEXT, phase TEXT, command TEXT, enabled INTEGER NOT NULL DEFAULT 1, updated_at TEXT
       );
+      -- Workflows (linear + gates): an ordered arrangement of agent steps with forced skills/hooks.
+      CREATE TABLE IF NOT EXISTS workflows (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL, trigger TEXT, steps TEXT, gates TEXT,
+        builtin INTEGER NOT NULL DEFAULT 0, updated_at TEXT
+      );
       -- Local-first tracking (Phase 4): the DB as source of truth, GitHub as a synced adapter.
       CREATE TABLE IF NOT EXISTS local_issue (
         repo TEXT NOT NULL, number INTEGER NOT NULL, title TEXT, body TEXT, labels TEXT,
