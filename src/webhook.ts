@@ -149,7 +149,7 @@ function serveStatic(pathname: string, res: ServerResponse): boolean {
 
 type CreatePr = (repo: string, number: number) => Promise<{ ok: boolean; url?: string; msg?: string }>;
 type Audit = (repo: string) => Promise<void>;
-export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: Resume, approve?: Resume, fix?: Resume, start?: Resume, stop?: Resume, createPr?: CreatePr, onComment?: Resume, audit?: Audit): Promise<void> {
+export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: Resume, approve?: Resume, fix?: Resume, start?: Resume, stop?: Resume, createPr?: CreatePr, onComment?: Resume, audit?: Audit, startNew?: (repo: string, number: number, title: string, body: string) => Promise<void>): Promise<void> {
   const port = Number(process.env.PORT?.trim() || "3000");
   // Webhook secret is read live (dashboard → env) so it can be set/rotated without a redeploy.
   const webhookSecret = (): string => getSecretSetting("github_webhook_secret") || process.env.GITHUB_WEBHOOK_SECRET?.trim() || "";
@@ -1434,7 +1434,10 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
             }
             if (p.start) {
               recordIssueStatus(repo, created.number, withStatus("working"), { title: p.title.trim() });
-              void trigger("dashboard-new-issue");
+              // Dashboard-first INSTANT start: dispatch from the title/body we already have — no GitHub
+              // read, no scan. (GitHub gets the comments/PR reported in the background.)
+              if (startNew) void startNew(repo, created.number, p.title.trim(), issueBody).catch(() => {});
+              else if (start) void start(repo, created.number).catch(() => {});
             } else {
               await addLabel(repo, created.number, "agency:planned").catch(() => {});
               recordIssueStatus(repo, created.number, withStatus("planned"), { title: p.title.trim() });

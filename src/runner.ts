@@ -230,7 +230,7 @@ function workdirFor(repo: string, key: string): string {
 // ---- workers (run inside the pool) ----
 
 /** Process one actionable issue end to end. */
-async function processIssue(cfg: Config, repo: string, issue: Issue): Promise<void> {
+async function processIssue(cfg: Config, repo: string, issue: Issue, opts: { fresh?: boolean } = {}): Promise<void> {
   // Chat agents (v3): interactive, non-repo. Route here and skip the clone/branch/PR machinery.
   const chatDef = chatAgentForText(`${issue.title}\n${issue.body}`);
   if (chatDef) {
@@ -259,6 +259,7 @@ async function processIssue(cfg: Config, repo: string, issue: Issue): Promise<vo
     : wf ? workflowLeadRole(wf)
     : roleForText(`${issue.title}\n${issue.body}`, loadHandleRoleMap()) ?? "developer";
   console.log(`[agency] ${repo} #${issue.number}: ${issue.title} -> role:${role}${resuming ? " (resume)" : ""}`);
+  pushActivity(repo, issue.number, role, "start", "▶ starting…"); // instant feedback before the GitHub prep + clone
 
   // Budget gate: park runaway issues instead of silently burning more. Per-issue override +
   // unlimited flag live in the DB now (ADR-0001: labels have no power); the old agency:unlimited
@@ -285,12 +286,12 @@ async function processIssue(cfg: Config, repo: string, issue: Issue): Promise<vo
   await removeLabel(repo, issue.number, cfg.queueLabel);
   for (const l of AWAITING_LABELS) await removeLabel(repo, issue.number, l);
   recordIssueStatus(repo, issue.number, withStatus("working"), { title: issue.title, role });
-  await acknowledge(repo, issue.number); // 👀 on your last comment (or the issue)
+  void acknowledge(repo, issue.number).catch(() => {}); // 👀 — fire-and-forget, never block the run
   if (!resuming) {
     await commentOnIssue(repo, issue.number, `🏗️ On it (role: **${role}**) — branch \`agency/issue-${issue.number}\`.`);
   }
 
-  const thread = await commentThread(repo, issue.number);
+  const thread = opts.fresh ? "" : await commentThread(repo, issue.number); // fresh dashboard issue has no thread — skip the GitHub read
   const workdir = workdirFor(repo, `${issue.number}`);
   // Mark active + show progress BEFORE the slow prep so the card spins and the live stream isn't
   // silent while we clone (and the GitNexus index now builds in the background, off this path).
@@ -616,6 +617,21 @@ async function processFix(cfg: Config, repo: string, issue: Issue, conflict: boo
  * Play button: start a Planned issue now. Drops the planned hold, then runs the full pipeline
  * (planner → … ). If we're inside the usage-limit window, queue it to auto-resume after the reset.
  */
+/** Dashboard-first instant start: dispatch from the title/body we already have — no GitHub read. */
+export async function forceStartWith(cfg: Config, repo: string, number: number, title: string, body: string): Promise<void> {
+  await removeLabel(repo, number, "agency:planned").catch(() => {});
+  if (agentsArePaused()) {
+    setRateLimited(repo, number, new Date(pausedUntil()).toISOString());
+    recordIssueStatus(repo, number, setBlocked(withStatus("working"), "rateLimited"));
+    await addLabel(repo, number, RATE_LIMITED).catch(() => {});
+    return;
+  }
+  await addLabel(repo, number, IN_PROGRESS).catch(() => {});
+  recordIssueStatus(repo, number, withStatus("working"), { title });
+  console.log(`[agency] start (dashboard, instant) ${repo} #${number}`);
+  dispatch(`${repo}#${number}`, () => processIssue(cfg, repo, { number, title, body, labels: [] }, { fresh: true }));
+}
+
 export async function forceStart(cfg: Config, repo: string, number: number): Promise<void> {
   const issue = await getIssue(repo, number);
   if (!issue) return;
@@ -1252,6 +1268,7 @@ async function main(): Promise<void> {
       (repo, number) => forceCreatePr(cfg, repo, number),
       (repo, number) => forceResume(cfg, repo, number, true), // onComment: re-engage to address the new message (no PR short-circuit)
       (repo) => forceAudit(cfg, repo),
+      (repo, number, title, body) => forceStartWith(cfg, repo, number, title, body),
     );
   } else {
     await backgroundInit(cfg);
