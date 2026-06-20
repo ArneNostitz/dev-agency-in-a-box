@@ -30,6 +30,9 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
   const [saving, setSaving] = useState(false);
   const [editAgent, setEditAgent] = useState(null); // null | "__new__" | handle
   const canvasRef = useRef(null);
+  const flowRef = useRef(null);
+  const [drag, setDrag] = useState(null);
+  const [dropAt, setDropAt] = useState(null);
   const [cw, setCw] = useState(960);
   useEffect(() => { const el = canvasRef.current; if (!el) return; const m = () => setCw(el.clientWidth || 960); m(); window.addEventListener("resize", m); return () => window.removeEventListener("resize", m); }, [sel]);
 
@@ -58,6 +61,19 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
   }
   const patchStep = (i, p) => setForm((f) => ({ ...f, steps: f.steps.map((s, j) => (j === i ? { ...s, ...p } : s)) }));
   const addStep = (handle) => setForm((f) => { const def = ((data && data.agentDefs) || []).find((d) => (d.handle || ("@" + d.name)) === handle); const instruction = (def && def.defaultTask) || DEFAULT_TASK[(handle || "").toLowerCase()] || ""; const steps = f.steps.concat({ ...blankStep(), agent: handle || "@dev", instruction }); setStep(steps.length - 1); return { ...f, steps }; });
+  const moveStep = (from, dropSlot) => setForm((f) => {
+    const insertAt = dropSlot > from ? dropSlot - 1 : dropSlot;
+    if (insertAt === from) return f;
+    const idxs = f.steps.map((_, i) => i);
+    const [xi] = idxs.splice(from, 1);
+    idxs.splice(insertAt, 0, xi);
+    const remap = {}; idxs.forEach((old, np) => { remap[old] = np; });
+    const steps = idxs.map((old) => f.steps[old]);
+    const gates = (f.gates || []).map((g) => { const ng = { ...g, after: remap[g.after] }; if (ng.route && ng.route.startsWith("loop")) { const t = Number(ng.route.split(":")[1]); if (Number.isFinite(t) && remap[t] != null) ng.route = "loop:" + remap[t]; } return ng; }).filter((g) => g.after != null);
+    setStep(insertAt);
+    return { ...f, steps, gates };
+  });
+  const dropSlotFromY = (clientY) => { const el = flowRef.current; if (!el) return null; const top = el.getBoundingClientRect().top; const y = clientY - top - PAD; return Math.max(0, Math.min(steps.length, Math.round(y / (NODE_H + ROW_GAP)))); };
   const removeStep = (i) => setForm((f) => { const steps = f.steps.filter((_, j) => j !== i); setStep(Math.max(0, Math.min(i, steps.length - 1))); return { ...f, steps, gates: (f.gates || []).filter((g) => g.after !== i).map((g) => (g.after > i ? { ...g, after: g.after - 1 } : g)) }; });
   const toggleChip = (i, key, val) => { const cur = form.steps[i][key] || []; patchStep(i, { [key]: cur.includes(val) ? cur.filter((x) => x !== val) : cur.concat(val) }); };
 
@@ -171,13 +187,17 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
 
       <!-- canvas -->
       <div class="bld-canvas" ref=${canvasRef}>
-        <div class="bld-flow" style=${"width:" + gridW + "px;height:" + gridH + "px"}>
+        <div class="bld-flow" ref=${flowRef} style=${"width:" + gridW + "px;height:" + gridH + "px"}
+          onDragOver=${(e) => { if (drag == null) return; e.preventDefault(); e.dataTransfer.dropEffect = "move"; setDropAt(dropSlotFromY(e.clientY)); }}
+          onDrop=${(e) => { if (drag == null) return; e.preventDefault(); const slot = dropSlotFromY(e.clientY); if (slot != null) moveStep(drag, slot); setDrag(null); setDropAt(null); }}
+          onDragLeave=${(e) => { if (e.target === flowRef.current) setDropAt(null); }}>
           <svg class="bld-wires" width=${gridW} height=${gridH} aria-hidden="true">
             <defs><marker id="bld-arrow" markerWidth="9" markerHeight="9" refX="6.5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--line-2)"/></marker><marker id="bld-loop" markerWidth="9" markerHeight="9" refX="6.5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--amber)"/></marker></defs>
             ${steps.slice(0, -1).map((_, i) => html`<path key=${i} d=${downPath(i)} fill="none" stroke="var(--line-2)" stroke-width="2" marker-end="url(#bld-arrow)"/>`)}
             ${steps.length ? html`<path key="toadd" d=${downPath(steps.length - 1)} fill="none" stroke="var(--line)" stroke-width="2" stroke-dasharray="3 4"/>` : null}
             ${(form.gates || []).filter((g) => g.route && g.route.startsWith("loop")).map((g, k) => { const t = Number(g.route.split(":")[1]); if (!Number.isFinite(t) || t === g.after || g.after >= steps.length || t >= steps.length) return null; const rx = C + NODE_W / 2, sy = midY(g.after), ty = midY(t), lx = C + NODE_W / 2 + LOOPM; return html`<path key=${"loop" + k} d=${`M ${rx} ${sy} C ${lx} ${sy}, ${lx} ${ty}, ${rx} ${ty}`} fill="none" stroke="var(--amber)" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#bld-loop)"/>`; })}
           </svg>
+          ${drag != null && dropAt != null ? html`<div class="bld-drop" style=${"left:" + (C - NODE_W / 2 - SIDE) + "px;top:" + (PAD + dropAt * (NODE_H + ROW_GAP) - ROW_GAP / 2 - 1) + "px;width:" + (NODE_W + SIDE * 2) + "px"}></div>` : null}
           ${steps.map((s, i) => {
             const y = nodeY(i), left = C - NODE_W / 2;
             const g = gateAfter(i);
@@ -187,8 +207,8 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
             return html`<div key=${"n" + i}>
               ${pre.length ? html`<div class="bld-hooks left" style=${"left:" + (left - SIDE) + "px;top:" + y + "px;width:" + (SIDE - 10) + "px;height:" + NODE_H + "px"}>${pre.map(hookChip)}</div>` : null}
               ${post.length ? html`<div class="bld-hooks right" style=${"left:" + (left + NODE_W + 10) + "px;top:" + y + "px;width:" + (SIDE - 10) + "px;height:" + NODE_H + "px"}>${post.map(hookChip)}</div>` : null}
-              <div class=${"bld-node" + (i === step ? " sel" : "")} style=${"left:" + left + "px;top:" + y + "px;width:" + NODE_W + "px"} onClick=${() => setStep(i)}>
-                <div class="bld-node-h"><span class="bld-node-num">${i + 1}</span><${Avatar} role=${roleFor(agentOf(s))} src=${srcFor(agentOf(s))} size=${26} crop="head"/><span class="bld-node-name">${labelFor(agentOf(s), agentOpts)}</span></div>
+              <div class=${"bld-node" + (i === step ? " sel" : "") + (i === drag ? " dragging" : "")} draggable=${true} onDragStart=${(e) => { setDrag(i); e.dataTransfer.effectAllowed = "move"; try { e.dataTransfer.setData("text/plain", String(i)); } catch (_) {} }} onDragEnd=${() => { setDrag(null); setDropAt(null); }} style=${"left:" + left + "px;top:" + y + "px;width:" + NODE_W + "px"} onClick=${() => setStep(i)}>
+                <div class="bld-node-h"><span class="bld-grip" title="Drag to reorder"><${Icon} name="dots" size=${13}/></span><span class="bld-node-num">${i + 1}</span><${Avatar} role=${roleFor(agentOf(s))} src=${srcFor(agentOf(s))} size=${26} crop="head"/><span class="bld-node-name">${labelFor(agentOf(s), agentOpts)}</span></div>
                 <div class="bld-node-task">${(s.instruction || "").split("\n")[0] || html`<span class="ph">describe this step…</span>`}</div>
                 <div class="bld-node-tags">${(s.skills || []).length ? html`<span class="t skill"><${Icon} name="sparkles" size=${10}/>${s.skills.length}</span>` : null}${s.model ? html`<span class="t"><${ProviderLogo} name="claude" size=${10}/></span>` : null}${g ? html`<span class=${"t " + (g.condition === "humanApproval" ? "approve" : g.route && g.route.startsWith("loop") ? "loop" : "stop")}>${g.condition === "humanApproval" ? html`<${Icon} name="hourglass" size=${10}/> approval` : g.route && g.route.startsWith("loop") ? html`<${Icon} name="refresh" size=${10}/> loop` : html`<${Icon} name="stop" size=${10}/> stop`}</span>` : null}</div>
               </div>
