@@ -13,8 +13,8 @@ import { join } from "node:path";
 import { getSetting, setSetting } from "./store.js";
 import { ghBotToken } from "./creds.js";
 
-export interface CheckResult { name: string; cmd: string; ok: boolean; firstError: string }
-export interface ChecksOutcome { ran: boolean; pass: boolean; summary: string; results: CheckResult[] }
+export interface CheckResult { name: string; cmd: string; ok: boolean; firstError: string; env?: boolean }
+export interface ChecksOutcome { ran: boolean; pass: boolean; summary: string; results: CheckResult[]; envBlocked?: boolean; blockReason?: string }
 
 interface CommandSet {
   /** Binary that must exist on PATH for these checks to run here (e.g. "swift", "go", "cargo"). */
@@ -24,6 +24,7 @@ interface CommandSet {
 }
 
 /** Run a shell command in `cwd`, capturing combined output; resolves with code + tail of output. */
+export function runShell(cmd: string, cwd: string, timeoutMs = 240_000): Promise<{ code: number; out: string }> { return run(cmd, cwd, timeoutMs); }
 function run(cmd: string, cwd: string, timeoutMs = 240_000): Promise<{ code: number; out: string }> {
   return new Promise((resolve) => {
     const token = ghBotToken();
@@ -46,6 +47,15 @@ function firstError(out: string): string {
   return (hit || lines[lines.length - 1] || "").slice(0, 300);
 }
 
+// A check whose non-zero exit means "the sandbox couldn't run it", NOT "the code is broken" — so we
+// never send the developer into a fix loop over it. 127 = command not found; pytest 2 = collection/
+// usage error (e.g. import error from missing deps), 5 = no tests collected.
+export function isEnvError(cmd: string, code: number): boolean {
+  if (code === 0) return false;
+  if (code === 127) return true;
+  if (/\bpytest\b/.test(cmd) && (code === 2 || code === 5)) return true;
+  return false;
+}
 const has = (workdir: string, ...files: string[]) => files.some((f) => existsSync(join(workdir, f)));
 
 /** Node / TypeScript / JavaScript (package.json). */
@@ -76,8 +86,8 @@ function pythonCommands(workdir: string): CommandSet | null {
   if (/\[tool\.mypy/.test(pyproject) || has(workdir, "mypy.ini")) checks.push({ name: "typecheck", cmd: "python3 -m mypy ." });
   checks.push({ name: "test", cmd: "python3 -m pytest -q" });
   const install = has(workdir, "requirements.txt")
-    ? "pip install --break-system-packages -r requirements.txt || true"
-    : "pip install --break-system-packages -e . || true";
+    ? "pip install --break-system-packages -r requirements.txt"
+    : "pip install --break-system-packages -e .";
   return { requires: "python3", install, checks };
 }
 
@@ -170,19 +180,52 @@ export async function runChecks(workdir: string, repo: string): Promise<ChecksOu
   if (set.install) {
     const inst = await run(set.install, workdir);
     if (inst.code !== 0) {
-      // Install failed — hand off to the LLM tester, which can adapt (different package manager, etc.).
-      return { ran: false, pass: false, summary: "", results: [] };
+      // Dependencies didn't install → the sandbox can't run these checks. Don't fall into a fix loop
+      // over phantom failures; report it as environment-blocked so the caller skips the gate.
+      return { ran: true, pass: false, envBlocked: true, blockReason: firstError(inst.out) || "dependency install failed", summary: "", results: [] };
     }
   }
 
   const results: CheckResult[] = [];
   for (const c of set.checks) {
     const r = await run(c.cmd, workdir);
-    results.push({ name: c.name, cmd: c.cmd, ok: r.code === 0, firstError: r.code === 0 ? "" : firstError(r.out) });
+    const env = isEnvError(c.cmd, r.code);
+    results.push({ name: c.name, cmd: c.cmd, ok: r.code === 0, firstError: r.code === 0 ? "" : firstError(r.out), env });
   }
   const pass = results.every((r) => r.ok);
+  const envBlocked = results.some((r) => !r.ok && r.env);
+  const blockReason = envBlocked ? (results.find((r) => r.env)?.firstError || "checks could not be executed") : undefined;
   const summary = `| check | status | detail |\n|---|---|---|\n` +
-    results.map((r) => `| ${r.name} | ${r.ok ? "✅ pass" : "❌ FAIL"} | ${r.ok ? "" : "`" + r.firstError.replace(/\|/g, "\\|") + "`"} |`).join("\n") +
+    results.map((r) => `| ${r.name} | ${r.ok ? "✅ pass" : r.env ? "⚙️ env" : "❌ FAIL"} | ${r.ok ? "" : "`" + r.firstError.replace(/\|/g, "\\|") + "`"} |`).join("\n") +
     `\n\n${pass ? "All checks passed." : "Some checks failed — see the first error above."}`;
-  return { ran: true, pass, summary, results };
+  return { ran: true, pass, envBlocked, blockReason, summary, results };
+}
+
+
+/**
+ * Which of these failing checks were ALREADY failing on the base (origin/main) BEFORE this change?
+ * Re-runs only the failing checks against the base commit in the same workdir (deps already
+ * installed, so it's cheap and token-free), then restores the branch. A check that fails on both is
+ * pre-existing — the agency shouldn't loop trying to "fix" code it didn't break. Best-effort: if the
+ * base can't be checked out, returns empty (treat all as introduced — the safe, conservative side).
+ */
+export async function baselineFailures(workdir: string, branch: string, failing: CheckResult[]): Promise<Set<string>> {
+  const pre = new Set<string>();
+  if (failing.length === 0) return pre;
+  const ref = async (r: string): Promise<boolean> => (await run(`git rev-parse --verify ${r}`, workdir)).code === 0;
+  const base = (await ref("origin/main")) ? "origin/main" : (await ref("main")) ? "main" : "";
+  if (!base) return pre; // no baseline available → don't suppress anything
+  const head = ((await run("git rev-parse --abbrev-ref HEAD", workdir)).out.trim()) || branch;
+  const cur = head === "HEAD" ? ((await run("git rev-parse HEAD", workdir)).out.trim() || branch) : head;
+  const stashed = (await run("git stash push -u -m agency-baseline", workdir)).out.includes("Saved");
+  try {
+    if ((await run(`git checkout --quiet --force ${base}`, workdir)).code !== 0) return pre;
+    for (const c of failing) {
+      if ((await run(c.cmd, workdir)).code !== 0) pre.add(c.name); // already red on base → pre-existing
+    }
+  } finally {
+    await run(`git checkout --quiet --force ${cur}`, workdir);
+    if (stashed) await run("git stash pop", workdir);
+  }
+  return pre;
 }

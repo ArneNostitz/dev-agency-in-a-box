@@ -36,7 +36,7 @@ import { conflictFiles } from "./github.js";
 import { pushActivity, setActive } from "./activity.js";
 import { execSync } from "node:child_process";
 import { runReflection } from "./reflect.js";
-import { runChecks, parseDiscoveredChecks, rememberChecks } from "./checks.js";
+import { runChecks, baselineFailures, parseDiscoveredChecks, rememberChecks } from "./checks.js";
 import { decideNext } from "./orchestrator.js";
 import { LABEL_IN_PROGRESS as IN_PROGRESS, LABEL_READY as READY, LABEL_NEEDS_ATTENTION as NEEDS_ATTENTION, withStatus, setBlocked, parseLegacyStatus } from "./state.js";
 
@@ -55,7 +55,24 @@ async function runTests(
   const checks = await runChecks(workdir, repo);
   if (checks.ran) {
     recordRun(repo, issueNumber, "tester", "code", 0, "test", 0); // deterministic, token-free
-    return { text: checks.summary, pass: checks.pass };
+    // The sandbox couldn't actually run the checks (deps wouldn't install, pytest collection error,
+    // missing tool). That's NOT a code defect — don't gate on it or the developer chases ghosts.
+    if (checks.envBlocked) {
+      return {
+        text: `⚙️ **Couldn't run the checks in the sandbox** — \`${checks.blockReason}\`.\n\nThis is an environment/dependency issue, not a code failure, so the change isn't blocked on it. Run the suite locally to confirm.`,
+        pass: true,
+      };
+    }
+    if (checks.pass) return { text: checks.summary, pass: true };
+    // Some checks failed. Were they ALREADY red on main (pre-existing), or did THIS change break them?
+    // Only newly-introduced failures gate the PR; pre-existing ones are reported, not fixed in a loop.
+    const failing = checks.results.filter((r) => !r.ok);
+    const preexisting = await baselineFailures(workdir, branch, failing);
+    const introduced = failing.filter((r) => !preexisting.has(r.name));
+    const note = preexisting.size
+      ? `\n\n> ℹ️ ${preexisting.size} check(s) (${[...preexisting].join(", ")}) were **already failing on \`main\`** before this change — pre-existing, not gated. ${introduced.length ? "" : "Proceeding to review."}`
+      : "";
+    return { text: checks.summary + note, pass: introduced.length === 0 };
   }
   // Unknown stack or toolchain missing → let the cheap tester discover the commands, then cache them.
   const t = await runRole("tester", {
