@@ -8,7 +8,7 @@ import { AddRepo, Onboarding } from "./onboarding.js";
 import { SecretBanner, StatusLine, TopBar } from "./topbar.js";
 import { Usage } from "./usage.js";
 import { AgentEditor, SkillEditor } from "./agents.js";
-import { WorkflowEditor } from "./workflows.js";
+import { WorkflowBuilder } from "./builder.js";
 
 
 // ---------- offline queue ----------
@@ -271,7 +271,7 @@ function App() {
       ${sheet === "addrepo" && html`<${AddRepo} repos=${repos} onClose=${() => setSheet(null)} reload=${load}/>`}
       ${sheet === "usage" && html`<${Usage} onClose=${() => setSheet(null)} onOpenIssue=${openIssue}/>`}
       ${sheet === "agents" && html`<${AgentEditor} data=${data} onClose=${() => setSheet(null)} onSkills=${() => setSheet("skills")} reload=${load}/>`}
-      ${sheet === "workflows" && html`<${WorkflowEditor} data=${data} onClose=${() => setSheet(null)} reload=${load}/>`}
+      ${sheet === "workflows" && html`<${WorkflowBuilder} data=${data} onClose=${() => setSheet(null)} reload=${load} onEditAgent=${(which) => setSheet(which === "skills" ? "skills" : "agents")}/>`}
       ${sheet === "skills" && html`<${SkillEditor} data=${data} onClose=${() => setSheet("agents")} reload=${load}/>`}
       ${data.user && data.onboarded === false && html`<${Onboarding} repos=${repos} github=${data.github} reload=${load}/>`}
       <${Toasts} toasts=${toasts} onDismiss=${dismissToast}/>
