@@ -1,6 +1,6 @@
 // Dev Agency dashboard — board module (split from app.js; Preact + htm, no build step).
 import { html, useState, useEffect } from "/web/vendor/standalone.mjs";
-import { Avatar, COLS, Icon, ProviderLogo, Select, Spinner, ago, api, boardSortCmp, classify, filterByTime, fmtTok, getSetupProgress, ghUrl, isDone, shortModel, statusChip, toast, usageTitle } from "./core.js";
+import { Avatar, COLS, Icon, ProviderLogo, Select, Spinner, ago, api, boardSortCmp, classify, defaultModelLogo, filterByTime, fmtTok, getSetupProgress, ghUrl, isDone, shortModel, statusChip, toast, usageTitle } from "./core.js";
 
 // ---------- sort / group / time options ----------
 
@@ -223,7 +223,7 @@ function Card({ i, subs, multi, onOpen, onOpenChild, act, data }) {
           ${isStop ? html`<button class=${"cardbtn cta stop" + (qBusy ? " busy" : "")} disabled=${qBusy} onClick=${runQuick}>${qBusy ? html`<${Spinner} size=${13}/>` : html`<${Icon} name="stop" size=${13}/>`} ${qBusy ? "working…" : quick.label}</button>` : null}
         </div>
         <div class="card-f-r">
-          ${modelOpts.length && !isStop ? html`<${ModelPicker} opts=${modelOpts} value=${modelSel} onPick=${onPickModel}/>` : null}
+          ${modelOpts.length && !isStop ? html`<${ModelPicker} opts=${modelOpts} value=${modelSel} onPick=${onPickModel} defaultLogo=${defaultModelLogo(data)}/>` : null}
           ${quick && !isStop
             ? html`<button class=${"cardbtn cta " + quick.cls + (qBusy ? " busy" : "")} disabled=${qBusy} onClick=${runQuick}>${qBusy ? html`<${Spinner} size=${13}/>` : html`<${Icon} name=${quick.icon} size=${13}/>`} ${qBusy ? "working…" : quick.label}</button>`
             : (!quick ? html`<span class="card-time">${ago(i.updated_at)}</span>` : null)}
@@ -250,11 +250,11 @@ function statusTip(i, st) {
 const DOT_COLOR = { "s-working": "var(--accent)", "s-ready": "var(--green)", "s-changes": "var(--red)", "s-attn": "var(--amber)", "s-auto": "var(--green)", "s-conflict": "var(--amber)", "s-done": "var(--ink-3)", "s-planned": "var(--ink-3)", "s-epic": "var(--purple)" };
 
 // The per-card LLM picker: an icon button (provider logo) + custom Select menu (fixed → unclipped).
-function ModelPicker({ opts, value, onPick }) {
+function ModelPicker({ opts, value, onPick, defaultLogo }) {
   const cur = opts.find((o) => o.value === value);
-  const options = [{ value: "", label: "Default model", icon: "flask" }].concat(opts.map((o) => ({ value: o.value, label: o.short, logo: o.provider })));
+  const options = [{ value: "", label: "Default model", logo: defaultLogo || "Claude" }].concat(opts.map((o) => ({ value: o.value, label: o.short, logo: o.provider })));
   return html`<${Select} value=${value} options=${options} onChange=${onPick} btnClass="iconbtn-sm"
-    trigger=${() => html`<span class="tip" data-tip=${cur ? cur.label : "Default model"} style="display:inline-flex"><${ProviderLogo} name=${cur ? cur.provider : ""} size=${16}/></span>`}/>`;
+    trigger=${() => html`<span class="tip" data-tip=${cur ? cur.label : "Default model"} style="display:inline-flex"><${ProviderLogo} name=${cur ? cur.provider : (defaultLogo || "Claude")} size=${16}/></span>`}/>`;
 }
 
 // Collapsible sub-issue list shown on an epic parent's card. Each row carries the child's live

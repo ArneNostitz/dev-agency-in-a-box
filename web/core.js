@@ -62,6 +62,16 @@ const PROVIDER_LOGOS = [
   [/qwen/i, "qwen-color"],
   [/openai|gpt|custom/i, "openai"],
 ];
+// The provider name backing the configured DEFAULT model (global default, else Claude subscription)
+// — so the "Default model" option can show the real logo instead of a generic icon.
+export function defaultModelLogo(data) {
+  const gm = data && data.globalModel;
+  if (gm && gm.providerId) {
+    const p = ((data && data.providers) || []).find((x) => x.id === gm.providerId);
+    if (p && p.name) return p.name;
+  }
+  return "Claude";
+}
 export function providerLogoSrc(name) {
   const n = String(name || "");
   for (const [re, file] of PROVIDER_LOGOS) if (re.test(n)) return "/web/logos/" + file + ".svg";
