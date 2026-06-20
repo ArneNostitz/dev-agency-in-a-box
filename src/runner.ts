@@ -1000,11 +1000,10 @@ async function sweepStuck(): Promise<void> {
     recordIssueStatus(i.repo, i.number, setBlocked(withStatus("working"), "needsAttention"));
     await removeLabel(i.repo, i.number, IN_PROGRESS).catch(() => {});
     await addLabel(i.repo, i.number, NEEDS_ATTENTION).catch(() => {});
-    await commentOnIssue(
-      i.repo,
-      i.number,
-      "⏸ This looked stuck — a run was interrupted with nothing now working on it. Moved to needs-attention. Press **Resume** on the dashboard (or re-pin) to retry.",
-    ).catch(() => {});
+    // DB-only notice (NOT a GitHub comment): GitHub comments here emailed on every scan AND were
+    // misread as "new human comment" next scan, which re-dispatched the run → an endless loop.
+    pushActivity(i.repo, i.number, "agency", "done", "⏸ Run interrupted — parked at needs-attention. Press Resume to retry.");
+    recordIncident("stuck-swept", `#${i.number} interrupted with no live run; parked at needs-attention`);
     console.log(`[agency] swept stuck ${i.repo} #${i.number}`);
   }
 }

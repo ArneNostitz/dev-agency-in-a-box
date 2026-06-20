@@ -20,6 +20,7 @@ import {
   AGENCY_MARKER,
 } from "./github.js";
 import { addWatchedRepo, listWatchedRepos, recordIssueStatus, getIssueStatus } from "./store.js";
+import { pushActivity } from "./activity.js";
 import { withStatus } from "./state.js";
 
 export type ControlCommand = { type: "add-repo"; repo: string } | { type: "list-repos" };
@@ -117,11 +118,8 @@ export async function recoverOrphans(cfg: Config): Promise<void> {
           // failing). The human re-pins when ready.
           await removeLabel(repo, i.number, "agency:in-progress");
           await addLabel(repo, i.number, "agency:needs-attention");
-          await commentOnIssue(
-            repo,
-            i.number,
-            "⏸ A restart interrupted this mid-run. Re-pin (`@dev`/`@plan`) to resume.",
-          );
+          // DB-only — no GitHub comment (those emailed on every restart and fed a re-dispatch loop).
+          pushActivity(repo, i.number, "agency", "done", "⏸ A restart interrupted this mid-run — parked at needs-attention. Press Resume to resume.");
           console.log(`[agency] parked orphaned ${repo} #${i.number}`);
         }
       }

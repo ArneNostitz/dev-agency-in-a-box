@@ -459,7 +459,9 @@ export function Select({ value, options, onChange, trigger, btnClass, menuAlign,
     }
     const ox = cb ? cb.left : 0, cbBottom = cb ? cb.bottom : vh;
     const oy = cb ? cb.top : 0;
-    setPos({ left: Math.round(left - ox), width: w, up, top: up ? null : Math.round(r.bottom + 5 - oy), bottom: up ? Math.round(cbBottom - r.top + 5) : null });
+    const avail = up ? (r.top - 12) : (vh - r.bottom - 12);
+    const maxH = Math.max(160, Math.min(Math.round(avail), Math.round(vh * 0.72)));
+    setPos({ left: Math.round(left - ox), width: w, up, maxH, top: up ? null : Math.round(r.bottom + 5 - oy), bottom: up ? Math.round(cbBottom - r.top + 5) : null });
   }
   function toggle(e) { e.stopPropagation(); if (disabled) return; if (!open) place(); setOpen((o) => !o); }
   function pick(e, v) { e.stopPropagation(); setOpen(false); onChange(v); }
@@ -491,7 +493,7 @@ export function Select({ value, options, onChange, trigger, btnClass, menuAlign,
     <button ref=${btnRef} class=${"sel-btn " + (btnClass || "")} disabled=${disabled} onClick=${toggle}>
       ${trigger ? trigger(cur) : html`<span class="sel-cur">${cur && cur.avatar ? html`<${Avatar} role=${cur.avatar} crop="head" size=${16}/>` : cur && cur.logo ? html`<${ProviderLogo} name=${cur.logo} size=${15}/>` : null}${cur ? cur.label : (placeholder || "Select…")}</span><${Icon} name="chevdown" size=${13} cls="sel-caret"/>`}
     </button>
-    ${open && pos ? html`<div ref=${menuRef} class="sel-menu" style=${"left:" + pos.left + "px;min-width:" + pos.width + "px;" + (pos.up ? "bottom:" + pos.bottom + "px" : "top:" + pos.top + "px")}>
+    ${open && pos ? html`<div ref=${menuRef} class="sel-menu" style=${"left:" + pos.left + "px;min-width:" + pos.width + "px;max-height:" + pos.maxH + "px;" + (pos.up ? "bottom:" + pos.bottom + "px" : "top:" + pos.top + "px")}>
         ${(options || []).map((o) => html`<button key=${o.value} class=${"sel-item" + (o.value === value ? " on" : "")} onClick=${(e) => pick(e, o.value)}>${itemInner(o)}</button>`)}
       </div>` : null}
   </div>`;
