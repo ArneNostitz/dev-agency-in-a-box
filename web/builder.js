@@ -6,6 +6,7 @@ import { Avatar, Icon, Select, ProviderLogo, defaultModelLogo, agentOptions, api
 
 const NODE_W = 150, NODE_H = 92, GAP = 78, PAD_X = 28, ROW_Y = 70, SVG_H = ROW_Y + NODE_H + 60;
 const STEP_ROLE = { "@plan": "planner", "@arch": "architect", "@dev": "developer", "@review": "reviewer", "@test": "tester" };
+const DEFAULT_TASK = { "@plan": "Produce a concrete build plan for this issue.", "@arch": "Turn the plan into a concrete technical design (no code).", "@dev": "Implement the plan; commit and open a PR.", "@review": "Review the PR against the plan and the codebase.", "@test": "Run the project\u2019s checks and fix any failures." };
 const ROUTES = [
   { value: "continue", label: "Continue →" },
   { value: "stop", label: "Stop here" },
@@ -33,11 +34,19 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
   const hookOpts = ((data && data.hooks) || []).map((h) => ({ value: String(h.id), label: (h.target || "hook"), phase: h.phase || "pre" }));
 
   function open(w) {
-    setForm(w ? JSON.parse(JSON.stringify(w)) : { id: "", name: "", trigger: "", steps: [blankStep()], gates: [] });
-    setSel(w ? w.id : "__new__"); setStep(0);
+    if (!w) { // new — restore an in-progress draft so nothing is lost on close
+      let draft = null; try { draft = JSON.parse(localStorage.getItem("wf:draft") || "null"); } catch { draft = null; }
+      setForm(draft && draft.form ? draft.form : { id: "", name: "", trigger: "", steps: [blankStep()], gates: [] });
+      setSel("__new__"); setStep(draft && Number.isFinite(draft.step) ? draft.step : 0);
+      return;
+    }
+    setForm(JSON.parse(JSON.stringify(w))); setSel(w.id); setStep(0);
   }
+  // Persist the working copy of a NEW workflow so leaving the page never loses it.
+  useEffect(() => { if (form && !form.id) { try { localStorage.setItem("wf:draft", JSON.stringify({ form, step })); } catch { /* noop */ } } }, [form, step]);
+  const clearDraft = () => { try { localStorage.removeItem("wf:draft"); } catch { /* noop */ } };
   const patchStep = (i, p) => setForm((f) => ({ ...f, steps: f.steps.map((s, j) => (j === i ? { ...s, ...p } : s)) }));
-  const addStep = (handle) => setForm((f) => { const steps = f.steps.concat({ ...blankStep(), agent: handle || "@dev" }); setStep(steps.length - 1); return { ...f, steps }; });
+  const addStep = (handle) => setForm((f) => { const def = ((data && data.agentDefs) || []).find((d) => (d.handle || ("@" + d.name)) === handle); const instruction = (def && def.defaultTask) || DEFAULT_TASK[(handle || "").toLowerCase()] || ""; const steps = f.steps.concat({ ...blankStep(), agent: handle || "@dev", instruction }); setStep(steps.length - 1); return { ...f, steps }; });
   const removeStep = (i) => setForm((f) => { const steps = f.steps.filter((_, j) => j !== i); setStep(Math.max(0, Math.min(i, steps.length - 1))); return { ...f, steps, gates: (f.gates || []).filter((g) => g.after !== i).map((g) => (g.after > i ? { ...g, after: g.after - 1 } : g)) }; });
   const toggleChip = (i, key, val) => { const cur = form.steps[i][key] || []; patchStep(i, { [key]: cur.includes(val) ? cur.filter((x) => x !== val) : cur.concat(val) }); };
 
@@ -61,13 +70,13 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
     const trigger = (form.trigger || "@" + id).trim();
     setSaving(true);
     api("/workflow-save", { workflow: { ...form, id, trigger } })
-      .then(() => { toast("Saved"); setSel(null); reload && reload(); })
+      .then(() => { toast("Saved"); clearDraft(); setSel(null); reload && reload(); })
       .catch((e) => toast((e && e.message) || "Couldn’t save", "error"))
       .finally(() => setSaving(false));
   }
   function del() {
     if (!form.id || !window.confirm("Delete " + (form.name || "workflow") + "?")) return;
-    api("/workflow-delete", { workflowId: form.id }).then(() => { toast("Deleted"); setSel(null); reload && reload(); });
+    api("/workflow-delete", { workflowId: form.id }).then(() => { toast("Deleted"); clearDraft(); setSel(null); reload && reload(); });
   }
 
   // ---------- workflow list ----------
@@ -142,15 +151,16 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
       <div class="bld-canvas">
         <div class="bld-flow" style=${"width:" + svgW + "px;min-height:" + SVG_H + "px"}>
           <svg class="bld-wires" width=${svgW} height=${SVG_H} aria-hidden="true">
-            <defs><marker id="bld-arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--line-2)"/></marker></defs>
+            <defs><marker id="bld-arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--line-2)"/></marker><marker id="bld-loop" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--amber)"/></marker></defs>
             ${steps.slice(0, -1).map((_, i) => { const c = connector(i); return html`<path key=${i} d=${c.d} fill="none" stroke="var(--line-2)" stroke-width="2" marker-end="url(#bld-arrow)"/>`; })}
+            ${(form.gates || []).filter((g) => g.route && g.route.startsWith("loop")).map((g, k) => { const n = Number(g.route.split(":")[1]); if (!Number.isFinite(n) || n === g.after) return null; const sx = PAD_X + g.after * (NODE_W + GAP) + NODE_W / 2, tx = PAD_X + n * (NODE_W + GAP) + NODE_W / 2; const by = ROW_Y + NODE_H, dip = by + 42; return html`<path key=${"loop" + k} d=${`M ${sx} ${by} C ${sx} ${dip}, ${tx} ${dip}, ${tx} ${by + 4}`} fill="none" stroke="var(--amber)" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#bld-loop)"/>`; })}
           </svg>
           ${steps.map((s, i) => {
             const x = PAD_X + i * (NODE_W + GAP);
             const g = gateAfter(i);
             return html`<div key=${i}>
               <div class=${"bld-node" + (i === step ? " sel" : "")} style=${"left:" + x + "px;top:" + ROW_Y + "px;width:" + NODE_W + "px"} onClick=${() => setStep(i)}>
-                <div class="bld-node-h"><${Avatar} role=${roleFor(agentOf(s))} size=${26} crop="head"/><span class="bld-node-name">${labelFor(agentOf(s), agentOpts)}</span></div>
+                <div class="bld-node-h"><span class="bld-node-num">${i + 1}</span><${Avatar} role=${roleFor(agentOf(s))} size=${26} crop="head"/><span class="bld-node-name">${labelFor(agentOf(s), agentOpts)}</span></div>
                 <div class="bld-node-task">${(s.instruction || "").split("\n")[0] || html`<span class="ph">describe this step…</span>`}</div>
                 <div class="bld-node-tags">${(s.skills || []).length ? html`<span class="t skill"><${Icon} name="sparkles" size=${10}/>${s.skills.length}</span>` : null}${(s.hooks || []).length ? html`<span class="t hook">${s.hooks.length} hook</span>` : null}${s.model ? html`<span class="t"><${ProviderLogo} name="claude" size=${10}/></span>` : null}</div>
               </div>
@@ -180,7 +190,7 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
           <${Select} value=${cur.model || ""} options=${[{ value: "", label: "Default", logo: defaultModelLogo(data) }].concat(modelOpts(data))} onChange=${(v) => patchStep(step, { model: v })}/>
           ${(cur.skills || []).length ? html`<label class="bld-lbl">Skills</label><div class="bld-chips">${cur.skills.map((s) => html`<span class="bld-chip skill" key=${s}>${s}<button onClick=${() => toggleChip(step, "skills", s)} aria-label="remove"><${Icon} name="x" size=${10}/></button></span>`)}</div>` : null}
           ${(cur.hooks || []).length ? html`<label class="bld-lbl">Hooks</label><div class="bld-chips">${cur.hooks.map((h) => { const ho = hookOpts.find((x) => x.value === h); return html`<span class="bld-chip hook" key=${h}>${ho ? ho.phase + " · " + ho.label : h}<button onClick=${() => toggleChip(step, "hooks", h)} aria-label="remove"><${Icon} name="x" size=${10}/></button></span>`; })}</div>` : null}
-          ${step < steps.length - 1 ? html`
+          ${html`
             <label class="bld-lbl">When this step finishes</label>
             <${Select} value=${(gateAfter(step) ? gateAfter(step).route.startsWith("loop") ? "loop" : "stop" : "continue")} options=${[{ value: "continue", label: "Continue to next →" }, { value: "loop", label: "Loop back if…" }, { value: "stop", label: "Stop the workflow" }]} onChange=${(v) => v === "continue" ? setGate(step, { route: "continue" }) : v === "stop" ? setGate(step, { route: "stop" }) : setGate(step, { route: "loop:" + Math.max(0, step - 1), condition: (gateAfter(step) || {}).condition || "review:changes" })}/>
             ${gateAfter(step) && gateAfter(step).route.startsWith("loop") ? html`
@@ -189,7 +199,7 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
               <label class="bld-lbl">Loop back to</label>
               <${Select} value=${String(Number(gateAfter(step).route.split(":")[1]))} options=${steps.slice(0, step).map((s2, j) => ({ value: String(j), label: (j + 1) + ". " + labelFor(agentOf(s2), agentOpts) }))} onChange=${(v) => setGate(step, { route: "loop:" + v })}/>
             ` : null}
-          ` : null}
+          `}
         ` : html`<div class="bld-empty">Add a step to begin.</div>`}
       </div>
     </div>
