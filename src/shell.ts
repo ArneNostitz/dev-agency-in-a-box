@@ -479,6 +479,20 @@ textarea{resize:vertical;min-height:64px}
 .modal-h{padding:15px 18px;border-bottom:1px solid var(--line);font-weight:600;font-size:15px}
 .modal-b{padding:16px 18px;overflow-y:auto}
 .modal-f{padding:12px 18px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end;background:var(--surface)}
+/* workflow builder */
+.wf-row{display:flex;align-items:center;gap:8px;width:100%;text-align:left;border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:10px 12px;margin-bottom:7px;cursor:pointer}
+.wf-row:hover{border-color:var(--accent)}
+.wf-name{flex:1;display:flex;align-items:center;gap:6px}
+.wf-flow{display:flex;flex-direction:column;gap:8px}
+.wf-step{border:1px solid var(--line);border-radius:12px;background:var(--surface-2);padding:9px 10px;display:flex;flex-direction:column;gap:7px}
+.wf-step-h{display:flex;align-items:center;gap:6px}
+.wf-grip{color:var(--ink-3);cursor:grab;flex:0 0 auto}
+.wf-num{width:18px;height:18px;border-radius:50%;background:var(--accent-weak);color:var(--accent);font-size:11px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto}
+.wf-instr{width:100%;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);font:inherit;font-size:13px;padding:6px 8px;resize:vertical}
+.wf-attach{display:flex;gap:12px;flex-wrap:wrap}
+.wf-chips{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+.wf-chip{display:inline-flex;align-items:center;gap:3px;font-size:11px;padding:2px 7px;border-radius:999px;cursor:pointer}
+.wf-gate{display:flex;align-items:center;gap:6px;margin-bottom:6px;flex-wrap:wrap}
 .gtip{position:fixed;z-index:400;transform:translate(-50%,-100%);background:var(--ink);color:var(--bg);font-size:11px;font-weight:500;padding:3px 7px;border-radius:6px;white-space:nowrap;pointer-events:none;max-width:280px;overflow:hidden;text-overflow:ellipsis;box-shadow:var(--shadow)}
 .onboard{position:fixed;inset:0;z-index:60;background:var(--bg);overflow-y:auto;-webkit-overflow-scrolling:touch}
 .ob{max-width:580px;margin:0 auto;width:100%;padding:calc(28px + var(--safe-t)) 20px calc(28px + var(--safe-b))}

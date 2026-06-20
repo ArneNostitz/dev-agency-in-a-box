@@ -58,7 +58,7 @@ async function mountApp(opts = {}) {
   const webDir = join(HERE, "..", "web");
   const vendorUrl = pathToFileURL(join(webDir, "vendor", "standalone.mjs")).href;
   const tmpDir = mkdtempSync(join(tmpdir(), "daui-"));
-  for (const f of ["core", "board", "detail", "settings", "onboarding", "topbar", "usage", "agents", "app"]) {
+  for (const f of ["core", "board", "detail", "settings", "onboarding", "topbar", "usage", "agents", "workflows", "app"]) {
     const src = readFileSync(join(webDir, f + ".js"), "utf8").split("/web/vendor/standalone.mjs").join(vendorUrl);
     writeFileSync(join(tmpDir, f + ".js"), src);
   }

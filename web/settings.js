@@ -5,7 +5,7 @@ import { OB_PROVIDERS } from "./onboarding.js";
 
 
 // ---------- Settings ----------
-export function Settings({ data, onClose, reload, openGithubTokens, openModels, openAgents }) {
+export function Settings({ data, onClose, reload, openGithubTokens, openModels, openAgents, openWorkflows }) {
   const cfg = data.config || {};
   const admin = Boolean(data.user && data.user.role === "admin");
   const [skipArch, setSkipArch] = useState(cfg.skipArchitect !== "off");
@@ -33,7 +33,7 @@ export function Settings({ data, onClose, reload, openGithubTokens, openModels, 
         <div class="muted" style="font-size:12px;margin-bottom:8px"><b>Agents</b> are the roles (planner, developer, reviewer…). <b>Workflows</b> arrange agents into a pipeline with their own instructions.</div>
         <div style="display:flex;gap:8px">
           <button class="btn" style="flex:1;justify-content:center" onClick=${openAgents}><${Icon} name="users" size=${15}/> Edit agents</button>
-          <button class="btn tip" data-tip="Drag-and-drop workflow builder — coming soon" style="flex:1;justify-content:center" onClick=${() => window.open("https://github.com/ArneNostitz/dev-agency/issues/83", "_blank", "noopener")}><${Icon} name="layers" size=${15}/> Workflows</button>
+          <button class="btn" style="flex:1;justify-content:center" onClick=${openWorkflows}><${Icon} name="layers" size=${15}/> Workflows</button>
         </div>
       </div>
     ` : null}

@@ -8,6 +8,7 @@ import { AddRepo, Onboarding } from "./onboarding.js";
 import { SecretBanner, StatusLine, TopBar } from "./topbar.js";
 import { Usage } from "./usage.js";
 import { AgentEditor, SkillEditor } from "./agents.js";
+import { WorkflowEditor } from "./workflows.js";
 
 
 // ---------- offline queue ----------
@@ -246,12 +247,13 @@ function App() {
       ${open && html`<div class="dscrim" onClick=${() => setOpenKey(null)}></div>`}
       ${open && html`<${Detail} key=${openKey} issue=${open} activity=${activity} act=${act} isDesktop=${isDesktop} startError=${detailError} onClose=${() => { setOpenKey(null); setDetailError(null); }} onOpenIssue=${openIssue} data=${data} isOnline=${isOnline} onQueueComment=${oqPush}/>`}
       ${sheet === "composer" && html`<${Composer} repos=${repos} repo=${composerRepo} setRepo=${setComposerRepo} onClose=${() => setSheet(null)} onCreate=${createIssue} data=${data}/>`}
-      ${sheet === "settings" && html`<${Settings} data=${data} onClose=${() => setSheet(null)} reload=${load} openGithubTokens=${() => setSheet("github")} openModels=${() => setSheet("models")} openAgents=${() => setSheet("agents")}/>`}
+      ${sheet === "settings" && html`<${Settings} data=${data} onClose=${() => setSheet(null)} reload=${load} openGithubTokens=${() => setSheet("github")} openModels=${() => setSheet("models")} openAgents=${() => setSheet("agents")} openWorkflows=${() => setSheet("workflows")}/>`}
       ${sheet === "github" && html`<${GithubTokensModal} secretKeys=${data.secretKeys || []} github=${data.github} onClose=${() => setSheet("settings")} reload=${load}/>`}
       ${sheet === "models" && html`<${ModelsModal} onClose=${() => setSheet("settings")} reload=${load}/>`}
       ${sheet === "addrepo" && html`<${AddRepo} repos=${repos} onClose=${() => setSheet(null)} reload=${load}/>`}
       ${sheet === "usage" && html`<${Usage} onClose=${() => setSheet(null)} onOpenIssue=${openIssue}/>`}
       ${sheet === "agents" && html`<${AgentEditor} data=${data} onClose=${() => setSheet(null)} onSkills=${() => setSheet("skills")} reload=${load}/>`}
+      ${sheet === "workflows" && html`<${WorkflowEditor} data=${data} onClose=${() => setSheet(null)} reload=${load}/>`}
       ${sheet === "skills" && html`<${SkillEditor} data=${data} onClose=${() => setSheet("agents")} reload=${load}/>`}
       ${data.user && data.onboarded === false && html`<${Onboarding} repos=${repos} github=${data.github} reload=${load}/>`}
       <${Toasts} toasts=${toasts} onDismiss=${dismissToast}/>
