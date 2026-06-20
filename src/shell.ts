@@ -125,6 +125,14 @@ input,select,textarea{font-size:16px}
 .bctrl-label{font-size:11.5px;color:var(--ink-3);font-weight:540;white-space:nowrap}
 .bctrl select{font:12.5px inherit;border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:8px;padding:4px 8px;cursor:pointer}
 .bctrl select:focus{outline:none;border-color:var(--accent)}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+.seg .segbtn{border:none;border-right:1px solid var(--line);border-radius:0;height:30px}
+.seg .segbtn:last-child{border-right:none}
+.segbtn{display:inline-flex;align-items:center;gap:3px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);border-radius:9px;padding:5px 9px;cursor:pointer;font:12px inherit;height:30px}
+.segbtn.on{background:var(--accent-weak);color:var(--accent)}
+.segbtn:hover:not(.on){background:var(--surface-2);color:var(--ink)}
+.segdir{margin:0 -2px 0 -3px}
+.segx{font-weight:540;font-size:11.5px}
 
 /* board */
 .board{padding:8px}

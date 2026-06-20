@@ -18,15 +18,29 @@ const TIME_OPTS = [
   { v: "30d", label: "Last 30 days" },
 ];
 
+function parseBoardSort(v) { const m = /^([a-z]+)_(asc|desc)$/.exec(v || "updated_desc"); return m ? [m[1], m[2]] : ["updated", "desc"]; }
+const SORT_FIELDS = [
+  { f: "updated", icon: "clock", tip: "Last updated" },
+  { f: "created", icon: "plus", tip: "Created" },
+  { f: "number", icon: "hash", tip: "Issue number" },
+];
+const TIME_CYCLE = [["any", "All"], ["24h", "24h"], ["7d", "7d"], ["30d", "30d"]];
+
 function BoardControls({ boardSort, setBoardSort, boardGroup, setBoardGroup, boardTime, setBoardTime }) {
-  const opt = (a) => a.map((o) => ({ value: o.v, label: o.label }));
+  const [field, dir] = parseBoardSort(boardSort);
+  const defDir = (f) => (f === "number" ? "asc" : "desc"); // newest/last-updated default desc; #1 first
+  const clickSort = (f) => setBoardSort(field === f ? f + "_" + (dir === "desc" ? "asc" : "desc") : f + "_" + defDir(f));
+  const cycleTime = () => { const i = TIME_CYCLE.findIndex((t) => t[0] === boardTime); setBoardTime(TIME_CYCLE[(i + 1) % TIME_CYCLE.length][0]); };
+  const timeLbl = (TIME_CYCLE.find((t) => t[0] === boardTime) || TIME_CYCLE[0])[1];
+  const grouped = boardGroup === "repo";
   return html`<div class="bctrl">
-    <span class="bctrl-group"><span class="bctrl-label">Sort</span>
-      <${Select} value=${boardSort} options=${opt(SORT_OPTS)} onChange=${setBoardSort}/></span>
-    <span class="bctrl-group"><span class="bctrl-label">Group</span>
-      <${Select} value=${boardGroup} options=${[{ value: "state", label: "Workflow state" }, { value: "repo", label: "Repo" }]} onChange=${setBoardGroup}/></span>
-    <span class="bctrl-group"><span class="bctrl-label">Updated</span>
-      <${Select} value=${boardTime} options=${opt(TIME_OPTS)} onChange=${setBoardTime}/></span>
+    <div class="seg">
+      ${SORT_FIELDS.map((srt) => html`<button key=${srt.f} class=${"segbtn tip" + (field === srt.f ? " on" : "")} data-tip=${"Sort by " + srt.tip.toLowerCase() + (field === srt.f ? " — click to reverse" : "")} onClick=${() => clickSort(srt.f)}>
+        <${Icon} name=${srt.icon} size=${15}/>${field === srt.f ? html`<${Icon} name=${dir === "asc" ? "chevup" : "chevdown"} size=${12} cls="segdir"/>` : null}
+      </button>`)}
+    </div>
+    <button class=${"segbtn tip" + (boardTime !== "any" ? " on" : "")} data-tip="Filter by last updated — click to cycle" onClick=${cycleTime}><${Icon} name="hourglass" size=${14}/> <span class="segx">${timeLbl}</span></button>
+    <button class=${"segbtn tip" + (grouped ? " on" : "")} data-tip=${grouped ? "Grouped by repo — click for workflow columns" : "Group by repo"} onClick=${() => setBoardGroup(grouped ? "state" : "repo")}><${Icon} name="layers" size=${15}/></button>
   </div>`;
 }
 
