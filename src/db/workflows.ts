@@ -29,15 +29,16 @@ export interface Workflow {
   trigger: string; // "@ship"
   steps: WorkflowStep[];
   gates: WorkflowGate[];
+  hooks: string[]; // workflow-level hook ids — run pre (before step 1) / post (after the last step)
   builtin: boolean;
   updatedAt: string;
 }
 
 function parse<T>(s: string | null, fallback: T): T { try { return s ? (JSON.parse(s) as T) : fallback; } catch { return fallback; } }
-function rowToWorkflow(r: { id: string; name: string; trigger: string | null; steps: string | null; gates: string | null; builtin: number; updated_at: string | null }): Workflow {
+function rowToWorkflow(r: { id: string; name: string; trigger: string | null; steps: string | null; gates: string | null; hooks: string | null; builtin: number; updated_at: string | null }): Workflow {
   return {
     id: r.id, name: r.name, trigger: r.trigger ?? "",
-    steps: parse<WorkflowStep[]>(r.steps, []), gates: parse<WorkflowGate[]>(r.gates, []),
+    steps: parse<WorkflowStep[]>(r.steps, []), gates: parse<WorkflowGate[]>(r.gates, []), hooks: parse<string[]>(r.hooks, []),
     builtin: !!r.builtin, updatedAt: r.updated_at ?? "",
   };
 }
@@ -46,11 +47,11 @@ export function upsertWorkflow(w: Partial<Workflow> & { id: string; name: string
   const d = getDb(); if (!d) return;
   try {
     d.prepare(
-      `INSERT INTO workflows (id, name, trigger, steps, gates, builtin, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO workflows (id, name, trigger, steps, gates, hooks, builtin, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
-         name=excluded.name, trigger=excluded.trigger, steps=excluded.steps, gates=excluded.gates, updated_at=excluded.updated_at`,
-    ).run(w.id, w.name, w.trigger ?? "", JSON.stringify(w.steps ?? []), JSON.stringify(w.gates ?? []), w.builtin ? 1 : 0, now());
+         name=excluded.name, trigger=excluded.trigger, steps=excluded.steps, gates=excluded.gates, hooks=excluded.hooks, updated_at=excluded.updated_at`,
+    ).run(w.id, w.name, w.trigger ?? "", JSON.stringify(w.steps ?? []), JSON.stringify(w.gates ?? []), JSON.stringify(w.hooks ?? []), w.builtin ? 1 : 0, now());
   } catch { /* best effort */ }
 }
 

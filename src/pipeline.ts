@@ -892,6 +892,8 @@ export async function runWorkflowEngine(cfg: Config, repo: string, issue: Issue,
   const loops: Record<number, number> = {};
   let i = 0, guard = 0;
   await commentOnIssue(repo, issue.number, say("developer", `🧭 Running workflow **${wf.name}** — ${wf.steps.length} step(s).`));
+  const wfHookIds = (wf.hooks || []).map(Number).filter((n) => Number.isFinite(n));
+  await runStepHooks(wfHookIds, "pre", workdir, repo, issue.number); // workflow-level pre hooks
   while (i < wf.steps.length && guard++ < 30) {
     if (isStopRequested(repo, issue.number)) { console.log(`[agency] workflow halted by Stop ${repo} #${issue.number}`); return; }
     const step = wf.steps[i];
@@ -939,6 +941,7 @@ ${thread}` : ""}${skills}`,
     }
     i++;
   }
+  await runStepHooks(wfHookIds, "post", workdir, repo, issue.number); // workflow-level post hooks
   await removeLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
   await addLabel(repo, issue.number, READY).catch(() => {});
   recordIssueStatus(repo, issue.number, withStatus("review"));

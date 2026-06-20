@@ -41,7 +41,7 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
   function open(w) {
     if (!w) { // new — restore an in-progress draft so nothing is lost on close
       let draft = null; try { draft = JSON.parse(localStorage.getItem("wf:draft") || "null"); } catch { draft = null; }
-      setForm(draft && draft.form ? draft.form : { id: "", name: "", trigger: "", steps: [blankStep()], gates: [] });
+      setForm(draft && draft.form ? draft.form : { id: "", name: "", trigger: "", steps: [blankStep()], gates: [], hooks: [] });
       setSel("__new__"); setStep(draft && Number.isFinite(draft.step) ? draft.step : 0);
       return;
     }
@@ -154,10 +154,15 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
           <button class="bld-pill ghost" onClick=${importSkills}><${Icon} name="download" size=${13}/><span>Import from GitHub</span></button>
           <button class="bld-pill ghost" onClick=${() => onEditAgent && onEditAgent("skills")}><${Icon} name="plus" size=${13}/><span>Manage skills</span></button>
         </div>
-        <div class="bld-rail-sec">Hooks</div>
+        <div class="bld-rail-sec">Step hooks ${cur ? html`<span class="bld-hint">→ ${labelFor(agentOf(cur), agentOpts)}</span>` : null}</div>
         <div class="bld-pills">
           ${hookOpts.length === 0 ? html`<div class="bld-empty sm">No hooks yet.</div>` : null}
           ${hookOpts.map((h) => { const on = cur && (cur.hooks || []).includes(h.value); return html`<button class=${"bld-pill hook" + (on ? " on" : "")} key=${h.value} onClick=${() => cur && toggleChip(step, "hooks", h.value)}><span class=${"phase " + h.phase}>${h.phase}</span><span>${h.label}</span></button>`; })}
+        </div>
+        <div class="bld-rail-sec">Workflow hooks <span class="bld-hint">whole run</span></div>
+        <div class="bld-pills">
+          ${hookOpts.length === 0 ? html`<div class="bld-empty sm">No hooks yet.</div>` : null}
+          ${hookOpts.map((h) => { const on = (form.hooks || []).includes(h.value); return html`<button class=${"bld-pill hook" + (on ? " on" : "")} key=${"wf" + h.value} onClick=${() => setForm((f2) => ({ ...f2, hooks: (f2.hooks || []).includes(h.value) ? f2.hooks.filter((x) => x !== h.value) : (f2.hooks || []).concat(h.value) }))}><span class=${"phase " + h.phase}>${h.phase}</span><span>${h.label}</span></button>`; })}
         </div>
       </div>
 

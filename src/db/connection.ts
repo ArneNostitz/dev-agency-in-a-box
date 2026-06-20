@@ -156,7 +156,7 @@ export function getDb(): DatabaseSync | null {
       -- Workflows (linear + gates): an ordered arrangement of agent steps with forced skills/hooks.
       CREATE TABLE IF NOT EXISTS workflows (
         id TEXT PRIMARY KEY, name TEXT NOT NULL, trigger TEXT, steps TEXT, gates TEXT,
-        builtin INTEGER NOT NULL DEFAULT 0, updated_at TEXT
+        hooks TEXT, builtin INTEGER NOT NULL DEFAULT 0, updated_at TEXT
       );
       -- Local-first tracking (Phase 4): the DB as source of truth, GitHub as a synced adapter.
       CREATE TABLE IF NOT EXISTS local_issue (
@@ -213,6 +213,7 @@ export function getDb(): DatabaseSync | null {
       `ALTER TABLE issues ADD COLUMN blocked TEXT`,
       `ALTER TABLE agent_def ADD COLUMN default_task TEXT`,
       `ALTER TABLE agent_def ADD COLUMN avatar TEXT`,
+      `ALTER TABLE workflows ADD COLUMN hooks TEXT`,
     ]) {
       try {
         d.exec(sql);
