@@ -79,6 +79,7 @@ function RepoDropdown({ repos, repoFilter, setRepoFilter, reload, auto, autoRepo
     </button>
     ${open ? html`<div class="dropscrim" onClick=${() => setOpen(false)}></div>
       <div class="dropmenu repodrop-menu">
+        <div class="repodrop-head"><span>Repositories</span><button class="iconbtn" aria-label="Close" onClick=${() => setOpen(false)}><${Icon} name="x" size=${18}/></button></div>
         <button class=${"dropmenu-item" + (repoFilter ? "" : " sel")} onClick=${() => { setRepoFilter(null); setOpen(false); }}>
           <div style="flex:1;display:flex;align-items:center"><${Icon} name="layers" size=${14}/> All repos</div>
           <div class="autorow" style="margin:0">${gpill("resume")}${gpill("merge")}</div>
