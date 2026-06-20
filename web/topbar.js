@@ -16,22 +16,35 @@ export function SecretBanner({ h, onFix }) {
 }
 
 export function TopBar({ working, scanning, env, theme, setTheme, onSettings, onUsage, onAgents, repos, repoFilter, setRepoFilter, reload, auto, autoRepos, setAuto }) {
+  const [menu, setMenu] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   // Spin only while this manual refresh is in flight, and ALWAYS time out — never tie the spinner to
   // the global scan flag (a long/continuous background scan would make it spin forever).
   useEffect(() => { if (!refreshing) return; const t = setTimeout(() => setRefreshing(false), 8000); return () => clearTimeout(t); }, [refreshing]);
   const reloadBusy = refreshing;
   function reloadGithub() { if (refreshing) return; setRefreshing(true); api("/refresh", {}).then(() => toast("Reloading from GitHub…")).catch(() => toast("Couldn’t reach the server", "error")); setTimeout(reload, 1500); setTimeout(reload, 4000); }
+  const themeItem = { icon: theme === "dark" ? "sun" : "moon", label: theme === "dark" ? "Light mode" : "Dark mode", fn: () => setTheme(theme === "dark" ? "light" : "dark") };
+  const acts = [
+    { icon: reloadBusy ? null : "refresh", label: reloadBusy ? "Reloading…" : "Reload from GitHub", fn: reloadGithub, busy: reloadBusy },
+    { icon: "users", label: "Agents", fn: onAgents },
+    { icon: "chart", label: "Token usage", fn: onUsage },
+    themeItem,
+    { icon: "settings", label: "Settings", fn: onSettings },
+  ];
   return html`<div class="topbar">
     <div class="brand"><${Icon} name="crown" size=${18}/> <span class="brandname">Dev Agency in a Box</span> ${env === "development" ? html`<span class="envbadge">DEV</span>` : null} ${working ? html`<span class="dot"></span>` : null}</div>
     <div class="spacer"></div>
     <${RepoDropdown} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${reload} auto=${auto} autoRepos=${autoRepos} setAuto=${setAuto}/>
     <div class="spacer"></div>
-    <button class="iconbtn" aria-label="Reload from GitHub" title=${reloadBusy ? "Reloading from GitHub…" : "Reload issues from GitHub"} disabled=${reloadBusy} onClick=${reloadGithub}>${reloadBusy ? html`<${Spinner} size=${18}/>` : html`<${Icon} name="refresh"/>`}</button>
-    <button class="iconbtn" aria-label="Agents" title="Agents editor" onClick=${onAgents}><${Icon} name="users"/></button>
-    <button class="iconbtn" aria-label="Token usage" title="Token usage statistics" onClick=${onUsage}><${Icon} name="chart"/></button>
-    <button class="iconbtn" aria-label="Toggle theme" onClick=${() => setTheme(theme === "dark" ? "light" : "dark")}><${Icon} name=${theme === "dark" ? "sun" : "moon"}/></button>
-    <button class="iconbtn" aria-label="Settings" onClick=${onSettings}><${Icon} name="settings"/></button>
+    <div class="topbtns">
+      ${acts.map((a) => html`<button class="iconbtn" aria-label=${a.label} data-tip=${a.label} disabled=${a.busy} onClick=${a.fn}>${a.busy ? html`<${Spinner} size=${18}/>` : html`<${Icon} name=${a.icon}/>`}</button>`)}
+    </div>
+    <span class="dropwrap topburger">
+      <button class="iconbtn" aria-label="Menu" onClick=${() => setMenu((o) => !o)}><${Icon} name=${menu ? "x" : "menu"}/></button>
+      ${menu ? html`<div class="dropscrim" onClick=${() => setMenu(false)}></div><div class="dropmenu menu">
+        ${acts.map((a, i) => html`<button key=${i} class="menu-item" disabled=${a.busy} onClick=${() => { a.fn(); setMenu(false); }}>${a.busy ? html`<${Spinner} size=${15}/>` : html`<${Icon} name=${a.icon} size=${15}/>`}<span class="mi-label">${a.label}</span></button>`)}
+      </div>` : null}
+    </span>
   </div>`;
 }
 
@@ -60,21 +73,23 @@ function RepoDropdown({ repos, repoFilter, setRepoFilter, reload, auto, autoRepo
   const addable = (avail || []).filter((r) => !watching.includes(r.full_name));
   const title = repoFilter ? repoFilter.split("/").pop() : "All";
   return html`<div class="dropwrap repodrop">
-    <button class="repodrop-btn" onClick=${() => setOpen((o) => !o)}>
-      <span class="repodrop-title">${title}</span>${repoFilter ? null : html` <span class="repodrop-sub">(add/remove repos)</span>`}
-      <${Icon} name=${open ? "x" : "planned"} size=${15}/>
+    <button class="repodrop-btn" data-tip="Switch repo · add / remove repos" onClick=${() => setOpen((o) => !o)}>
+      <span class="repodrop-title">${title}</span>
+      <${Icon} name=${open ? "x" : "chevdown"} size=${15}/>
     </button>
     ${open ? html`<div class="dropscrim" onClick=${() => setOpen(false)}></div>
-      <div class="dropmenu repodrop-menu" style="min-width:300px">
+      <div class="dropmenu repodrop-menu">
         <button class=${"dropmenu-item" + (repoFilter ? "" : " sel")} onClick=${() => { setRepoFilter(null); setOpen(false); }}>
           <div style="flex:1;display:flex;align-items:center"><${Icon} name="layers" size=${14}/> All repos</div>
           <div class="autorow" style="margin:0">${gpill("resume")}${gpill("merge")}</div>
         </button>
         ${watching.length ? html`<div class="dropmenu-h">Watching</div>` : null}
         ${watching.map((r) => html`<div class=${"repodrop-row" + (repoFilter === r ? " sel" : "")} key=${r}>
-          <button class="repodrop-pick" onClick=${() => { setRepoFilter(r); setOpen(false); }} style="flex:1;overflow:hidden;text-overflow:ellipsis"><${Icon} name="pr" size=${13}/> ${r}</button>
-          <div class="autorow" style="margin:0">${rpill(r, "resume")}${rpill(r, "merge")}</div>
-          <button class="repodrop-x" disabled=${busy} aria-label=${"Remove " + r} title="Stop watching" onClick=${() => remove(r)}><${Icon} name="trash" size=${14}/></button>
+          <button class="repodrop-pick" onClick=${() => { setRepoFilter(r); setOpen(false); }}><${Icon} name="pr" size=${13}/> <span class="repodrop-rowner">${r.split("/")[0]}/</span><span class="repodrop-rname">${r.split("/").pop()}</span></button>
+          <div class="repodrop-ctl">
+            <div class="autorow" style="margin:0">${rpill(r, "resume")}${rpill(r, "merge")}</div>
+            <button class="repodrop-x" disabled=${busy} aria-label=${"Remove " + r} data-tip="Stop watching" onClick=${() => remove(r)}><${Icon} name="trash" size=${14}/></button>
+          </div>
         </div>`)}
         <div class="dropmenu-h">Add a repo</div>
         <div class="repodrop-add">

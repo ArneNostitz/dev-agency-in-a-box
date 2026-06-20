@@ -61,16 +61,26 @@ input,select,textarea{font-size:16px}
 .iconbtn:active{transform:scale(.96)}
 /* centered repo dropdown (selector + add/remove) */
 .repodrop{flex:0 1 auto;min-width:0}
+.topbtns{display:flex;align-items:center;gap:2px}
+.topburger{display:none}
+@media(max-width:680px){.topbtns{display:none}.topburger{display:inline-flex}}
 .repodrop-btn{display:inline-flex;align-items:center;gap:8px;max-width:min(60vw,360px);border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:999px;padding:7px 14px;font:14px inherit;font-weight:600;cursor:pointer}
 .repodrop-btn:hover{border-color:var(--line-2)}
 .repodrop-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .repodrop-sub{color:var(--ink-3);font-weight:400;font-size:12.5px}
-.repodrop-menu{left:50%;right:auto;transform:translateX(-50%);min-width:280px;max-width:min(92vw,360px)}
-.repodrop-row{display:flex;align-items:center;gap:4px;border-radius:8px}
+.repodrop-menu{left:50%;right:auto;transform:translateX(-50%);min-width:300px;max-width:min(92vw,380px)}
+@media(max-width:560px){.repodrop-menu{left:8px;right:8px;transform:none;min-width:0;max-width:none;width:auto}.repodrop-ctl{opacity:1;pointer-events:auto}}
+.repodrop-row{position:relative;display:flex;align-items:center;border-radius:8px}
 .repodrop-row.sel{background:var(--accent-weak)}
-.repodrop-pick{flex:1;display:flex;align-items:center;gap:7px;min-width:0;text-align:left;border:none;background:transparent;color:var(--ink);padding:8px 9px;border-radius:8px;cursor:pointer;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.repodrop-pick:hover{background:var(--surface-2)}
-.repodrop-row.sel .repodrop-pick{color:var(--accent);font-weight:600}
+.repodrop-row:hover{background:var(--surface-2)}
+.repodrop-pick{flex:1;display:flex;align-items:baseline;gap:6px;min-width:0;text-align:left;border:none;background:transparent;color:var(--ink);padding:9px 10px;border-radius:8px;cursor:pointer;font-size:14px;overflow:hidden;white-space:nowrap}
+.repodrop-rowner{color:var(--ink-3);font-size:12px;flex:0 0 auto}
+.repodrop-rname{font-weight:600;overflow:hidden;text-overflow:ellipsis}
+.repodrop-row.sel .repodrop-pick .repodrop-rname{color:var(--accent)}
+/* per-repo controls overlay on the right; revealed on hover (desktop) or when selected (tap = mobile) */
+.repodrop-ctl{position:absolute;right:6px;top:50%;transform:translateY(-50%);display:flex;align-items:center;gap:4px;padding-left:14px;opacity:0;pointer-events:none;transition:opacity .12s;background:linear-gradient(90deg,transparent,var(--surface) 14px)}
+.repodrop-row:hover .repodrop-ctl{opacity:1;pointer-events:auto;background:linear-gradient(90deg,transparent,var(--surface-2) 14px)}
+.repodrop-row.sel .repodrop-ctl{opacity:1;pointer-events:auto;background:linear-gradient(90deg,transparent,var(--accent-weak) 14px)}
 .repodrop-x{border:none;background:transparent;color:var(--ink-3);cursor:pointer;display:flex;padding:6px;border-radius:8px}
 .repodrop-x:hover{background:var(--red-weak);color:var(--red)}
 .dropmenu-item.sel{color:var(--accent);font-weight:600;background:var(--accent-weak)}
