@@ -49,6 +49,7 @@ import { listAgentFiles, readAgentFile, isSafeAgentPath } from "./memory.js";
 import { startApp, stopApp, getApp, pickWebDevScript, isTauriPackage, buildLocalCommand } from "./apprun.js";
 import { ensureRepoAccess } from "./commands.js";
 import { previewUrlFor, runChecksNow } from "./preview.js";
+import { putAttachment, getAttachment } from "./db/attachments.js";
 import { dispatch } from "./pool.js";
 import { trackerMode, syncInIssue, syncInComment } from "./tracker.js";
 import { ensureRepoIndex } from "./gitnexus.js";
@@ -301,6 +302,13 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         return;
       }
 
+      // Local-first attachments: serve image/file bytes straight from the DB (never the repo).
+      if (url.startsWith("/attach/")) {
+        const att = getAttachment(url.slice("/attach/".length));
+        if (!att) return void res.writeHead(404).end("not found");
+        res.writeHead(200, { "content-type": att.mime || "application/octet-stream", "cache-control": "public, max-age=31536000, immutable" });
+        return void res.end(att.bytes);
+      }
       if (url === "/data") {
         const midnight = new Date();
         midnight.setHours(0, 0, 0, 0);
@@ -1398,10 +1406,9 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           return ok();
         }
         if (path === "/upload-image" || path === "/upload-file") {
-          // Commit a pasted/picked file (image, pdf, csv, xlsx, json…) to the repo and return
-          // markdown to embed: images inline, everything else as a download link.
+          // Store a pasted/picked file (image, pdf, csv…) LOCALLY in the DB and return markdown that
+          // points at /attach/<id>. No GitHub token needed — attachments are local-first.
           if (!repo || !p.dataUrl) return res.writeHead(400).end("{}");
-          if (!ownerToken) return res.writeHead(409).end(JSON.stringify({ error: "set a GitHub token (Settings → credentials) to upload attachments" }));
           const m = /^data:([\w.+-]+\/[\w.+-]+)?;base64,(.+)$/.exec(p.dataUrl);
           if (!m) return res.writeHead(400).end(JSON.stringify({ error: "not a base64 data URL" }));
           const mime = m[1] || "application/octet-stream";
@@ -1409,12 +1416,15 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           const safe = (p.name ?? "").replace(/[^\w.\- ]+/g, "_").replace(/\s+/g, "_").slice(-64);
           const extFromMime = mime.split("/")[1]?.replace("jpeg", "jpg").replace(/[^\w]/g, "") || "bin";
           const fname = safe && /\.[\w]+$/.test(safe) ? safe : `${safe || "file"}.${extFromMime}`;
-          const file = `.devagency/attachments/${Date.now()}-${Math.random().toString(36).slice(2, 6)}-${fname}`;
-          const r = await putRepoBase64(repo, file, m[2], `dev-agency: dashboard attachment ${fname}`, ownerToken);
-          if (!r.ok || !r.url) return res.writeHead(500).end(JSON.stringify({ error: r.msg }));
+          // LOCAL-FIRST: store the bytes in the DB and serve them from /attach/<id>. Do NOT commit
+          // attachments to the GitHub repo (slow, pollutes history, and concurrent commits collided
+          // so only one image survived). GitHub only ever gets the reference in the body text.
+          const bytes = Buffer.from(m[2], "base64");
+          const id = putAttachment(repo, typeof p.number === "number" ? p.number : 0, fname, mime, bytes);
+          const localUrl = `/attach/${id}`;
           const label = p.name || fname;
-          const md = isImage ? `![${label}](${r.url})` : `[📎 ${label}](${r.url})`;
-          return ok(JSON.stringify({ url: r.url, md, isImage }));
+          const md = isImage ? `![${label}](${localUrl})` : `[📎 ${label}](${localUrl})`;
+          return ok(JSON.stringify({ url: localUrl, md, isImage }));
         }
         if (path === "/new-issue") {
           // Create a new issue (authored by you). start=true → begin immediately; otherwise it

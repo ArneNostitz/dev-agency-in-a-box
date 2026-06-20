@@ -103,6 +103,7 @@ import { parseRateLimit, nextWindowReset } from "./ratelimit.js";
 import { startPreviewSweeper, killAllApps } from "./apprun.js";
 import { setActive, clearActive, getActive } from "./activity.js";
 import { stopRuns, requestStop, clearStop, isStopRequested } from "./abort.js";
+import { flushOldAttachments } from "./db/attachments.js";
 import { dispatch, drain, stop as stopPool, poolStatus, inFlightKeys } from "./pool.js";
 import { loadBudget, overBudget, effectiveLimits } from "./budget.js";
 import { maybeSelfImprove } from "./reflect.js";
@@ -204,6 +205,7 @@ async function maybeParkRateLimited(repo: string, number: number, msg: string, i
 /** Don't re-engage closed threads older than this (keeps the scan cheap). DB-first → env → 21. */
 const followupWindowDays = (): number => sNum("followup_window_days", "FOLLOWUP_WINDOW_DAYS", 21);
 /** An in-progress issue with no live run, idle this long, is treated as an orphan. */
+let lastAttachmentFlush = 0;
 const ORPHAN_GRACE_MS = (Number(process.env.ORPHAN_GRACE_MIN?.trim()) || 12) * 60_000;
 const LOCK_PATH = join(process.cwd(), ".agency.lock");
 
@@ -1057,6 +1059,8 @@ export async function processAllRepos(cfg: Config): Promise<number> {
     }
   }
   await sweepStuck().catch(() => {});
+  // Housekeeping: drop local attachment blobs older than a week (≤ hourly, cheap DELETE).
+  if (Date.now() - lastAttachmentFlush > 3_600_000) { lastAttachmentFlush = Date.now(); try { const n = flushOldAttachments(7); if (n) console.log(`[agency] flushed ${n} old attachment(s)`); } catch { /* noop */ } }
   // Self-evolving loop: fold accumulated lessons into the playbooks via a draft PR.
   maybeSelfImprove(cfg);
   return 0;

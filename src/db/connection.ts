@@ -197,6 +197,10 @@ export function getDb(): DatabaseSync | null {
       CREATE TABLE IF NOT EXISTS password_resets (
         token TEXT PRIMARY KEY, user_id INTEGER NOT NULL, expires_at TEXT, used INTEGER DEFAULT 0
       );
+      CREATE TABLE IF NOT EXISTS attachments (
+        id TEXT PRIMARY KEY, repo TEXT, number INTEGER, name TEXT, mime TEXT,
+        bytes BLOB NOT NULL, size INTEGER, created_at TEXT
+      );
     `);
     // Migrations for older databases (ALTER fails harmlessly if the column already exists).
     for (const sql of [
