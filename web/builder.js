@@ -4,7 +4,7 @@
 import { html, useState, useEffect, useRef } from "/web/vendor/standalone.mjs";
 import { Avatar, Icon, Select, ProviderLogo, defaultModelLogo, agentOptions, api, toast, Spinner } from "./core.js";
 
-const NODE_W = 150, NODE_H = 92, GAP = 78, PAD_X = 28, ROW_Y = 70, SVG_H = ROW_Y + NODE_H + 60;
+const NODE_W = 168, NODE_H = 98, GAP = 60, ROW_GAP = 56, PAD = 30;
 const STEP_ROLE = { "@plan": "planner", "@arch": "architect", "@dev": "developer", "@review": "reviewer", "@test": "tester" };
 const DEFAULT_TASK = { "@plan": "Produce a concrete build plan for this issue.", "@arch": "Turn the plan into a concrete technical design (no code).", "@dev": "Implement the plan; commit and open a PR.", "@review": "Review the PR against the plan and the codebase.", "@test": "Run the project\u2019s checks and fix any failures." };
 const ROUTES = [
@@ -28,6 +28,9 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
   const [form, setForm] = useState(null);        // working copy
   const [step, setStep] = useState(0);           // selected step index
   const [saving, setSaving] = useState(false);
+  const canvasRef = useRef(null);
+  const [cw, setCw] = useState(960);
+  useEffect(() => { const el = canvasRef.current; if (!el) return; const m = () => setCw(el.clientWidth || 960); m(); window.addEventListener("resize", m); return () => window.removeEventListener("resize", m); }, [sel]);
 
   const agentOpts = agentOptions(data && data.agentDefs, []).filter((o) => o.hint !== "workflow");
   const skillOpts = ((data && data.skills) || []).map((s) => ({ value: s.name, label: s.name, desc: s.description || "" }));
@@ -104,15 +107,17 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
   // ---------- canvas editor ----------
   const steps = form.steps || [];
   const cur = steps[step] || steps[0];
-  const svgW = PAD_X * 2 + steps.length * NODE_W + (steps.length - 1) * GAP + 70;
-
-  const connector = (i) => {
-    const x1 = PAD_X + i * (NODE_W + GAP) + NODE_W;
-    const x2 = PAD_X + (i + 1) * (NODE_W + GAP);
-    const y = ROW_Y + NODE_H / 2;
-    const mx = (x1 + x2) / 2;
-    return { x1, x2, y, mx, d: `M ${x1} ${y} C ${mx} ${y}, ${mx} ${y}, ${x2} ${y}` };
-  };
+  // Serpentine (boustrophedon) layout: nodes flow L→R, wrap to the next row, then run R→L, so they
+  // use the screen width and break to a new line to stay on-page. On a narrow screen cols collapses
+  // to 1 → a clean vertical column.
+  const cols = Math.max(1, Math.floor((cw - PAD * 2 + GAP) / (NODE_W + GAP)));
+  const slots = steps.length + 1; // +1 for the "add step" tile
+  const rows = Math.max(1, Math.ceil(slots / cols));
+  const nodePos = (i) => { const row = Math.floor(i / cols), col = i % cols; const vcol = row % 2 === 0 ? col : (cols - 1 - col); return { row, x: PAD + vcol * (NODE_W + GAP), y: PAD + row * (NODE_H + ROW_GAP) }; };
+  const usedCols = Math.min(cols, slots);
+  const gridW = PAD * 2 + usedCols * NODE_W + (usedCols - 1) * GAP;
+  const gridH = PAD * 2 + rows * NODE_H + (rows - 1) * ROW_GAP + 24;
+  const wirePath = (i) => { const p = nodePos(i), q = nodePos(i + 1); if (p.row === q.row) { const ltr = p.row % 2 === 0; const x1 = ltr ? p.x + NODE_W : p.x, x2 = ltr ? q.x : q.x + NODE_W, y = p.y + NODE_H / 2, mx = (x1 + x2) / 2; return `M ${x1} ${y} C ${mx} ${y}, ${mx} ${y}, ${x2} ${y}`; } const cx = p.x + NODE_W / 2, y1 = p.y + NODE_H, y2 = q.y, my = (y1 + y2) / 2; return `M ${cx} ${y1} C ${cx} ${my}, ${cx} ${my}, ${cx} ${y2}`; };
 
   return html`<div class="bld">
     <div class="bld-top">
@@ -148,26 +153,24 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
       </div>
 
       <!-- canvas -->
-      <div class="bld-canvas">
-        <div class="bld-flow" style=${"width:" + svgW + "px;min-height:" + SVG_H + "px"}>
-          <svg class="bld-wires" width=${svgW} height=${SVG_H} aria-hidden="true">
-            <defs><marker id="bld-arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--line-2)"/></marker><marker id="bld-loop" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--amber)"/></marker></defs>
-            ${steps.slice(0, -1).map((_, i) => { const c = connector(i); return html`<path key=${i} d=${c.d} fill="none" stroke="var(--line-2)" stroke-width="2" marker-end="url(#bld-arrow)"/>`; })}
-            ${(form.gates || []).filter((g) => g.route && g.route.startsWith("loop")).map((g, k) => { const n = Number(g.route.split(":")[1]); if (!Number.isFinite(n) || n === g.after) return null; const sx = PAD_X + g.after * (NODE_W + GAP) + NODE_W / 2, tx = PAD_X + n * (NODE_W + GAP) + NODE_W / 2; const by = ROW_Y + NODE_H, dip = by + 42; return html`<path key=${"loop" + k} d=${`M ${sx} ${by} C ${sx} ${dip}, ${tx} ${dip}, ${tx} ${by + 4}`} fill="none" stroke="var(--amber)" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#bld-loop)"/>`; })}
+      <div class="bld-canvas" ref=${canvasRef}>
+        <div class="bld-flow" style=${"width:" + gridW + "px;height:" + gridH + "px"}>
+          <svg class="bld-wires" width=${gridW} height=${gridH} aria-hidden="true">
+            <defs><marker id="bld-arrow" markerWidth="9" markerHeight="9" refX="6.5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--line-2)"/></marker><marker id="bld-loop" markerWidth="9" markerHeight="9" refX="6.5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--amber)"/></marker></defs>
+            ${steps.slice(0, -1).map((_, i) => html`<path key=${i} d=${wirePath(i)} fill="none" stroke="var(--line-2)" stroke-width="2" marker-end="url(#bld-arrow)"/>`)}
+            ${steps.length ? html`<path key="toadd" d=${wirePath(steps.length - 1)} fill="none" stroke="var(--line)" stroke-width="2" stroke-dasharray="3 4"/>` : null}
+            ${(form.gates || []).filter((g) => g.route && g.route.startsWith("loop")).map((g, k) => { const t = Number(g.route.split(":")[1]); if (!Number.isFinite(t) || t === g.after) return null; const ps = nodePos(g.after), pt = nodePos(t); const sx = ps.x + NODE_W / 2, sy = ps.y + NODE_H, tx = pt.x + NODE_W / 2, ty = pt.y; const dip = Math.max(38, Math.abs(sy - ty) / 2 + 26); return html`<path key=${"loop" + k} d=${`M ${sx} ${sy} C ${sx} ${sy + dip}, ${tx} ${ty - dip}, ${tx} ${ty}`} fill="none" stroke="var(--amber)" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#bld-loop)"/>`; })}
           </svg>
           ${steps.map((s, i) => {
-            const x = PAD_X + i * (NODE_W + GAP);
+            const p = nodePos(i);
             const g = gateAfter(i);
-            return html`<div key=${i}>
-              <div class=${"bld-node" + (i === step ? " sel" : "")} style=${"left:" + x + "px;top:" + ROW_Y + "px;width:" + NODE_W + "px"} onClick=${() => setStep(i)}>
+            return html`<div key=${i} class=${"bld-node" + (i === step ? " sel" : "")} style=${"left:" + p.x + "px;top:" + p.y + "px;width:" + NODE_W + "px"} onClick=${() => setStep(i)}>
                 <div class="bld-node-h"><span class="bld-node-num">${i + 1}</span><${Avatar} role=${roleFor(agentOf(s))} size=${26} crop="head"/><span class="bld-node-name">${labelFor(agentOf(s), agentOpts)}</span></div>
                 <div class="bld-node-task">${(s.instruction || "").split("\n")[0] || html`<span class="ph">describe this step…</span>`}</div>
-                <div class="bld-node-tags">${(s.skills || []).length ? html`<span class="t skill"><${Icon} name="sparkles" size=${10}/>${s.skills.length}</span>` : null}${(s.hooks || []).length ? html`<span class="t hook">${s.hooks.length} hook</span>` : null}${s.model ? html`<span class="t"><${ProviderLogo} name="claude" size=${10}/></span>` : null}</div>
-              </div>
-              ${g ? html`<div class="bld-gate" style=${"left:" + (x + NODE_W + GAP / 2) + "px;top:" + (ROW_Y + NODE_H / 2) + "px"}>${g.route && g.route.startsWith("loop") ? html`<${Icon} name="refresh" size=${11}/>` : html`<${Icon} name="alert" size=${11}/>`} ${g.route && g.route.startsWith("loop") ? "loop" : "branch"}</div>` : null}
-            </div>`;
+                <div class="bld-node-tags">${(s.skills || []).length ? html`<span class="t skill"><${Icon} name="sparkles" size=${10}/>${s.skills.length}</span>` : null}${(s.hooks || []).length ? html`<span class="t hook">${s.hooks.length} hook</span>` : null}${s.model ? html`<span class="t"><${ProviderLogo} name="claude" size=${10}/></span>` : null}${g ? html`<span class=${"t " + (g.route && g.route.startsWith("loop") ? "loop" : "branch")}>${g.route && g.route.startsWith("loop") ? html`<${Icon} name="refresh" size=${10}/> loop` : html`<${Icon} name="alert" size=${10}/> stop`}</span>` : null}</div>
+              </div>`;
           })}
-          <button class="bld-add" style=${"left:" + (PAD_X + steps.length * (NODE_W + GAP)) + "px;top:" + ROW_Y + "px"} onClick=${() => addStep("@dev")} title="Add step"><${Icon} name="plus" size=${20}/></button>
+          ${(() => { const p = nodePos(steps.length); return html`<button class="bld-add" style=${"left:" + p.x + "px;top:" + p.y + "px;width:" + NODE_W + "px;height:" + NODE_H + "px"} onClick=${() => addStep("@dev")} title="Add step"><${Icon} name="plus" size=${22}/><span>Add step</span></button>`; })()}
         </div>
       </div>
 

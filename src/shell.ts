@@ -548,8 +548,8 @@ textarea{resize:vertical;min-height:64px}
 .bld-pill.hook .phase.pre{background:var(--accent-weak);color:var(--accent)}
 .bld-pill.hook .phase.post{background:var(--green-weak);color:var(--green)}
 /* canvas */
-.bld-canvas{flex:1;overflow:auto;background:var(--bg);background-image:radial-gradient(var(--line) 1px,transparent 1px);background-size:22px 22px}
-.bld-flow{position:relative}
+.bld-canvas{flex:1;overflow:auto;background:var(--bg);background-image:radial-gradient(var(--line) 1px,transparent 1px);background-size:24px 24px}
+.bld-flow{position:relative;margin:0 auto}
 .bld-wires{position:absolute;left:0;top:0;pointer-events:none}
 .bld-node{position:absolute;height:92px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:9px 11px;cursor:pointer;display:flex;flex-direction:column;gap:5px;box-shadow:0 1px 2px rgba(0,0,0,.04);transition:border-color .12s,box-shadow .12s;box-sizing:border-box}
 .bld-node:hover{border-color:var(--line-2)}
@@ -563,8 +563,10 @@ textarea{resize:vertical;min-height:64px}
 .bld-node-tags{display:flex;gap:5px;margin-top:auto}
 .bld-node-tags .t{display:inline-flex;align-items:center;gap:3px;font-size:10.5px;color:var(--ink-2);background:var(--surface-2);border-radius:6px;padding:1px 6px}
 .bld-node-tags .t.skill{color:var(--accent);background:var(--accent-weak)}
+.bld-node-tags .t.loop{color:var(--amber);background:var(--amber-weak,rgba(217,119,6,.12))}
+.bld-node-tags .t.branch{color:var(--ink-2)}
 .bld-gate{position:absolute;transform:translate(-50%,-50%);display:inline-flex;align-items:center;gap:3px;font-size:10.5px;font-weight:600;color:var(--ink-2);background:var(--surface);border:1px solid var(--line-2);border-radius:999px;padding:2px 8px;white-space:nowrap;z-index:2}
-.bld-add{position:absolute;width:42px;height:92px;border:1.5px dashed var(--line-2);border-radius:14px;background:transparent;color:var(--ink-3);cursor:pointer;display:flex;align-items:center;justify-content:center}
+.bld-add{position:absolute;border:1.5px dashed var(--line-2);border-radius:14px;background:transparent;color:var(--ink-3);cursor:pointer;display:flex;flex-direction:column;gap:4px;align-items:center;justify-content:center;font-size:12px;font-weight:600;transition:border-color .12s,color .12s,background .12s}
 .bld-add:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-weak)}
 /* inspector */
 .bld-insp{width:264px;flex:none;background:var(--surface);border-left:1px solid var(--line);overflow-y:auto;padding:14px}
