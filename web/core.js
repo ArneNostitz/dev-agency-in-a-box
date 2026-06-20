@@ -91,7 +91,16 @@ export const Spinner = ({ size = 18 }) => html`<svg class="lic spin" width=${siz
 const ROLE_AVATAR = { planner: "planner-f", architect: "architect", developer: "developer-f", reviewer: "reviewer", tester: "tester", librarian: "librarian-f", auditor: "auditor" };
 const ROLE_WORDS = ["planner", "architect", "developer", "reviewer", "tester", "librarian", "auditor"];
 // crop="head" → the dedicated head-only SVG (dashboard); "full" → the whole figure (detail comments).
-function avatarFile(role, crop) { const n = ROLE_AVATAR[role] || "agent"; return crop === "head" ? "/web/avatars/heads/" + n + ".svg" : "/web/avatars/" + n + ".svg"; }
+// Full pool of persona art (heads + full). Unknown agents get a STABLE distinct one from the pool
+// (so every custom/chat agent has its own face), with a couple of fitting named picks.
+const AVATAR_POOL = ["planner", "planner-f", "architect", "reviewer", "reviewer-f", "tester", "tester-f", "developer", "developer-f", "librarian", "librarian-f", "auditor", "auditor-f"];
+const NAMED_AVATAR = { "grill-me": "auditor", grill: "auditor", "spec-creator": "librarian", spec: "librarian" };
+function hashStr(s) { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h; }
+function avatarFile(role, crop) {
+  let n = ROLE_AVATAR[role];
+  if (!n) { const k = String(role || "").toLowerCase(); n = NAMED_AVATAR[k] || (k ? AVATAR_POOL[hashStr(k) % AVATAR_POOL.length] : "agent"); }
+  return crop === "head" ? "/web/avatars/heads/" + n + ".svg" : "/web/avatars/" + n + ".svg";
+}
 // The author role of an agency comment, read from its leading badge ("🧠 **Planner**", "role: **developer**", …).
 export function roleFromComment(body) { const head = (body || "").slice(0, 90).toLowerCase(); for (const r of ROLE_WORDS) if (head.includes(r)) return r; return null; }
 // Persona avatar. crop="head" (dashboard: pre-cropped head) | "full" (detail: whole figure).
