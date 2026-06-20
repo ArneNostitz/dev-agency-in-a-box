@@ -7,14 +7,13 @@ import { Avatar, COLS, Icon, ProviderLogo, Select, Spinner, ago, api, boardSortC
 function parseBoardSort(v) { const m = /^([a-z]+)_(asc|desc)$/.exec(v || "updated_desc"); return m ? [m[1], m[2]] : ["updated", "desc"]; }
 const SORT_FIELDS = [
   { f: "updated", icon: "clock", tip: "Last updated" },
-  { f: "created", icon: "plus", tip: "Created" },
-  { f: "number", icon: "hash", tip: "Issue number" },
+  { f: "created", icon: "hash", tip: "Created (issue #)" },
 ];
 const TIME_CYCLE = [["any", "All"], ["24h", "24h"], ["7d", "7d"], ["30d", "30d"]];
 
 function BoardControls({ boardSort, setBoardSort, boardGroup, setBoardGroup, boardTime, setBoardTime }) {
   const [field, dir] = parseBoardSort(boardSort);
-  const defDir = (f) => (f === "number" ? "asc" : "desc"); // newest/last-updated default desc; #1 first
+  const defDir = () => "desc"; // newest/last-updated default desc; #1 first
   const clickSort = (f) => setBoardSort(field === f ? f + "_" + (dir === "desc" ? "asc" : "desc") : f + "_" + defDir(f));
   const cycleTime = () => { const i = TIME_CYCLE.findIndex((t) => t[0] === boardTime); setBoardTime(TIME_CYCLE[(i + 1) % TIME_CYCLE.length][0]); };
   const timeLbl = (TIME_CYCLE.find((t) => t[0] === boardTime) || TIME_CYCLE[0])[1];
