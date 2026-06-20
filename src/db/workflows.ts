@@ -77,10 +77,16 @@ export function deleteWorkflow(id: string): void {
 
 /** Seed the built-in workflow templates once. Users clone + edit these. */
 export function seedWorkflows(): void {
-  if (getWorkflow("full-build")) return;
+  const existing = getWorkflow("full-build");
+  if (existing) {
+    // Migration: the old @dev trigger collided with the developer/code agent (which should run a
+    // SOLO developer, not the full build). Move Full build onto @build.
+    if (existing.trigger === "@dev") upsertWorkflow({ ...existing, trigger: "@build" });
+    return;
+  }
   const S = (agent: string, instruction: string, extra: Partial<WorkflowStep> = {}): WorkflowStep => ({ agent, instruction, skills: [], hooks: [], ...extra });
   upsertWorkflow({
-    id: "full-build", name: "Full build", trigger: "@dev", builtin: true,
+    id: "full-build", name: "Full build", trigger: "@build", builtin: true,
     steps: [
       S("@plan", "Produce a concrete build plan for this issue."),
       S("@dev", "Implement the plan; commit and open a PR."),

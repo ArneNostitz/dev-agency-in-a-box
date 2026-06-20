@@ -103,6 +103,12 @@ function avatarFile(role, crop) {
 }
 // The author role of an agency comment, read from its leading badge ("🧠 **Planner**", "role: **developer**", …).
 export function roleFromComment(body) { const head = (body || "").slice(0, 90).toLowerCase(); for (const r of ROLE_WORDS) if (head.includes(r)) return r; return null; }
+// Role badge for an agency comment, rendered inline in the comment header (emoji · Role) so the
+// redundant "💻 **Developer** · _dev-agency_" first body line can be stripped (see stripBadge).
+const ROLE_EMOJI = { planner: "🧠", architect: "🏛", developer: "💻", reviewer: "🔍", tester: "🧪", librarian: "📚", auditor: "🔎" };
+export function commentBadge(body) { const r = roleFromComment(body); return r ? { role: r, emoji: ROLE_EMOJI[r] || "", name: r[0].toUpperCase() + r.slice(1) } : null; }
+// Drop the leading "🧠 **Planner** · _dev-agency_" line (now shown in the header) from a comment body.
+export function stripBadge(body) { return (body || "").replace(/^\s*[^\n]*·\s*_dev-agency_\s*\r?\n+/, ""); }
 // Persona avatar. crop="head" (dashboard: pre-cropped head) | "full" (detail: whole figure).
 export const Avatar = ({ role, size = 24, crop = "head" }) => {
   const w = crop === "full" ? Math.round(size * 0.82) : size;

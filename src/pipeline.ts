@@ -843,6 +843,29 @@ async function evalGate(cond: string, repo: string, issue: Issue, workdir: strin
 }
 
 /** Run a workflow's steps in sequence with gates (review verdict / tests / conflict / human approval). */
+/**
+ * Solo developer run — the @dev pin or a single code agent. The clone is already done; the
+ * developer makes the change directly (no planner/architect gate, no tester/reviewer loop) and the
+ * orchestrator opens a draft PR. This is the "just the developer" path; the multi-step build is the
+ * Full build workflow (@build).
+ */
+export async function runDeveloperSolo(repo: string, issue: Issue, workdir: string, thread: string): Promise<void> {
+  const branch = `agency/issue-${issue.number}`;
+  const dev = await runRole("developer", {
+    workdir,
+    repo,
+    issueNumber: issue.number,
+    task:
+      `Implement this issue on branch \`${branch}\` off an up-to-date main. Reuse existing code, keep the change ` +
+      `focused, and commit + push your work (\`git add … && git commit -m "…" && git push\`). When the change is ` +
+      `made and committed, stop — the orchestrator opens the PR.\n\n### ${issueHeader(issue)}` +
+      (thread ? `\n\n### Conversation (latest applies)\n${thread}` : ""),
+  });
+  recordRun(repo, issue.number, "developer", dev.model, dev.turns, "implement", dev.costUsd);
+  await commentOnIssue(repo, issue.number, say("developer", dev.text));
+  await finalizeWithPr(repo, issue, workdir, branch, false);
+}
+
 export async function runWorkflowEngine(cfg: Config, repo: string, issue: Issue, wf: Workflow, workdir: string, thread: string): Promise<void> {
   void cfg;
   const branch = `agency/issue-${issue.number}`;

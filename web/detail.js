@@ -1,6 +1,6 @@
 // Dev Agency dashboard — detail module (split from app.js; Preact + htm, no build step).
 import { html, useState, useEffect, useRef } from "/web/vendor/standalone.mjs";
-import { Avatar, Icon, Modal, ProviderLogo, Select, Sheet, Spinner, agentOptions, ago, api, defaultModelLogo, fmtTok, getJSON, getSetupProgress, ghUrl, isDone, md, MarkdownArea, readAttach, roleFromComment, shortModel, toast, usageTitle } from "./core.js";
+import { Avatar, Icon, Modal, ProviderLogo, Select, Sheet, Spinner, agentOptions, ago, api, commentBadge, defaultModelLogo, fmtTok, getJSON, getSetupProgress, ghUrl, isDone, md, MarkdownArea, readAttach, roleFromComment, shortModel, stripBadge, toast, usageTitle } from "./core.js";
 
 
 // ---------- Detail ----------
@@ -384,7 +384,7 @@ function Comment({ id, author, createdAt, body, isAgency, isSkel, incoming, avat
   return html`<div class=${"cmt " + (isAgency ? "ag" : "") + (isSkel ? " skel" : "") + (incoming ? " incoming" : "")}>
     <div class="h">
       ${isAgency && avatars ? html`<${Avatar} role=${roleFromComment(body)} size=${44} crop="full"/>` : null}
-      <span>${incoming ? html`<span class="cmt-in" title="Incoming — posted on GitHub"><${Icon} name="incoming" size=${12}/></span> ` : ""}${author || ""} · ${isSkel ? "just now" : ago(createdAt)}</span>
+      <span>${incoming ? html`<span class="cmt-in" title="Incoming — posted on GitHub"><${Icon} name="incoming" size=${12}/></span> ` : ""}${(() => { const bd = isAgency ? commentBadge(body) : null; return bd ? html`<span class="cmt-role">${bd.emoji} ${bd.name}</span> · ` : ""; })()}${author || ""} · ${isSkel ? "just now" : ago(createdAt)}</span>
       ${id && onEdit && !isSkel ? html`<button class="iconbtn cmt-edit-btn" title="Edit comment" onClick=${startEdit}><${Icon} name="edit" size=${13}/></button>` : null}
     </div>
     ${editing ? html`
@@ -393,7 +393,7 @@ function Comment({ id, author, createdAt, body, isAgency, isSkel, incoming, avat
         <button class="btn" onClick=${cancelEdit}>Cancel</button>
         <button class="btn primary" disabled=${saving} onClick=${save}>${saving ? html`<${Spinner} size=${13}/>` : "Save"}</button>
       </div>
-    ` : html`<div class="b" dangerouslySetInnerHTML=${{ __html: md(body) }}></div>`}
+    ` : html`<div class="b" dangerouslySetInnerHTML=${{ __html: md(isAgency ? stripBadge(body) : body) }}></div>`}
   </div>`;
 }
 

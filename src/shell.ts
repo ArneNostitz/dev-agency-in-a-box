@@ -355,6 +355,7 @@ textarea{resize:vertical;min-height:64px}
 .avi.full img{object-fit:contain;object-position:center top}
 .cmt.incoming{border-left:3px solid var(--accent)}
 .cmt .h .cmt-in{display:inline-flex;align-items:center;color:var(--accent);vertical-align:middle}
+.cmt .h .cmt-role{font-weight:600;color:var(--ink)}
 .cmt .h .cmt-edit-btn{margin-left:auto;opacity:0;transition:opacity .15s;padding:2px}
 .cmt:hover .h .cmt-edit-btn{opacity:1}
 .cmt .b,.composer .b{font-size:14px}

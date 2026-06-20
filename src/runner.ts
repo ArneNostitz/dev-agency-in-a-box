@@ -57,7 +57,7 @@ import { indexRepo } from "./gitnexus.js";
 import { pushActivity } from "./activity.js";
 import { loadHandleRoleMap, roleForText, ALL_ROLES, type RoleName } from "./agents/roles.js";
 import { resolveWorkflow, workflowLeadRole, workflowTriggers } from "./workflow.js";
-import { runPipeline, runWorkflowEngine, runPrFix, runFollowUp, runResumeBuild, runReviewFix } from "./pipeline.js";
+import { runPipeline, runWorkflowEngine, runDeveloperSolo, runPrFix, runFollowUp, runResumeBuild, runReviewFix } from "./pipeline.js";
 import { runRole } from "./agents/roleAgent.js";
 import { runChatAgent } from "./agents/chat.js";
 import { parseAuditProposals } from "./auditparse.js";
@@ -251,13 +251,18 @@ async function processIssue(cfg: Config, repo: string, issue: Issue, opts: { fre
   }
 
   const resuming = issue.labels.some((l) => AWAITING_LABELS.includes(l));
-  // A workflow trigger (e.g. @dev → Full build) resolves to its lead role and drives the existing
+  // A workflow trigger (e.g. @build → Full build) resolves to its lead role and drives the existing
   // flow; otherwise fall back to the role-pin handle map.
   const wf = resuming ? null : resolveWorkflow(`${issue.title}\n${issue.body}`);
+  const handleRole = resuming ? null : roleForText(`${issue.title}\n${issue.body}`, loadHandleRoleMap());
   const role: RoleName = resuming
     ? ((getIssueRole(repo, issue.number) as RoleName) ?? "developer")
     : wf ? workflowLeadRole(wf)
-    : roleForText(`${issue.title}\n${issue.body}`, loadHandleRoleMap()) ?? "developer";
+    : handleRole ?? "developer";
+  // A single explicit pin (no workflow) runs JUST that one agent — @dev / a code agent = solo
+  // developer + PR; @plan/@arch/@review/@test = a single specialist. The multi-step build is the
+  // Full build workflow (@build). A bare issue with no recognised handle falls back to Full build.
+  const single = !resuming && !wf && handleRole !== null;
   console.log(`[agency] ${repo} #${issue.number}: ${issue.title} -> role:${role}${resuming ? " (resume)" : ""}`);
   pushActivity(repo, issue.number, role, "start", "▶ starting…"); // instant feedback before the GitHub prep + clone
 
@@ -295,6 +300,12 @@ async function processIssue(cfg: Config, repo: string, issue: Issue, opts: { fre
   const workdir = workdirFor(repo, `${issue.number}`);
   // Mark active + show progress BEFORE the slow prep so the card spins and the live stream isn't
   // silent while we clone (and the GitNexus index now builds in the background, off this path).
+  // A custom workflow runs via the step engine; a single @dev/code pin runs the solo developer; the
+  // proven full-build path stays on runPipeline. (Full build = the @build workflow.)
+  const runFlow = () =>
+    (wf && wf.id !== "full-build") ? runWorkflowEngine(cfg, repo, issue, wf, workdir, thread)
+    : (single && role === "developer") ? runDeveloperSolo(repo, issue, workdir, thread)
+    : runPipeline(cfg, repo, issue, role, workdir, thread);
   setActive(repo, issue.number, "issue", role, issue.title);
   try {
     pushActivity(repo, issue.number, role, "tool", `📥 cloning ${repo}… 0%`);
@@ -304,8 +315,6 @@ async function processIssue(cfg: Config, repo: string, issue: Issue, opts: { fre
       pushActivity(repo, issue.number, role, "tool", `📥 cloning ${repo}… ${phase === "cloned" ? "done" : percent + "%"}`);
     });
     await indexRepo(workdir, repo, (s) => pushActivity(repo, issue.number, role, "tool", s));
-    // A custom workflow runs via the step engine; the proven full-build path stays on runPipeline.
-    const runFlow = () => (wf && wf.id !== "full-build") ? runWorkflowEngine(cfg, repo, issue, wf, workdir, thread) : runPipeline(cfg, repo, issue, role, workdir, thread);
     await runFlow();
   } catch (err) {
     const msg = (err as Error).message ?? String(err);
@@ -314,7 +323,7 @@ async function processIssue(cfg: Config, repo: string, issue: Issue, opts: { fre
     if (rl === "switch") {
       // Auto-switched to fallback model — retry the pipeline in the same workdir (no re-clone).
       try {
-        await ((wf && wf.id !== "full-build") ? runWorkflowEngine(cfg, repo, issue, wf, workdir, thread) : runPipeline(cfg, repo, issue, role, workdir, thread));
+        await runFlow();
       } catch (err2) {
         const msg2 = (err2 as Error).message ?? String(err2);
         console.error(`[agency] pipeline error after model switch ${repo} #${issue.number}:`, msg2);
