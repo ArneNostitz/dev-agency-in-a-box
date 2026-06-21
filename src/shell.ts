@@ -564,6 +564,25 @@ textarea{resize:vertical;min-height:64px}
 .bld-srow .bld-hk button{border:none;background:none;color:inherit;cursor:pointer;display:inline-flex;padding:0;opacity:.6}
 .bld-hlbl.sk{background:var(--accent-weak);color:var(--accent);display:inline-flex;align-items:center;padding:2px 5px}
 .bld-insp-wf{border-top:1px solid var(--line);margin-top:14px;padding-top:12px}
+/* external (outside-node) half-height hook slots */
+.bld-slot{position:absolute;display:flex;align-items:center;gap:4px;padding:0 8px;border:1px dashed var(--line);border-radius:8px;background:var(--bg);overflow:hidden}
+.bld-slot.pre{border-bottom-left-radius:0;border-bottom-right-radius:0;border-bottom:none}
+.bld-slot.post{border-top-left-radius:0;border-top-right-radius:0;border-top:none}
+.bld-slot .bld-hlbl{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;border-radius:4px;padding:1px 5px;flex:0 0 auto}
+.bld-slot.pre .bld-hlbl{background:var(--accent-weak);color:var(--accent)}
+.bld-slot.post .bld-hlbl{background:var(--green-weak);color:var(--green)}
+.bld-slot .bld-hk{display:inline-flex;align-items:center;gap:3px;font-size:10.5px;background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:1px 4px 1px 7px;color:var(--ink-2);max-width:120px;overflow:hidden}
+.bld-slot .bld-hk button{border:none;background:none;color:inherit;cursor:pointer;display:inline-flex;padding:0;opacity:.55}
+.bld-slot .bld-hk button:hover{opacity:1}
+/* skills inside the node — a vertical list that grows the card one row at a time */
+.bld-sk-list{display:flex;flex-direction:column;gap:4px;margin-top:6px}
+.bld-skchip{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;background:var(--accent-weak);color:var(--accent);border-radius:7px;padding:3px 5px 3px 8px}
+.bld-skchip-t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bld-skchip button{border:none;background:none;color:inherit;cursor:pointer;display:inline-flex;padding:0;opacity:.6}
+.bld-skchip button:hover{opacity:1}
+.bld-skadd{align-self:flex-start;border:1px dashed var(--line-2);border-radius:7px;background:transparent;color:var(--ink-3);font-size:11.5px;font-weight:600;padding:3px 9px;gap:3px}
+.bld-skadd:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-weak)}
+.bld-skadd .sel-caret{display:none}
 .bld-hrow.pre{margin-bottom:4px}
 .bld-hrow.post{margin-top:6px;padding-top:6px;border-top:1px dashed var(--line)}
 .bld-hlbl{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;border-radius:4px;padding:1px 5px;flex:0 0 auto}
@@ -612,7 +631,7 @@ textarea{resize:vertical;min-height:64px}
 .bld-add{position:absolute;border:1.5px dashed var(--line-2);border-radius:14px;background:transparent;color:var(--ink-3);cursor:pointer;display:flex;flex-direction:column;gap:4px;align-items:center;justify-content:center;font-size:12px;font-weight:600;transition:border-color .12s,color .12s,background .12s}
 .bld-add:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-weak)}
 /* inspector */
-.bld-insp{width:264px;flex:none;background:var(--surface);border-left:1px solid var(--line);overflow-y:auto;padding:14px}
+.bld-insp{width:340px;flex:none;background:var(--surface);border-left:1px solid var(--line);overflow-y:auto;padding:16px}
 .bld-insp-h{display:flex;align-items:center;gap:9px;padding-bottom:12px;border-bottom:1px solid var(--line);margin-bottom:12px}
 .bld-insp-name{font-weight:600;font-size:14px}
 .bld-link{border:none;background:none;color:var(--accent);font-size:11.5px;cursor:pointer;padding:0}

@@ -4,7 +4,7 @@
 import { html, useState, useEffect, useRef } from "/web/vendor/standalone.mjs";
 import { Avatar, Icon, Modal, Select, ProviderLogo, defaultModelLogo, agentOptions, api, toast, readAttach, Spinner } from "./core.js";
 
-const NODE_W = 216, NODE_H = 158, ROW_GAP = 56, PAD = 28, SIDE = 70, LOOPM = 46;
+const NODE_W = 216, NODE_BASE = 104, SKILL_H = 28, SLOT_H = 30, BLK_GAP = 28, PAD = 28, LOOPM = 46;
 const STEP_ROLE = { "@plan": "planner", "@arch": "architect", "@dev": "developer", "@review": "reviewer", "@test": "tester" };
 const DEFAULT_TASK = { "@plan": "Produce a concrete build plan for this issue.", "@arch": "Turn the plan into a concrete technical design (no code).", "@dev": "Implement the plan; commit and open a PR.", "@review": "Review the PR against the plan and the codebase.", "@test": "Run the project\u2019s checks and fix any failures." };
 const ROUTES = [
@@ -75,7 +75,7 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
     setStep(insertAt);
     return { ...f, steps, gates };
   });
-  const dropSlotFromY = (clientY) => { const el = flowRef.current; if (!el) return null; const top = el.getBoundingClientRect().top; const y = clientY - top - PAD; return Math.max(0, Math.min(steps.length, Math.round(y / (NODE_H + ROW_GAP)))); };
+  const dropSlotFromY = (clientY) => { const el = flowRef.current; if (!el) return null; const top = el.getBoundingClientRect().top; const y = clientY - top; let n = 0; for (let i = 0; i < lay.length; i++) if (lay[i].nY + lay[i].h / 2 < y) n++; return n; };
   const removeStep = (i) => setForm((f) => { const steps = f.steps.filter((_, j) => j !== i); setStep(Math.max(0, Math.min(i, steps.length - 1))); return { ...f, steps, gates: (f.gates || []).filter((g) => g.after !== i).map((g) => (g.after > i ? { ...g, after: g.after - 1 } : g)) }; });
   const toggleChip = (i, key, val) => { const cur = form.steps[i][key] || []; patchStep(i, { [key]: cur.includes(val) ? cur.filter((x) => x !== val) : cur.concat(val) }); };
 
@@ -200,20 +200,23 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
   // ---------- canvas editor ----------
   const steps = form.steps || [];
   const cur = steps[step] || steps[0];
-  // Vertical layout: a single top-to-bottom column. Pre-hooks sit on the LEFT of each agent, post
-  // hooks on the RIGHT; loop-backs arc up the right gutter and point into their target.
+  // Vertical layout, top→bottom, with DYNAMIC node heights: each node grows by one row per skill.
+  // The PRE/POST hook slots are thin half-height bars OUTSIDE the node (above/below it).
   const hookPhase = Object.fromEntries(hookOpts.map((h) => [h.value, h.phase]));
-  const slots = steps.length + 1; // +1 for the "add step" tile
   const nLoops = (form.gates || []).filter((g) => g.route && g.route.startsWith("loop")).length;
-  const flowW = PAD * 2 + SIDE + NODE_W + SIDE + LOOPM + nLoops * 16;
-  const cx = PAD + SIDE + NODE_W / 2;        // node centre x
-  const nodeY = (i) => PAD + i * (NODE_H + ROW_GAP);
-  const midY = (i) => nodeY(i) + NODE_H / 2;
+  const nodeH = (st) => NODE_BASE + (st.skills || []).length * SKILL_H;
+  // Cumulative layout: [pre-slot][node][post-slot] per step, a gap between blocks.
+  const lay = []; let yc = PAD;
+  for (let i = 0; i < steps.length; i++) { const preY = yc; yc += SLOT_H; const nY = yc; const h = nodeH(steps[i]); yc += h; const postY = yc; yc += SLOT_H; lay.push({ preY, nY, h, postY }); yc += BLK_GAP; }
+  const addY = yc;
+  const flowW = PAD * 2 + NODE_W + LOOPM + nLoops * 16 + 24;
+  const cx = PAD + NODE_W / 2;
   const gridW = Math.max(flowW, cw - 4);
-  const gridH = PAD * 2 + slots * NODE_H + (slots - 1) * ROW_GAP;
-  const ox = (gridW - flowW) / 2;            // centre the column when the canvas is wider
-  const C = cx + ox;                          // centred node centre
-  const downPath = (i) => { const y1 = nodeY(i) + NODE_H, y2 = nodeY(i + 1); const my = (y1 + y2) / 2; return `M ${C} ${y1} C ${C} ${my}, ${C} ${my}, ${C} ${y2}`; };
+  const gridH = addY + NODE_BASE + PAD;
+  const ox = (gridW - flowW) / 2;
+  const C = cx + ox;                          // centred node centre x
+  const nodeMid = (i) => lay[i].nY + lay[i].h / 2;
+  const downPath = (i) => { const y1 = lay[i].postY + SLOT_H, y2 = lay[i + 1].preY; const my = (y1 + y2) / 2; return `M ${C} ${y1} C ${C} ${my}, ${C} ${my}, ${C} ${y2}`; };
 
   return html`<div class="bld">
     <div class="bld-top">
@@ -232,41 +235,39 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
           onDrop=${(e) => { if (drag == null) return; e.preventDefault(); const slot = dropSlotFromY(e.clientY); if (slot != null) moveStep(drag, slot); setDrag(null); setDropAt(null); }}
           onDragLeave=${(e) => { if (e.target === flowRef.current) setDropAt(null); }}>
           <svg class="bld-wires" width=${gridW} height=${gridH} aria-hidden="true">
-            <defs><marker id="bld-arrow" markerWidth="9" markerHeight="9" refX="6.5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--line-2)"/></marker><marker id="bld-loop" markerWidth="9" markerHeight="9" refX="6.5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--amber)"/></marker></defs>
+            <defs><marker id="bld-arrow" markerWidth="9" markerHeight="9" refX="6.5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--line-2)"/></marker></defs>
             ${steps.slice(0, -1).map((_, i) => html`<path key=${i} d=${downPath(i)} fill="none" stroke="var(--line-2)" stroke-width="2" marker-end="url(#bld-arrow)"/>`)}
-            ${steps.length ? html`<path key="toadd" d=${downPath(steps.length - 1)} fill="none" stroke="var(--line)" stroke-width="2" stroke-dasharray="3 4"/>` : null}
-            ${(form.gates || []).filter((g) => g.route && g.route.startsWith("loop")).map((g, k) => { const t = Number(g.route.split(":")[1]); if (!Number.isFinite(t) || t === g.after || g.after >= steps.length || t >= steps.length) return null; const rx = C + NODE_W / 2, sy = midY(g.after), ty = midY(t), lx = C + NODE_W / 2 + LOOPM + k * 16; const r = 9, up = ty < sy; const d = `M ${rx} ${sy} H ${lx - r} Q ${lx} ${sy} ${lx} ${sy + (up ? -r : r)} V ${ty + (up ? r : -r)} Q ${lx} ${ty} ${lx - r} ${ty} H ${rx}`; const cond = (CONDITIONS.find((c) => c.value === g.condition) || {}).label || g.condition || "a condition"; const reason = `Loops back to step ${t + 1} if ${cond.toLowerCase()} (max ${g.maxLoops || 2}×)`; return html`<path key=${"loop" + k} d=${d} fill="none" stroke="var(--line-2)" stroke-width="2" stroke-dasharray="5 5" stroke-linejoin="round" marker-end="url(#bld-arrow)"><title>${reason}</title></path>`; })}
+            ${steps.length ? html`<path key="toadd" d=${`M ${C} ${lay[steps.length - 1].postY + SLOT_H} L ${C} ${addY}`} fill="none" stroke="var(--line)" stroke-width="2" stroke-dasharray="3 4"/>` : null}
+            ${(form.gates || []).filter((g) => g.route && g.route.startsWith("loop")).map((g, k) => { const t = Number(g.route.split(":")[1]); if (!Number.isFinite(t) || t === g.after || g.after >= steps.length || t >= steps.length) return null; const rx = C + NODE_W / 2, sy = nodeMid(g.after), ty = nodeMid(t), lx = C + NODE_W / 2 + LOOPM + k * 16; const r = 9, up = ty < sy; const d = `M ${rx} ${sy} H ${lx - r} Q ${lx} ${sy} ${lx} ${sy + (up ? -r : r)} V ${ty + (up ? r : -r)} Q ${lx} ${ty} ${lx - r} ${ty} H ${rx}`; const cond = (CONDITIONS.find((c) => c.value === g.condition) || {}).label || g.condition || "a condition"; return html`<path key=${"loop" + k} d=${d} fill="none" stroke="var(--line-2)" stroke-width="2" stroke-dasharray="5 5" stroke-linejoin="round" marker-end="url(#bld-arrow)"><title>${`Loops back to step ${t + 1} if ${cond.toLowerCase()} (max ${g.maxLoops || 2}×)`}</title></path>`; })}
           </svg>
-          ${drag != null && dropAt != null ? html`<div class="bld-drop" style=${"left:" + (C - NODE_W / 2 - SIDE) + "px;top:" + (PAD + dropAt * (NODE_H + ROW_GAP) - ROW_GAP / 2 - 1) + "px;width:" + (NODE_W + SIDE * 2) + "px"}></div>` : null}
+          ${drag != null && dropAt != null ? html`<div class="bld-drop" style=${"left:" + (C - NODE_W / 2) + "px;top:" + ((dropAt < steps.length ? lay[dropAt].preY : addY) - BLK_GAP / 2) + "px;width:" + NODE_W + "px"}></div>` : null}
           ${steps.map((s, i) => {
-            const y = nodeY(i), left = C - NODE_W / 2;
+            const left = C - NODE_W / 2;
             const g = gateAfter(i);
-            const hrow = (phase) => { const on = (s.hooks || []).filter((h) => (hookPhase[h] || "pre") === phase); const avail = hookOpts.filter((h) => h.phase === phase && !(s.hooks || []).includes(h.value)); return html`<div class=${"bld-hrow " + phase} onClick=${(e) => e.stopPropagation()}>
+            const slot = (phase, sy) => { const on = (s.hooks || []).filter((h) => (hookPhase[h] || "pre") === phase); const avail = hookOpts.filter((h) => h.phase === phase && !(s.hooks || []).includes(h.value)); return html`<div class=${"bld-slot " + phase} style=${"left:" + left + "px;top:" + sy + "px;width:" + NODE_W + "px;height:" + SLOT_H + "px"} onClick=${(e) => e.stopPropagation()}>
                 <span class="bld-hlbl">${phase}</span>
                 ${on.map((h) => { const ho = hookOpts.find((x) => x.value === h); return html`<span class="bld-hk" key=${h} title=${ho ? ho.label : h}>${ho ? ho.label : h}<button onClick=${() => toggleChip(i, "hooks", h)} aria-label="remove"><${Icon} name="x" size=${9}/></button></span>`; })}
-                <${Select} value="" options=${avail} menuAlign=${phase === "post" ? "right" : null} onChange=${(v) => v && toggleChip(i, "hooks", v)} btnClass="bld-hadd" trigger=${() => html`<${Icon} name="plus" size=${11}/>`}/>
+                <${Select} value="" options=${avail} menuAlign="right" onChange=${(v) => v && toggleChip(i, "hooks", v)} btnClass="bld-hadd" trigger=${() => html`<${Icon} name="plus" size=${10}/>`}/>
               </div>`; };
             return html`<div key=${"n" + i}>
-              <div class=${"bld-node" + (i === step ? " sel" : "") + (i === drag ? " dragging" : "")} draggable=${true} onDragStart=${(e) => { setDrag(i); e.dataTransfer.effectAllowed = "move"; try { e.dataTransfer.setData("text/plain", String(i)); } catch (_) {} }} onDragEnd=${() => { setDrag(null); setDropAt(null); }} style=${"left:" + left + "px;top:" + y + "px;width:" + NODE_W + "px"} onClick=${() => setStep(i)}>
+              ${slot("pre", lay[i].preY)}
+              <div class=${"bld-node" + (i === step ? " sel" : "") + (i === drag ? " dragging" : "")} draggable=${true} onDragStart=${(e) => { setDrag(i); e.dataTransfer.effectAllowed = "move"; try { e.dataTransfer.setData("text/plain", String(i)); } catch (_) {} }} onDragEnd=${() => { setDrag(null); setDropAt(null); }} style=${"left:" + left + "px;top:" + lay[i].nY + "px;width:" + NODE_W + "px;height:" + lay[i].h + "px"} onClick=${() => setStep(i)}>
                 <span class="bld-grip" title="Drag to reorder"><${Icon} name="grip" size=${14}/></span>
-                ${hrow("pre")}
                 <div class="bld-node-h"><span class="bld-node-num">${i + 1}</span><${Avatar} role=${roleFor(agentOf(s))} src=${srcFor(agentOf(s))} size=${26} crop="head"/><${Select} value=${agentOf(s)} options=${agentOpts} onChange=${(v) => patchStep(i, { agent: v })} btnClass="bld-agentsel" trigger=${(c) => html`<span class="bld-node-name">${c ? c.label : labelFor(agentOf(s), agentOpts)}</span><${Icon} name="chevdown" size=${12} cls="bld-agentsel-c"/>`}/></div>
                 <div class="bld-node-task">${(s.instruction || "").split("\n")[0] || html`<span class="ph">describe this step…</span>`}</div>
-                <div class="bld-srow" onClick=${(e) => e.stopPropagation()}>
-                  <span class="bld-hlbl sk"><${Icon} name="sparkles" size=${9}/></span>
-                  ${(s.skills || []).map((sk) => { const so = skillOpts.find((x) => x.value === sk); return html`<span class="bld-hk" key=${sk} title=${so ? so.desc : sk}>${so ? so.label : sk}<button onClick=${() => toggleChip(i, "skills", sk)} aria-label="remove"><${Icon} name="x" size=${9}/></button></span>`; })}
-                  <${Select} value="" options=${skillOpts.filter((x) => !(s.skills || []).includes(x.value))} onChange=${(v) => v && toggleChip(i, "skills", v)} btnClass="bld-hadd" trigger=${() => html`<${Icon} name="plus" size=${11}/>`}/>
+                <div class="bld-sk-list" onClick=${(e) => e.stopPropagation()}>
+                  ${(s.skills || []).map((sk) => { const so = skillOpts.find((x) => x.value === sk); return html`<span class="bld-skchip" key=${sk} title=${so ? so.desc : sk}><${Icon} name="sparkles" size=${10}/><span class="bld-skchip-t">${so ? so.label : sk}</span><button onClick=${() => toggleChip(i, "skills", sk)} aria-label="remove"><${Icon} name="x" size=${10}/></button></span>`; })}
+                  <${Select} value="" options=${skillOpts.filter((x) => !(s.skills || []).includes(x.value))} onChange=${(v) => v && toggleChip(i, "skills", v)} btnClass="bld-skadd" trigger=${() => html`<${Icon} name="plus" size=${11}/> skill`}/>
                 </div>
                 <div class="bld-node-tags">${s.model ? html`<span class="t"><${ProviderLogo} name="claude" size=${10}/></span>` : null}${g ? html`<span class=${"t " + (g.condition === "humanApproval" ? "approve" : g.route && g.route.startsWith("loop") ? "loop" : "stop")}>${g.condition === "humanApproval" ? html`<${Icon} name="hourglass" size=${10}/> approval` : g.route && g.route.startsWith("loop") ? html`<${Icon} name="refresh" size=${10}/> loop` : html`<${Icon} name="stop" size=${10}/> stop`}</span>` : null}</div>
-                ${hrow("post")}
               </div>
+              ${slot("post", lay[i].postY)}
+              ${g && (g.condition === "humanApproval" || g.route === "stop") ? html`<div class=${"bld-flowmark " + (g.condition === "humanApproval" ? "approve" : "stop")} style=${"left:" + (C - 64) + "px;top:" + (lay[i].postY + SLOT_H + BLK_GAP / 2 - 11) + "px"}>${g.condition === "humanApproval" ? html`<${Icon} name="hourglass" size=${12}/> waits for you` : html`<${Icon} name="stop" size=${12}/> ends here`}</div>` : null}
             </div>`;
           })}
-          ${(form.gates || []).map((g, k) => { const i = g.after; if (i == null || i >= steps.length) return null; const isApproval = g.condition === "humanApproval"; const isStop = g.route === "stop"; if (!isApproval && !isStop) return null; const y = nodeY(i) + NODE_H + ROW_GAP / 2 - 12; return html`<div key=${"mk" + k} class=${"bld-flowmark " + (isApproval ? "approve" : "stop")} style=${"left:" + (C - 64) + "px;top:" + y + "px"}>${isApproval ? html`<${Icon} name="hourglass" size=${12}/> waits for you` : html`<${Icon} name="stop" size=${12}/> ends here`}</div>`; })}
-          ${(() => { const y = nodeY(steps.length), left = C - NODE_W / 2; return html`<button class="bld-add" style=${"left:" + left + "px;top:" + y + "px;width:" + NODE_W + "px;height:" + NODE_H + "px"} onClick=${() => addStep("@dev")} title="Add step"><${Icon} name="plus" size=${22}/><span>Add step</span></button>`; })()}
+          ${(() => { const left = C - NODE_W / 2; return html`<button class="bld-add" style=${"left:" + left + "px;top:" + addY + "px;width:" + NODE_W + "px;height:" + NODE_BASE + "px"} onClick=${() => addStep("@dev")} title="Add step"><${Icon} name="plus" size=${22}/><span>Add step</span></button>`; })()}
         </div>
       </div>
-
       <!-- inspector -->
       <div class="bld-insp">
         ${cur ? html`
