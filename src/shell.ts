@@ -581,6 +581,9 @@ textarea{resize:vertical;min-height:64px}
 .bld-grip:hover{color:var(--ink-2)}
 .bld-drop{position:absolute;height:3px;border-radius:3px;background:var(--accent);box-shadow:0 0 0 3px var(--accent-weak);z-index:3;pointer-events:none}
 .bld-node-name{font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bld-agentsel{border:none;background:transparent;padding:2px 4px;border-radius:7px;gap:3px;min-width:0}
+.bld-agentsel:hover{background:var(--surface-2)}
+.bld-agentsel-c{color:var(--ink-3);flex:0 0 auto}
 .bld-node-task{font-size:11.5px;color:var(--ink-2);line-height:1.35;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 .bld-node-task .ph{color:var(--ink-3);font-style:italic}
 .bld-node-tags{display:flex;gap:5px;margin-top:auto}

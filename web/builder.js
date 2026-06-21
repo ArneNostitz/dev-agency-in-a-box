@@ -273,7 +273,7 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
               <div class=${"bld-node" + (i === step ? " sel" : "") + (i === drag ? " dragging" : "")} draggable=${true} onDragStart=${(e) => { setDrag(i); e.dataTransfer.effectAllowed = "move"; try { e.dataTransfer.setData("text/plain", String(i)); } catch (_) {} }} onDragEnd=${() => { setDrag(null); setDropAt(null); }} style=${"left:" + left + "px;top:" + y + "px;width:" + NODE_W + "px"} onClick=${() => setStep(i)}>
                 <span class="bld-grip" title="Drag to reorder"><${Icon} name="grip" size=${14}/></span>
                 ${hrow("pre")}
-                <div class="bld-node-h"><span class="bld-node-num">${i + 1}</span><${Avatar} role=${roleFor(agentOf(s))} src=${srcFor(agentOf(s))} size=${26} crop="head"/><span class="bld-node-name">${labelFor(agentOf(s), agentOpts)}</span></div>
+                <div class="bld-node-h"><span class="bld-node-num">${i + 1}</span><${Avatar} role=${roleFor(agentOf(s))} src=${srcFor(agentOf(s))} size=${26} crop="head"/><${Select} value=${agentOf(s)} options=${agentOpts} onChange=${(v) => patchStep(i, { agent: v })} btnClass="bld-agentsel" trigger=${(c) => html`<span class="bld-node-name">${c ? c.label : labelFor(agentOf(s), agentOpts)}</span><${Icon} name="chevdown" size=${12} cls="bld-agentsel-c"/>`}/></div>
                 <div class="bld-node-task">${(s.instruction || "").split("\n")[0] || html`<span class="ph">describe this step…</span>`}</div>
                 <div class="bld-node-tags">${(s.skills || []).length ? html`<span class="t skill"><${Icon} name="sparkles" size=${10}/>${s.skills.length}</span>` : null}${s.model ? html`<span class="t"><${ProviderLogo} name="claude" size=${10}/></span>` : null}${g ? html`<span class=${"t " + (g.condition === "humanApproval" ? "approve" : g.route && g.route.startsWith("loop") ? "loop" : "stop")}>${g.condition === "humanApproval" ? html`<${Icon} name="hourglass" size=${10}/> approval` : g.route && g.route.startsWith("loop") ? html`<${Icon} name="refresh" size=${10}/> loop` : html`<${Icon} name="stop" size=${10}/> stop`}</span>` : null}</div>
                 ${hrow("post")}
@@ -296,8 +296,6 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
             </div>
             <button class="iconbtn" title="Remove step" onClick=${() => removeStep(step)} disabled=${steps.length <= 1}><${Icon} name="trash" size=${15}/></button>
           </div>
-          <label class="bld-lbl">Agent</label>
-          <${Select} value=${agentOf(cur)} options=${agentOpts} onChange=${(v) => patchStep(step, { agent: v })}/>
           <label class="bld-lbl">Special instructions <span class="bld-hint">(optional)</span></label>
           <textarea class="bld-ta" rows="3" placeholder=${"Leave blank to use " + labelFor(agentOf(cur), agentOpts) + "’s default task. Add only extra/override instructions for this step."} value=${cur.instruction} onInput=${(e) => patchStep(step, { instruction: e.target.value })}></textarea>
           <label class="bld-lbl">Model</label>
