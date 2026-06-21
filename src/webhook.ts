@@ -27,6 +27,8 @@ import { githubOAuthClientId, githubOAuthToken, githubIdentity } from "./creds.j
 import { binaryAvailable } from "./runners/registry.js";
 import { installSpec, installCli, RUNNER_PACKAGES } from "./runners/install.js";
 import { parseLegacyStatus, withStatus, setBlocked } from "./state.js";
+import { runOrchestratorChat } from "./agents/orchestrator-chat.js";
+import { listOrchThread, clearOrchThread, setByAgent } from "./store.js";
 import { getIssueBudget, setIssueBudget } from "./budget.js";
 import { renderShell } from "./shell.js";
 import { addLabel, removeLabel } from "./github.js";
@@ -771,6 +773,13 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         return;
       }
 
+      if (url === "/orch") {
+        const q = new URLSearchParams((req.url ?? "").split("?")[1] ?? "");
+        const repo = q.get("repo") ?? "";
+        if (!repo) return void res.writeHead(400).end("{}");
+        return void res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ thread: listOrchThread(repo, 200) }));
+      }
+
       // Live status dashboard (client fetches /data + /events). No-store so a redeploy's new
       // UI shows up immediately instead of the browser serving a stale cached page.
       res.writeHead(200, {
@@ -875,7 +884,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
     }
 
     // Dashboard actions (auth required), not GitHub webhooks.
-    if (["/archive", "/comment", "/comment-edit", "/run-checks", "/merge", "/close", "/close-not-planned", "/create-pr", "/delete", "/resume", "/stop", "/fix", "/auto", "/start", "/new-issue", "/approve", "/audit", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude", "/model-override", "/issue-budget", "/agent-def-save", "/agent-def-delete", "/skill-save", "/skill-delete", "/skill-import", "/hook-save", "/hook-delete", "/analyzer-run", "/refresh", "/refresh-issue", "/cancel", "/install-cli", "/gh-connect", "/gh-connect-poll", "/gh-disconnect", "/workflow-save", "/workflow-delete"].includes(path)) {
+    if (["/archive", "/comment", "/comment-edit", "/run-checks", "/merge", "/close", "/close-not-planned", "/create-pr", "/delete", "/resume", "/stop", "/fix", "/auto", "/start", "/new-issue", "/approve", "/audit", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude", "/model-override", "/issue-budget", "/agent-def-save", "/agent-def-delete", "/skill-save", "/skill-delete", "/skill-import", "/hook-save", "/hook-delete", "/analyzer-run", "/refresh", "/refresh-issue", "/cancel", "/install-cli", "/gh-connect", "/gh-connect-poll", "/gh-disconnect", "/workflow-save", "/workflow-delete", "/orch-chat", "/orch-handoff", "/orch-clear"].includes(path)) {
       const actor = userFromReq(req);
       if (!actor) return void res.writeHead(401, { "content-type": "application/json" }).end('{"error":"auth required"}');
       void readBody(req).then(async (body) => {
@@ -1462,6 +1471,56 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           const label = p.name || fname;
           const md = isImage ? `![${label}](${localUrl})` : `[📎 ${label}](${localUrl})`;
           return ok(JSON.stringify({ url: localUrl, md, isImage }));
+        }
+        if (path === "/orch-chat") {
+          // One turn of the repo Orchestrator chat. DB-first: the thread lives in orch_msg.
+          const text = (p.body ?? "").trim();
+          if (!repo) return res.writeHead(400).end(JSON.stringify({ error: "repo required" }));
+          if (!text) return res.writeHead(400).end(JSON.stringify({ error: "empty message" }));
+          try {
+            const r = await runOrchestratorChat(repo, text);
+            return ok(JSON.stringify({ ok: true, reply: r.reply, proposal: r.proposal, thread: listOrchThread(repo, 200) }));
+          } catch (err) {
+            return res.writeHead(500).end(JSON.stringify({ error: `Orchestrator failed — ${(err as Error).message}` }));
+          }
+        }
+        if (path === "/orch-clear") {
+          if (!repo) return res.writeHead(400).end("{}");
+          clearOrchThread(repo);
+          return ok();
+        }
+        if (path === "/orch-handoff") {
+          // Confirmed handoff: create the proposed issues as PLANNED + by-agent (user approves each
+          // and presses Start). DB-first markers; GitHub is only the mirror.
+          if (!repo) return res.writeHead(400).end(JSON.stringify({ error: "repo required" }));
+          if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) return res.writeHead(400).end(JSON.stringify({ error: `Bad repo "${repo}"` }));
+          const ph = p as { workflow?: string; issues?: Array<{ title?: string; scope?: string }> };
+          const wf = (ph.workflow ?? "full-build");
+          const HANDLE: Record<string, string> = { "quick-fix": "@quickfix", "full-build": "@build", "plan-only": "@planonly", "split": "@split" };
+          const handle = HANDLE[wf] ?? "@build";
+          const issues = Array.isArray(ph.issues) ? ph.issues : [];
+          if (!issues.length) return res.writeHead(400).end(JSON.stringify({ error: "no issues to create" }));
+          const userTok = ghUserToken();
+          if (!userTok) return res.writeHead(409).end(JSON.stringify({ error: "Add your GitHub token in Settings → credentials so the agency can create issues." }));
+          const created: Array<{ number: number; title: string; url: string }> = [];
+          try {
+            for (let n = 0; n < issues.length; n++) {
+              const it = issues[n];
+              const title = (it.title ?? "").trim();
+              if (!title) continue;
+              const pos = issues.length > 1 ? `\n\n— Part ${n + 1} of ${issues.length}.` : "";
+              const body = `${handle} ${(it.scope ?? "").trim()}${pos}\n\nProposed by the 🧭 Orchestrator from a chat. Review and press ▶ Start when ready.`;
+              const c = await createIssue(repo, title, body, userTok);
+              if (!c.number) continue;
+              await addLabel(repo, c.number, "agency:planned").catch(() => {});
+              recordIssueStatus(repo, c.number, withStatus("planned"), { title });
+              setByAgent(repo, c.number, true);
+              created.push({ number: c.number, title, url: c.url });
+            }
+            return ok(JSON.stringify({ ok: true, created }));
+          } catch (err) {
+            return res.writeHead(500).end(JSON.stringify({ error: `Couldn't create issues — ${(err as Error).message}` }));
+          }
         }
         if (path === "/new-issue") {
           // Create a new issue (authored by you). start=true → begin immediately; otherwise it

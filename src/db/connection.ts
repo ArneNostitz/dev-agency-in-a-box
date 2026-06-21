@@ -202,6 +202,12 @@ export function getDb(): DatabaseSync | null {
         id TEXT PRIMARY KEY, repo TEXT, number INTEGER, name TEXT, mime TEXT,
         bytes BLOB NOT NULL, size INTEGER, created_at TEXT
       );
+      CREATE TABLE IF NOT EXISTS orch_msg (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        repo TEXT NOT NULL, role TEXT NOT NULL, text TEXT NOT NULL,
+        meta TEXT, created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS orch_msg_repo ON orch_msg (repo, id);
     `);
     // Migrations for older databases (ALTER fails harmlessly if the column already exists).
     for (const sql of [
