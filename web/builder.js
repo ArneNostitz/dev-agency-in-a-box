@@ -107,6 +107,15 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
     const id = (base.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "wf") + "-copy-" + Date.now().toString(36).slice(-4);
     api("/workflow-save", { workflow: { id, name: base + " (copy)", trigger: "@" + id, steps: w.steps || [], gates: w.gates || [], hooks: w.hooks || [] } }).then(() => { toast("Duplicated"); reload && reload(); }).catch(() => toast("Couldn’t duplicate", "error"));
   }
+  function duplicateAgent(a) {
+    const base = (a.name || "agent").replace(/-copy.*$/, "");
+    const name = (base + "-copy-" + Date.now().toString(36).slice(-3)).replace(/[^\w-]/g, "");
+    api("/agent-def-save", { agentDef: { name, handle: "@" + name, mode: a.mode, model: a.model, tools: a.tools, persona: a.persona, defaultTask: a.defaultTask, avatar: a.avatar, pushesGithub: a.pushesGithub !== false } }).then(() => { toast("Duplicated"); reload && reload(); }).catch(() => toast("Couldn’t duplicate", "error"));
+  }
+  function delAgent(a) {
+    if (!window.confirm("Delete agent " + a.name + "?")) return;
+    api("/agent-def-delete", { agentName: a.name }).then(() => { toast("Deleted"); reload && reload(); }).catch(() => toast("Couldn’t delete", "error"));
+  }
   function delWf(w) {
     if (!window.confirm("Delete " + (w.name || "workflow") + "?")) return;
     api("/workflow-delete", { workflowId: w.id }).then(() => { toast("Deleted"); reload && reload(); }).catch(() => toast("Couldn’t delete", "error"));
@@ -139,7 +148,21 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
             <div class="bld-card-meta">${(w.steps || []).length} step${(w.steps || []).length === 1 ? "" : "s"}${(w.gates || []).length ? ` · ${w.gates.length} gate${w.gates.length === 1 ? "" : "s"}` : ""}</div>
           </div>`)}
         </div>
+
+        <div class="bld-sec-head"><span>Agents</span><button class="btn" onClick=${() => setEditAgent("__new__")}><${Icon} name="plus" size=${14}/> New agent</button></div>
+        <div class="bld-grid">
+          ${(data && data.agentDefs || []).length === 0 ? html`<div class="bld-empty sm">No custom agents yet. The built-in roles (planner/developer/…) are always available.</div>` : null}
+          ${(data && data.agentDefs || []).map((a) => html`<div class="bld-card agent" key=${a.name} onClick=${() => setEditAgent(a.handle || "@" + a.name)}>
+            <div class="bld-card-h"><${Avatar} role=${a.name} src=${a.avatar} size=${30} crop="head"/><span class="bld-card-acts" onClick=${(e) => e.stopPropagation()}>
+              <button class="iconbtn-sm tip" data-tip="Duplicate" onClick=${() => duplicateAgent(a)}><${Icon} name="copy" size=${14}/></button>
+              <button class="iconbtn-sm tip danger" data-tip="Delete" onClick=${() => delAgent(a)}><${Icon} name="trash" size=${14}/></button>
+            </span></div>
+            <div class="bld-card-name">${a.name}</div>
+            <div class="bld-card-meta">${a.handle || "@" + a.name} · ${a.mode || "repo"}</div>
+          </div>`)}
+        </div>
       </div>
+      ${editAgent ? html`<${AgentModal} data=${data} which=${editAgent} onClose=${() => setEditAgent(null)} reload=${reload}/>` : null}
     </div>`;
   }
 

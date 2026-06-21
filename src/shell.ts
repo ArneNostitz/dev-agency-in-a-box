@@ -610,6 +610,8 @@ textarea{resize:vertical;min-height:64px}
 .bld-chip button:hover{opacity:1}
 /* list */
 .bld-listwrap{flex:1;overflow-y:auto;padding:20px}
+.bld-sec-head{display:flex;align-items:center;justify-content:space-between;max-width:920px;margin:26px auto 12px;font-size:15px;font-weight:600}
+.bld-card.agent .bld-card-h{margin-bottom:9px}
 .bld-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;max-width:920px;margin:0 auto}
 .bld-card{text-align:left;border:1px solid var(--line);background:var(--surface);border-radius:14px;padding:14px;cursor:pointer;transition:border-color .12s,box-shadow .12s}
 .bld-card:hover{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-weak)}
