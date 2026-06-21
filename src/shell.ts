@@ -563,7 +563,9 @@ textarea{resize:vertical;min-height:64px}
 .bld-node{cursor:grab}
 .bld-node:active{cursor:grabbing}
 .bld-node.dragging{opacity:.4}
-.bld-grip{flex:0 0 auto;color:var(--ink-3);display:inline-flex;cursor:grab;margin-left:-2px}
+.bld-grip{position:absolute;top:6px;right:6px;color:var(--ink-3);display:inline-flex;cursor:grab;padding:2px;border-radius:5px}
+.bld-node:hover .bld-grip{color:var(--ink-2)}
+.bld-grip:hover{background:var(--surface-2)}
 .bld-grip:hover{color:var(--ink-2)}
 .bld-drop{position:absolute;height:3px;border-radius:3px;background:var(--accent);box-shadow:0 0 0 3px var(--accent-weak);z-index:3;pointer-events:none}
 .bld-node-name{font-weight:600;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -592,8 +594,9 @@ textarea{resize:vertical;min-height:64px}
 .bld-insp-name{font-weight:600;font-size:14px}
 .bld-link{border:none;background:none;color:var(--accent);font-size:11.5px;cursor:pointer;padding:0}
 .bld-lbl{display:block;font-size:11px;font-weight:600;color:var(--ink-3);text-transform:uppercase;letter-spacing:.03em;margin:12px 0 6px}
-.bld-ta{width:100%;border:1px solid var(--line);border-radius:9px;background:var(--bg);color:var(--ink);font:13px/1.5 inherit;padding:8px;resize:vertical;box-sizing:border-box}
-.bld-num{width:100%;border:1px solid var(--line);border-radius:9px;background:var(--bg);color:var(--ink);font:13px inherit;padding:7px 9px;box-sizing:border-box}
+.bld-ta{width:100%;border:1px solid var(--line);border-radius:9px;background:var(--bg);color:var(--ink);font-family:inherit;font-size:13.5px;line-height:1.5;padding:9px 10px;resize:vertical;box-sizing:border-box}
+.bld-ta:focus,.bld-num:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-weak)}
+.bld-num{width:100%;border:1px solid var(--line);border-radius:9px;background:var(--bg);color:var(--ink);font-family:inherit;font-size:13.5px;padding:9px 10px;box-sizing:border-box}
 .agm-top{display:flex;gap:14px;align-items:flex-start;margin-bottom:6px}
 .agm-avatar{position:relative;flex:0 0 auto;width:56px;height:56px;border-radius:50%;overflow:hidden;cursor:pointer;border:1px solid var(--line);background:var(--surface-2);display:flex;align-items:center;justify-content:center}
 .agm-avatar img{width:100%;height:100%;object-fit:cover}
@@ -620,6 +623,10 @@ textarea{resize:vertical;min-height:64px}
 .bld-card:hover .bld-card-acts{opacity:1}
 .iconbtn-sm.danger:hover{background:var(--red-weak);color:var(--red)}
 .bld-trig{font-size:11.5px;color:var(--accent);background:var(--accent-weak);border-radius:999px;padding:2px 9px}
+.bld-trig.sk{color:var(--green);background:var(--green-weak);display:inline-flex;align-items:center;gap:3px}
+.bld-hk-phase{font-size:10.5px;font-weight:700;text-transform:uppercase;border-radius:5px;padding:2px 7px}
+.bld-hk-phase.pre{background:var(--accent-weak);color:var(--accent)}
+.bld-hk-phase.post{background:var(--green-weak);color:var(--green)}
 .bld-builtin{font-size:10.5px;color:var(--ink-3)}
 .bld-card-name{font-weight:600;font-size:15px;margin-bottom:9px}
 .bld-card-flow{display:flex;align-items:center;gap:3px;color:var(--ink-3);margin-bottom:8px;flex-wrap:wrap}

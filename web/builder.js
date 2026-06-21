@@ -29,6 +29,8 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
   const [step, setStep] = useState(0);           // selected step index
   const [saving, setSaving] = useState(false);
   const [editAgent, setEditAgent] = useState(null); // null | "__new__" | handle
+  const [editSkill, setEditSkill] = useState(null);
+  const [editHook, setEditHook] = useState(null);
   const canvasRef = useRef(null);
   const flowRef = useRef(null);
   const [drag, setDrag] = useState(null);
@@ -130,11 +132,12 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
     return html`<div class="bld">
       <div class="bld-top">
         <button class="iconbtn" onClick=${onClose} aria-label="Close"><${Icon} name="x" size=${18}/></button>
-        <div class="bld-title">Workflows</div>
-        <button class="btn primary" onClick=${() => open(null)}><${Icon} name="plus" size=${15}/> New workflow</button>
+        <div class="bld-title">Workflow & agent manager</div>
+        <div style="flex:1"></div>
       </div>
       <div class="bld-listwrap">
-        ${wfs.length === 0 ? html`<div class="bld-empty">No workflows yet. Create one — chain agents on a canvas.</div>` : null}
+        <div class="bld-sec-head"><span>Workflows</span><button class="btn" onClick=${() => open(null)}><${Icon} name="plus" size=${14}/> New workflow</button></div>
+        ${wfs.length === 0 ? html`<div class="bld-empty sm">No workflows yet.</div>` : null}
         <div class="bld-grid">
           ${wfs.map((w) => html`<div class="bld-card" key=${w.id} onClick=${() => open(w)}>
             <div class="bld-card-h"><span class="bld-trig">${w.trigger || "@" + w.id}</span>${w.builtin ? html`<span class="bld-builtin">built-in</span>` : null}
@@ -161,8 +164,36 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
             <div class="bld-card-meta">${a.handle || "@" + a.name} · ${a.mode || "repo"}</div>
           </div>`)}
         </div>
+
+        <div class="bld-sec-head"><span>Skills</span><span style="display:flex;gap:6px"><button class="btn" onClick=${importSkills}><${Icon} name="download" size=${14}/> Import</button><button class="btn" onClick=${() => setEditSkill("__new__")}><${Icon} name="plus" size=${14}/> New skill</button></span></div>
+        <div class="bld-grid">
+          ${(data && data.skills || []).length === 0 ? html`<div class="bld-empty sm">No skills yet — import a set or add one.</div>` : null}
+          ${(data && data.skills || []).map((sk) => html`<div class="bld-card" key=${sk.name} onClick=${() => setEditSkill(sk.name)}>
+            <div class="bld-card-h"><span class="bld-trig sk"><${Icon} name="sparkles" size=${12}/> skill</span><span class="bld-card-acts" onClick=${(e) => e.stopPropagation()}>
+              <button class="iconbtn-sm tip" data-tip="Duplicate" onClick=${() => { const name = (sk.name + "-copy").replace(/[^\w-]/g, ""); api("/skill-save", { skill: { name, description: sk.description, body: sk.body } }).then(() => { toast("Duplicated"); reload && reload(); }); }}><${Icon} name="copy" size=${14}/></button>
+              <button class="iconbtn-sm tip danger" data-tip="Delete" onClick=${() => { if (window.confirm("Delete skill " + sk.name + "?")) api("/skill-delete", { skillName: sk.name }).then(() => { toast("Deleted"); reload && reload(); }); }}><${Icon} name="trash" size=${14}/></button>
+            </span></div>
+            <div class="bld-card-name">${sk.name}</div>
+            <div class="bld-card-meta">${sk.description || "No description"}</div>
+          </div>`)}
+        </div>
+
+        <div class="bld-sec-head"><span>Hooks</span><button class="btn" onClick=${() => setEditHook("__new__")}><${Icon} name="plus" size=${14}/> New hook</button></div>
+        <div class="bld-grid">
+          ${(data && data.hooks || []).length === 0 ? html`<div class="bld-empty sm">No hooks yet.</div>` : null}
+          ${(data && data.hooks || []).map((h) => html`<div class="bld-card" key=${h.id} onClick=${() => setEditHook(String(h.id))}>
+            <div class="bld-card-h"><span class=${"bld-hk-phase " + (h.phase || "post")}>${h.phase || "post"}</span><span class="bld-card-acts" onClick=${(e) => e.stopPropagation()}>
+              <button class="iconbtn-sm tip" data-tip="Duplicate" onClick=${() => api("/hook-save", { hook: { target: (h.target || "hook") + " copy", phase: h.phase, command: h.command, enabled: true } }).then(() => { toast("Duplicated"); reload && reload(); })}><${Icon} name="copy" size=${14}/></button>
+              <button class="iconbtn-sm tip danger" data-tip="Delete" onClick=${() => { if (window.confirm("Delete this hook?")) api("/hook-delete", { hookId: h.id }).then(() => { toast("Deleted"); reload && reload(); }); }}><${Icon} name="trash" size=${14}/></button>
+            </span></div>
+            <div class="bld-card-name">${h.target || "hook"}</div>
+            <div class="bld-card-meta" style="font-family:ui-monospace,Menlo,monospace;font-size:11px">${(h.command || "").slice(0, 80)}</div>
+          </div>`)}
+        </div>
       </div>
       ${editAgent ? html`<${AgentModal} data=${data} which=${editAgent} onClose=${() => setEditAgent(null)} reload=${reload}/>` : null}
+      ${editSkill ? html`<${SkillModal} data=${data} which=${editSkill} onClose=${() => setEditSkill(null)} reload=${reload}/>` : null}
+      ${editHook ? html`<${HookModal} data=${data} which=${editHook} onClose=${() => setEditHook(null)} reload=${reload}/>` : null}
     </div>`;
   }
 
@@ -173,7 +204,8 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
   // hooks on the RIGHT; loop-backs arc up the right gutter and point into their target.
   const hookPhase = Object.fromEntries(hookOpts.map((h) => [h.value, h.phase]));
   const slots = steps.length + 1; // +1 for the "add step" tile
-  const flowW = PAD * 2 + SIDE + NODE_W + SIDE + LOOPM;
+  const nLoops = (form.gates || []).filter((g) => g.route && g.route.startsWith("loop")).length;
+  const flowW = PAD * 2 + SIDE + NODE_W + SIDE + LOOPM + nLoops * 16;
   const cx = PAD + SIDE + NODE_W / 2;        // node centre x
   const nodeY = (i) => PAD + i * (NODE_H + ROW_GAP);
   const midY = (i) => nodeY(i) + NODE_H / 2;
@@ -231,7 +263,7 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
             <defs><marker id="bld-arrow" markerWidth="9" markerHeight="9" refX="6.5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--line-2)"/></marker><marker id="bld-loop" markerWidth="9" markerHeight="9" refX="6.5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--amber)"/></marker></defs>
             ${steps.slice(0, -1).map((_, i) => html`<path key=${i} d=${downPath(i)} fill="none" stroke="var(--line-2)" stroke-width="2" marker-end="url(#bld-arrow)"/>`)}
             ${steps.length ? html`<path key="toadd" d=${downPath(steps.length - 1)} fill="none" stroke="var(--line)" stroke-width="2" stroke-dasharray="3 4"/>` : null}
-            ${(form.gates || []).filter((g) => g.route && g.route.startsWith("loop")).map((g, k) => { const t = Number(g.route.split(":")[1]); if (!Number.isFinite(t) || t === g.after || g.after >= steps.length || t >= steps.length) return null; const rx = C + NODE_W / 2, sy = midY(g.after), ty = midY(t), lx = C + NODE_W / 2 + LOOPM; const r = 9, up = ty < sy; const d = `M ${rx} ${sy} H ${lx - r} Q ${lx} ${sy} ${lx} ${sy + (up ? -r : r)} V ${ty + (up ? r : -r)} Q ${lx} ${ty} ${lx - r} ${ty} H ${rx}`; return html`<path key=${"loop" + k} d=${d} fill="none" stroke="var(--line-2)" stroke-width="2" stroke-dasharray="5 5" stroke-linejoin="round" marker-end="url(#bld-arrow)"/>`; })}
+            ${(form.gates || []).filter((g) => g.route && g.route.startsWith("loop")).map((g, k) => { const t = Number(g.route.split(":")[1]); if (!Number.isFinite(t) || t === g.after || g.after >= steps.length || t >= steps.length) return null; const rx = C + NODE_W / 2, sy = midY(g.after), ty = midY(t), lx = C + NODE_W / 2 + LOOPM + k * 16; const r = 9, up = ty < sy; const d = `M ${rx} ${sy} H ${lx - r} Q ${lx} ${sy} ${lx} ${sy + (up ? -r : r)} V ${ty + (up ? r : -r)} Q ${lx} ${ty} ${lx - r} ${ty} H ${rx}`; return html`<path key=${"loop" + k} d=${d} fill="none" stroke="var(--line-2)" stroke-width="2" stroke-dasharray="5 5" stroke-linejoin="round" marker-end="url(#bld-arrow)"/>`; })}
           </svg>
           ${drag != null && dropAt != null ? html`<div class="bld-drop" style=${"left:" + (C - NODE_W / 2 - SIDE) + "px;top:" + (PAD + dropAt * (NODE_H + ROW_GAP) - ROW_GAP / 2 - 1) + "px;width:" + (NODE_W + SIDE * 2) + "px"}></div>` : null}
           ${steps.map((s, i) => {
@@ -244,7 +276,7 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
               ${pre.length ? html`<div class="bld-hooks left" style=${"left:" + (left - SIDE) + "px;top:" + y + "px;width:" + (SIDE - 10) + "px;height:" + NODE_H + "px"}>${pre.map(hookChip)}</div>` : null}
               ${post.length ? html`<div class="bld-hooks right" style=${"left:" + (left + NODE_W + 10) + "px;top:" + y + "px;width:" + (SIDE - 10) + "px;height:" + NODE_H + "px"}>${post.map(hookChip)}</div>` : null}
               <div class=${"bld-node" + (i === step ? " sel" : "") + (i === drag ? " dragging" : "")} draggable=${true} onDragStart=${(e) => { setDrag(i); e.dataTransfer.effectAllowed = "move"; try { e.dataTransfer.setData("text/plain", String(i)); } catch (_) {} }} onDragEnd=${() => { setDrag(null); setDropAt(null); }} style=${"left:" + left + "px;top:" + y + "px;width:" + NODE_W + "px"} onClick=${() => setStep(i)}>
-                <div class="bld-node-h"><span class="bld-grip" title="Drag to reorder"><${Icon} name="dots" size=${13}/></span><span class="bld-node-num">${i + 1}</span><${Avatar} role=${roleFor(agentOf(s))} src=${srcFor(agentOf(s))} size=${26} crop="head"/><span class="bld-node-name">${labelFor(agentOf(s), agentOpts)}</span></div>
+                <span class="bld-grip" title="Drag to reorder"><${Icon} name="grip" size=${14}/></span><div class="bld-node-h"><span class="bld-node-num">${i + 1}</span><${Avatar} role=${roleFor(agentOf(s))} src=${srcFor(agentOf(s))} size=${26} crop="head"/><span class="bld-node-name">${labelFor(agentOf(s), agentOpts)}</span></div>
                 <div class="bld-node-task">${(s.instruction || "").split("\n")[0] || html`<span class="ph">describe this step…</span>`}</div>
                 <div class="bld-node-tags">${(s.skills || []).length ? html`<span class="t skill"><${Icon} name="sparkles" size=${10}/>${s.skills.length}</span>` : null}${s.model ? html`<span class="t"><${ProviderLogo} name="claude" size=${10}/></span>` : null}${g ? html`<span class=${"t " + (g.condition === "humanApproval" ? "approve" : g.route && g.route.startsWith("loop") ? "loop" : "stop")}>${g.condition === "humanApproval" ? html`<${Icon} name="hourglass" size=${10}/> approval` : g.route && g.route.startsWith("loop") ? html`<${Icon} name="refresh" size=${10}/> loop` : html`<${Icon} name="stop" size=${10}/> stop`}</span>` : null}</div>
               </div>
@@ -329,6 +361,42 @@ function AgentModal({ data, which, onClose, reload }) {
     <div class="agm-tools">${TOOLS.map((t) => html`<label class=${"agm-tool" + ((f.tools || []).includes(t) ? " on" : "")} key=${t}><input type="checkbox" checked=${(f.tools || []).includes(t)} onChange=${() => toggleTool(t)}/> ${t}</label>`)}</div>
     <label class="bld-lbl">Persona <span class="bld-hint">(markdown)</span></label>
     <textarea class="bld-ta" rows="6" value=${f.persona} placeholder="How this agent thinks and behaves…" onInput=${(e) => set("persona", e.target.value)}></textarea>
+  <//>`;
+}
+
+function SkillModal({ data, which, onClose, reload }) {
+  const skills = (data && data.skills) || [];
+  const existing = which === "__new__" ? null : skills.find((sk) => sk.name === which);
+  const [f, setF] = useState(existing ? Object.assign({}, existing) : { name: "", description: "", body: "" });
+  const [busy, setBusy] = useState(false);
+  const set = (k, v) => setF((o) => Object.assign({}, o, { [k]: v }));
+  function save() { if (!/^[\w-]+$/.test(f.name || "")) { toast("Name: letters/numbers/-/_"); return; } setBusy(true); api("/skill-save", { skill: { name: f.name, description: f.description, body: f.body } }).then(() => { toast("Skill saved"); reload && reload(); onClose(); }).catch((e) => toast((e && e.message) || "Couldn’t save", "error")).then(() => setBusy(false)); }
+  const footer = html`<button class="btn" onClick=${onClose}>Cancel</button><button class="btn primary" disabled=${busy} onClick=${save}>${busy ? html`<${Spinner} size=${14}/>` : "Save skill"}</button>`;
+  return html`<${Modal} title=${existing ? "Edit skill" : "New skill"} onClose=${onClose} footer=${footer}>
+    <label class="bld-lbl">Name</label>
+    <input class="bld-num" value=${f.name} disabled=${!!existing} placeholder="e.g. conventional-commits" onInput=${(e) => set("name", e.target.value.replace(/[^\w-]/g, "-"))}/>
+    <label class="bld-lbl">Description</label>
+    <input class="bld-num" value=${f.description} placeholder="What this skill does" onInput=${(e) => set("description", e.target.value)}/>
+    <label class="bld-lbl">Body <span class="bld-hint">(markdown — injected into the agent’s context)</span></label>
+    <textarea class="bld-ta" rows="8" value=${f.body} onInput=${(e) => set("body", e.target.value)}></textarea>
+  <//>`;
+}
+
+function HookModal({ data, which, onClose, reload }) {
+  const hooks = (data && data.hooks) || [];
+  const existing = which === "__new__" ? null : hooks.find((h) => String(h.id) === String(which));
+  const [f, setF] = useState(existing ? Object.assign({}, existing) : { target: "", phase: "post", command: "" });
+  const [busy, setBusy] = useState(false);
+  const set = (k, v) => setF((o) => Object.assign({}, o, { [k]: v }));
+  function save() { if (!(f.target || "").trim() || !(f.command || "").trim()) { toast("Name + command required"); return; } setBusy(true); api("/hook-save", { hook: Object.assign(existing ? { id: existing.id } : {}, { target: f.target.trim(), phase: f.phase, command: f.command, enabled: true }) }).then(() => { toast("Hook saved"); reload && reload(); onClose(); }).catch((e) => toast((e && e.message) || "Couldn’t save", "error")).then(() => setBusy(false)); }
+  const footer = html`<button class="btn" onClick=${onClose}>Cancel</button><button class="btn primary" disabled=${busy} onClick=${save}>${busy ? html`<${Spinner} size=${14}/>` : "Save hook"}</button>`;
+  return html`<${Modal} title=${existing ? "Edit hook" : "New hook"} onClose=${onClose} footer=${footer}>
+    <label class="bld-lbl">Name</label>
+    <input class="bld-num" value=${f.target} placeholder="e.g. format (prettier)" onInput=${(e) => set("target", e.target.value)}/>
+    <label class="bld-lbl">Phase</label>
+    <${Select} value=${f.phase} options=${[{ value: "pre", label: "pre — runs before the step" }, { value: "post", label: "post — runs after the step" }]} onChange=${(v) => set("phase", v)}/>
+    <label class="bld-lbl">Command <span class="bld-hint">(shell, runs in the repo)</span></label>
+    <textarea class="bld-ta" rows="3" style="font-family:ui-monospace,Menlo,monospace" value=${f.command} placeholder="npx prettier --write . || true" onInput=${(e) => set("command", e.target.value)}></textarea>
   <//>`;
 }
 
