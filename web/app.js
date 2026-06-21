@@ -1,6 +1,6 @@
 // Dev Agency dashboard — app module (split from app.js; Preact + htm, no build step).
 import { html, render, useState, useEffect, useRef } from "/web/vendor/standalone.mjs";
-import { Toasts, api, getJSON, md, setToastFn, toast, useIsDesktop } from "./core.js";
+import { Icon, Toasts, api, getJSON, md, setToastFn, toast, useIsDesktop } from "./core.js";
 import { Board, TabBar } from "./board.js";
 import { Composer, Detail } from "./detail.js";
 import { GithubTokensModal, ModelsModal, Settings } from "./settings.js";
@@ -9,6 +9,8 @@ import { SecretBanner, StatusLine, TopBar } from "./topbar.js";
 import { Usage } from "./usage.js";
 import { AgentEditor, SkillEditor } from "./agents.js";
 import { WorkflowBuilder } from "./builder.js";
+import { ProgressTable } from "./table.js";
+import { Orchestrator } from "./orch.js";
 
 
 // ---------- offline queue ----------
@@ -34,6 +36,8 @@ function App() {
   const [data, setData] = useState({ issues: [], repos: [], active: [], activity: [], session: {}, config: {}, auto: {}, autoRepos: {} });
   const [repoFilter, setRepoFilter] = useState(null);
   const [tab, setTab] = useState("planned");
+  const [view, setView] = useState(() => { try { return localStorage.getItem("view") || "list"; } catch (e) { return "list"; } });
+  const setViewP = (v) => { setView(v); try { localStorage.setItem("view", v); } catch (e) {} };
   const [openKey, setOpenKey] = useState(null); // "repo#number"
   const [sheet, setSheet] = useState(null); // "composer" | "settings"
   const [tip, setTip] = useState(null); // global fixed tooltip {text,x,y}
@@ -258,10 +262,23 @@ function App() {
       <${TopBar} working=${working} scanning=${data.scanning} env=${data.env} theme=${theme} setTheme=${setThemeP} onSettings=${() => setSheet("settings")} onUsage=${() => setSheet("usage")} onAgents=${() => setSheet("workflows")} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${load} auto=${data.auto || {}} autoRepos=${data.autoRepos || {}} setAuto=${act.setAuto}/>
       ${data.secretsHealth ? html`<${SecretBanner} h=${data.secretsHealth} onFix=${() => setSheet("settings")}/>` : null}
       <${StatusLine} working=${working} session=${data.session} spend=${data.spendToday} analyzer=${data.analyzer} reload=${load} offlineQ=${offlineQ} syncing=${syncing}/>
+      ${repos.length ? html`<div class="viewbar">
+        <div class="viewseg">
+          <button class=${view === "chat" ? "on" : ""} onClick=${() => setViewP("chat")}><${Icon} name="messages" size=${15}/> Chat</button>
+          <button class=${view === "list" ? "on" : ""} onClick=${() => setViewP("list")}><${Icon} name="layers" size=${15}/> List</button>
+          <button class=${view === "board" ? "on" : ""} onClick=${() => setViewP("board")}><${Icon} name="columns" size=${15}/> Board</button>
+        </div>
+      </div>` : null}
       <div class="content">
-        <${Board} issues=${shown} repos=${repos} repoFilter=${repoFilter} tab=${tab} isDesktop=${isDesktop} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onOpenChild=${openIssue} onAddRepo=${() => setSheet("addrepo")} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data}/>
+        ${view === "chat" && repos.length
+          ? html`<${Orchestrator} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${load} onOpenIssue=${openIssue}/>`
+          : view === "board"
+          ? html`<${Board} issues=${shown} repos=${repos} repoFilter=${repoFilter} tab=${tab} isDesktop=${isDesktop} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onOpenChild=${openIssue} onAddRepo=${() => setSheet("addrepo")} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data}/>`
+          : (repos.length
+            ? html`<${ProgressTable} issues=${shown} repos=${repos} repoFilter=${repoFilter} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data}/>`
+            : html`<${Board} issues=${shown} repos=${repos} repoFilter=${repoFilter} tab=${tab} isDesktop=${isDesktop} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onOpenChild=${openIssue} onAddRepo=${() => setSheet("addrepo")} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data}/>`)}
       </div>
-      ${!isDesktop && html`<${TabBar} issues=${shown} tab=${tab} setTab=${setTab}/>`}
+      ${!isDesktop && view === "board" && html`<${TabBar} issues=${shown} tab=${tab} setTab=${setTab}/>`}
       ${open && html`<div class="dscrim" onClick=${() => setOpenKey(null)}></div>`}
       ${open && html`<${Detail} key=${openKey} issue=${open} activity=${activity} act=${act} isDesktop=${isDesktop} startError=${detailError} onClose=${() => { setOpenKey(null); setDetailError(null); }} onOpenIssue=${openIssue} data=${data} isOnline=${isOnline} onQueueComment=${oqPush}/>`}
       ${sheet === "composer" && html`<${Composer} repos=${repos} repo=${composerRepo} setRepo=${setComposerRepo} onClose=${() => setSheet(null)} onCreate=${createIssue} data=${data}/>`}

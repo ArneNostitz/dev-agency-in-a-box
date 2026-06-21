@@ -708,6 +708,109 @@ textarea{resize:vertical;min-height:64px}
 .obchip small{display:block;font-weight:400;color:var(--ink-2);font-size:12px;margin-top:1px}
 .obchip .ck{margin-left:auto;color:var(--accent)}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+
+/* ── v4 view switcher ── */
+.viewseg{display:inline-flex;gap:2px;background:var(--surface-2);border:1px solid var(--line);border-radius:11px;padding:3px}
+.viewseg button{display:inline-flex;align-items:center;gap:6px;border:none;background:transparent;color:var(--ink-2);padding:6px 13px;border-radius:8px;font:13px inherit;font-weight:600;cursor:pointer}
+.viewseg button.on{background:var(--surface);color:var(--ink);box-shadow:var(--shadow)}
+.viewbar{display:flex;align-items:center;gap:10px;padding:10px 14px 0}
+/* ── v4 rich progress table ── */
+.ptable-wrap{padding:10px 14px 24px;max-width:100%;overflow-x:auto}
+.ptable-bar{display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+.pt-needsyou{display:inline-flex;align-items:center;gap:5px;color:var(--amber);font-size:12.5px;font-weight:600}
+.ptable{width:100%;border-collapse:separate;border-spacing:0;font-size:14px}
+.ptable thead th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-3);font-weight:600;padding:0 12px 8px}
+.ptable .pt-h-tl{width:34%}
+.prow{cursor:pointer}
+.prow>td{border-top:1px solid var(--line);padding:11px 12px;vertical-align:middle;background:var(--surface)}
+.prow:hover>td{background:var(--surface-2)}
+.prow-attention>td{box-shadow:inset 3px 0 0 var(--amber)}
+.prow-attention>td:first-child{box-shadow:inset 3px 0 0 var(--amber)}
+.pt-issue{max-width:0;width:42%}
+.pt-title-row{display:flex;align-items:center;gap:7px;min-width:0}
+.pt-av{display:inline-flex;flex:none}
+.pt-title{font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pt-byagent{flex:none;display:inline-flex;align-items:center;gap:3px;font-size:10.5px;font-weight:600;color:var(--accent);background:var(--accent-weak);border-radius:999px;padding:1px 7px}
+.pt-sub{color:var(--ink-3);font-size:12px;margin-top:2px;display:flex;align-items:center;gap:4px}
+.pt-pr{display:inline-flex;align-items:center;gap:3px}
+/* timeline */
+.tl{display:flex;align-items:center}
+.tl-nd{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;border:1.5px solid var(--line-2);color:var(--ink-3);background:var(--surface)}
+.tl-num{font-size:11px;font-weight:600}
+.tl-seg{width:20px;height:2px;background:var(--line-2)}
+.tl-seg.on{background:var(--green)}
+.tl-done{background:var(--green-weak);border-color:var(--green);color:var(--green)}
+.tl-running{background:var(--accent-weak);border-color:var(--accent);color:var(--accent);animation:tlpulse 1.4s ease-in-out infinite}
+.tl-queued{border-color:var(--accent);color:var(--accent);border-style:dashed}
+.tl-attention{background:var(--amber-weak);border-color:var(--amber);color:var(--amber)}
+.tl-pending{}
+@keyframes tlpulse{0%,100%{box-shadow:0 0 0 0 var(--accent-weak)}50%{box-shadow:0 0 0 4px var(--accent-weak)}}
+.tl-idle{color:var(--ink-3);font-size:12.5px;font-style:italic}
+.tl-epic{display:flex;align-items:center;gap:8px}
+.tl-epic-track{width:120px;height:6px;border-radius:999px;background:var(--surface-2);overflow:hidden}
+.tl-epic-fill{height:100%;background:var(--purple);border-radius:999px}
+.tl-epic-lbl{display:inline-flex;align-items:center;gap:4px;color:var(--ink-2);font-size:12px}
+/* status field */
+.pt-status{white-space:nowrap}
+.pstat{display:inline-flex;align-items:center;gap:5px;font-size:12.5px;font-weight:600;padding:3px 10px;border-radius:999px}
+.pstat-running{background:var(--accent-weak);color:var(--accent)}
+.pstat-attention{background:var(--amber-weak);color:var(--amber)}
+.pstat-ready{background:var(--green-weak);color:var(--green)}
+.pstat-queued{background:var(--surface-2);color:var(--ink-2)}
+.pstat-planned{background:var(--surface-2);color:var(--ink-2)}
+.pstat-done{background:var(--surface-2);color:var(--ink-3)}
+.pt-when{display:block;color:var(--ink-3);font-size:11px;margin-top:3px}
+.pt-act{text-align:right;white-space:nowrap}
+@media(max-width:760px){
+  .ptable .pt-h-tl,.pt-timeline{display:none}
+  .pt-issue{width:auto}
+  .pt-act-lbl{display:none}
+}
+
+/* ── v4 Orchestrator chat ── */
+.orch{display:flex;flex-direction:column;height:calc(100vh - 220px);min-height:420px;max-width:860px;margin:0 auto;border:1px solid var(--line);border-radius:16px;background:var(--surface);overflow:hidden}
+.orch-head{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line)}
+.orch-title{display:flex;align-items:center;gap:7px;font-weight:600;color:var(--ink)}
+.orch-repo{font-size:12px;font-weight:600;color:var(--accent);background:var(--accent-weak);border-radius:999px;padding:2px 9px}
+.orch-head .iconbtn{margin-left:auto}
+.orch-scroll{flex:1;overflow-y:auto;padding:16px 14px;display:flex;flex-direction:column;gap:14px}
+.orch-empty{margin:auto;text-align:center;max-width:440px;color:var(--ink-2)}
+.orch-empty .obki{width:54px;height:54px;border-radius:16px;background:var(--accent-weak);color:var(--accent);display:flex;align-items:center;justify-content:center;margin:0 auto 12px}
+.orch-empty .obh{font-size:17px;font-weight:600;color:var(--ink);margin-bottom:6px}
+.orch-empty .obsub{font-size:14px;line-height:1.6}
+.obub{display:flex;gap:10px;max-width:100%}
+.obub-av{flex:none;width:26px;height:26px;border-radius:50%;overflow:hidden}
+.obub-body{min-width:0;max-width:88%}
+.obub-user{flex-direction:row-reverse}
+.obub-user .obub-body{max-width:80%}
+.obub-txt{padding:10px 13px;border-radius:14px;font-size:14.5px;line-height:1.6;word-wrap:break-word;overflow-wrap:anywhere}
+.obub-orch .obub-txt{background:var(--surface-2);color:var(--ink);border-top-left-radius:4px}
+.obub-user .obub-txt{background:var(--accent);color:#fff;border-top-right-radius:4px;white-space:pre-wrap}
+.obub-txt p{margin:0 0 8px}.obub-txt p:last-child{margin:0}
+.obub-txt pre{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;overflow:auto;font-size:12.5px}
+.obub-txt code{font-family:ui-monospace,Menlo,monospace;font-size:.92em}
+.obub-think{color:var(--ink-2);display:inline-flex;align-items:center;gap:7px}
+/* proposal card */
+.oprop{margin-top:10px;border:1px solid var(--accent);background:var(--accent-weak);border-radius:14px;padding:12px 14px}
+.oprop-h{display:flex;align-items:center;gap:6px;font-weight:600;color:var(--accent);font-size:13.5px;margin-bottom:9px}
+.oprop-wf{display:flex;align-items:center;gap:8px;margin-bottom:9px}
+.oprop-wf label{font-size:12px;color:var(--ink-2);font-weight:600}
+.oprop-wf select{flex:1;border:1px solid var(--line);border-radius:9px;padding:6px 9px;font:13px inherit;background:var(--surface);color:var(--ink)}
+.oprop-list{margin:0 0 10px;padding-left:20px;display:flex;flex-direction:column;gap:6px}
+.oprop-list li{font-size:13.5px;color:var(--ink)}
+.oprop-t{font-weight:600;display:block}
+.oprop-s{display:block;color:var(--ink-2);font-size:12.5px}
+.oprop-actions{display:flex}
+.oprop-foot{font-size:11.5px;color:var(--ink-2);margin-top:8px}
+.oprop-done{border-color:var(--green);background:var(--green-weak)}
+.oprop-done .oprop-h{color:var(--green)}
+.oprop-created{display:flex;flex-direction:column;gap:4px;margin-bottom:6px}
+.oprop-link{text-align:left;border:none;background:transparent;color:var(--accent);font-size:13px;cursor:pointer;padding:2px 0;font-weight:500}
+.orch-compose{display:flex;gap:8px;align-items:flex-end;padding:10px 12px;border-top:1px solid var(--line);background:var(--surface)}
+.orch-compose textarea{flex:1;resize:none;border:1px solid var(--line);border-radius:12px;padding:10px 12px;font:14.5px inherit;background:var(--bg);color:var(--ink);max-height:160px;line-height:1.5}
+.orch-compose textarea:focus{outline:none;border-color:var(--accent)}
+.orch-send{width:42px;height:42px;padding:0;flex:none;border-radius:12px;display:inline-flex;align-items:center;justify-content:center}
+@media(max-width:760px){.orch{height:calc(100vh - 190px);border-radius:0;border-left:none;border-right:none}.obub-body{max-width:92%}}
 </style>
 </head>
 <body>

@@ -49,6 +49,8 @@ async function mountApp(opts = {}) {
   if (opts.localStorage) {
     for (const [k, v] of Object.entries(opts.localStorage)) window.localStorage.setItem(k, JSON.stringify(v));
   }
+  // v4: the top-level view (list|board|chat) is read raw from localStorage at mount.
+  if (opts.view) window.localStorage.setItem("view", opts.view);
 
   global.fetch = opts.fetch || (async () => ({ ok: true, json: async () => ({}), text: async () => "" }));
 
@@ -58,7 +60,7 @@ async function mountApp(opts = {}) {
   const webDir = join(HERE, "..", "web");
   const vendorUrl = pathToFileURL(join(webDir, "vendor", "standalone.mjs")).href;
   const tmpDir = mkdtempSync(join(tmpdir(), "daui-"));
-  for (const f of ["core", "board", "detail", "settings", "onboarding", "topbar", "usage", "agents", "workflows", "builder", "app"]) {
+  for (const f of ["core", "board", "detail", "settings", "onboarding", "topbar", "usage", "agents", "workflows", "builder", "table", "orch", "app"]) {
     const src = readFileSync(join(webDir, f + ".js"), "utf8").split("/web/vendor/standalone.mjs").join(vendorUrl);
     writeFileSync(join(tmpDir, f + ".js"), src);
   }
@@ -103,6 +105,7 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
   };
 
   const { window, dom, root, mod } = await mountApp({
+    view: "board",
     fetch: async (u) => ({ ok: true, json: async () => route(u), text: async () => "" }),
   });
 
@@ -199,6 +202,43 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
   await tick(80);
   assert.match(root.innerHTML, /Conversation/, "detail opens with conversation pane");
 
+  dom.window.close();
+});
+
+test("v4: default List view renders the rich progress table + timeline; Chat view mounts", async () => {
+  const SAMPLE = {
+    user: { id: 1, username: "arne", role: "admin" }, authEnabled: true, onboarded: true,
+    repos: ["acme/app"], auto: { resume: "", merge: "" }, autoRepos: { "acme/app": {} },
+    github: { connected: true }, workflows: [], active: [], runs: [], activity: [],
+    spendToday: { costUsd: 0 }, session: { tokens: 0, budget: 0 }, config: {},
+    issues: [
+      { repo: "acme/app", number: 1, title: "A planned task", state: "planned", byAgent: true, updated_at: new Date().toISOString(), auto: {} },
+      { repo: "acme/app", number: 2, title: "Running dev", state: "working", role: "developer", running: true, updated_at: new Date().toISOString(), auto: {} },
+    ],
+  };
+  const route = (u) => {
+    u = String(u);
+    if (u.includes("/data")) return SAMPLE;
+    if (u.includes("/orch")) return { thread: [] };
+    return {};
+  };
+  const { window, dom, root } = await mountApp({
+    view: "list",
+    fetch: async (u) => ({ ok: true, json: async () => route(u), text: async () => "" }),
+  });
+  await new Promise((r) => setTimeout(r, 150));
+  assert.match(root.innerHTML, /Workflow timeline/, "table header renders by default");
+  assert.match(root.innerHTML, /A planned task/, "planned row renders");
+  assert.match(root.innerHTML, /ptable/, "the rich progress table is the default list view");
+  assert.match(root.innerHTML, /Running/, "a working+running issue shows a Running status");
+
+  // Switch to Chat view via the view switcher → the Orchestrator panel mounts (chat compose).
+  const tick = (ms) => new Promise((r) => setTimeout(r, ms));
+  const chatBtn = Array.from(window.document.querySelectorAll(".viewseg button")).find((b) => /Chat/.test(b.textContent));
+  chatBtn.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await tick(120);
+  assert.match(root.innerHTML, /Orchestrator/, "Chat view mounts the Orchestrator panel");
+  assert.ok(window.document.querySelector(".orch-compose"), "orchestrator has a compose box");
   dom.window.close();
 });
 
