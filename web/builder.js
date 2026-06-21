@@ -4,7 +4,7 @@
 import { html, useState, useEffect, useRef } from "/web/vendor/standalone.mjs";
 import { Avatar, Icon, Modal, Select, ProviderLogo, defaultModelLogo, agentOptions, api, toast, readAttach, Spinner } from "./core.js";
 
-const NODE_W = 208, NODE_H = 96, ROW_GAP = 60, PAD = 28, SIDE = 96, LOOPM = 46;
+const NODE_W = 212, NODE_H = 132, ROW_GAP = 58, PAD = 28, SIDE = 70, LOOPM = 46;
 const STEP_ROLE = { "@plan": "planner", "@arch": "architect", "@dev": "developer", "@review": "reviewer", "@test": "tester" };
 const DEFAULT_TASK = { "@plan": "Produce a concrete build plan for this issue.", "@arch": "Turn the plan into a concrete technical design (no code).", "@dev": "Implement the plan; commit and open a PR.", "@review": "Review the PR against the plan and the codebase.", "@test": "Run the project\u2019s checks and fix any failures." };
 const ROUTES = [
@@ -241,11 +241,6 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
           <button class="bld-pill ghost" onClick=${importSkills}><${Icon} name="download" size=${13}/><span>Import from GitHub</span></button>
           <button class="bld-pill ghost" onClick=${() => onEditAgent && onEditAgent("skills")}><${Icon} name="plus" size=${13}/><span>Manage skills</span></button>
         </div>
-        <div class="bld-rail-sec">Step hooks ${cur ? html`<span class="bld-hint">→ ${labelFor(agentOf(cur), agentOpts)}</span>` : null}</div>
-        <div class="bld-pills">
-          ${hookOpts.length === 0 ? html`<div class="bld-empty sm">No hooks yet.</div>` : null}
-          ${hookOpts.map((h) => { const on = cur && (cur.hooks || []).includes(h.value); return html`<button class=${"bld-pill hook" + (on ? " on" : "")} key=${h.value} onClick=${() => cur && toggleChip(step, "hooks", h.value)}><span class=${"phase " + h.phase}>${h.phase}</span><span>${h.label}</span></button>`; })}
-        </div>
         <div class="bld-rail-sec">Workflow hooks <span class="bld-hint">whole run</span></div>
         <div class="bld-pills">
           ${hookOpts.length === 0 ? html`<div class="bld-empty sm">No hooks yet.</div>` : null}
@@ -269,16 +264,19 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
           ${steps.map((s, i) => {
             const y = nodeY(i), left = C - NODE_W / 2;
             const g = gateAfter(i);
-            const pre = (s.hooks || []).filter((h) => (hookPhase[h] || "pre") === "pre");
-            const post = (s.hooks || []).filter((h) => (hookPhase[h] || "pre") === "post");
-            const hookChip = (h) => { const ho = hookOpts.find((x) => x.value === h); return html`<span class="bld-hk" key=${h} title=${ho ? ho.label : h}><span class=${"phase " + (hookPhase[h] || "pre")}>${(hookPhase[h] || "pre")}</span>${ho ? ho.label : h}</span>`; };
+            const hrow = (phase) => { const on = (s.hooks || []).filter((h) => (hookPhase[h] || "pre") === phase); const avail = hookOpts.filter((h) => h.phase === phase && !(s.hooks || []).includes(h.value)); return html`<div class=${"bld-hrow " + phase} onClick=${(e) => e.stopPropagation()}>
+                <span class="bld-hlbl">${phase}</span>
+                ${on.map((h) => { const ho = hookOpts.find((x) => x.value === h); return html`<span class="bld-hk" key=${h} title=${ho ? ho.label : h}>${ho ? ho.label : h}<button onClick=${() => toggleChip(i, "hooks", h)} aria-label="remove"><${Icon} name="x" size=${9}/></button></span>`; })}
+                <${Select} value="" options=${avail} menuAlign=${phase === "post" ? "right" : null} onChange=${(v) => v && toggleChip(i, "hooks", v)} btnClass="bld-hadd" trigger=${() => html`<${Icon} name="plus" size=${11}/>`}/>
+              </div>`; };
             return html`<div key=${"n" + i}>
-              ${pre.length ? html`<div class="bld-hooks left" style=${"left:" + (left - SIDE) + "px;top:" + y + "px;width:" + (SIDE - 10) + "px;height:" + NODE_H + "px"}>${pre.map(hookChip)}</div>` : null}
-              ${post.length ? html`<div class="bld-hooks right" style=${"left:" + (left + NODE_W + 10) + "px;top:" + y + "px;width:" + (SIDE - 10) + "px;height:" + NODE_H + "px"}>${post.map(hookChip)}</div>` : null}
               <div class=${"bld-node" + (i === step ? " sel" : "") + (i === drag ? " dragging" : "")} draggable=${true} onDragStart=${(e) => { setDrag(i); e.dataTransfer.effectAllowed = "move"; try { e.dataTransfer.setData("text/plain", String(i)); } catch (_) {} }} onDragEnd=${() => { setDrag(null); setDropAt(null); }} style=${"left:" + left + "px;top:" + y + "px;width:" + NODE_W + "px"} onClick=${() => setStep(i)}>
-                <span class="bld-grip" title="Drag to reorder"><${Icon} name="grip" size=${14}/></span><div class="bld-node-h"><span class="bld-node-num">${i + 1}</span><${Avatar} role=${roleFor(agentOf(s))} src=${srcFor(agentOf(s))} size=${26} crop="head"/><span class="bld-node-name">${labelFor(agentOf(s), agentOpts)}</span></div>
+                <span class="bld-grip" title="Drag to reorder"><${Icon} name="grip" size=${14}/></span>
+                ${hrow("pre")}
+                <div class="bld-node-h"><span class="bld-node-num">${i + 1}</span><${Avatar} role=${roleFor(agentOf(s))} src=${srcFor(agentOf(s))} size=${26} crop="head"/><span class="bld-node-name">${labelFor(agentOf(s), agentOpts)}</span></div>
                 <div class="bld-node-task">${(s.instruction || "").split("\n")[0] || html`<span class="ph">describe this step…</span>`}</div>
                 <div class="bld-node-tags">${(s.skills || []).length ? html`<span class="t skill"><${Icon} name="sparkles" size=${10}/>${s.skills.length}</span>` : null}${s.model ? html`<span class="t"><${ProviderLogo} name="claude" size=${10}/></span>` : null}${g ? html`<span class=${"t " + (g.condition === "humanApproval" ? "approve" : g.route && g.route.startsWith("loop") ? "loop" : "stop")}>${g.condition === "humanApproval" ? html`<${Icon} name="hourglass" size=${10}/> approval` : g.route && g.route.startsWith("loop") ? html`<${Icon} name="refresh" size=${10}/> loop` : html`<${Icon} name="stop" size=${10}/> stop`}</span>` : null}</div>
+                ${hrow("post")}
               </div>
             </div>`;
           })}
@@ -305,7 +303,7 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
           <label class="bld-lbl">Model</label>
           <${Select} value=${cur.model || ""} options=${[{ value: "", label: "Default", logo: defaultModelLogo(data) }].concat(modelOpts(data))} onChange=${(v) => patchStep(step, { model: v })}/>
           ${(cur.skills || []).length ? html`<label class="bld-lbl">Skills</label><div class="bld-chips">${cur.skills.map((s) => html`<span class="bld-chip skill" key=${s}>${s}<button onClick=${() => toggleChip(step, "skills", s)} aria-label="remove"><${Icon} name="x" size=${10}/></button></span>`)}</div>` : null}
-          ${(cur.hooks || []).length ? html`<label class="bld-lbl">Hooks</label><div class="bld-chips">${cur.hooks.map((h) => { const ho = hookOpts.find((x) => x.value === h); return html`<span class="bld-chip hook" key=${h}>${ho ? ho.phase + " · " + ho.label : h}<button onClick=${() => toggleChip(step, "hooks", h)} aria-label="remove"><${Icon} name="x" size=${10}/></button></span>`; })}</div>` : null}
+
           ${html`
             <label class="bld-lbl">When this step finishes</label>
             <${Select} value=${(() => { const g = gateAfter(step); return !g ? "continue" : g.condition === "humanApproval" ? "approve" : g.route && g.route.startsWith("loop") ? "loop" : "stop"; })()} options=${[{ value: "continue", label: "Continue to next →" }, { value: "approve", label: "⏸ Pause for my approval" }, { value: "loop", label: "Loop back if…" }, { value: "stop", label: "Stop the workflow" }]} onChange=${(v) => v === "continue" ? setGate(step, { route: "continue", condition: "review:changes" }) : v === "approve" ? setGate(step, { condition: "humanApproval", route: "continue" }) : v === "stop" ? setGate(step, { route: "stop", condition: "review:changes" }) : setGate(step, { route: "loop:" + Math.max(0, step - 1), condition: ((gateAfter(step) || {}).condition === "humanApproval" ? "review:changes" : (gateAfter(step) || {}).condition) || "review:changes" })}/>
