@@ -255,7 +255,7 @@ function App() {
 
   return html`
     <div class="app">
-      <${TopBar} working=${working} scanning=${data.scanning} env=${data.env} theme=${theme} setTheme=${setThemeP} onSettings=${() => setSheet("settings")} onUsage=${() => setSheet("usage")} onAgents=${() => setSheet("agents")} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${load} auto=${data.auto || {}} autoRepos=${data.autoRepos || {}} setAuto=${act.setAuto}/>
+      <${TopBar} working=${working} scanning=${data.scanning} env=${data.env} theme=${theme} setTheme=${setThemeP} onSettings=${() => setSheet("settings")} onUsage=${() => setSheet("usage")} onAgents=${() => setSheet("workflows")} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${load} auto=${data.auto || {}} autoRepos=${data.autoRepos || {}} setAuto=${act.setAuto}/>
       ${data.secretsHealth ? html`<${SecretBanner} h=${data.secretsHealth} onFix=${() => setSheet("settings")}/>` : null}
       <${StatusLine} working=${working} session=${data.session} spend=${data.spendToday} analyzer=${data.analyzer} reload=${load} offlineQ=${offlineQ} syncing=${syncing}/>
       <div class="content">

@@ -49,3 +49,38 @@ export function listHooks(target?: string, phase?: "pre" | "post"): Hook[] {
 }
 export function deleteHook(id: number): void { const d = getDb(); if (!d) return; try { d.prepare(`DELETE FROM hook WHERE id = ?`).run(id); } catch { /* best effort */ }
 }
+
+/**
+ * Seed a widely-useful baseline library of skills + hooks the first time (idempotent — only seeds
+ * when the tables are empty, so the user's own edits/imports are never clobbered). Users extend it,
+ * but get a good starting set out of the box.
+ */
+export function seedLibrary(): void {
+  const d = getDb(); if (!d) return;
+  try {
+    if (listSkills().length === 0) {
+      const skills: Array<{ name: string; description: string; body: string }> = [
+        { name: "conventional-commits", description: "Write commits in Conventional Commits style.", body: "Write every commit as `type(scope): summary` (feat, fix, docs, refactor, test, chore). Imperative mood, ≤72-char subject, body explains the why. One logical change per commit." },
+        { name: "clear-pr", description: "Open PRs with a clear, reviewable description.", body: "Open the PR with: a one-line summary, **What** changed, **Why**, and **How to test**. Keep the diff focused; call out anything risky or out of scope." },
+        { name: "test-coverage", description: "Add or extend tests for every change.", body: "For each behavioural change, add or extend a test that fails before and passes after. Prefer the project's existing test framework and conventions. Don't lower coverage." },
+        { name: "security-review", description: "Check changes for common security issues.", body: "Before finishing, scan the diff for: injection (SQL/shell/HTML), missing authz checks, secrets committed to the repo, unsafe deserialization, and unvalidated input. Flag anything suspicious." },
+        { name: "accessibility", description: "Keep UI changes accessible.", body: "For UI changes: ensure semantic HTML, labels/alt text, keyboard focus, sufficient colour contrast, and ARIA only where needed. Never rely on colour alone to convey state." },
+        { name: "update-docs", description: "Keep docs in sync with behaviour.", body: "When public behaviour, flags, env vars, or commands change, update the README/docs in the same PR. Add a short note to the changelog if the repo keeps one." },
+        { name: "small-diffs", description: "Prefer the smallest correct change.", body: "Make the smallest change that correctly solves the issue. Reuse existing code and patterns, avoid drive-by refactors, and don't introduce new dependencies without need." },
+      ];
+      for (const s of skills) upsertSkill(s);
+    }
+    if (listHooks().length === 0) {
+      const hooks: Array<{ target: string; phase: "pre" | "post"; command: string }> = [
+        { target: "install deps", phase: "pre", command: "npm ci 2>/dev/null || npm install 2>/dev/null || pip install -r requirements.txt --break-system-packages 2>/dev/null || true" },
+        { target: "format (prettier)", phase: "post", command: "npx --no-install prettier --write . 2>/dev/null || true" },
+        { target: "lint --fix (eslint)", phase: "post", command: "npx --no-install eslint . --fix 2>/dev/null || true" },
+        { target: "typecheck (tsc)", phase: "post", command: "npx --no-install tsc --noEmit 2>/dev/null || true" },
+        { target: "run tests", phase: "post", command: "npm test 2>/dev/null || pytest -q 2>/dev/null || true" },
+        { target: "format (black)", phase: "post", command: "python3 -m black . 2>/dev/null || true" },
+        { target: "secret scan", phase: "post", command: "git diff --cached | grep -nEi '(api[_-]?key|secret|password|token)[\"'\"'\"']?\\s*[:=]' && echo '⚠ possible secret in diff' || true" },
+      ];
+      for (const h of hooks) upsertHook(h);
+    }
+  } catch { /* best effort */ }
+}

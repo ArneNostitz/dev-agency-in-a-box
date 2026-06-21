@@ -27,7 +27,7 @@ export { upsertLocalIssue, getLocalIssue, listLocalOpenIssues, nextLocalIssueNum
 export type { LocalIssue, LocalComment, ConversationComment } from "./db/local.js";
 export { getAutoRaw, setAuto, autoEnabled, autoAttempts, bumpAutoAttempts, resetAutoAttempts } from "./db/auto.js";
 export type { AutoKind, AutoValue } from "./db/auto.js";
-export { upsertSkill, getSkill, listSkills, deleteSkill, skillsPrompt, upsertHook, listHooks, deleteHook } from "./db/skills_hooks.js";
+export { upsertSkill, getSkill, listSkills, deleteSkill, skillsPrompt, upsertHook, listHooks, deleteHook, seedLibrary } from "./db/skills_hooks.js";
 export type { Skill, Hook } from "./db/skills_hooks.js";
 export {
   getModelsPresets, getProviders, setProviders, getRoleModels, setRoleModels,

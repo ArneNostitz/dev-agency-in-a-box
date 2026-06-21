@@ -529,6 +529,7 @@ textarea{resize:vertical;min-height:64px}
 .bld-name{font-weight:600;font-size:15px;border:none;background:transparent;color:var(--ink);padding:6px 8px;border-radius:8px;min-width:140px}
 .bld-name:hover,.bld-name:focus{background:var(--surface-2);outline:none}
 .bld-trig-edit{display:inline-flex;align-items:center;gap:1px;background:var(--surface-2);border-radius:999px;padding:3px 10px;font-size:12px;color:var(--ink-2)}
+.bld-top .bld-trig{background:var(--accent-weak);color:var(--accent);border-radius:999px;padding:4px 11px;font-size:12.5px;font-weight:600}
 .bld-trig-edit .at{opacity:.6}
 .bld-trig-edit input{border:none;background:transparent;color:var(--accent);font-size:12px;width:84px;padding:2px}
 .bld-trig-edit input:focus{outline:none}
@@ -613,6 +614,9 @@ textarea{resize:vertical;min-height:64px}
 .bld-card{text-align:left;border:1px solid var(--line);background:var(--surface);border-radius:14px;padding:14px;cursor:pointer;transition:border-color .12s,box-shadow .12s}
 .bld-card:hover{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-weak)}
 .bld-card-h{display:flex;align-items:center;justify-content:space-between;margin-bottom:7px}
+.bld-card-acts{display:flex;gap:4px;opacity:0;transition:opacity .12s}
+.bld-card:hover .bld-card-acts{opacity:1}
+.iconbtn-sm.danger:hover{background:var(--red-weak);color:var(--red)}
 .bld-trig{font-size:11.5px;color:var(--accent);background:var(--accent-weak);border-radius:999px;padding:2px 9px}
 .bld-builtin{font-size:10.5px;color:var(--ink-3)}
 .bld-card-name{font-weight:600;font-size:15px;margin-bottom:9px}

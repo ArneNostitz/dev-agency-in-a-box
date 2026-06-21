@@ -94,6 +94,7 @@ import {
   chatAgentForText,
   seedChatAgents,
   seedWorkflows,
+  seedLibrary,
   clearIssueModelOverride,
   filesFor,
   recordIncident,
@@ -1262,6 +1263,7 @@ async function main(): Promise<void> {
   seedAdmin(); // multi-user: create the admin from env on first boot (no-op if MASTER_KEY unset)
   seedChatAgents(); // v3: register the starter chat agents (spec-creator, grill-me) once
   seedWorkflows(); // workflows: seed the built-in templates (full-build / quick-fix / plan-only / review-only)
+  seedLibrary(); // skills + hooks: seed the baseline library (idempotent — only when empty)
   resetAdminPassword(); // forgot-password recovery via RESET_ADMIN_PASSWORD env (no-op if unset)
   startAutoResume(cfg);
   startAutoMode(cfg);

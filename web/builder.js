@@ -102,6 +102,15 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
       .catch((e) => toast((e && e.message) || "Couldn’t save", "error"))
       .finally(() => setSaving(false));
   }
+  function duplicateWf(w) {
+    const base = (w.name || "workflow").replace(/ \(copy.*$/, "");
+    const id = (base.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "wf") + "-copy-" + Date.now().toString(36).slice(-4);
+    api("/workflow-save", { workflow: { id, name: base + " (copy)", trigger: "@" + id, steps: w.steps || [], gates: w.gates || [], hooks: w.hooks || [] } }).then(() => { toast("Duplicated"); reload && reload(); }).catch(() => toast("Couldn’t duplicate", "error"));
+  }
+  function delWf(w) {
+    if (!window.confirm("Delete " + (w.name || "workflow") + "?")) return;
+    api("/workflow-delete", { workflowId: w.id }).then(() => { toast("Deleted"); reload && reload(); }).catch(() => toast("Couldn’t delete", "error"));
+  }
   function del() {
     if (!form.id || !window.confirm("Delete " + (form.name || "workflow") + "?")) return;
     api("/workflow-delete", { workflowId: form.id }).then(() => { toast("Deleted"); clearDraft(); setSel(null); reload && reload(); });
@@ -118,12 +127,17 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
       <div class="bld-listwrap">
         ${wfs.length === 0 ? html`<div class="bld-empty">No workflows yet. Create one — chain agents on a canvas.</div>` : null}
         <div class="bld-grid">
-          ${wfs.map((w) => html`<button class="bld-card" key=${w.id} onClick=${() => open(w)}>
-            <div class="bld-card-h"><span class="bld-trig">${w.trigger || "@" + w.id}</span>${w.builtin ? html`<span class="bld-builtin">built-in</span>` : null}</div>
+          ${wfs.map((w) => html`<div class="bld-card" key=${w.id} onClick=${() => open(w)}>
+            <div class="bld-card-h"><span class="bld-trig">${w.trigger || "@" + w.id}</span>${w.builtin ? html`<span class="bld-builtin">built-in</span>` : null}
+              <span class="bld-card-acts" onClick=${(e) => e.stopPropagation()}>
+                <button class="iconbtn-sm tip" data-tip="Duplicate" onClick=${() => duplicateWf(w)}><${Icon} name="copy" size=${14}/></button>
+                ${w.builtin ? null : html`<button class="iconbtn-sm tip danger" data-tip="Delete" onClick=${() => delWf(w)}><${Icon} name="trash" size=${14}/></button>`}
+              </span>
+            </div>
             <div class="bld-card-name">${w.name}</div>
             <div class="bld-card-flow">${(w.steps || []).map((s, i) => html`${i ? html`<${Icon} name="chevron" size=${12}/>` : null}<${Avatar} role=${roleFor(agentOf(s))} size=${22} crop="head"/>`)}</div>
             <div class="bld-card-meta">${(w.steps || []).length} step${(w.steps || []).length === 1 ? "" : "s"}${(w.gates || []).length ? ` · ${w.gates.length} gate${w.gates.length === 1 ? "" : "s"}` : ""}</div>
-          </button>`)}
+          </div>`)}
         </div>
       </div>
     </div>`;
@@ -148,11 +162,10 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
 
   return html`<div class="bld">
     <div class="bld-top">
-      <button class="iconbtn" onClick=${() => setSel(null) || setForm(null)} aria-label="Back"><${Icon} name="chevron" size=${18}/></button>
-      <input class="bld-name" value=${form.name} placeholder="Workflow name" onInput=${(e) => setForm((f) => ({ ...f, name: e.target.value }))}/>
-      <span class="bld-trig-edit"><span class="at">@</span><input value=${(form.trigger || "").replace(/^@/, "")} placeholder="trigger" onInput=${(e) => setForm((f) => ({ ...f, trigger: "@" + e.target.value.replace(/[^a-z0-9]/gi, "") }))}/></span>
+      <input class="bld-name" value=${form.name} placeholder="Workflow name" onInput=${(e) => { const name = e.target.value; const trig = "@" + name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 24); setForm((f) => ({ ...f, name, trigger: trig })); }}/>
+      <span class="bld-trig">${form.trigger || "@" + (form.name || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "") || "@new"}</span>
       <div style="flex:1"></div>
-      ${form.id && !((wfs.find((w) => w.id === form.id) || {}).builtin) ? html`<button class="btn ghost danger" onClick=${del}>Delete</button>` : null}
+      <button class="btn" onClick=${() => { clearDraft(); setSel(null); setForm(null); }}>Cancel</button>
       <button class="btn primary" disabled=${saving} onClick=${save}>${saving ? html`<${Spinner} size=${14}/>` : html`<${Icon} name="check" size=${15}/>`} Save</button>
     </div>
 
@@ -195,7 +208,7 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
             <defs><marker id="bld-arrow" markerWidth="9" markerHeight="9" refX="6.5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--line-2)"/></marker><marker id="bld-loop" markerWidth="9" markerHeight="9" refX="6.5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--amber)"/></marker></defs>
             ${steps.slice(0, -1).map((_, i) => html`<path key=${i} d=${downPath(i)} fill="none" stroke="var(--line-2)" stroke-width="2" marker-end="url(#bld-arrow)"/>`)}
             ${steps.length ? html`<path key="toadd" d=${downPath(steps.length - 1)} fill="none" stroke="var(--line)" stroke-width="2" stroke-dasharray="3 4"/>` : null}
-            ${(form.gates || []).filter((g) => g.route && g.route.startsWith("loop")).map((g, k) => { const t = Number(g.route.split(":")[1]); if (!Number.isFinite(t) || t === g.after || g.after >= steps.length || t >= steps.length) return null; const rx = C + NODE_W / 2, sy = midY(g.after), ty = midY(t), lx = C + NODE_W / 2 + LOOPM; return html`<path key=${"loop" + k} d=${`M ${rx} ${sy} C ${lx} ${sy}, ${lx} ${ty}, ${rx} ${ty}`} fill="none" stroke="var(--amber)" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#bld-loop)"/>`; })}
+            ${(form.gates || []).filter((g) => g.route && g.route.startsWith("loop")).map((g, k) => { const t = Number(g.route.split(":")[1]); if (!Number.isFinite(t) || t === g.after || g.after >= steps.length || t >= steps.length) return null; const rx = C + NODE_W / 2, sy = midY(g.after), ty = midY(t), lx = C + NODE_W / 2 + LOOPM; const r = 9, up = ty < sy; const d = `M ${rx} ${sy} H ${lx - r} Q ${lx} ${sy} ${lx} ${sy + (up ? -r : r)} V ${ty + (up ? r : -r)} Q ${lx} ${ty} ${lx - r} ${ty} H ${rx}`; return html`<path key=${"loop" + k} d=${d} fill="none" stroke="var(--line-2)" stroke-width="2" stroke-dasharray="5 5" stroke-linejoin="round" marker-end="url(#bld-arrow)"/>`; })}
           </svg>
           ${drag != null && dropAt != null ? html`<div class="bld-drop" style=${"left:" + (C - NODE_W / 2 - SIDE) + "px;top:" + (PAD + dropAt * (NODE_H + ROW_GAP) - ROW_GAP / 2 - 1) + "px;width:" + (NODE_W + SIDE * 2) + "px"}></div>` : null}
           ${steps.map((s, i) => {
