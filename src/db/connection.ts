@@ -70,6 +70,7 @@ export function getDb(): DatabaseSync | null {
         title TEXT,
         role TEXT,
         state TEXT,
+        by_agent INTEGER NOT NULL DEFAULT 0,
         updated_at TEXT,
         PRIMARY KEY (repo, number)
       );
@@ -214,6 +215,7 @@ export function getDb(): DatabaseSync | null {
       `ALTER TABLE agent_def ADD COLUMN default_task TEXT`,
       `ALTER TABLE agent_def ADD COLUMN avatar TEXT`,
       `ALTER TABLE workflows ADD COLUMN hooks TEXT`,
+      `ALTER TABLE issues ADD COLUMN by_agent INTEGER NOT NULL DEFAULT 0`,
     ]) {
       try {
         d.exec(sql);

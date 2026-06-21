@@ -65,7 +65,7 @@ export { recordRunStep, toolStatsSince, recordIncident, recentFailuresSince, run
 export type { ToolStat, FailureStat } from "./db/telemetry.js";
 export {
   recordIssueFiles, filesFor, recordIssueState, recordIssueStatus, getIssueStatus,
-  recordPr, getIssueRow, recentIssues, archiveIssue, getIssueRole,
+  recordPr, getIssueRow, recentIssues, archiveIssue, getIssueRole, setByAgent,
 } from "./db/issues.js";
 export type { IssueRow } from "./db/issues.js";
 export { recordLesson, recentLessons, unprocessedLessons, markLessonsProcessed } from "./db/lessons.js";

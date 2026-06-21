@@ -406,6 +406,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               // True iff a Claude run is actually executing for this issue right now (abort registry
               // — the precise signal). Drives the Stop button so it's reliably shown only while live.
               running: hasActiveRun(i.repo, i.number),
+              byAgent: !!(i.by_agent),
               auto: {
                 resume: autoEnabled("resume", i.repo, i.number),
                 merge: autoEnabled("merge", i.repo, i.number),

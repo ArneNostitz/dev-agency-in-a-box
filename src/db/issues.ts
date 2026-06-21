@@ -92,6 +92,7 @@ export interface IssueRow {
   updated_at: string;
   pr_number: number | null;
   pr_url: string | null;
+  by_agent?: number;
 }
 
 export function recordPr(repo: string, number: number, prNumber: number, prUrl: string): void {
@@ -109,12 +110,18 @@ export function recordPr(repo: string, number: number, prNumber: number, prUrl: 
   }
 }
 
+/** DB-first 'created by an agent' flag (so the dashboard can show it without a GitHub label). */
+export function setByAgent(repo: string, number: number, on = true): void {
+  const d = getDb(); if (!d) return;
+  try { d.prepare(`UPDATE issues SET by_agent = ? WHERE repo = ? AND number = ?`).run(on ? 1 : 0, repo, number); } catch { /* best effort */ }
+}
+
 export function getIssueRow(repo: string, number: number): IssueRow | null {
   const d = getDb();
   if (!d) return null;
   try {
     return (d
-      .prepare(`SELECT repo, number, title, role, state, blocked, updated_at, pr_number, pr_url FROM issues WHERE repo = ? AND number = ?`)
+      .prepare(`SELECT repo, number, title, role, state, blocked, updated_at, pr_number, pr_url, by_agent FROM issues WHERE repo = ? AND number = ?`)
       .get(repo, number) as unknown as IssueRow | null) ?? null;
   } catch {
     return null;
@@ -127,7 +134,7 @@ export function recentIssues(limit = 40): IssueRow[] {
   try {
     return d
       .prepare(
-        `SELECT i.repo, i.number, i.title, i.role, i.state, i.blocked, i.updated_at, i.pr_number, i.pr_url FROM issues i
+        `SELECT i.repo, i.number, i.title, i.role, i.state, i.blocked, i.updated_at, i.pr_number, i.pr_url, i.by_agent FROM issues i
          WHERE NOT EXISTS (SELECT 1 FROM archived a WHERE a.repo = i.repo AND a.number = i.number)
          ORDER BY i.updated_at DESC LIMIT ?`,
       )

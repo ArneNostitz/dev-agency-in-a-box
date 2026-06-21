@@ -190,6 +190,7 @@ function Card({ i, subs, multi, onOpen, onOpenChild, act, data }) {
       <span class="card-repo">${i.repo.split("/").pop()}</span>
       <span class="card-num">#${i.number > 0 ? i.number : "…"}</span>
       <span class="card-hicons">
+        ${i.byAgent ? html`<span class="card-byagent tip" data-tip="Created by an agent — review &amp; start"><${Icon} name="rocket" size=${11}/> agent</span>` : null}
         ${(i.state === "planned" || i.state === "notPlanned") && i.number > 0 ? html`<button class="card-del tip" data-tip="Delete permanently" disabled=${act.isBusy("del", i.repo, i.number)} onClick=${(e) => { e.stopPropagation(); if (window.confirm("Permanently delete #" + i.number + "? This can’t be undone.")) act.del(i.repo, i.number); }}>${act.isBusy("del", i.repo, i.number) ? html`<${Spinner} size=${11}/>` : html`<${Icon} name="x" size=${13}/>`}</button>` : null}
         ${i.conflict ? html`<span class="card-hicon tip" data-tip=${(i.conflict.files || []).join(", ") || "Merge conflict"} style="color:var(--amber)"><${Icon} name="merge" size=${14}/></span>` : null}
         ${autoOn ? html`<span class="card-hicon tip" data-tip=${"Auto-" + (i.auto.merge ? "merge" : "resume") + " on"} style="color:var(--green)"><${Icon} name=${i.auto.merge ? "merge" : "refresh"} size=${13}/></span>` : null}

@@ -174,6 +174,7 @@ html,body{overflow-x:hidden}
 .card-num{font-size:11px;color:var(--ink-3);flex:0 0 auto}
 .card-hicons{margin-left:auto;display:flex;align-items:center;gap:6px;flex:0 0 auto}
 .card-hicon{display:inline-flex;align-items:center;color:var(--ink-3)}
+.card-byagent{display:inline-flex;align-items:center;gap:3px;font-size:10.5px;font-weight:600;color:var(--accent);background:var(--accent-weak);border-radius:999px;padding:1px 7px}
 .card-m{display:flex;flex-direction:column;gap:3px}
 .card-title{font-weight:560;font-size:14.5px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .card-meta{display:flex;align-items:flex-start;gap:6px;font-size:11.5px;color:var(--ink-3);min-height:20px}

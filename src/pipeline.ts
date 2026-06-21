@@ -32,7 +32,7 @@ import { EPIC_LABEL, renderEpicTracker } from "./epics.js";
 import { runRole } from "./agents/roleAgent.js";
 import { isStopRequested } from "./abort.js";
 import type { RoleName } from "./agents/roles.js";
-import { recordRun, recordPlan, lastPlan, recordIssueState, recordIssueStatus, recordIssueFiles, recordPr, addEpicChild, listEpicChildren, getSession, issueActivity, recordReview, getReview, recordConflict, clearConflict, getSetting, skillsPrompt, listHooks, listAgentDefs, type Workflow } from "./store.js";
+import { recordRun, recordPlan, lastPlan, recordIssueState, recordIssueStatus, recordIssueFiles, recordPr, setByAgent, addEpicChild, listEpicChildren, getSession, issueActivity, recordReview, getReview, recordConflict, clearConflict, getSetting, skillsPrompt, listHooks, listAgentDefs, type Workflow } from "./store.js";
 import { conflictFiles } from "./github.js";
 import { pushActivity, setActive } from "./activity.js";
 import { execSync } from "node:child_process";
@@ -293,8 +293,8 @@ async function splitIntoPlanned(repo: string, issue: Issue, text: string): Promi
     addEpicChild(repo, issue.number, created.number, it.title);
     if (it.files.length) recordIssueFiles(repo, created.number, it.files);
     await addLabel(repo, created.number, "agency:planned").catch(() => {});
-    await addLabel(repo, created.number, "agency:by-agent").catch(() => {});
     recordIssueStatus(repo, created.number, withStatus("planned"), { title: it.title });
+    setByAgent(repo, created.number, true); // DB-first marker; the dashboard reads this, not a GitHub label
     recordRun(repo, issue.number, "decomposer", MODELS_NONE, 0, "create-issue");
   }
   await commentOnIssue(repo, issue.number, say("decomposer", `**Split into ${items.length} epic(s)** — created as **Planned** (tagged \`by agent\`). Review each and press ▶ Start to build it; the build then breaks the epic into sub-issues.`));
