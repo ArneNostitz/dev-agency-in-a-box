@@ -4,7 +4,7 @@
 import { html, useState, useEffect, useRef } from "/web/vendor/standalone.mjs";
 import { Avatar, Icon, Modal, Select, ProviderLogo, defaultModelLogo, agentOptions, api, toast, readAttach, Spinner } from "./core.js";
 
-const NODE_W = 216, NODE_BASE = 104, SKILL_H = 28, SLOT_H = 30, BLK_GAP = 28, PAD = 28, LOOPM = 46;
+const NODE_W = 220, NODE_BASE = 132, SKILL_H = 28, SLOT_H = 26, SLOT_GAP = 9, BLK_GAP = 26, PAD = 28, LOOPM = 46;
 const STEP_ROLE = { "@plan": "planner", "@arch": "architect", "@dev": "developer", "@review": "reviewer", "@test": "tester" };
 const DEFAULT_TASK = { "@plan": "Produce a concrete build plan for this issue.", "@arch": "Turn the plan into a concrete technical design (no code).", "@dev": "Implement the plan; commit and open a PR.", "@review": "Review the PR against the plan and the codebase.", "@test": "Run the project\u2019s checks and fix any failures." };
 const ROUTES = [
@@ -207,7 +207,7 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
   const nodeH = (st) => NODE_BASE + (st.skills || []).length * SKILL_H;
   // Cumulative layout: [pre-slot][node][post-slot] per step, a gap between blocks.
   const lay = []; let yc = PAD;
-  for (let i = 0; i < steps.length; i++) { const preY = yc; yc += SLOT_H; const nY = yc; const h = nodeH(steps[i]); yc += h; const postY = yc; yc += SLOT_H; lay.push({ preY, nY, h, postY }); yc += BLK_GAP; }
+  for (let i = 0; i < steps.length; i++) { const preY = yc; yc += SLOT_H + SLOT_GAP; const nY = yc; const h = nodeH(steps[i]); yc += h + SLOT_GAP; const postY = yc; yc += SLOT_H; lay.push({ preY, nY, h, postY }); yc += BLK_GAP; }
   const addY = yc;
   const flowW = PAD * 2 + NODE_W + LOOPM + nLoops * 16 + 24;
   const cx = PAD + NODE_W / 2;
@@ -216,7 +216,7 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
   const ox = (gridW - flowW) / 2;
   const C = cx + ox;                          // centred node centre x
   const nodeMid = (i) => lay[i].nY + lay[i].h / 2;
-  const downPath = (i) => { const y1 = lay[i].postY + SLOT_H, y2 = lay[i + 1].preY; const my = (y1 + y2) / 2; return `M ${C} ${y1} C ${C} ${my}, ${C} ${my}, ${C} ${y2}`; };
+  const downPath = (i) => { const y1 = lay[i].nY + lay[i].h, y2 = lay[i + 1].nY; return `M ${C} ${y1} L ${C} ${y2}`; };
 
   return html`<div class="bld">
     <div class="bld-top">
@@ -237,7 +237,7 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
           <svg class="bld-wires" width=${gridW} height=${gridH} aria-hidden="true">
             <defs><marker id="bld-arrow" markerWidth="9" markerHeight="9" refX="6.5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="var(--line-2)"/></marker></defs>
             ${steps.slice(0, -1).map((_, i) => html`<path key=${i} d=${downPath(i)} fill="none" stroke="var(--line-2)" stroke-width="2" marker-end="url(#bld-arrow)"/>`)}
-            ${steps.length ? html`<path key="toadd" d=${`M ${C} ${lay[steps.length - 1].postY + SLOT_H} L ${C} ${addY}`} fill="none" stroke="var(--line)" stroke-width="2" stroke-dasharray="3 4"/>` : null}
+            ${steps.length ? html`<path key="toadd" d=${`M ${C} ${lay[steps.length - 1].nY + lay[steps.length - 1].h} L ${C} ${addY}`} fill="none" stroke="var(--line)" stroke-width="2" stroke-dasharray="3 4"/>` : null}
             ${(form.gates || []).filter((g) => g.route && g.route.startsWith("loop")).map((g, k) => { const t = Number(g.route.split(":")[1]); if (!Number.isFinite(t) || t === g.after || g.after >= steps.length || t >= steps.length) return null; const rx = C + NODE_W / 2, sy = nodeMid(g.after), ty = nodeMid(t), lx = C + NODE_W / 2 + LOOPM + k * 16; const r = 9, up = ty < sy; const d = `M ${rx} ${sy} H ${lx - r} Q ${lx} ${sy} ${lx} ${sy + (up ? -r : r)} V ${ty + (up ? r : -r)} Q ${lx} ${ty} ${lx - r} ${ty} H ${rx}`; const cond = (CONDITIONS.find((c) => c.value === g.condition) || {}).label || g.condition || "a condition"; return html`<path key=${"loop" + k} d=${d} fill="none" stroke="var(--line-2)" stroke-width="2" stroke-dasharray="5 5" stroke-linejoin="round" marker-end="url(#bld-arrow)"><title>${`Loops back to step ${t + 1} if ${cond.toLowerCase()} (max ${g.maxLoops || 2}×)`}</title></path>`; })}
           </svg>
           ${drag != null && dropAt != null ? html`<div class="bld-drop" style=${"left:" + (C - NODE_W / 2) + "px;top:" + ((dropAt < steps.length ? lay[dropAt].preY : addY) - BLK_GAP / 2) + "px;width:" + NODE_W + "px"}></div>` : null}
