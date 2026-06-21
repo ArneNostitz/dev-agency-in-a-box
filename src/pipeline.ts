@@ -32,7 +32,7 @@ import { EPIC_LABEL, renderEpicTracker } from "./epics.js";
 import { runRole } from "./agents/roleAgent.js";
 import { isStopRequested } from "./abort.js";
 import type { RoleName } from "./agents/roles.js";
-import { recordRun, recordPlan, lastPlan, recordIssueState, recordIssueStatus, recordIssueFiles, recordPr, addEpicChild, listEpicChildren, getSession, issueActivity, recordReview, getReview, recordConflict, clearConflict, getSetting, skillsPrompt, listHooks, type Workflow } from "./store.js";
+import { recordRun, recordPlan, lastPlan, recordIssueState, recordIssueStatus, recordIssueFiles, recordPr, addEpicChild, listEpicChildren, getSession, issueActivity, recordReview, getReview, recordConflict, clearConflict, getSetting, skillsPrompt, listHooks, listAgentDefs, type Workflow } from "./store.js";
 import { conflictFiles } from "./github.js";
 import { pushActivity, setActive } from "./activity.js";
 import { execSync } from "node:child_process";
@@ -886,6 +886,16 @@ export async function runDeveloperSolo(repo: string, issue: Issue, workdir: stri
   await finalizeWithPr(repo, issue, workdir, branch, false);
 }
 
+const WF_ROLE_DEFAULT_TASK: Record<string, string> = { "@plan": "Produce a concrete build plan for this issue.", "@arch": "Turn the plan into a concrete technical design (no code).", "@dev": "Implement the plan; commit and open a PR.", "@review": "Review the PR against the plan and the codebase.", "@test": "Run the project's checks and fix any failures." };
+/** A step's instruction, or — when blank — the agent's default task (agentDef.defaultTask, else the role default). */
+function stepInstruction(step: { agent?: string; instruction?: string }): string {
+  const own = (step.instruction || "").trim();
+  if (own) return own;
+  const handle = (step.agent || "").toLowerCase();
+  const def = listAgentDefs().find((d) => (d.handle || `@${d.name}`).toLowerCase() === handle || d.name.toLowerCase() === handle.replace(/^@/, ""));
+  return (def && def.defaultTask && def.defaultTask.trim()) || WF_ROLE_DEFAULT_TASK[handle] || `Do your part for this issue as the ${handle || "developer"} agent.`;
+}
+
 export async function runWorkflowEngine(cfg: Config, repo: string, issue: Issue, wf: Workflow, workdir: string, thread: string): Promise<void> {
   void cfg;
   const branch = `agency/issue-${issue.number}`;
@@ -903,11 +913,12 @@ export async function runWorkflowEngine(cfg: Config, repo: string, issue: Issue,
 
 ${skillsPrompt(step.skills)}` : "";
     setActive(repo, issue.number, "issue", role, issue.title);
-    await commentOnIssue(repo, issue.number, say(role, `▶ **Step ${i + 1}/${wf.steps.length}** · ${(step.instruction || "").split("\n")[0].slice(0, 90)}`));
+    const instr = stepInstruction(step);
+    await commentOnIssue(repo, issue.number, say(role, `▶ **Step ${i + 1}/${wf.steps.length}** · ${instr.split("\n")[0].slice(0, 90)}`));
     await runStepHooks(hookIds, "pre", workdir, repo, issue.number);
     const out = await runRole(role, {
       workdir, repo, issueNumber: issue.number,
-      task: `${step.instruction}
+      task: `${instr}
 
 ### ${issueHeader(issue)}${thread ? `
 

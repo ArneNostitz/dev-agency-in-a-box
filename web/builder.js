@@ -60,7 +60,7 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
     api("/skill-import", { source: src.trim() }).then((r) => { toast((r && r.imported ? r.imported : 0) + " skill(s) imported"); reload && reload(); }).catch((e) => toast((e && e.message) || "Import failed", "error"));
   }
   const patchStep = (i, p) => setForm((f) => ({ ...f, steps: f.steps.map((s, j) => (j === i ? { ...s, ...p } : s)) }));
-  const addStep = (handle) => setForm((f) => { const def = ((data && data.agentDefs) || []).find((d) => (d.handle || ("@" + d.name)) === handle); const instruction = (def && def.defaultTask) || DEFAULT_TASK[(handle || "").toLowerCase()] || ""; const steps = f.steps.concat({ ...blankStep(), agent: handle || "@dev", instruction }); setStep(steps.length - 1); return { ...f, steps }; });
+  const addStep = (handle) => setForm((f) => { const steps = f.steps.concat({ ...blankStep(), agent: handle || "@dev" }); setStep(steps.length - 1); return { ...f, steps }; });
   const moveStep = (from, dropSlot) => setForm((f) => {
     const insertAt = dropSlot > from ? dropSlot - 1 : dropSlot;
     if (insertAt === from) return f;
@@ -231,8 +231,8 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
           </div>
           <label class="bld-lbl">Agent</label>
           <${Select} value=${agentOf(cur)} options=${agentOpts} onChange=${(v) => patchStep(step, { agent: v })}/>
-          <label class="bld-lbl">Task for this step <span class="bld-hint">(not the agent’s profile)</span></label>
-          <textarea class="bld-ta" rows="3" placeholder="What this agent does here…" value=${cur.instruction} onInput=${(e) => patchStep(step, { instruction: e.target.value })}></textarea>
+          <label class="bld-lbl">Special instructions <span class="bld-hint">(optional)</span></label>
+          <textarea class="bld-ta" rows="3" placeholder=${"Leave blank to use " + labelFor(agentOf(cur), agentOpts) + "’s default task. Add only extra/override instructions for this step."} value=${cur.instruction} onInput=${(e) => patchStep(step, { instruction: e.target.value })}></textarea>
           <label class="bld-lbl">Model</label>
           <${Select} value=${cur.model || ""} options=${[{ value: "", label: "Default", logo: defaultModelLogo(data) }].concat(modelOpts(data))} onChange=${(v) => patchStep(step, { model: v })}/>
           ${(cur.skills || []).length ? html`<label class="bld-lbl">Skills</label><div class="bld-chips">${cur.skills.map((s) => html`<span class="bld-chip skill" key=${s}>${s}<button onClick=${() => toggleChip(step, "skills", s)} aria-label="remove"><${Icon} name="x" size=${10}/></button></span>`)}</div>` : null}
@@ -258,16 +258,18 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
 
 function AgentModal({ data, which, onClose, reload }) {
   const defs = (data && data.agentDefs) || [];
-  const existing = which === "__new__" ? null : defs.find((d) => (d.handle || ("@" + d.name)) === which || d.name === String(which).replace(/^@/, ""));
+  const existing = which === "__new__" ? null : defs.find((d) => (d.handle || ("@" + d.name)) === which || ("@" + d.name) === which || d.name === String(which).replace(/^@/, ""));
+  const ROLE_NAMES = { "@plan": "planner", "@arch": "architect", "@dev": "developer", "@review": "reviewer", "@test": "tester" };
+  const roleSeed = !existing && ROLE_NAMES[which] ? { name: ROLE_NAMES[which], handle: which, mode: "repo", model: "", tools: ["Read", "Glob", "Grep"], persona: "", defaultTask: DEFAULT_TASK[which] || "", avatar: "", pushesGithub: true } : null;
   const TOOLS = ["Read", "Glob", "Grep", "Edit", "Write", "Bash"];
-  const [f, setF] = useState(existing ? Object.assign({ defaultTask: "", avatar: "", tools: [] }, existing) : { name: "", handle: "", mode: "repo", model: "", tools: ["Read", "Glob", "Grep"], persona: "", defaultTask: "", avatar: "", pushesGithub: true });
+  const [f, setF] = useState(existing ? Object.assign({ defaultTask: "", avatar: "", tools: [] }, existing) : roleSeed || { name: "", handle: "", mode: "repo", model: "", tools: ["Read", "Glob", "Grep"], persona: "", defaultTask: "", avatar: "", pushesGithub: true });
   const [busy, setBusy] = useState(false);
   const set = (k, v) => setF((o) => Object.assign({}, o, { [k]: v }));
   const toggleTool = (t) => setF((o) => Object.assign({}, o, { tools: (o.tools || []).includes(t) ? o.tools.filter((x) => x !== t) : (o.tools || []).concat(t) }));
   function pickAvatar(e) { const file = (e.target.files || [])[0]; if (!file) return; readAttach(file, (a) => { api("/upload-file", { repo: "_agents", number: -1, dataUrl: a.d, name: (f.name || "avatar") }).then((j) => { if (j && j.url) set("avatar", j.url); else toast("Upload failed", "error"); }).catch(() => toast("Upload failed", "error")); }); e.target.value = ""; }
   function save() { if (!f.name.trim()) { toast("Name required"); return; } setBusy(true); api("/agent-def-save", { agentDef: { name: f.name.trim(), handle: f.handle || "@" + f.name.trim(), mode: f.mode, model: f.model, tools: f.tools, persona: f.persona, defaultTask: f.defaultTask, avatar: f.avatar, pushesGithub: f.pushesGithub !== false } }).then(() => { toast("Agent saved"); reload && reload(); onClose(); }).catch((e) => toast((e && e.message) || "Couldn’t save", "error")).then(() => setBusy(false)); }
   const footer = html`<button class="btn" onClick=${onClose}>Cancel</button><button class="btn primary" disabled=${busy} onClick=${save}>${busy ? html`<${Spinner} size=${14}/>` : "Save agent"}</button>`;
-  return html`<${Modal} title=${existing ? "Edit agent" : "New agent"} onClose=${onClose} footer=${footer}>
+  return html`<${Modal} title=${existing ? "Edit agent" : roleSeed ? "Edit " + roleSeed.name : "New agent"} onClose=${onClose} footer=${footer}>
     <div class="agm-top">
       <label class="agm-avatar" title="Upload a custom avatar">
         ${f.avatar ? html`<img src=${f.avatar}/>` : html`<${Avatar} role=${f.name || "agent"} size=${56} crop="head"/>`}
@@ -276,7 +278,7 @@ function AgentModal({ data, which, onClose, reload }) {
       </label>
       <div style="flex:1;min-width:0">
         <label class="bld-lbl">Name</label>
-        <input class="bld-num" value=${f.name} disabled=${!!existing} placeholder="e.g. spec-creator" onInput=${(e) => set("name", e.target.value.replace(/[^\w-]/g, ""))}/>
+        <input class="bld-num" value=${f.name} disabled=${!!existing || !!roleSeed} placeholder="e.g. spec-creator" onInput=${(e) => set("name", e.target.value.replace(/[^\w-]/g, ""))}/>
         <label class="bld-lbl">Handle</label>
         <input class="bld-num" value=${f.handle} placeholder=${"@" + (f.name || "agent")} onInput=${(e) => set("handle", e.target.value)}/>
       </div>
