@@ -82,5 +82,17 @@ export function seedLibrary(): void {
       ];
       for (const h of hooks) upsertHook(h);
     }
+    // Agency-native hooks — wired to our own tooling (GitNexus index, analyzer, lessons).
+    // Idempotent by name, so existing installs pick them up on the next boot.
+    {
+      const have = new Set(listHooks().map((h) => h.target));
+      const agency: Array<{ target: string; phase: "pre" | "post"; command: string }> = [
+        { target: "gitnexus: re-analyze", phase: "post", command: "gitnexus analyze . 2>/dev/null || npx --no-install gitnexus analyze . 2>/dev/null || true" },
+        { target: "trigger analyzer run", phase: "post", command: "[ -n \"$AGENCY_URL\" ] && curl -fsS -X POST \"$AGENCY_URL/analyzer-run\" >/dev/null 2>&1 || true" },
+        { target: "summarize changes", phase: "post", command: "git --no-pager log --oneline -5 2>/dev/null; echo '---'; git --no-pager diff --stat 2>/dev/null || true" },
+        { target: "record learnings", phase: "post", command: "mkdir -p .devagency && { echo \"## $(date -u +%FT%TZ)\"; git --no-pager log -1 --pretty='%s' 2>/dev/null; } >> .devagency/LEARNINGS.md 2>/dev/null || true" },
+      ];
+      for (const h of agency) if (!have.has(h.target)) upsertHook(h);
+    }
   } catch { /* best effort */ }
 }

@@ -577,6 +577,9 @@ textarea{resize:vertical;min-height:64px}
 .bld-node-tags .t.loop{color:var(--amber);background:var(--amber-weak,rgba(217,119,6,.12))}
 .bld-node-tags .t.branch{color:var(--ink-2)}
 .bld-node-tags .t.approve{color:var(--accent);background:var(--accent-weak)}
+.bld-flowmark{position:absolute;z-index:2;display:inline-flex;align-items:center;gap:4px;width:128px;justify-content:center;font-size:11px;font-weight:600;border-radius:999px;padding:3px 8px;border:1px solid var(--line-2);background:var(--surface)}
+.bld-flowmark.approve{color:var(--accent);border-color:var(--accent);background:var(--accent-weak)}
+.bld-flowmark.stop{color:var(--ink-2)}
 .bld-node-tags .t.stop{color:var(--ink-2)}
 .bld-hooks{position:absolute;display:flex;flex-direction:column;justify-content:center;gap:5px}
 .bld-hooks.left{align-items:flex-end}
