@@ -43,7 +43,7 @@ export function canonicalModel(m: string): string {
   return s;
 }
 
-export type RoleName = "planner" | "architect" | "developer" | "reviewer" | "tester" | "librarian" | "auditor";
+export type RoleName = "planner" | "decomposer" | "architect" | "developer" | "reviewer" | "tester" | "librarian" | "auditor";
 
 export interface RoleDef {
   name: RoleName;
@@ -75,6 +75,16 @@ export const ROLES: Record<RoleName, RoleDef> = {
     tools: READ_TOOLS,
     // Opus is expensive and context compounds per turn — a plan should not take 100+ turns.
     maxTurns: 45,
+  },
+  decomposer: {
+    name: "decomposer",
+    personaFile: "decomposer",
+    playbooks: [...SHARED_PLAYBOOKS],
+    // Splitting a plan into well-scoped epics is judgement work — use the strong planner-tier model.
+    defaultModel: MODELS.opus,
+    modelEnv: "DECOMPOSER_MODEL",
+    tools: READ_TOOLS,
+    maxTurns: 30,
   },
   architect: {
     name: "architect",

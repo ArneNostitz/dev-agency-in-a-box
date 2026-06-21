@@ -92,8 +92,8 @@ export const Spinner = ({ size = 18 }) => html`<svg class="lic spin" width=${siz
 
 // ---------- agent persona avatars ----------
 // One avatar file per role (a mixed-gender team). Swap a value to change who represents a role.
-const ROLE_AVATAR = { planner: "planner-f", architect: "architect", developer: "developer-f", reviewer: "reviewer", tester: "tester", librarian: "librarian-f", auditor: "auditor" };
-const ROLE_WORDS = ["planner", "architect", "developer", "reviewer", "tester", "librarian", "auditor"];
+const ROLE_AVATAR = { planner: "planner-f", decomposer: "auditor", architect: "architect", developer: "developer-f", reviewer: "reviewer", tester: "tester", librarian: "librarian-f", auditor: "auditor" };
+const ROLE_WORDS = ["planner", "decomposer", "architect", "developer", "reviewer", "tester", "librarian", "auditor"];
 // crop="head" → the dedicated head-only SVG (dashboard); "full" → the whole figure (detail comments).
 // Full pool of persona art (heads + full). Unknown agents get a STABLE distinct one from the pool
 // (so every custom/chat agent has its own face), with a couple of fitting named picks.
@@ -121,7 +121,7 @@ export const Avatar = ({ role, size = 24, crop = "head", src }) => {
 };
 
 // ---------- helpers ----------
-const ROLE_ICON = { planner: "layers", developer: "laptop", reviewer: "flask", tester: "flask", architect: "settings", librarian: "history" };
+const ROLE_ICON = { planner: "layers", decomposer: "layers", developer: "laptop", reviewer: "flask", tester: "flask", architect: "settings", librarian: "history" };
 export function ago(iso) { if (!iso) return ""; let s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000); if (s < 60) return Math.floor(s) + "s"; if (s < 3600) return Math.floor(s / 60) + "m"; if (s < 86400) return Math.floor(s / 3600) + "h"; return Math.floor(s / 86400) + "d"; }
 export function hm(d) { try { return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); } catch (e) { return ""; } }
 export function fmtTok(n) { n = n || 0; if (n >= 1e6) return (n / 1e6).toFixed(2) + "M"; if (n >= 1e3) return Math.round(n / 1e3) + "k"; return "" + n; }
@@ -553,6 +553,7 @@ export function Modal({ title, onClose, footer, children, size }) {
 // Single-role pins (a workflow is the multi-step path; these run one specialist).
 const ROLE_PINS = [
   { value: "@plan", label: "Plan", avatar: "planner", hint: "role", hintCls: "b-role" },
+  { value: "@split", label: "Split", avatar: "auditor", hint: "role", hintCls: "b-role" },
   { value: "@arch", label: "Architect", avatar: "architect", hint: "role", hintCls: "b-role" },
   { value: "@review", label: "Review", avatar: "reviewer", hint: "role", hintCls: "b-role" },
   { value: "@test", label: "Test", avatar: "tester", hint: "role", hintCls: "b-role" },

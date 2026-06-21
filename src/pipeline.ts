@@ -123,6 +123,7 @@ function changesRequested(reviewText: string): boolean {
 /** Visible worker badge so each comment reads as the teammate that wrote it. */
 const BADGE: Record<RoleName, string> = {
   planner: "🧠 **Planner**",
+  decomposer: "🪓 **Decomposer**",
   developer: "💻 **Developer**",
   reviewer: "🔍 **Reviewer**",
   tester: "🧪 **Tester**",
@@ -275,6 +276,35 @@ export function parseSubIssues(planText: string): Array<{ title: string; body: s
  * (the agency then works them automatically) and mark the parent done. Returns true if it
  * handled the issue (so the caller skips building/accepting).
  */
+/**
+ * The Decomposer's split: turn its `### SUB-ISSUES` output into EPIC-level issues that are PLANNED
+ * (NOT auto-started) and tagged "by agent" so the human reviews and starts each. Issues are created
+ * in order (Part N/M) and linked to the parent as an epic. The user then approves an epic and the
+ * build workflow decomposes IT into sub-issues. Returns how many were created.
+ */
+async function splitIntoPlanned(repo: string, issue: Issue, text: string): Promise<number> {
+  const items = parseSubIssues(text);
+  if (items.length === 0) return 0;
+  for (let n = 0; n < items.length; n++) {
+    const it = items[n];
+    const body = `${it.body}\n\n— Epic ${n + 1} of ${items.length}, part of #${issue.number}. Created by the 🪓 Decomposer agent; review and press ▶ Start when ready.`;
+    const created = await createIssue(repo, it.title, body);
+    if (!created.number) continue;
+    addEpicChild(repo, issue.number, created.number, it.title);
+    if (it.files.length) recordIssueFiles(repo, created.number, it.files);
+    await addLabel(repo, created.number, "agency:planned").catch(() => {});
+    await addLabel(repo, created.number, "agency:by-agent").catch(() => {});
+    recordIssueStatus(repo, created.number, withStatus("planned"), { title: it.title });
+    recordRun(repo, issue.number, "decomposer", MODELS_NONE, 0, "create-issue");
+  }
+  await commentOnIssue(repo, issue.number, say("decomposer", `**Split into ${items.length} epic(s)** — created as **Planned** (tagged \`by agent\`). Review each and press ▶ Start to build it; the build then breaks the epic into sub-issues.`));
+  await upsertTrackerComment(repo, issue.number, renderEpicTracker(listEpicChildren(repo, issue.number))).catch(() => {});
+  await removeLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
+  await addLabel(repo, issue.number, EPIC_LABEL).catch(() => {});
+  recordIssueStatus(repo, issue.number, withStatus("review"));
+  return items.length;
+}
+
 async function maybeDecompose(repo: string, issue: Issue, planText: string): Promise<boolean> {
   const subs = parseSubIssues(planText);
   if (subs.length === 0) return false;
@@ -834,7 +864,7 @@ export async function runFollowUp(
 
 // ---- workflow engine (Phase 2): run a custom workflow's steps in order, with forced skills/hooks
 // and gates. The proven full-build path stays on runPipeline; this drives everything else. ----
-const STEP_ROLE: Record<string, RoleName> = { "@dev": "developer", "@plan": "planner", "@arch": "architect", "@review": "reviewer", "@test": "tester" };
+const STEP_ROLE: Record<string, RoleName> = { "@dev": "developer", "@plan": "planner", "@arch": "architect", "@review": "reviewer", "@test": "tester", "@split": "decomposer" };
 
 async function runStepHooks(ids: number[], phase: "pre" | "post", workdir: string, repo: string, number: number): Promise<void> {
   if (!ids.length) return;
@@ -930,6 +960,7 @@ ${thread}` : ""}${skills}`,
     recordRun(repo, issue.number, role, out.model, out.turns, "workflow", out.costUsd);
     await commentOnIssue(repo, issue.number, say(role, out.text));
     await runStepHooks(hookIds, "post", workdir, repo, issue.number);
+    if (role === "decomposer") { await splitIntoPlanned(repo, issue, out.text).catch(() => {}); return; } // split → planned epics, end this run
     if (role === "developer") await finalizeWithPr(repo, issue, workdir, branch).catch(() => {});
 
     const gate = (wf.gates || []).find((g) => g.after === i);

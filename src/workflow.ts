@@ -9,7 +9,7 @@ import { listWorkflows, type Workflow } from "./store.js";
 import type { RoleName } from "./agents/roles.js";
 
 const LEAD_ROLE: Record<string, RoleName> = { "full-build": "developer", "quick-fix": "developer", "plan-only": "planner", "review-only": "reviewer" };
-const HANDLE_ROLE: Record<string, RoleName> = { "@dev": "developer", "@plan": "planner", "@arch": "architect", "@review": "reviewer", "@test": "tester" };
+const HANDLE_ROLE: Record<string, RoleName> = { "@dev": "developer", "@plan": "planner", "@split": "decomposer", "@arch": "architect", "@review": "reviewer", "@test": "tester" };
 const esc = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /** The role that leads a workflow's run (v1: maps to an existing flow via its first step). */
