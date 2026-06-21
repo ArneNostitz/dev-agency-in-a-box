@@ -559,6 +559,11 @@ textarea{resize:vertical;min-height:64px}
 .bld-node.sel{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-weak)}
 .bld-node-h{display:flex;align-items:center;gap:7px}
 .bld-hrow{display:flex;align-items:center;gap:4px;flex-wrap:wrap;min-height:20px}
+.bld-srow{display:flex;align-items:center;gap:4px;flex-wrap:wrap;min-height:20px;margin:5px 0}
+.bld-srow .bld-hk{display:inline-flex;align-items:center;gap:3px;font-size:10.5px;background:var(--accent-weak);color:var(--accent);border-radius:6px;padding:2px 4px 2px 7px;max-width:120px;overflow:hidden}
+.bld-srow .bld-hk button{border:none;background:none;color:inherit;cursor:pointer;display:inline-flex;padding:0;opacity:.6}
+.bld-hlbl.sk{background:var(--accent-weak);color:var(--accent);display:inline-flex;align-items:center;padding:2px 5px}
+.bld-insp-wf{border-top:1px solid var(--line);margin-top:14px;padding-top:12px}
 .bld-hrow.pre{margin-bottom:4px}
 .bld-hrow.post{margin-top:6px;padding-top:6px;border-top:1px dashed var(--line)}
 .bld-hlbl{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;border-radius:4px;padding:1px 5px;flex:0 0 auto}

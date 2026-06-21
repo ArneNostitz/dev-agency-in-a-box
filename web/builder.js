@@ -4,7 +4,7 @@
 import { html, useState, useEffect, useRef } from "/web/vendor/standalone.mjs";
 import { Avatar, Icon, Modal, Select, ProviderLogo, defaultModelLogo, agentOptions, api, toast, readAttach, Spinner } from "./core.js";
 
-const NODE_W = 212, NODE_H = 132, ROW_GAP = 58, PAD = 28, SIDE = 70, LOOPM = 46;
+const NODE_W = 216, NODE_H = 158, ROW_GAP = 56, PAD = 28, SIDE = 70, LOOPM = 46;
 const STEP_ROLE = { "@plan": "planner", "@arch": "architect", "@dev": "developer", "@review": "reviewer", "@test": "tester" };
 const DEFAULT_TASK = { "@plan": "Produce a concrete build plan for this issue.", "@arch": "Turn the plan into a concrete technical design (no code).", "@dev": "Implement the plan; commit and open a PR.", "@review": "Review the PR against the plan and the codebase.", "@test": "Run the project\u2019s checks and fix any failures." };
 const ROUTES = [
@@ -225,29 +225,6 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
     </div>
 
     <div class="bld-body">
-      <!-- palette -->
-      <div class="bld-rail">
-        <div class="bld-rail-sec">Agents</div>
-        <div class="bld-pills">
-          ${agentOpts.map((o) => html`<button class="bld-pill agent" key=${o.value} title=${"Add " + o.label} onClick=${() => addStep(o.value)}>
-            <${Avatar} role=${o.avatar || roleFor(o.value)} src=${o.avatarSrc} size=${18} crop="head"/><span>${o.label}</span><${Icon} name="plus" size=${12}/>
-          </button>`)}
-          <button class="bld-pill ghost" onClick=${() => setEditAgent("__new__")}><${Icon} name="plus" size=${13}/><span>New agent</span></button>
-        </div>
-        <div class="bld-rail-sec">Skills ${cur ? html`<span class="bld-hint">→ ${labelFor(agentOf(cur), agentOpts)}</span>` : null}</div>
-        <div class="bld-pills">
-          ${skillOpts.length === 0 ? html`<div class="bld-empty sm">No skills yet.</div>` : null}
-          ${skillOpts.map((s) => { const on = cur && (cur.skills || []).includes(s.value); return html`<button class=${"bld-pill skill" + (on ? " on" : "")} key=${s.value} title=${s.desc} onClick=${() => cur && toggleChip(step, "skills", s.value)}><${Icon} name=${on ? "check" : "plus"} size=${12}/><span>${s.label}</span></button>`; })}
-          <button class="bld-pill ghost" onClick=${importSkills}><${Icon} name="download" size=${13}/><span>Import from GitHub</span></button>
-          <button class="bld-pill ghost" onClick=${() => onEditAgent && onEditAgent("skills")}><${Icon} name="plus" size=${13}/><span>Manage skills</span></button>
-        </div>
-        <div class="bld-rail-sec">Workflow hooks <span class="bld-hint">whole run</span></div>
-        <div class="bld-pills">
-          ${hookOpts.length === 0 ? html`<div class="bld-empty sm">No hooks yet.</div>` : null}
-          ${hookOpts.map((h) => { const on = (form.hooks || []).includes(h.value); return html`<button class=${"bld-pill hook" + (on ? " on" : "")} key=${"wf" + h.value} onClick=${() => setForm((f2) => ({ ...f2, hooks: (f2.hooks || []).includes(h.value) ? f2.hooks.filter((x) => x !== h.value) : (f2.hooks || []).concat(h.value) }))}><span class=${"phase " + h.phase}>${h.phase}</span><span>${h.label}</span></button>`; })}
-        </div>
-      </div>
-
       <!-- canvas -->
       <div class="bld-canvas" ref=${canvasRef}>
         <div class="bld-flow" ref=${flowRef} style=${"width:" + gridW + "px;height:" + gridH + "px"}
@@ -275,7 +252,12 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
                 ${hrow("pre")}
                 <div class="bld-node-h"><span class="bld-node-num">${i + 1}</span><${Avatar} role=${roleFor(agentOf(s))} src=${srcFor(agentOf(s))} size=${26} crop="head"/><${Select} value=${agentOf(s)} options=${agentOpts} onChange=${(v) => patchStep(i, { agent: v })} btnClass="bld-agentsel" trigger=${(c) => html`<span class="bld-node-name">${c ? c.label : labelFor(agentOf(s), agentOpts)}</span><${Icon} name="chevdown" size=${12} cls="bld-agentsel-c"/>`}/></div>
                 <div class="bld-node-task">${(s.instruction || "").split("\n")[0] || html`<span class="ph">describe this step…</span>`}</div>
-                <div class="bld-node-tags">${(s.skills || []).length ? html`<span class="t skill"><${Icon} name="sparkles" size=${10}/>${s.skills.length}</span>` : null}${s.model ? html`<span class="t"><${ProviderLogo} name="claude" size=${10}/></span>` : null}${g ? html`<span class=${"t " + (g.condition === "humanApproval" ? "approve" : g.route && g.route.startsWith("loop") ? "loop" : "stop")}>${g.condition === "humanApproval" ? html`<${Icon} name="hourglass" size=${10}/> approval` : g.route && g.route.startsWith("loop") ? html`<${Icon} name="refresh" size=${10}/> loop` : html`<${Icon} name="stop" size=${10}/> stop`}</span>` : null}</div>
+                <div class="bld-srow" onClick=${(e) => e.stopPropagation()}>
+                  <span class="bld-hlbl sk"><${Icon} name="sparkles" size=${9}/></span>
+                  ${(s.skills || []).map((sk) => { const so = skillOpts.find((x) => x.value === sk); return html`<span class="bld-hk" key=${sk} title=${so ? so.desc : sk}>${so ? so.label : sk}<button onClick=${() => toggleChip(i, "skills", sk)} aria-label="remove"><${Icon} name="x" size=${9}/></button></span>`; })}
+                  <${Select} value="" options=${skillOpts.filter((x) => !(s.skills || []).includes(x.value))} onChange=${(v) => v && toggleChip(i, "skills", v)} btnClass="bld-hadd" trigger=${() => html`<${Icon} name="plus" size=${11}/>`}/>
+                </div>
+                <div class="bld-node-tags">${s.model ? html`<span class="t"><${ProviderLogo} name="claude" size=${10}/></span>` : null}${g ? html`<span class=${"t " + (g.condition === "humanApproval" ? "approve" : g.route && g.route.startsWith("loop") ? "loop" : "stop")}>${g.condition === "humanApproval" ? html`<${Icon} name="hourglass" size=${10}/> approval` : g.route && g.route.startsWith("loop") ? html`<${Icon} name="refresh" size=${10}/> loop` : html`<${Icon} name="stop" size=${10}/> stop`}</span>` : null}</div>
                 ${hrow("post")}
               </div>
             </div>`;
@@ -300,8 +282,6 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
           <textarea class="bld-ta" rows="3" placeholder=${"Leave blank to use " + labelFor(agentOf(cur), agentOpts) + "’s default task. Add only extra/override instructions for this step."} value=${cur.instruction} onInput=${(e) => patchStep(step, { instruction: e.target.value })}></textarea>
           <label class="bld-lbl">Model</label>
           <${Select} value=${cur.model || ""} options=${[{ value: "", label: "Default", logo: defaultModelLogo(data) }].concat(modelOpts(data))} onChange=${(v) => patchStep(step, { model: v })}/>
-          ${(cur.skills || []).length ? html`<label class="bld-lbl">Skills</label><div class="bld-chips">${cur.skills.map((s) => html`<span class="bld-chip skill" key=${s}>${s}<button onClick=${() => toggleChip(step, "skills", s)} aria-label="remove"><${Icon} name="x" size=${10}/></button></span>`)}</div>` : null}
-
           ${html`
             <label class="bld-lbl">When this step finishes</label>
             <${Select} value=${(() => { const g = gateAfter(step); return !g ? "continue" : g.condition === "humanApproval" ? "approve" : g.route && g.route.startsWith("loop") ? "loop" : "stop"; })()} options=${[{ value: "continue", label: "Continue to next →" }, { value: "approve", label: "⏸ Pause for my approval" }, { value: "loop", label: "Loop back if…" }, { value: "stop", label: "Stop the workflow" }]} onChange=${(v) => v === "continue" ? setGate(step, { route: "continue", condition: "review:changes" }) : v === "approve" ? setGate(step, { condition: "humanApproval", route: "continue" }) : v === "stop" ? setGate(step, { route: "stop", condition: "review:changes" }) : setGate(step, { route: "loop:" + Math.max(0, step - 1), condition: ((gateAfter(step) || {}).condition === "humanApproval" ? "review:changes" : (gateAfter(step) || {}).condition) || "review:changes" })}/>
@@ -315,6 +295,13 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
             ` : null}
           `}
         ` : html`<div class="bld-empty">Add a step to begin.</div>`}
+        <div class="bld-insp-wf">
+          <label class="bld-lbl">Workflow hooks <span class="bld-hint">(whole run)</span></label>
+          <div class="bld-chips">
+            ${(form.hooks || []).map((h) => { const ho = hookOpts.find((x) => x.value === h); return html`<span class="bld-chip" key=${"wf" + h}>${ho ? ho.phase + " · " + ho.label : h}<button onClick=${() => setForm((f2) => ({ ...f2, hooks: (f2.hooks || []).filter((x) => x !== h) }))} aria-label="remove"><${Icon} name="x" size=${10}/></button></span>`; })}
+            <${Select} value="" options=${hookOpts.filter((x) => !(form.hooks || []).includes(x.value))} menuAlign="right" onChange=${(v) => v && setForm((f2) => ({ ...f2, hooks: (f2.hooks || []).concat(v) }))} btnClass="bld-hadd" trigger=${() => html`<${Icon} name="plus" size=${11}/>`}/>
+          </div>
+        </div>
       </div>
     </div>
     ${editAgent ? html`<${AgentModal} data=${data} which=${editAgent} onClose=${() => setEditAgent(null)} reload=${reload}/>` : null}
