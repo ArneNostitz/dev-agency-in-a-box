@@ -3,21 +3,9 @@
  * PWA wiring (manifest + service worker), and a Preact app loaded as an ES module from /web/app.js.
  * All the UI lives in /web/app.js (Preact + htm, no build step).
  */
-export function renderShell(): string {
-  return `<!doctype html><html lang="en"><head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#f5f6f8" id="metatheme">
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="apple-mobile-web-app-title" content="Dev Agency in a Box">
-<link rel="manifest" href="/manifest.webmanifest">
-<link rel="apple-touch-icon" href="/web/icons/icon-192.png">
-<link rel="icon" href="/web/icons/icon.svg" type="image/svg+xml">
-<title>Dev Agency in a Box</title>
-<style>
-:root{
+import { versionInfo } from "./version.js";
+
+export const SHELL_CSS = `:root{
   --bg:#f5f6f8;--surface:#ffffff;--surface-2:#eef0f3;--ink:#1c1e22;--ink-2:#5a6069;--ink-3:#9aa0a8;
   --line:#e4e7eb;--line-2:#d3d8de;--accent:#2f6df6;--accent-weak:#e7efff;--green:#0b8a52;--green-weak:#e6f7ef;
   --amber:#a76a00;--amber-weak:#fff3da;--red:#c0392b;--red-weak:#fdeceb;--purple:#6741d9;--purple-weak:#efe9ff;
@@ -818,8 +806,23 @@ textarea{resize:vertical;min-height:64px}
 .orch-compose textarea{flex:1;resize:none;border:1px solid var(--line);border-radius:12px;padding:10px 12px;font:14.5px inherit;background:var(--bg);color:var(--ink);max-height:160px;line-height:1.5}
 .orch-compose textarea:focus{outline:none;border-color:var(--accent)}
 .orch-send{width:42px;height:42px;padding:0;flex:none;border-radius:12px;display:inline-flex;align-items:center;justify-content:center}
-@media(max-width:760px){.orch{height:calc(100vh - 190px);border-radius:0;border-left:none;border-right:none}.obub-body{max-width:92%}}
-</style>
+@media(max-width:760px){.orch{height:calc(100vh - 190px);border-radius:0;border-left:none;border-right:none}.obub-body{max-width:92%}}`;
+
+export function renderShell(): string {
+  const __VER__ = encodeURIComponent(versionInfo().sha || versionInfo().version || "dev");
+  return `<!doctype html><html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f5f6f8" id="metatheme">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Dev Agency in a Box">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/web/icons/icon-192.png">
+<link rel="icon" href="/web/icons/icon.svg" type="image/svg+xml">
+<title>Dev Agency in a Box</title>
+<link rel="stylesheet" href="/app.css?v=${__VER__}">
 </head>
 <body>
 <div id="root" aria-busy="true"></div>

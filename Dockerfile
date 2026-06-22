@@ -2,6 +2,15 @@
 # The Agent SDK bundles its own native Claude Code binary, so no extra runtime is needed.
 FROM node:22-bookworm-slim
 
+# Optional toolchains — all default ON (so existing deploys are unchanged on rebuild). For a lean
+# core image (Claude pipeline only) pass e.g. `--build-arg WITH_PI=0 --build-arg WITH_TUNNEL=0
+# --build-arg WITH_AUDITOR=0 --build-arg WITH_GITNEXUS=0 --build-arg WITH_PYTHON=0`.
+ARG WITH_TUNNEL=1
+ARG WITH_PYTHON=1
+ARG WITH_AUDITOR=1
+ARG WITH_GITNEXUS=1
+ARG WITH_PI=1
+
 # git (for branches/commits) and gh (GitHub CLI used by the agency and the agents).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl git gnupg \
@@ -17,26 +26,29 @@ RUN apt-get update \
 
 # cloudflared: opens a temporary public tunnel so a PR's dev server (run in-container) can be
 # opened from your phone — no DNS/Coolify setup. Arch-aware (amd64/arm64).
-RUN arch="$(dpkg --print-architecture)" \
+RUN if [ "$WITH_TUNNEL" = "1" ]; then arch="$(dpkg --print-architecture)" \
     && curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${arch}" \
         -o /usr/local/bin/cloudflared \
-    && chmod +x /usr/local/bin/cloudflared
+    && chmod +x /usr/local/bin/cloudflared; \
+    else echo "skip cloudflared (WITH_TUNNEL=0) — phone preview tunnels disabled"; fi
 
 # Python toolchain so the agency can lint/test Python projects (Django, ruff, pytest, coverage).
 # The agent creates a venv per repo and pip-installs the repo's requirements at run time (writes
 # into the node-owned clone — no system installs, no sudo needed). build-essential + libpq-dev +
 # python3-dev cover C-extension deps like psycopg2.
-RUN apt-get update \
+RUN if [ "$WITH_PYTHON" = "1" ]; then apt-get update \
     && apt-get install -y --no-install-recommends \
         python3 python3-pip python3-venv python3-dev build-essential libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/*; \
+    else echo "skip python toolchain (WITH_PYTHON=0) — Python repo lint/test unavailable"; fi
 
 # Graphify (https://github.com/safishamsi/graphify) — knowledge-graph engine for the codebase
 # Auditor agent: builds a structural graph (NetworkX + Leiden + tree-sitter) and a GRAPH_REPORT.md
 # (god nodes + surprising connections). Pure Python, on-device, no native FTS extension. Best-effort
 # (the audit feature degrades to direct code analysis if it's unavailable). PyPI name: graphifyy.
-RUN pip install --no-cache-dir --break-system-packages graphifyy \
-    || echo "graphify not installed (optional) — the auditor falls back to direct codebase analysis"
+RUN if [ "$WITH_AUDITOR" = "1" ]; then pip install --no-cache-dir --break-system-packages graphifyy \
+    || echo "graphify not installed (optional) — the auditor falls back to direct codebase analysis"; \
+    else echo "skip graphify (WITH_AUDITOR=0)"; fi
 
 WORKDIR /app
 
@@ -46,14 +58,16 @@ RUN corepack enable || true
 # Optional: GitNexus code-intelligence (token-light codebase research via MCP). Best-effort —
 # the build never fails on it, and the runtime only uses it when GITNEXUS=true. Skipping the
 # vendored Dart/Proto/Swift grammars avoids needing a C++ toolchain.
-RUN GITNEXUS_SKIP_OPTIONAL_GRAMMARS=1 npm install -g gitnexus@latest \
-    || echo "gitnexus not installed (optional) — set GITNEXUS=true only if this succeeds"
+RUN if [ "$WITH_GITNEXUS" = "1" ]; then GITNEXUS_SKIP_OPTIONAL_GRAMMARS=1 npm install -g gitnexus@latest \
+    || echo "gitnexus not installed (optional) — set GITNEXUS=true only if this succeeds"; \
+    else echo "skip gitnexus (WITH_GITNEXUS=0) — code-intelligence MCP disabled"; fi
 
 # pi (https://github.com/earendil-works/pi) — the coding-agent CLI used by the `pi-cli` runner so
 # the agency can drive ANY model/provider pi supports (Claude, GLM, DeepSeek, Codex, …). Baked into
 # the image at the default prefix; runtime on-the-fly installs go to the data-volume prefix below.
-RUN npm install -g --prefix /usr/local --ignore-scripts @earendil-works/pi-coding-agent \
-    || echo "pi not installed (optional) — the pi-cli runner falls back to the built-in SDK runner"
+RUN if [ "$WITH_PI" = "1" ]; then npm install -g --prefix /usr/local --ignore-scripts @earendil-works/pi-coding-agent \
+    || echo "pi not installed (optional) — the pi-cli runner falls back to the built-in SDK runner"; \
+    else echo "skip pi (WITH_PI=0) — pi-cli runner falls back to the built-in SDK runner"; fi
 
 # Pre-install LadybugDB's FTS (full-text search) extension at BUILD time. GitNexus runs LadybugDB
 # "load-only" during analyze — it won't download the extension itself — so at runtime full-text
@@ -62,7 +76,7 @@ RUN npm install -g --prefix /usr/local --ignore-scripts @earendil-works/pi-codin
 # under the node user's home (~/.gitnexus / ~/.ladybug), which lives in the IMAGE (only ~/.claude is
 # on the data volume) — so installing it once here makes it persist for every run. Best-effort:
 # never fails the build; if it can't install, runtime falls back to structural-graph-only.
-RUN set -eux; \
+RUN if [ "$WITH_GITNEXUS" = "1" ]; then set -eux; \
     d=/tmp/gnwarm; rm -rf "$d"; mkdir -p "$d"; cd "$d"; \
     git init -q; printf 'def hello():\n    return "hi"\n' > app.py; \
     git -c user.email=build@local -c user.name=build add -A; \
@@ -70,7 +84,8 @@ RUN set -eux; \
     HOME=/home/node GITNEXUS_SKIP_OPTIONAL_GRAMMARS=1 gitnexus analyze --skip-embeddings 2>&1 | tail -25 \
       || echo "gitnexus FTS warm: best-effort (failed; runtime falls back to structural-only search)"; \
     cd /; rm -rf "$d"; \
-    chown -R node:node /home/node/.gitnexus /home/node/.ladybug /home/node/.kuzu /home/node/.cache 2>/dev/null || true
+    chown -R node:node /home/node/.gitnexus /home/node/.ladybug /home/node/.kuzu /home/node/.cache 2>/dev/null || true; \
+    else echo "skip gitnexus FTS warm (WITH_GITNEXUS=0)"; fi
 
 # Install dependencies first for better layer caching.
 COPY package.json package-lock.json* ./

@@ -39,27 +39,29 @@ export function summarizeTool(name: string, input: Record<string, unknown> = {})
   }
 }
 
+/**
+ * Runner registry — the single source of truth for backends. To add a runner: add one entry here
+ * (and its kind to RunnerKind in interface.ts). getRunner/defaultRunnerKind derive from this map,
+ * so no switch to update.
+ */
+const RUNNERS: Record<RunnerKind, (customCliCommand?: string) => AgentRunner> = {
+  "claude-sdk": () => new ClaudeSdkRunner(),
+  "pi-cli": () => new PiCliRunner(),
+  "claude-cli": (cli) => new CliRunner(cli || CLI_TEMPLATES["claude-cli"]),
+  // custom-cli falls back to the pi template if no command is configured (sensible "any CLI" default;
+  // overridden via the agent_cli_command setting).
+  "custom-cli": (cli) => new CliRunner(cli || sStr("agent_cli_command", "AGENT_CLI_COMMAND", CLI_TEMPLATES["pi-cli"])),
+};
+
 /** Resolve the active runner from a kind + optional custom template. */
 export function getRunner(kind: RunnerKind | string, customCliCommand?: string): AgentRunner {
-  switch (kind) {
-    case "claude-sdk":
-      return new ClaudeSdkRunner();
-    case "pi-cli":
-      return new PiCliRunner();
-    case "claude-cli":
-      return new CliRunner(customCliCommand || CLI_TEMPLATES["claude-cli"]);
-    case "custom-cli":
-    default:
-      // custom-cli falls back to the pi template if no command is configured (sensible default
-      // for "any CLI" — the user overrides via the agent_cli_command setting).
-      return new CliRunner(customCliCommand || sStr("agent_cli_command", "AGENT_CLI_COMMAND", CLI_TEMPLATES["pi-cli"]));
-  }
+  return (RUNNERS[kind as RunnerKind] ?? RUNNERS["custom-cli"])(customCliCommand);
 }
 
 /** The default runner kind, from the agent_runner setting (default claude-sdk). */
 export function defaultRunnerKind(): RunnerKind {
   const k = sStr("agent_runner", "AGENT_RUNNER", "claude-sdk");
-  return k === "claude-sdk" || k === "claude-cli" || k === "pi-cli" || k === "custom-cli" ? (k as RunnerKind) : "claude-sdk";
+  return k in RUNNERS ? (k as RunnerKind) : "claude-sdk";
 }
 
 /**

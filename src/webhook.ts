@@ -30,7 +30,7 @@ import { parseLegacyStatus, withStatus, setBlocked } from "./state.js";
 import { runOrchestratorChat } from "./agents/orchestrator-chat.js";
 import { listOrchThread, clearOrchThread, setByAgent } from "./store.js";
 import { getIssueBudget, setIssueBudget } from "./budget.js";
-import { renderShell } from "./shell.js";
+import { renderShell, SHELL_CSS } from "./shell.js";
 import { addLabel, removeLabel } from "./github.js";
 import { afterMerge } from "./merge_hooks.js";
 import { activeClaims } from "./locks.js";
@@ -136,6 +136,13 @@ function serveStatic(pathname: string, res: ServerResponse): boolean {
   if (pathname === "/web/version.json") {
     res.writeHead(200, { "content-type": "application/json", "cache-control": "no-cache" });
     res.end(JSON.stringify(versionInfo()));
+    return true;
+  }
+  // The stylesheet is served as its own long-immutable asset (busted by ?v=<sha>) instead of being
+  // inlined into the no-store shell on every navigation — first paint + repeat loads cache it.
+  if (pathname === "/app.css") {
+    res.writeHead(200, { "content-type": "text/css; charset=utf-8", "cache-control": "public, max-age=31536000, immutable" });
+    res.end(SHELL_CSS);
     return true;
   }
   let rel: string | null = null;

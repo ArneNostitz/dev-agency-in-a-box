@@ -81,7 +81,7 @@ export async function listQueuedIssues(repo: string, label: string): Promise<Iss
       number: i.number,
       title: i.title,
       body: i.body ?? "",
-      labels: i.labels.map((l) => l.name),
+      labels: (i.labels || []).map((l) => (typeof l === "string" ? l : l.name)),
     }))
     .sort((a, b) => a.number - b.number);
 }
@@ -133,7 +133,7 @@ export async function listActionableIssues(repo: string, opts: ActionableOptions
     number: i.number,
     title: i.title,
     body: i.body ?? "",
-    labels: i.labels.map((l) => l.name),
+    labels: (i.labels || []).map((l) => (typeof l === "string" ? l : l.name)),
   }));
 
   const result: Issue[] = [];
@@ -260,18 +260,60 @@ export async function issueAuthorAssoc(repo: string, number: number): Promise<st
 // Memoize signals per thread keyed by the issue's updatedAt: if GitHub's updatedAt hasn't advanced,
 // the comment list (and labels) are unchanged, so the prior result is exact — and we skip the
 // per-thread `gh` subprocess entirely. This is the dominant per-scan cost on idle repos.
+// ── Direct GitHub REST (no subprocess) ──────────────────────────────────────────────────────────
+// The `gh` CLI forks a process (startup + keyring + TLS) per call. When a bot token is available we
+// hit the REST API directly with `fetch` instead; on ANY problem (no token / non-200 / network /
+// parse) we return null and the caller falls back to `gh`, so keyring-only setups and edge cases
+// (pagination, etc.) keep working exactly as before. Read-only hot paths only.
+function ghHeaders(): Record<string, string> | null {
+  const t = ghBotToken();
+  if (!t) return null;
+  return { Authorization: `Bearer ${t}`, Accept: "application/vnd.github+json", "User-Agent": "dev-agency", "X-GitHub-Api-Version": "2022-11-28" };
+}
+/** Single REST page → array, or null to fall back to gh. */
+async function ghFetchPage(path: string): Promise<unknown[] | null> {
+  const h = ghHeaders();
+  if (!h) return null;
+  try {
+    const r = await fetch(`https://api.github.com/${path}`, { headers: h });
+    if (!r.ok) return null;
+    const j = await r.json();
+    return Array.isArray(j) ? j : null;
+  } catch { return null; }
+}
+/** All REST pages (follows Link rel=next, bounded) → array, or null to fall back to gh. */
+async function ghFetchAll(path: string): Promise<unknown[] | null> {
+  const h = ghHeaders();
+  if (!h) return null;
+  try {
+    let url: string = `https://api.github.com/${path}${path.includes("?") ? "&" : "?"}per_page=100`;
+    const out: unknown[] = [];
+    for (let i = 0; i < 20 && url; i++) {
+      const r = await fetch(url, { headers: h });
+      if (!r.ok) return null;
+      const page = await r.json();
+      if (!Array.isArray(page)) return null;
+      out.push(...page);
+      const m = /<([^>]+)>;\s*rel="next"/.exec(r.headers.get("link") || "");
+      url = m ? m[1] : "";
+    }
+    return out;
+  } catch { return null; }
+}
+
 const sigCache = new Map<string, { at: string; sig: ThreadInspect }>();
 export async function threadSignals(repo: string, number: number, updatedAt?: string): Promise<ThreadInspect> {
   const key = `${repo}#${number}`;
   if (updatedAt) { const c = sigCache.get(key); if (c && c.at === updatedAt) return c.sig; }
-  const out = await gh([
-    "api", `repos/${repo}/issues/${number}/comments`, "--paginate", "--jq", '[.[]|{id,body,assoc:.author_association,plus:.reactions["+1"]}]',
-  ]).catch(() => "[]");
   let arr: Array<{ id: number; body: string; assoc?: string; plus?: number }> = [];
-  try {
-    arr = JSON.parse(out);
-  } catch {
-    /* ignore */
+  const viaFetch = await ghFetchAll(`repos/${repo}/issues/${number}/comments`);
+  if (viaFetch) {
+    arr = (viaFetch as Array<{ id: number; body?: string; author_association?: string; reactions?: { "+1"?: number } }>).map((c) => ({ id: c.id, body: c.body ?? "", assoc: c.author_association, plus: c.reactions?.["+1"] }));
+  } else {
+    const out = await gh([
+      "api", `repos/${repo}/issues/${number}/comments`, "--paginate", "--jq", '[.[]|{id,body,assoc:.author_association,plus:.reactions["+1"]}]',
+    ]).catch(() => "[]");
+    try { arr = JSON.parse(out); } catch { /* ignore */ }
   }
   const agencyEverCommented = arr.some((c) => c.body.includes(AGENCY_MARKER));
   const last = arr[arr.length - 1];
@@ -310,29 +352,26 @@ export interface RecentThread {
 
 /** Issues updated recently, ANY state, with the bits the router needs. */
 export async function listRecentThreads(repo: string, limit = 60): Promise<RecentThread[]> {
-  const out = await gh([
-    "issue", "list", "--repo", repo, "--state", "all",
-    "--json", "number,title,body,labels,state,comments,updatedAt", "--limit", String(limit),
-  ]).catch(() => "[]");
-  let raw: Array<{
-    number: number;
-    title: string;
-    body: string | null;
-    labels: Array<{ name: string }>;
-    state: string;
-    comments: number | unknown[];
-    updatedAt: string;
-  }> = [];
-  try {
-    raw = JSON.parse(out);
-  } catch {
-    /* ignore */
+  type Raw = { number: number; title: string; body: string | null; labels: Array<{ name: string } | string>; state: string; comments: number | unknown[]; updatedAt: string };
+  let raw: Raw[] = [];
+  // REST returns PRs in the issues list too; filter them out (they carry a pull_request field).
+  const viaFetch = await ghFetchPage(`repos/${repo}/issues?state=all&sort=updated&direction=desc&per_page=${limit}`);
+  if (viaFetch) {
+    raw = (viaFetch as Array<Record<string, unknown>>)
+      .filter((i) => !i.pull_request)
+      .map((i) => ({ number: i.number as number, title: (i.title as string) ?? "", body: (i.body as string) ?? "", labels: (i.labels as Array<{ name: string }>) ?? [], state: (i.state as string) ?? "open", comments: (i.comments as number) ?? 0, updatedAt: (i.updated_at as string) ?? "" }));
+  } else {
+    const out = await gh([
+      "issue", "list", "--repo", repo, "--state", "all",
+      "--json", "number,title,body,labels,state,comments,updatedAt", "--limit", String(limit),
+    ]).catch(() => "[]");
+    try { raw = JSON.parse(out); } catch { /* ignore */ }
   }
   return raw.map((i) => ({
     number: i.number,
     title: i.title,
     body: i.body ?? "",
-    labels: i.labels.map((l) => l.name),
+    labels: (i.labels || []).map((l) => (typeof l === "string" ? l : l.name)),
     closed: (i.state ?? "").toUpperCase() === "CLOSED",
     // gh returns `comments` as a count (number) on most versions, an array on some.
     comments: Array.isArray(i.comments) ? i.comments.length : Number(i.comments) || 0,
@@ -884,7 +923,7 @@ export async function listAllOpenIssues(repo: string): Promise<Issue[]> {
     number: number; title: string; body: string | null; labels: Array<{ name: string }>;
   }>;
   return raw.map((i) => ({
-    number: i.number, title: i.title, body: i.body ?? "", labels: i.labels.map((l) => l.name),
+    number: i.number, title: i.title, body: i.body ?? "", labels: (i.labels || []).map((l) => (typeof l === "string" ? l : l.name)),
   }));
 }
 
