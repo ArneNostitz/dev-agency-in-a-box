@@ -85,13 +85,14 @@ function rowQuick(i, act) {
   return null;
 }
 
-function Row({ i, multi, onOpen, act, avatarsOn }) {
+function Row({ i, multi, onOpen, act, avatarsOn, child = false, expandable = false, expanded = false, onToggle }) {
   const sf = statusField(i);
   const q = rowQuick(i, act);
   const qBusy = q && act.isBusy(q.a, i.repo, i.number);
-  return html`<tr class=${"prow prow-" + sf.kind} onClick=${() => onOpen(i)}>
-    <td class="pt-issue">
+  return html`<tr class=${"prow prow-" + sf.kind + (child ? " prow-child" : "")} onClick=${() => onOpen(i)}>
+    <td class=${"pt-issue" + (child ? " pt-issue-child" : "")}>
       <div class="pt-title-row">
+        ${expandable ? html`<button class=${"pt-exp" + (expanded ? " open" : "")} aria-label=${expanded ? "Collapse sub-issues" : "Expand sub-issues"} onClick=${(e) => { e.stopPropagation(); onToggle && onToggle(); }}><${Icon} name="chevron" size=${14}/></button>` : null}
         ${avatarsOn && (i.active || i.queued) && i.role ? html`<span class="pt-av"><${Avatar} role=${i.role} size=${18} crop="head"/></span>` : null}
         <span class="pt-title">${i.title || "#" + i.number}</span>
         ${i.byAgent ? html`<span class="pt-byagent tip" data-tip="Proposed by an agent — review & start"><${Icon} name="rocket" size=${10}/> agent</span>` : null}
@@ -119,6 +120,10 @@ export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, o
   // Decorate each row with its status-kind + time ONCE (statusField was previously recomputed O(n log n)
   // times inside the comparator, on every 5s poll), then sort the decorated array.
   const nested = nestedChildKeys(issues);
+  const liveBy = useMemo(() => new Map(issues.map((i) => [i.repo + "#" + i.number, i])), [issues]);
+  // Epics are unfolded by DEFAULT (sub-issues shown as full indented rows); track collapsed ones.
+  const [collapsed, setCollapsed] = useState(() => new Set());
+  const toggle = (key) => setCollapsed((prev) => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
   const { rows, needsYou } = useMemo(() => {
     const dec = issues.filter((i) => !nested.has(i.repo + "#" + i.number)).map((i) => ({ i, kind: statusField(i).kind, t: new Date(i.updated_at || 0).getTime() }));
     if (group === "smart") dec.sort((a, b) => { const ka = KIND_ORDER[a.kind] ?? 9, kb = KIND_ORDER[b.kind] ?? 9; return ka !== kb ? ka - kb : b.t - a.t; });
@@ -140,7 +145,19 @@ export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, o
     </div>
     ${rows.length ? html`<table class="ptable">
       <thead><tr><th>Issue</th><th class="pt-h-tl">Workflow timeline</th><th>Status</th><th></th></tr></thead>
-      <tbody>${rows.map((i) => html`<${Row} key=${i.repo + "#" + i.number} i=${i} multi=${multi} onOpen=${onOpen} act=${act} avatarsOn=${avatarsOn}/>`)}</tbody>
+      <tbody>${rows.flatMap((i) => {
+        const key = i.repo + "#" + i.number;
+        const kids = i.epic && i.epic.children ? i.epic.children : null;
+        const isEpic = kids && kids.length > 0;
+        const open = isEpic && !collapsed.has(key);
+        const out = [html`<${Row} key=${key} i=${i} multi=${multi} onOpen=${onOpen} act=${act} avatarsOn=${avatarsOn} expandable=${!!isEpic} expanded=${open} onToggle=${() => toggle(key)}/>`];
+        if (open) for (const c of kids) {
+          const ck = i.repo + "#" + c.child;
+          const ci = liveBy.get(ck) || { repo: i.repo, number: c.child, title: c.title, state: c.closed ? "done" : (c.state || "planned"), updated_at: i.updated_at };
+          out.push(html`<${Row} key=${ck} i=${ci} multi=${multi} onOpen=${onOpen} act=${act} avatarsOn=${avatarsOn} child=${true}/>`);
+        }
+        return out;
+      })}</tbody>
     </table>` : html`<div class="empty" style="padding:40px;text-align:center">No issues yet — start one with “New issue” or the Chat.</div>`}
   </div>`;
 }

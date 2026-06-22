@@ -245,6 +245,30 @@ test("v4: default List view renders the rich progress table + timeline; Chat vie
   dom.window.close();
 });
 
+test("v4: epics unfold their sub-issues as indented full rows in the List", async () => {
+  const SAMPLE = {
+    user: { id: 1, username: "arne", role: "admin" }, authEnabled: true, onboarded: true,
+    repos: ["acme/app"], auto: {}, autoRepos: {}, github: { connected: true }, workflows: [],
+    active: [], runs: [], activity: [], spendToday: { costUsd: 0 }, session: {}, config: {},
+    issues: [
+      { repo: "acme/app", number: 5, title: "Big epic", state: "agency:epic", updated_at: new Date().toISOString(), auto: {},
+        epic: { total: 2, done: 1, children: [ { child: 6, title: "Child one", closed: 1, state: "done" }, { child: 7, title: "Child two", closed: 0, state: "working" } ] } },
+      { repo: "acme/app", number: 7, title: "Child two", state: "working", running: true, updated_at: new Date().toISOString(), auto: {} },
+    ],
+  };
+  const { window, dom, root } = await mountApp({
+    view: "list",
+    fetch: async (u) => ({ ok: true, json: async () => (String(u).includes("/data") ? SAMPLE : {}), text: async () => "" }),
+  });
+  await new Promise((r) => setTimeout(r, 150));
+  assert.match(root.innerHTML, /Big epic/, "epic row renders");
+  assert.ok(window.document.querySelector(".pt-exp"), "epic has an expand toggle");
+  assert.ok(window.document.querySelector(".pt-issue-child"), "sub-issues render as indented child rows (default unfolded)");
+  assert.match(root.innerHTML, /Child one/, "stub sub-issue (#6, not in list) shows from epic.children");
+  assert.match(root.innerHTML, /Child two/, "live sub-issue (#7) shows under the epic");
+  dom.window.close();
+});
+
 // Pure unit tests for shapeToastMsg (web/core.js) — the toast-message tokenizer that splits a
 // string into text/url/path segments. core.js imports the vendor bundle via an absolute path, so
 // copy it to a temp dir rewriting that import, then import only the named export (no jsdom needed).

@@ -719,6 +719,14 @@ textarea{resize:vertical;min-height:64px}
 .pt-av{display:inline-flex;flex:none}
 .pt-title{font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pt-byagent{flex:none;display:inline-flex;align-items:center;gap:3px;font-size:10.5px;font-weight:600;color:var(--accent);background:var(--accent-weak);border-radius:999px;padding:1px 7px}
+.pt-exp{flex:none;display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border:none;background:transparent;color:var(--ink-3);cursor:pointer;padding:0;border-radius:5px;transition:transform .12s ease}
+.pt-exp:hover{background:var(--surface-2);color:var(--ink)}
+.pt-exp.open{transform:rotate(90deg)}
+.prow-child>td{background:var(--bg)}
+.prow-child:hover>td{background:var(--surface-2)}
+.pt-issue-child{padding-left:30px!important;position:relative}
+.pt-issue-child .pt-title{font-weight:500}
+.prow-child .pt-issue-child::before{content:"";position:absolute;left:14px;top:0;bottom:0;width:1px;background:var(--line)}
 .pt-sub{color:var(--ink-3);font-size:12px;margin-top:2px;display:flex;align-items:center;gap:4px}
 .pt-pr{display:inline-flex;align-items:center;gap:3px}
 .pt-lock{display:inline-flex;align-items:center;gap:3px;color:var(--accent)}
