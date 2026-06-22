@@ -65,13 +65,15 @@ function App() {
     });
   }, []);
 
-  function load() {
-    getJSON("/data").then((d) => {
+  // load(true) = lightweight poll (?lite=1, no heavy static config) merged onto the retained copy;
+  // load(false) = full payload (initial load + any user action), which carries config + replaces.
+  function load(lite) {
+    getJSON(lite ? "/data?lite=1" : "/data").then((d) => {
       liveRef.current = [];
       // prune stale optimistic overrides (server has caught up after ~10s)
       const ov = overridesRef.current, now = Date.now();
       Object.keys(ov).forEach((k) => { if (now - ov[k].t > 10000) delete ov[k]; });
-      setData(d);
+      setData((prev) => (lite ? { ...prev, ...d } : d));
       // drop optimistic pendings that now exist on the server
       setPending((ps) => ps.filter((p) => !(d.issues || []).some((i) => i.repo === p.repo && (i.number === p.number || (i.title || "") === p.title))));
     }).catch(() => {});
@@ -80,10 +82,10 @@ function App() {
   // server + re-render forever). On becoming visible again, refresh immediately. SSE (/events) still
   // streams live deltas, so a hidden tab loses nothing it can't catch up on instantly.
   useEffect(() => {
-    const tick = () => { if (typeof document === "undefined" || !document.hidden) load(); };
-    load();
+    const tick = () => { if (typeof document === "undefined" || !document.hidden) load(true); };
+    load(false);
     const t = setInterval(tick, 5000);
-    const onVis = () => { if (!document.hidden) load(); };
+    const onVis = () => { if (!document.hidden) load(false); };
     document.addEventListener("visibilitychange", onVis);
     return () => { clearInterval(t); document.removeEventListener("visibilitychange", onVis); };
   }, []);
@@ -281,7 +283,7 @@ function App() {
       </div>` : null}
       <div class="content">
         ${view === "chat" && repos.length
-          ? html`<${Orchestrator} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${load} onOpenIssue=${openIssue}/>`
+          ? html`<${Orchestrator} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${load} onOpenIssue=${openIssue} issues=${issues}/>`
           : view === "board"
           ? html`<${Board} issues=${shown} repos=${repos} repoFilter=${repoFilter} tab=${tab} isDesktop=${isDesktop} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onOpenChild=${openIssue} onAddRepo=${() => setSheet("addrepo")} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data}/>`
           : (repos.length

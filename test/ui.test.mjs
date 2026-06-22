@@ -239,6 +239,9 @@ test("v4: default List view renders the rich progress table + timeline; Chat vie
   await tick(120);
   assert.match(root.innerHTML, /Orchestrator/, "Chat view mounts the Orchestrator panel");
   assert.ok(window.document.querySelector(".orch-compose"), "orchestrator has a compose box");
+  // Live run-state: the running issue (#2) for this repo surfaces in the chat's "Working now" strip.
+  assert.match(root.innerHTML, /Working now/, "orchestrator reflects live run-state");
+  assert.ok(window.document.querySelector(".orch-live"), "live work strip renders when a run is active");
   dom.window.close();
 });
 

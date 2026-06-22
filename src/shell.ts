@@ -775,6 +775,13 @@ textarea{resize:vertical;min-height:64px}
 .orch-repo{font-size:12px;font-weight:600;color:var(--accent);background:var(--accent-weak);border-radius:999px;padding:2px 9px}
 .orch-head .iconbtn{margin-left:auto}
 .orch-scroll{flex:1;overflow-y:auto;padding:16px 14px;display:flex;flex-direction:column;gap:14px}
+.orch-live{border-bottom:1px solid var(--line);background:var(--surface-2);padding:8px 12px;max-height:34%;overflow-y:auto}
+.orch-live-h{display:flex;align-items:center;gap:6px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-2);font-weight:600;margin-bottom:6px}
+.orch-live-dot{width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 0 var(--accent-weak);animation:tlpulse 1.4s ease-in-out infinite}
+.orch-live-rows{display:flex;flex-direction:column;gap:4px}
+.orch-live-row{display:flex;align-items:center;gap:8px;width:100%;text-align:left;border:none;background:transparent;color:var(--ink);padding:4px 6px;border-radius:8px;cursor:pointer;font-size:13px}
+.orch-live-row:hover{background:var(--surface)}
+.orch-live-ttl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .orch-empty{margin:auto;text-align:center;max-width:440px;color:var(--ink-2)}
 .orch-empty .obki{width:54px;height:54px;border-radius:16px;background:var(--accent-weak);color:var(--accent);display:flex;align-items:center;justify-content:center;margin:0 auto 12px}
 .orch-empty .obh{font-size:17px;font-weight:600;color:var(--ink);margin-bottom:6px}

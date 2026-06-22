@@ -3,6 +3,7 @@
 // PLANNED, by-agent issues. The user stays in control — nothing starts without your say-so.
 import { html, useState, useEffect, useRef } from "/web/vendor/standalone.mjs";
 import { Avatar, Icon, Spinner, api, getJSON, md, toast } from "./core.js";
+import { statusField } from "./table.js";
 
 const WF_LABEL = { "quick-fix": "Quick fix", "full-build": "Full build", "plan-only": "Plan only", "split": "Split into epics" };
 const WF_HINT = { "quick-fix": "one developer pass", "full-build": "plan → dev → test → review", "plan-only": "a plan to review, no code", "split": "several ordered epics" };
@@ -59,7 +60,7 @@ function Bubble({ m, repo, reload, onOpenIssue }) {
   </div>`;
 }
 
-export function Orchestrator({ repos, repoFilter, setRepoFilter, reload, onOpenIssue }) {
+export function Orchestrator({ repos, repoFilter, setRepoFilter, reload, onOpenIssue, issues = [] }) {
   const repo = repoFilter || (repos && repos[0]) || null;
   const [thread, setThread] = useState([]);
   const [draft, setDraft] = useState("");
@@ -93,6 +94,10 @@ export function Orchestrator({ repos, repoFilter, setRepoFilter, reload, onOpenI
   }
   function onKey(e) { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); } }
 
+  // Live run-state for this repo — so the chat reflects where things are (a handoff's issues, once
+  // started, and anything needing you), refreshed by the dashboard poll.
+  const live = (issues || []).filter((i) => i.repo === repo && (i.active || i.running || i.queued || i.state === "working" || i.blocked));
+
   if (!repo) return html`<div class="empty" style="padding:40px;text-align:center">Add a repo to start a conversation.</div>`;
 
   return html`<div class="orch">
@@ -100,6 +105,13 @@ export function Orchestrator({ repos, repoFilter, setRepoFilter, reload, onOpenI
       <div class="orch-title"><${Icon} name="sparkles" size=${16}/> Orchestrator <span class="orch-repo">${repo.split("/").pop()}</span></div>
       <button class="iconbtn" data-tip="New conversation" aria-label="New conversation" onClick=${clear}><${Icon} name="trash" size=${16}/></button>
     </div>
+    ${live.length ? html`<div class="orch-live">
+      <div class="orch-live-h"><span class="orch-live-dot"></span> Working now · ${live.length}</div>
+      <div class="orch-live-rows">${live.map((i) => { const sf = statusField(i); return html`<button class="orch-live-row" key=${i.number} onClick=${() => onOpenIssue && onOpenIssue(repo, i.number, i.title)}>
+        <span class=${"pstat pstat-" + sf.kind}><${Icon} name=${sf.icon} size=${11}/> ${sf.label}</span>
+        <span class="orch-live-ttl">#${i.number} ${i.title || ""}</span>
+      </button>`; })}</div>
+    </div>` : null}
     <div class="orch-scroll" ref=${scrollRef}>
       ${loading ? html`<div class="empty" style="padding:30px;text-align:center"><${Spinner} size=${18}/></div>`
         : thread.length ? thread.map((m) => html`<${Bubble} key=${m.id} m=${m} repo=${repo} reload=${reload} onOpenIssue=${onOpenIssue}/>`)

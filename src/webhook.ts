@@ -435,13 +435,11 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           const offAt = Date.parse(getSetting("usage_offset_at") ?? "");
           const offTok = Number.isFinite(offAt) && new Date(offAt).toISOString() >= win.startIso ? Number(getSetting("usage_offset_tokens") || 0) : 0;
           const gaugeTokens = sess.tokens + (offTok > 0 ? offTok : 0);
-          res.writeHead(200, { "content-type": "application/json" });
-          res.end(
-            JSON.stringify({
-              env: process.env.AGENCY_ENV?.trim() || process.env.APP_ENV?.trim() || "production",
-              authEnabled: authEnabled(),
-              user: sessionUser ? { id: sessionUser.id, username: sessionUser.username, role: sessionUser.role, email: sessionUser.email } : null,
-              onboarded: sessionUser ? getSetting(`onboarded:${sessionUser.id}`) === "1" : true,
+          // Static config (providers, workflows, agents, skills, hooks, ops, users, …) changes rarely,
+          // so the 5s poll requests ?lite=1 and the server omits it; the client retains the last full
+          // copy. Full /data (initial load + any user action) still carries everything.
+          const lite = (req.url || "").includes("lite=1");
+          const heavy: Record<string, unknown> = lite ? {} : {
               secretKeys: sessionUser ? listUserSecretKeys(sessionUser.id) : [],
               secretsHealth: sessionUser
                 ? {
@@ -456,6 +454,35 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               invites: sessionUser && sessionUser.role === "admin" ? listInvites() : [],
               webhookSecretSet: sessionUser && sessionUser.role === "admin" ? Boolean(getSecretSetting("github_webhook_secret") || process.env.GITHUB_WEBHOOK_SECRET) : false,
               github: { connected: Boolean(githubOAuthToken()), user: githubIdentity(), clientIdSet: Boolean(githubOAuthClientId()) },
+              ops: opsSettingsValues(),
+              opsMeta: OPS_SETTINGS,
+              providers: getProviders(),
+              roleModels: getRoleModels(),
+              globalModel: getGlobalModel(),
+              agentDefs: listAgentDefs(),
+              workflows: listWorkflows(),
+              skills: listSkills(),
+              hooks: listHooks(),
+              config: {
+                skipArchitect: (getSetting("skip_architect") ?? "") || (process.env.SKIP_ARCHITECT?.trim().toLowerCase() === "false" ? "off" : "on"),
+                gitnexus: (getSetting("gitnexus") ?? "") || (process.env.GITNEXUS?.trim().toLowerCase() === "true" ? "on" : "off"),
+                maxTokensPerRun: Number(getSetting("max_tokens_per_run")) || Number(process.env.MAX_TOKENS_PER_RUN?.trim()) || 600000,
+                maxReviseRounds: getSetting("max_revise_rounds") !== null ? Number(getSetting("max_revise_rounds")) : (Number(process.env.MAX_REVISE_ROUNDS?.trim()) || 1),
+                auditThreshold: Number(getSetting("audit_threshold")) || Number(process.env.AUDIT_THRESHOLD?.trim()) || 10,
+                avatars: getSetting("avatars") === "off" ? "off" : "on",
+                agentRunner: (getSetting("agent_runner") ?? process.env.AGENT_RUNNER?.trim() ?? "claude-sdk"),
+                agentCliCommand: (getSetting("agent_cli_command") ?? process.env.AGENT_CLI_COMMAND?.trim() ?? ""),
+                tracker: (getSetting("tracker") ?? process.env.TRACKER?.trim() ?? "local"),
+              },
+          };
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(
+            JSON.stringify({
+              env: process.env.AGENCY_ENV?.trim() || process.env.APP_ENV?.trim() || "production",
+              authEnabled: authEnabled(),
+              user: sessionUser ? { id: sessionUser.id, username: sessionUser.username, role: sessionUser.role, email: sessionUser.email } : null,
+              onboarded: sessionUser ? getSetting(`onboarded:${sessionUser.id}`) === "1" : true,
+              ...heavy,
               repos: effectiveRepos(cfg),
               scanning: running, // a GitHub scan/refresh is in progress (drives the reload spinner)
               auto: { resume: getAutoRaw("resume"), merge: getAutoRaw("merge") },
@@ -479,31 +506,11 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
                 anchored: Boolean(Date.parse(getSetting("window_anchor") ?? "")),
                 byModel: tokensByModelSince(win.startIso),
               },
-              ops: opsSettingsValues(),
-              opsMeta: OPS_SETTINGS,
-              providers: getProviders(),
-              roleModels: getRoleModels(),
-              globalModel: getGlobalModel(),
-              agentDefs: listAgentDefs(),
-              workflows: listWorkflows(),
-              skills: listSkills(),
-              hooks: listHooks(),
               analyzer: {
                 enabled: Boolean((process.env.ANALYZER_API_KEY || getSetting("analyzer_api_key") || "").trim()),
                 lastPull: getSetting("analyzer_last_pull") || null,
                 lastIssueAt: getSetting("analyzer_last_issue_ts") || null,
                 url: getSetting("analyzer_url") || null,
-              },
-              config: {
-                skipArchitect: (getSetting("skip_architect") ?? "") || (process.env.SKIP_ARCHITECT?.trim().toLowerCase() === "false" ? "off" : "on"),
-                gitnexus: (getSetting("gitnexus") ?? "") || (process.env.GITNEXUS?.trim().toLowerCase() === "true" ? "on" : "off"),
-                maxTokensPerRun: Number(getSetting("max_tokens_per_run")) || Number(process.env.MAX_TOKENS_PER_RUN?.trim()) || 600000,
-                maxReviseRounds: getSetting("max_revise_rounds") !== null ? Number(getSetting("max_revise_rounds")) : (Number(process.env.MAX_REVISE_ROUNDS?.trim()) || 1),
-                auditThreshold: Number(getSetting("audit_threshold")) || Number(process.env.AUDIT_THRESHOLD?.trim()) || 10,
-                avatars: getSetting("avatars") === "off" ? "off" : "on",
-                agentRunner: (getSetting("agent_runner") ?? process.env.AGENT_RUNNER?.trim() ?? "claude-sdk"),
-                agentCliCommand: (getSetting("agent_cli_command") ?? process.env.AGENT_CLI_COMMAND?.trim() ?? ""),
-                tracker: (getSetting("tracker") ?? process.env.TRACKER?.trim() ?? "local"),
               },
             }),
           );
