@@ -99,8 +99,9 @@ import {
   filesFor,
   recordIncident,
 } from "./store.js";
-import { claimFiles, releaseFiles } from "./locks.js";
+import { claimFiles, releaseFiles, claimBarrier } from "./locks.js";
 import { afterMerge } from "./merge_hooks.js";
+import { isStructural, structuralFlagKey } from "./coordination.js";
 import { parseRateLimit, nextWindowReset } from "./ratelimit.js";
 import { startPreviewSweeper, killAllApps } from "./apprun.js";
 import { setActive, clearActive, getActive } from "./activity.js";
@@ -882,6 +883,10 @@ async function scanRepo(cfg: Config, repo: string): Promise<void> {
   const LIVE_LABELS = [IN_PROGRESS, READY, NEEDS_ATTENTION, ...AWAITING_LABELS];
   const threads = await listRecentThreads(repo, 100);
   const threadMap = new Map(threads.map((t) => [t.number, t]));
+  // Structural changes (refactors/renames/moves) go FIRST so they can grab the exclusive barrier
+  // ahead of ordinary work in the same scan (priority + drain).
+  threads.sort((a, b) => (isStructural(b.title, b.body) ? 1 : 0) - (isStructural(a.title, a.body) ? 1 : 0));
+  let holdNewWork = false; // a structural change is queued/running — don't start new ordinary runs
   for (const t of threads) {
     if (t.labels.includes(cfg.ignoreLabel)) continue;
     // Keep the DB's title fresh for every open issue (cheap title-only upsert) so cards never show
@@ -971,12 +976,29 @@ async function scanRepo(cfg: Config, repo: string): Promise<void> {
     // file footprint. If another in-flight run holds an overlapping file, DON'T dispatch now — defer
     // to a later scan when it frees (serializes only the overlapping work; disjoint work runs in
     // parallel). An unknown footprint never blocks (the feature-aware merge is the backstop).
-    const claim = claimFiles(repo, t.number, filesFor(repo, t.number));
-    if (!claim.ok) {
-      recordIncident("file-lock-deferred", `#${t.number} waits on \`${claim.file}\` (held by #${claim.blockedBy})`);
-      continue;
+    const structural = isStructural(t.title, t.body);
+    if (structural) {
+      setSetting(structuralFlagKey(repo, t.number), "1"); // DB-first flag the agent reads
+      const bar = claimBarrier(repo, t.number);
+      if (!bar.ok) {
+        // Can't run exclusively yet — in-flight work must drain first. Hold ordinary work this scan
+        // so the queue empties and the refactor can take the repo on a later scan.
+        holdNewWork = true;
+        recordIncident("barrier-waiting", `#${t.number} (structural) waits to run exclusively — draining #${bar.blockedBy}`);
+        continue;
+      }
+    } else {
+      if (holdNewWork) {
+        recordIncident("barrier-hold", `#${t.number} held — a structural change is queued for this repo`);
+        continue;
+      }
+      const claim = claimFiles(repo, t.number, filesFor(repo, t.number));
+      if (!claim.ok) {
+        recordIncident("file-lock-deferred", `#${t.number} waits on \`${claim.file}\` (held by #${claim.blockedBy})`);
+        continue;
+      }
     }
-    const release = () => releaseFiles(repo, t.number);
+    const release = () => { releaseFiles(repo, t.number); if (structural) try { setSetting(structuralFlagKey(repo, t.number), ""); } catch { /* noop */ } };
     // Mark this comment handled now so re-polls during the run don't double-fire.
     if (newHumanComment) setThreadCursor(repo, t.number, lastCommentId);
 

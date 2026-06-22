@@ -12,6 +12,8 @@ export interface FileClaim {
   number: number;
   files: string[];
   at: number;
+  /** A structural-change barrier: holds the WHOLE repo exclusively (renames/moves/deletes). */
+  barrier?: boolean;
 }
 
 const claims = new Map<string, FileClaim>(); // key: `${repo}#${number}`
@@ -44,6 +46,11 @@ export interface ClaimResult {
  */
 export function claimFiles(repo: string, number: number, files: string[]): ClaimResult {
   purge();
+  // A structural barrier (another issue's refactor) blocks ALL other editing — even unknown
+  // footprints — until it merges. Everyone else then rebases onto the refactored main.
+  for (const c of claims.values()) {
+    if (c.repo === repo && c.number !== number && c.barrier) return { ok: false, blockedBy: c.number, file: "(structural change in progress)" };
+  }
   const want = (files || []).map(norm).filter(Boolean);
   if (!want.length) return { ok: true };
   for (const c of claims.values()) {
@@ -52,6 +59,21 @@ export function claimFiles(repo: string, number: number, files: string[]): Claim
     if (ov.length) return { ok: false, blockedBy: c.number, file: ov[0] };
   }
   claims.set(key(repo, number), { repo, number, files: want, at: Date.now() });
+  return { ok: true };
+}
+
+/**
+ * Claim a repo-wide EXCLUSIVE barrier for a structural change (refactor/rename/move/delete). Succeeds
+ * only when NO other run is active for the repo — i.e. it DRAINS in-flight work first. While held, no
+ * other editing run can start (`claimFiles` fails). Released like any claim. This makes a refactor a
+ * checkpoint everyone rebases through, instead of fighting it file-by-file.
+ */
+export function claimBarrier(repo: string, number: number): ClaimResult {
+  purge();
+  for (const c of claims.values()) {
+    if (c.repo === repo && c.number !== number) return { ok: false, blockedBy: c.number, file: c.barrier ? "(another structural change)" : (c.files[0] || "(active run)") };
+  }
+  claims.set(key(repo, number), { repo, number, files: [], at: Date.now(), barrier: true });
   return { ok: true };
 }
 
