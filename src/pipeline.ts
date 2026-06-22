@@ -32,7 +32,7 @@ import { EPIC_LABEL, renderEpicTracker } from "./epics.js";
 import { runRole } from "./agents/roleAgent.js";
 import { isStopRequested } from "./abort.js";
 import type { RoleName } from "./agents/roles.js";
-import { recordRun, recordPlan, lastPlan, recordIssueState, recordIssueStatus, recordIssueFiles, recordPr, setByAgent, addEpicChild, listEpicChildren, getSession, issueActivity, recordReview, getReview, recordConflict, clearConflict, getSetting, skillsPrompt, listHooks, listAgentDefs, type Workflow } from "./store.js";
+import { recordRun, recordPlan, lastPlan, recordIssueState, recordIssueStatus, recordIssueFiles, recordPr, setByAgent, addEpicChild, listEpicChildren, getSession, issueActivity, recordReview, getReview, recordConflict, clearConflict, getSetting, skillsPrompt, listHooks, listAgentDefs, changesTouchingFiles, type Workflow } from "./store.js";
 import { conflictFiles } from "./github.js";
 import { pushActivity, setActive } from "./activity.js";
 import { execSync } from "node:child_process";
@@ -709,6 +709,20 @@ export async function runResumeBuild(repo: string, issue: Issue, workdir: string
  * exactly what the reviewer flagged (no fresh plan, no redoing finished work), resolving conflicts
  * with main when asked. Re-records the verdict so the card clears its ⚠ flag once clean.
  */
+/**
+ * Change-journal context for a set of files (v4 reconcile-by-intent): what OTHER issues already
+ * merged into these files and WHY. Handed to the conflict resolver so it integrates with the
+ * incoming work's intent instead of guessing from conflict markers. Empty (no-op) until merges exist.
+ */
+function journalContextForFiles(repo: string, files: string[]): string {
+  const hits = changesTouchingFiles(repo, files, 8);
+  if (!hits.length) return "";
+  return (
+    `\n\n### What recently landed in these files (change journal — integrate with their INTENT, never undo them)\n` +
+    hits.map((c) => `- #${c.number} **${c.title}** — ${c.summary || "merged"}${c.files.length ? ` (files: ${c.files.slice(0, 6).map((f) => f.path).join(", ")})` : ""}`).join("\n")
+  );
+}
+
 export async function runReviewFix(repo: string, issue: Issue, workdir: string, opts?: { conflict?: boolean }): Promise<void> {
   const branch = `agency/issue-${issue.number}`;
   const rev = getReview(repo, issue.number);
@@ -744,7 +758,8 @@ export async function runReviewFix(repo: string, issue: Issue, workdir: string, 
           `Keep BOTH — combine the changes so every feature from each side survives. Never resolve by deleting one ` +
           `side's code to make the markers go away. Remove all \`<<<<<<<\`/\`=======\`/\`>>>>>>>\` markers, then \`git add\` each resolved file. ` +
           `Do NOT run \`git merge\`/\`git rebase\` again, do NOT \`git merge --abort\`, do NOT open a new PR, and do NOT commit — the system commits and pushes for you. ` +
-          `When every file is resolved and \`git add\`ed, make sure the project still builds, then stop.`,
+          `When every file is resolved and \`git add\`ed, make sure the project still builds, then stop.` +
+          journalContextForFiles(repo, m.files),
         ...(getSession(repo, issue.number, "developer") ? { resumeSessionId: getSession(repo, issue.number, "developer") ?? undefined } : {}),
       });
       recordRun(repo, issue.number, "developer", dev.model, dev.turns, "resolve-conflict", dev.costUsd);
