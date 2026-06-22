@@ -81,6 +81,28 @@ export function getDb(): DatabaseSync | null {
     // synchronous=NORMAL is safe under WAL; busy_timeout avoids SQLITE_BUSY under the 5s poll + the
     // concurrent run pool; mmap/temp speed reads. Best-effort — ignore if the build lacks a pragma.
     try { d.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000; PRAGMA temp_store=MEMORY; PRAGMA mmap_size=134217728;"); } catch { /* noop */ }
+
+    // ── DB ENGINE SEAM ──────────────────────────────────────────────────────────────────────────
+    // This is the single place the storage engine is created. Every db/*.ts module gets its handle
+    // from getDb(); none import `node:sqlite` directly. To move to another engine (e.g. Postgres for
+    // multi-node) you reimplement THIS function to return an object with the same `prepare()` /
+    // `exec()` surface — but note Postgres clients are async, so callers would need an async facade
+    // (see docs/adr/0002). Until then, SQLite + WAL is the right fit for the single-process design.
+    //
+    // Transparent prepared-statement cache: node:sqlite re-parses + re-plans SQL on every prepare().
+    // Memoizing by SQL string turns the ~140 hot inline `d.prepare("…")` call sites into one Map
+    // lookup each, with zero call-site changes. Statements are stateless across run/get/all, so reuse
+    // is safe; the cache is bounded by the number of distinct query strings.
+    try {
+      const realPrepare = d.prepare.bind(d);
+      const stmtCache = new Map<string, ReturnType<typeof realPrepare>>();
+      (d as { prepare: (sql: string) => ReturnType<typeof realPrepare> }).prepare = (sql: string) => {
+        let st = stmtCache.get(sql);
+        if (!st) { st = realPrepare(sql); stmtCache.set(sql, st); }
+        return st;
+      };
+    } catch { /* if a runtime forbids reassigning prepare, fall back to uncached — still correct */ }
+
     d.exec(`
       CREATE TABLE IF NOT EXISTS issues (
         repo TEXT NOT NULL,
