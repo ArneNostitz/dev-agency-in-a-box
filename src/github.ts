@@ -239,6 +239,8 @@ export interface ThreadInspect {
   lastHumanBody: string;
   /** GitHub author_association of the latest comment (OWNER/MEMBER/COLLABORATOR/…). */
   lastAuthorAssoc: string;
+  /** the latest AGENCY comment has a 👍 reaction (an approval signal) — folded in from the same fetch. */
+  approvedByReaction: boolean;
 }
 
 /** GitHub author_association values that may DRIVE the agency (a workspace member of the repo). */
@@ -255,11 +257,17 @@ export async function issueAuthorAssoc(repo: string, number: number): Promise<st
 }
 
 /** One API call that tells us everything the router needs about a thread's comments. */
-export async function threadSignals(repo: string, number: number): Promise<ThreadInspect> {
+// Memoize signals per thread keyed by the issue's updatedAt: if GitHub's updatedAt hasn't advanced,
+// the comment list (and labels) are unchanged, so the prior result is exact — and we skip the
+// per-thread `gh` subprocess entirely. This is the dominant per-scan cost on idle repos.
+const sigCache = new Map<string, { at: string; sig: ThreadInspect }>();
+export async function threadSignals(repo: string, number: number, updatedAt?: string): Promise<ThreadInspect> {
+  const key = `${repo}#${number}`;
+  if (updatedAt) { const c = sigCache.get(key); if (c && c.at === updatedAt) return c.sig; }
   const out = await gh([
-    "api", `repos/${repo}/issues/${number}/comments`, "--paginate", "--jq", "[.[]|{id,body,assoc:.author_association}]",
+    "api", `repos/${repo}/issues/${number}/comments`, "--paginate", "--jq", '[.[]|{id,body,assoc:.author_association,plus:.reactions["+1"]}]',
   ]).catch(() => "[]");
-  let arr: Array<{ id: number; body: string; assoc?: string }> = [];
+  let arr: Array<{ id: number; body: string; assoc?: string; plus?: number }> = [];
   try {
     arr = JSON.parse(out);
   } catch {
@@ -268,13 +276,19 @@ export async function threadSignals(repo: string, number: number): Promise<Threa
   const agencyEverCommented = arr.some((c) => c.body.includes(AGENCY_MARKER));
   const last = arr[arr.length - 1];
   const lastIsHuman = Boolean(last) && !last.body.includes(AGENCY_MARKER);
-  return {
+  // 👍 on the most recent AGENCY comment = an approval reaction (was a second full fetch).
+  let approvedByReaction = false;
+  for (let i = arr.length - 1; i >= 0; i--) { if (arr[i].body.includes(AGENCY_MARKER)) { approvedByReaction = (arr[i].plus ?? 0) > 0; break; } }
+  const sig: ThreadInspect = {
     agencyEverCommented,
     lastIsHuman,
     lastCommentId: last?.id ?? 0,
     lastHumanBody: lastIsHuman ? last.body : "",
     lastAuthorAssoc: last?.assoc ?? "",
+    approvedByReaction,
   };
+  if (updatedAt) sigCache.set(key, { at: updatedAt, sig });
+  return sig;
 }
 
 /** A short "thanks/looks good" style comment that should NOT trigger a code change. */

@@ -31,7 +31,6 @@ import {
   ensureDraftPr,
   createIssue,
   listQueuedIssues,
-  approvedByReaction,
   approveLastProposal,
   commentOnPr,
   prHealth,
@@ -934,12 +933,12 @@ async function scanRepo(cfg: Config, repo: string): Promise<void> {
     let approvedReaction = false;
     let lastCommentId = 0;
     if (ownedByLabel || awaiting || t.comments > 0) {
-      const sig = await threadSignals(repo, t.number);
+      const sig = await threadSignals(repo, t.number, t.updatedAt);
       owned = owned || sig.agencyEverCommented;
       lastCommentId = sig.lastCommentId;
       // Re-engage on a new comment only when it's from a repo member (owner/member/collaborator).
       newHumanComment = sig.lastIsHuman && sig.lastCommentId > getThreadCursor(repo, t.number) && canTrigger(sig.lastAuthorAssoc);
-      if (awaiting && !newHumanComment) approvedReaction = await approvedByReaction(repo, t.number);
+      if (awaiting && !newHumanComment) approvedReaction = sig.approvedByReaction;
     }
 
     // Is there an open PR for this issue? (only relevant when there's a new comment to route)
