@@ -733,6 +733,7 @@ textarea{resize:vertical;min-height:64px}
 .pt-byagent{flex:none;display:inline-flex;align-items:center;gap:3px;font-size:10.5px;font-weight:600;color:var(--accent);background:var(--accent-weak);border-radius:999px;padding:1px 7px}
 .pt-sub{color:var(--ink-3);font-size:12px;margin-top:2px;display:flex;align-items:center;gap:4px}
 .pt-pr{display:inline-flex;align-items:center;gap:3px}
+.pt-lock{display:inline-flex;align-items:center;gap:3px;color:var(--accent)}
 /* timeline */
 .tl{display:flex;align-items:center}
 .tl-nd{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;border:1.5px solid var(--line-2);color:var(--ink-3);background:var(--surface)}

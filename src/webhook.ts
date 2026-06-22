@@ -33,6 +33,7 @@ import { getIssueBudget, setIssueBudget } from "./budget.js";
 import { renderShell } from "./shell.js";
 import { addLabel, removeLabel } from "./github.js";
 import { afterMerge } from "./merge_hooks.js";
+import { activeClaims } from "./locks.js";
 import { authEnabled, userFromReq, setSessionCookie, clearSessionCookie, parseCookies, SESSION_COOKIE, verifyRecoveryKey } from "./auth.js";
 import { OPS_SETTINGS, opsSettingsValues } from "./settings.js";
 import { getSecretSetting, setSecretSetting, getUserSecretStatus } from "./store.js";
@@ -373,6 +374,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           const reviews = listReviews(); // verdict per "repo#number" — cheap, for the card badge
           const tokenMap = tokensByIssueAll(); // lifetime tokens/cost/model per "repo#number"
           const conflictMap = listConflicts(); // conflicting files per "repo#number"
+          const claimMap = new Map(activeClaims().map((c) => [`${c.repo}#${c.number}`, c.files])); // live file locks per issue
           const enriched = issues.map((i) => {
             const byParent = epicCache[i.repo] ?? {};
             const dbKids = byParent[i.number];
@@ -410,6 +412,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               // — the precise signal). Drives the Stop button so it's reliably shown only while live.
               running: hasActiveRun(i.repo, i.number),
               byAgent: !!(i.by_agent),
+              editing: claimMap.get(`${i.repo}#${i.number}`) ?? [], // files this run has live-claimed (overwrite lock)
               auto: {
                 resume: autoEnabled("resume", i.repo, i.number),
                 merge: autoEnabled("merge", i.repo, i.number),

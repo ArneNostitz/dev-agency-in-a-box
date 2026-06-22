@@ -55,6 +55,27 @@ export function claimFiles(repo: string, number: number, files: string[]): Claim
   return { ok: true };
 }
 
+/**
+ * Merge files an in-flight run ACTUALLY touched into its own claim (live footprint). If a newly
+ * touched file is already held by ANOTHER active run, returns that overlap so the caller can warn —
+ * this is the undeclared-edit collision the declared-footprint gate can't catch up front.
+ */
+export function addClaimFiles(repo: string, number: number, files: string[]): { overlap?: { number: number; file: string } } {
+  purge();
+  const add = (files || []).map(norm).filter(Boolean);
+  if (!add.length) return {};
+  let overlap: { number: number; file: string } | undefined;
+  for (const c of claims.values()) {
+    if (c.repo !== repo || c.number === number) continue;
+    const ov = fileOverlap(add, c.files);
+    if (ov.length) { overlap = { number: c.number, file: ov[0] }; break; }
+  }
+  const existing = claims.get(key(repo, number));
+  if (existing) existing.files = [...new Set([...existing.files, ...add])];
+  else claims.set(key(repo, number), { repo, number, files: add, at: Date.now() });
+  return overlap ? { overlap } : {};
+}
+
 /** Release a run's file claim (call in a finally when the run ends). */
 export function releaseFiles(repo: string, number: number): void {
   claims.delete(key(repo, number));

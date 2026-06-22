@@ -96,7 +96,7 @@ function Row({ i, multi, onOpen, act, avatarsOn }) {
         <span class="pt-title">${i.title || "#" + i.number}</span>
         ${i.byAgent ? html`<span class="pt-byagent tip" data-tip="Proposed by an agent — review & start"><${Icon} name="rocket" size=${10}/> agent</span>` : null}
       </div>
-      <div class="pt-sub">${multi ? html`<span class="pt-repo">${i.repo.split("/").pop()}</span> · ` : null}<span class="pt-num">#${i.number > 0 ? i.number : "…"}</span>${i.pr_number ? html` · <span class="pt-pr"><${Icon} name="pr" size=${10}/> #${i.pr_number}</span>` : null}</div>
+      <div class="pt-sub">${multi ? html`<span class="pt-repo">${i.repo.split("/").pop()}</span> · ` : null}<span class="pt-num">#${i.number > 0 ? i.number : "…"}</span>${i.pr_number ? html` · <span class="pt-pr"><${Icon} name="pr" size=${10}/> #${i.pr_number}</span>` : null}${i.editing && i.editing.length ? html` · <span class="pt-lock tip" data-tip=${"Editing now (file lock): " + i.editing.join(", ")}><${Icon} name="lock" size=${10}/> ${i.editing.length}</span>` : null}</div>
     </td>
     <td class="pt-timeline"><${Timeline} i=${i}/></td>
     <td class="pt-status"><span class=${"pstat pstat-" + sf.kind}><${Icon} name=${sf.icon} size=${12}/> ${sf.label}</span><span class="pt-when">${ago(i.updated_at)}</span></td>

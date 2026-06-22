@@ -11,6 +11,12 @@ export function recordIssueFiles(repo: string, number: number, files: string[]):
   } catch { /* best effort */ }
 }
 
+export function addIssueFiles(repo: string, number: number, files: string[]): void {
+  const cur = filesFor(repo, number);
+  const merged = [...new Set([...cur, ...(files || []).map((f) => f.trim().replace(/^\.?\/+/, "")).filter(Boolean)])];
+  if (merged.length !== cur.length) recordIssueFiles(repo, number, merged);
+}
+
 export function filesFor(repo: string, number: number): string[] {
   const d = getDb();
   if (!d) return [];

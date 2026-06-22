@@ -12,7 +12,9 @@ import { join as pathJoin } from "node:path";
 import { ROLES, modelFor, canonicalModel, type RoleName } from "./roles.js";
 import { loadConstitution, loadPersona, loadPlaybooks, loadLearned } from "../memory.js";
 import { pushActivity } from "../activity.js";
-import { recentLessons, recordTokens, recordRunStep, getProviders, getRoleModels, getSessionFallback, setSession, getIssueModelOverride, getGlobalModel } from "../store.js";
+import { recentLessons, recordTokens, recordRunStep, getProviders, getRoleModels, getSessionFallback, setSession, getIssueModelOverride, getGlobalModel, addIssueFiles } from "../store.js";
+import { addClaimFiles } from "../locks.js";
+import { coordinationContext } from "../coordination.js";
 import { loadBudget } from "../budget.js";
 import { gitnexusWiring, GITNEXUS_PROMPT } from "../gitnexus.js";
 import { recallWiring, RECALL_PROMPT } from "./recall.js";
@@ -79,16 +81,36 @@ function resolveRoute(role: RoleName, repo: string, issueNumber: number): { mode
 // summarizeTool now lives in src/runners/registry.ts (the one shared copy — issue #61).
 
 /** Pull readable text + tool summaries out of an assistant message's content blocks. */
-function emitAssistant(repo: string, number: number, role: RoleName, message: unknown): void {
+const WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
+/** Repo-relative path for a tool's file_path (strip the temp clone's workdir prefix). */
+function relPath(p: string, workdir: string): string {
+  let r = String(p || "");
+  if (workdir && r.startsWith(workdir)) r = r.slice(workdir.length);
+  return r.replace(/^\.?\/+/, "").replace(/\\/g, "/");
+}
+function emitAssistant(repo: string, number: number, role: RoleName, message: unknown, workdir = ""): void {
   const content = (message as { message?: { content?: unknown[] } }).message?.content;
   if (!Array.isArray(content)) return;
+  const edited: string[] = [];
   for (const block of content as Array<{ type?: string; text?: string; name?: string; input?: Record<string, unknown> }>) {
     if (block.type === "text" && block.text?.trim()) {
       pushActivity(repo, number, role, "text", block.text.trim().slice(0, 1200));
     } else if (block.type === "tool_use" && block.name) {
       pushActivity(repo, number, role, "tool", summarizeTool(block.name, block.input));
       recordRunStep(repo, number, role, block.name, summarizeTool(block.name, block.input)); // v3 telemetry
+      // LIVE FOOTPRINT: record files actually edited (catches what the planner didn't declare).
+      if (WRITE_TOOLS.has(block.name)) {
+        const fp = block.input && (block.input.file_path ?? block.input.notebook_path);
+        if (typeof fp === "string" && fp.trim()) edited.push(relPath(fp, workdir));
+      }
     }
+  }
+  if (edited.length) {
+    try {
+      addIssueFiles(repo, number, edited); // persist the real footprint
+      const { overlap } = addClaimFiles(repo, number, edited); // extend the live lock
+      if (overlap) pushActivity(repo, number, role, "tool", `⚠️ also editing \`${overlap.file}\` which #${overlap.number} is working on — coordinate to avoid clobbering its work`);
+    } catch { /* best effort — never break a run on bookkeeping */ }
   }
 }
 
@@ -292,7 +314,7 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
     }
     const runner = getRunner(runnerKind, cliCommand);
     const req: RunRequest = {
-      task: input.task,
+      task: input.task + coordinationContext(repo, issueNumber, role),
       cwd: input.workdir,
       model,
       allowedTools: [...def.tools, ...(gn?.tools ?? []), ...rc.tools],
@@ -313,7 +335,7 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
       if (sid) sessionId = sid;
       const m = message as { type?: string; delta?: string; summary?: string };
       if (m.type === "assistant") {
-        emitAssistant(repo, issueNumber, role, message);
+        emitAssistant(repo, issueNumber, role, message, input.workdir);
       } else if (m.type === "text_delta" && typeof m.delta === "string") {
         pushActivity(repo, issueNumber, role, "text", m.delta);
       } else if (m.type === "tool" && typeof m.summary === "string") {

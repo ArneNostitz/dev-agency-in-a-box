@@ -66,7 +66,7 @@ export { recordPlan, lastPlan } from "./db/plans.js";
 export { recordRunStep, toolStatsSince, recordIncident, recentFailuresSince, runStepCountSince } from "./db/telemetry.js";
 export type { ToolStat, FailureStat } from "./db/telemetry.js";
 export {
-  recordIssueFiles, filesFor, recordIssueState, recordIssueStatus, getIssueStatus,
+  recordIssueFiles, filesFor, addIssueFiles, recordIssueState, recordIssueStatus, getIssueStatus,
   recordPr, getIssueRow, recentIssues, archiveIssue, getIssueRole, setByAgent,
 } from "./db/issues.js";
 export type { IssueRow } from "./db/issues.js";
