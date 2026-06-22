@@ -208,6 +208,12 @@ export function getDb(): DatabaseSync | null {
         meta TEXT, created_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS orch_msg_repo ON orch_msg (repo, id);
+      CREATE TABLE IF NOT EXISTS change_journal (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        repo TEXT NOT NULL, number INTEGER NOT NULL, title TEXT,
+        files TEXT, summary TEXT, merged_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS change_journal_repo ON change_journal (repo, id);
     `);
     // Migrations for older databases (ALTER fails harmlessly if the column already exists).
     for (const sql of [

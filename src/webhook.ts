@@ -32,6 +32,7 @@ import { listOrchThread, clearOrchThread, setByAgent } from "./store.js";
 import { getIssueBudget, setIssueBudget } from "./budget.js";
 import { renderShell } from "./shell.js";
 import { addLabel, removeLabel } from "./github.js";
+import { afterMerge } from "./merge_hooks.js";
 import { authEnabled, userFromReq, setSessionCookie, clearSessionCookie, parseCookies, SESSION_COOKIE, verifyRecoveryKey } from "./auth.js";
 import { OPS_SETTINGS, opsSettingsValues } from "./settings.js";
 import { getSecretSetting, setSecretSetting, getUserSecretStatus } from "./store.js";
@@ -1114,6 +1115,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           }
           const r = await mergePrForBranch(repo, `agency/issue-${number}`);
           if (r.ok) {
+            afterMerge(repo, number, r.files);
             await closeIssue(repo, number, `🚀 Merged ${r.msg} from the dashboard.`).catch(() => {});
             recordIssueStatus(repo, number, withStatus("done"));
             clearConflict(repo, number);

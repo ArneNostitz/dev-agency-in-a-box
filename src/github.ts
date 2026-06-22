@@ -731,13 +731,20 @@ export async function approvedByReaction(repo: string, issue: number): Promise<b
 export async function mergePrForBranch(
   repo: string,
   branch: string,
-): Promise<{ ok: boolean; msg: string }> {
+): Promise<{ ok: boolean; msg: string; files?: Array<{ path: string; additions?: number; deletions?: number }> }> {
   const pr = await findPrForBranch(repo, branch);
   if (!pr) return { ok: false, msg: "no open PR for this issue" };
+  // Capture the change set BEFORE merging (the branch is deleted on merge) for the change journal.
+  let files: Array<{ path: string; additions?: number; deletions?: number }> | undefined;
+  try {
+    const out = await gh(["pr", "view", String(pr.number), "--repo", repo, "--json", "files"]);
+    const d = JSON.parse(out) as { files?: Array<{ path: string; additions?: number; deletions?: number }> };
+    files = d.files;
+  } catch { /* best effort — journal still records the merge with an empty footprint */ }
   try {
     if (pr.isDraft) await gh(["pr", "ready", String(pr.number), "--repo", repo]).catch(() => {});
     await gh(["pr", "merge", String(pr.number), "--repo", repo, "--squash", "--delete-branch"]);
-    return { ok: true, msg: pr.url };
+    return { ok: true, msg: pr.url, files };
   } catch (err) {
     return { ok: false, msg: (err as Error).message };
   }

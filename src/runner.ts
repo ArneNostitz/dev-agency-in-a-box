@@ -100,6 +100,7 @@ import {
   recordIncident,
 } from "./store.js";
 import { claimFiles, releaseFiles } from "./locks.js";
+import { afterMerge } from "./merge_hooks.js";
 import { parseRateLimit, nextWindowReset } from "./ratelimit.js";
 import { startPreviewSweeper, killAllApps } from "./apprun.js";
 import { setActive, clearActive, getActive } from "./activity.js";
@@ -1196,6 +1197,7 @@ function startAutoMode(cfg: Config): void {
           if (wantMerge && verdict === "approved" && health.status === "ok") {
             const r = await mergePrForBranch(repo, pr.branch);
             if (r.ok) {
+              afterMerge(repo, n, r.files);
               await closeIssue(repo, n, `🤖 **Auto-merged** ${r.msg} — review approved, no conflicts, checks green.`).catch(() => {});
               recordIssueStatus(repo, n, withStatus("done"));
               clearReview(repo, n);

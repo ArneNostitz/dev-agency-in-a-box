@@ -8,6 +8,7 @@
  *   - let `/merge` on the parent merge every child PR at once.
  */
 import { createHash } from "node:crypto";
+import { afterMerge } from "./merge_hooks.js";
 import { rm, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -150,7 +151,7 @@ export async function mergeEpic(repo: string, parent: number): Promise<{ ok: boo
   for (const c of children) {
     if (c.closed) continue;
     const r = await mergePrForBranch(repo, `agency/issue-${c.child}`);
-    if (r.ok) merged.push(c.child);
+    if (r.ok) { afterMerge(repo, c.child, r.files); merged.push(c.child); }
     else failed.push(`#${c.child}: ${r.msg}`);
   }
   if (failed.length) return { ok: false, msg: `merged ${merged.length}; could not merge ${failed.join("; ")}` };

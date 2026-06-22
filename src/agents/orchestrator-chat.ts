@@ -8,7 +8,7 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { appendOrchMsg, listOrchThread, recentIssues, getSession, setSession, recordRun, filesFor, listEpicChildren } from "../store.js";
+import { appendOrchMsg, listOrchThread, recentIssues, getSession, setSession, recordRun, filesFor, listEpicChildren, recentChanges } from "../store.js";
 import { activeClaims } from "../locks.js";
 import { resolveChatExec } from "./chat.js";
 import { recallWiring, RECALL_PROMPT } from "./recall.js";
@@ -85,7 +85,11 @@ function repoContext(repo: string): string {
   }
   const ownBlock = owners.length ? `\n\nDeclared file footprints (avoid proposing edits that overlap these unless you sequence them):\n${[...new Set(owners)].slice(0, 40).join("\n")}` : "";
 
-  return recent + liveBlock + epicBlock + ownBlock;
+  // Recently MERGED changes (real state, from the change journal) — what actually landed + why.
+  const merged = recentChanges(repo, 10).map((c) => `#${c.number} ${c.title}${c.files.length ? ` — ${c.files.slice(0, 6).map((f) => f.path).join(", ")}` : ""}`);
+  const mergedBlock = merged.length ? `\n\nRecently merged (real state — build on these, not on unmerged branches):\n${merged.join("\n")}` : "";
+
+  return recent + liveBlock + epicBlock + ownBlock + mergedBlock;
 }
 
 /**
