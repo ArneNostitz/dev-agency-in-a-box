@@ -101,8 +101,11 @@ test("each role declares tools and a model", () => {
   }
 });
 
-test("planner is the Opus 4.8 role, mapped to @plan", () => {
-  assert.equal(ROLES.planner.defaultModel, MODELS.opus);
+test("planner defaults to Sonnet (opus opt-in via PLANNER_MODEL), mapped to @plan", () => {
+  // Cost optimization (v1.4.x): the planner/decomposer default to Sonnet; Opus stays available via
+  // the per-role *_MODEL env override for genuinely hard issues. MODELS.opus is still the 4.8 id.
+  assert.equal(ROLES.planner.defaultModel, MODELS.sonnet);
+  assert.equal(ROLES.decomposer.defaultModel, MODELS.sonnet);
   assert.equal(MODELS.opus, "claude-opus-4-8");
   assert.equal(loadHandleRoleMap()["@plan"], "planner");
 });

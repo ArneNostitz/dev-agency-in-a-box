@@ -56,6 +56,20 @@ export function migrateIssueStates(): { migrated: number; skipped: number } {
   return { migrated, skipped };
 }
 
+/**
+ * Prune high-churn, purely-ephemeral telemetry so the hot tables don't grow unbounded. The activity
+ * stream is a live UI feed (kept short); run_step is tool-call telemetry. The token_usage + runs
+ * cost/audit ledger is intentionally NOT pruned here. Best-effort; called from the hourly sweep.
+ */
+export function pruneEphemeral(activityDays = 14, runStepDays = 45): { activity: number; runStep: number } {
+  const d = getDb(); if (!d) return { activity: 0, runStep: 0 };
+  const cut = (days: number): string => new Date(Date.now() - days * 86400_000).toISOString();
+  let activity = 0, runStep = 0;
+  try { activity = Number(d.prepare("DELETE FROM activity WHERE created_at < ?").run(cut(activityDays)).changes) || 0; } catch { /* noop */ }
+  try { runStep = Number(d.prepare("DELETE FROM run_step WHERE ts < ?").run(cut(runStepDays)).changes) || 0; } catch { /* noop */ }
+  return { activity, runStep };
+}
+
 /** The singleton DB handle. Creates the schema + runs migrations on first call. Best-effort. */
 export function getDb(): DatabaseSync | null {
   if (db) return db;
@@ -63,6 +77,10 @@ export function getDb(): DatabaseSync | null {
     const path = process.env.DB_PATH?.trim() || "data/agency.db";
     mkdirSync(dirname(path), { recursive: true });
     const d = new DatabaseSync(path);
+    // Concurrency + durability tuning: WAL lets readers and the single writer not block each other;
+    // synchronous=NORMAL is safe under WAL; busy_timeout avoids SQLITE_BUSY under the 5s poll + the
+    // concurrent run pool; mmap/temp speed reads. Best-effort — ignore if the build lacks a pragma.
+    try { d.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000; PRAGMA temp_store=MEMORY; PRAGMA mmap_size=134217728;"); } catch { /* noop */ }
     d.exec(`
       CREATE TABLE IF NOT EXISTS issues (
         repo TEXT NOT NULL,
@@ -214,6 +232,13 @@ export function getDb(): DatabaseSync | null {
         files TEXT, summary TEXT, merged_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS change_journal_repo ON change_journal (repo, id);
+      CREATE INDEX IF NOT EXISTS idx_token_usage_ts ON token_usage (ts);
+      CREATE INDEX IF NOT EXISTS idx_token_usage_issue ON token_usage (repo, number);
+      CREATE INDEX IF NOT EXISTS idx_runs_created ON runs (created_at);
+      CREATE INDEX IF NOT EXISTS idx_runs_issue ON runs (repo, number);
+      CREATE INDEX IF NOT EXISTS idx_run_step_ts ON run_step (ts);
+      CREATE INDEX IF NOT EXISTS idx_run_step_issue ON run_step (repo, number);
+      CREATE INDEX IF NOT EXISTS idx_activity_issue ON activity (repo, number);
     `);
     // Migrations for older databases (ALTER fails harmlessly if the column already exists).
     for (const sql of [

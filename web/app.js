@@ -76,7 +76,17 @@ function App() {
       setPending((ps) => ps.filter((p) => !(d.issues || []).some((i) => i.repo === p.repo && (i.number === p.number || (i.title || "") === p.title))));
     }).catch(() => {});
   }
-  useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, []);
+  // Poll /data every 5s, but NEVER while the tab is hidden (a backgrounded tab used to hammer the
+  // server + re-render forever). On becoming visible again, refresh immediately. SSE (/events) still
+  // streams live deltas, so a hidden tab loses nothing it can't catch up on instantly.
+  useEffect(() => {
+    const tick = () => { if (typeof document === "undefined" || !document.hidden) load(); };
+    load();
+    const t = setInterval(tick, 5000);
+    const onVis = () => { if (!document.hidden) load(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { clearInterval(t); document.removeEventListener("visibilitychange", onVis); };
+  }, []);
   useEffect(() => {
     let es; try { es = new EventSource("/events"); es.onmessage = (ev) => { try { const a = JSON.parse(ev.data); liveRef.current = liveRef.current.concat(a).slice(-200);
       // Surface run failures the user would otherwise only see on GitHub: an agent error is pushed

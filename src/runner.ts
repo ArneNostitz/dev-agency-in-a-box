@@ -107,6 +107,7 @@ import { startPreviewSweeper, killAllApps } from "./apprun.js";
 import { setActive, clearActive, getActive } from "./activity.js";
 import { stopRuns, requestStop, clearStop, isStopRequested } from "./abort.js";
 import { flushOldAttachments } from "./db/attachments.js";
+import { pruneEphemeral } from "./db/connection.js";
 import { dispatch, drain, stop as stopPool, poolStatus, inFlightKeys } from "./pool.js";
 import { loadBudget, overBudget, effectiveLimits } from "./budget.js";
 import { maybeSelfImprove } from "./reflect.js";
@@ -1084,7 +1085,11 @@ export async function processAllRepos(cfg: Config): Promise<number> {
   }
   await sweepStuck().catch(() => {});
   // Housekeeping: drop local attachment blobs older than a week (≤ hourly, cheap DELETE).
-  if (Date.now() - lastAttachmentFlush > 3_600_000) { lastAttachmentFlush = Date.now(); try { const n = flushOldAttachments(7); if (n) console.log(`[agency] flushed ${n} old attachment(s)`); } catch { /* noop */ } }
+  if (Date.now() - lastAttachmentFlush > 3_600_000) {
+    lastAttachmentFlush = Date.now();
+    try { const n = flushOldAttachments(7); if (n) console.log(`[agency] flushed ${n} old attachment(s)`); } catch { /* noop */ }
+    try { const p = pruneEphemeral(); if (p.activity || p.runStep) console.log(`[agency] pruned ${p.activity} activity + ${p.runStep} run-step row(s)`); } catch { /* noop */ }
+  }
   // Self-evolving loop: fold accumulated lessons into the playbooks via a draft PR.
   maybeSelfImprove(cfg);
   return 0;

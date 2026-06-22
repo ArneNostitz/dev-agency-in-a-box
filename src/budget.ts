@@ -53,7 +53,7 @@ export function loadBudget(): BudgetLimits {
     maxIssueCostUsd: num("MAX_ISSUE_COST_USD", 15, "max_issue_cost_usd"),
     maxIssueTurns: num("MAX_ISSUE_TURNS", 800, "max_issue_turns"),
     maxTurnsPerRun: num("MAX_TURNS_PER_RUN", 250, "max_turns_per_run"),
-    maxTokensPerRun: num("MAX_TOKENS_PER_RUN", 600_000, "max_tokens_per_run"),
+    maxTokensPerRun: num("MAX_TOKENS_PER_RUN", 300_000, "max_tokens_per_run"),
   };
 };
 

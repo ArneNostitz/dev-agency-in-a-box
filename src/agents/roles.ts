@@ -70,7 +70,7 @@ export const ROLES: Record<RoleName, RoleDef> = {
     personaFile: "planner",
     playbooks: [...SHARED_PLAYBOOKS, "frontend-atomic-design", "logic-separation", "backend", "database"],
     // The premium thinker: Opus 4.8, high effort. Override with PLANNER_MODEL.
-    defaultModel: MODELS.opus,
+    defaultModel: MODELS.sonnet, // opus opt-in via PLANNER_MODEL for hard issues
     modelEnv: "PLANNER_MODEL",
     tools: READ_TOOLS,
     // Opus is expensive and context compounds per turn — a plan should not take 100+ turns.
@@ -81,7 +81,7 @@ export const ROLES: Record<RoleName, RoleDef> = {
     personaFile: "decomposer",
     playbooks: [...SHARED_PLAYBOOKS],
     // Splitting a plan into well-scoped epics is judgement work — use the strong planner-tier model.
-    defaultModel: MODELS.opus,
+    defaultModel: MODELS.sonnet, // splitting is parse-checked; sonnet is enough (DECOMPOSER_MODEL to override)
     modelEnv: "DECOMPOSER_MODEL",
     tools: READ_TOOLS,
     maxTurns: 30,
@@ -114,7 +114,7 @@ export const ROLES: Record<RoleName, RoleDef> = {
     // Each turn re-sends the whole (growing) context, so a high cap is the single biggest cost
     // multiplier. 120 let a stuck run grind into millions of tokens; 50 is plenty for a focused
     // change and forces the agent to commit progress rather than thrash.
-    maxTurns: 50,
+    maxTurns: 35,
   },
   reviewer: {
     name: "reviewer",
@@ -123,7 +123,7 @@ export const ROLES: Record<RoleName, RoleDef> = {
     defaultModel: MODELS.sonnet,
     modelEnv: "REVIEWER_MODEL",
     tools: [...READ_TOOLS, "Bash"],
-    maxTurns: 40,
+    maxTurns: 20,
   },
   tester: {
     name: "tester",
