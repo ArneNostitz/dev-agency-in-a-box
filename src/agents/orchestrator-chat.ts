@@ -8,7 +8,8 @@ import { query } from "@anthropic-ai/claude-agent-sdk";
 import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { appendOrchMsg, listOrchThread, recentIssues, getSession, setSession, recordRun } from "../store.js";
+import { appendOrchMsg, listOrchThread, recentIssues, getSession, setSession, recordRun, filesFor, listEpicChildren } from "../store.js";
+import { activeClaims } from "../locks.js";
 import { resolveChatExec } from "./chat.js";
 import { recallWiring, RECALL_PROMPT } from "./recall.js";
 
@@ -52,9 +53,39 @@ function loadPersona(): string {
 }
 
 function repoContext(repo: string): string {
-  const mine = recentIssues(120).filter((i) => i.repo === repo).slice(0, 25);
-  if (!mine.length) return "No issues tracked for this repo yet.";
-  return mine.map((i) => `#${i.number} [${i.state}${i.blocked ? "/" + i.blocked : ""}] ${i.title}`).join("\n");
+  const all = recentIssues(160).filter((i) => i.repo === repo);
+  if (!all.length) return "No issues tracked for this repo yet.";
+  const recent = all.slice(0, 25).map((i) => {
+    const f = filesFor(repo, i.number);
+    return `#${i.number} [${i.state}${i.blocked ? "/" + i.blocked : ""}] ${i.title}${f.length ? ` — files: ${f.slice(0, 8).join(", ")}` : ""}`;
+  }).join("\n");
+
+  // What's running RIGHT NOW + which files each run has live-claimed (the overwrite-protection
+  // registry). This is how the Orchestrator knows what's in flight without reading the repo.
+  const claims = activeClaims(repo);
+  const inflight = all.filter((i) => i.state === "working").map((i) => {
+    const live = claims.find((c) => c.number === i.number);
+    return `#${i.number} ${i.title}${live && live.files.length ? ` — editing: ${live.files.join(", ")}` : ""}`;
+  });
+  const liveBlock = inflight.length ? `\n\nIn flight right now (don't propose work that fights these):\n${inflight.join("\n")}` : "";
+
+  // Epics and their planned sub-issues (the "handoff codes") so you know how big work was split.
+  const epics = listEpicChildren ? all.filter((i) => i.state === "agency:epic").map((i) => {
+    const kids = (listEpicChildren(repo, i.number) || []).map((c) => `#${c.child} ${c.title}`);
+    return `#${i.number} ${i.title} → ${kids.length ? kids.join(", ") : "(no sub-issues yet)"}`;
+  }) : [];
+  const epicBlock = epics.length ? `\n\nEpics & their sub-issues:\n${epics.join("\n")}` : "";
+
+  // File ownership across all open work — so a proposal can route to disjoint files and avoid clashes.
+  const owners: string[] = [];
+  for (const i of all) {
+    if (i.state === "done") continue;
+    const f = filesFor(repo, i.number);
+    for (const path of f) owners.push(`${path} ← #${i.number}`);
+  }
+  const ownBlock = owners.length ? `\n\nDeclared file footprints (avoid proposing edits that overlap these unless you sequence them):\n${[...new Set(owners)].slice(0, 40).join("\n")}` : "";
+
+  return recent + liveBlock + epicBlock + ownBlock;
 }
 
 /**
@@ -74,8 +105,9 @@ export async function runOrchestratorChat(repo: string, userText: string): Promi
   const rc = recallWiring(repo);
   const systemPrompt =
     `${loadPersona()}\n\n` +
-    `You are the Orchestrator for the repository **${repo}**.\n` +
-    `Recent issues in this repo:\n${repoContext(repo)}\n\n${RECALL_PROMPT}`;
+    `You are the Orchestrator for the repository **${repo}**.\n\n` +
+    `## Live repo state (issues, what's in flight, epics, file ownership)\n${repoContext(repo)}\n\n` +
+    `When you propose work, route it to files NOT already owned by open issues. If an idea must touch a file another issue owns, say so and propose to SEQUENCE it after that issue (so the second builds on the first's change) rather than running in parallel — two agents must never edit the same file at once.\n\n${RECALL_PROMPT}`;
 
   const resumeId = getSession(repo, 0, ORCH_ROLE) || undefined;
   let text = "";
