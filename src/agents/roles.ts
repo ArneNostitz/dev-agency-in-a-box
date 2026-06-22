@@ -176,14 +176,9 @@ const projectRoot = join(here, ".."); // src/agents -> src ; one more to root be
 const teamFile = join(projectRoot, "..", "config", "team.txt");
 
 function isRole(s: string): s is RoleName {
-  return (
-    s === "planner" ||
-    s === "architect" ||
-    s === "developer" ||
-    s === "reviewer" ||
-    s === "tester" ||
-    s === "librarian"
-  );
+  // Single source of truth: every key of ROLES (previously hand-listed here, which silently omitted
+  // auditor + decomposer and downgraded their handles to "developer").
+  return Object.prototype.hasOwnProperty.call(ROLES, s);
 }
 
 /** Map of "@handle" (lowercased) -> RoleName, read from config/team.txt. */

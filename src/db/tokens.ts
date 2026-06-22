@@ -108,7 +108,17 @@ export function topIssuesByTokensSince(sinceIso: string, limit = 12): Array<{ re
   }
 }
 
+let _tbiaCache: Record<string, { tokens: number; costUsd: number; model: string | null; runs: number }> | null = null;
+let _tbiaAt = 0;
 export function tokensByIssueAll(): Record<string, { tokens: number; costUsd: number; model: string | null; runs: number }> {
+  // Hot path: called on every /data poll over the full (unbounded) token_usage table. A ~8s memo
+  // collapses repeated polls into one scan; staleness on a cost badge is harmless.
+  if (_tbiaCache && Date.now() - _tbiaAt < 8000) return _tbiaCache;
+  _tbiaCache = tokensByIssueAllUncached();
+  _tbiaAt = Date.now();
+  return _tbiaCache;
+}
+function tokensByIssueAllUncached(): Record<string, { tokens: number; costUsd: number; model: string | null; runs: number }> {
   const d = getDb();
   if (!d) return {};
   try {

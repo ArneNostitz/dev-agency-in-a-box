@@ -110,6 +110,8 @@ function verifySignature(secret: string, body: Buffer, header: string | undefine
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+// Throttle the /data PR-number backfill: at most one `gh` lookup per issue per 60s (was per 5s poll).
+const prBackfillChecked = new Map<string, number>();
 function readBody(req: IncomingMessage): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -328,7 +330,9 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           // only until it's recorded). Skip planned / awaiting-approval (no branch yet).
           const PR_BACKFILL_STATES = ["agency:ready", "agency:in-progress", "agency:needs-attention", "agency:awaiting-answer", "agency:rate-limited"];
           for (const i of issues) {
-            if (!i.pr_number && PR_BACKFILL_STATES.includes(i.state ?? "")) {
+            const _pk = `${i.repo}#${i.number}`;
+            if (!i.pr_number && PR_BACKFILL_STATES.includes(i.state ?? "") && Date.now() - (prBackfillChecked.get(_pk) ?? 0) > 60_000) {
+              prBackfillChecked.set(_pk, Date.now());
               try {
                 const pr = await findPrForBranch(i.repo, `agency/issue-${i.number}`);
                 if (pr) {
@@ -463,7 +467,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               rateLimited: listRateLimited(),
               issues: enriched,
               runs: recentRuns(40),
-              activity: recentActivity(400),
+              activity: recentActivity(150), // SSE streams live deltas; the poll only needs a recent backlog
               spendToday: spendSince(midnight.toISOString()),
               session: {
                 tokens: gaugeTokens,

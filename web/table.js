@@ -1,7 +1,7 @@
 // Dev Agency dashboard — rich progress table (v4). The list view re-imagined: each row is an issue
 // whose hero column is a live WORKFLOW TIMELINE (plan → dev → test → review) showing exactly where
 // it is, plus a STATUS field that flags what needs you. Reads the same /data payload as the board.
-import { html, useState } from "/web/vendor/standalone.mjs";
+import { html, useState, useMemo } from "/web/vendor/standalone.mjs";
 import { Avatar, Icon, Spinner, ago, classify, isDone, statusChip } from "./core.js";
 import { nestedChildKeys } from "./board.js";
 
@@ -116,18 +116,15 @@ export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, o
   const target = repoFilter || (repos.length === 1 ? repos[0] : null);
   const analyzing = target && (auditRepos || []).includes(target);
 
+  // Decorate each row with its status-kind + time ONCE (statusField was previously recomputed O(n log n)
+  // times inside the comparator, on every 5s poll), then sort the decorated array.
   const nested = nestedChildKeys(issues);
-  let rows = issues.filter((i) => !nested.has(i.repo + "#" + i.number));
-  if (group === "smart") {
-    rows = rows.slice().sort((a, b) => {
-      const ka = KIND_ORDER[statusField(a).kind] ?? 9, kb = KIND_ORDER[statusField(b).kind] ?? 9;
-      if (ka !== kb) return ka - kb;
-      return new Date(b.updated_at || 0) - new Date(a.updated_at || 0);
-    });
-  } else {
-    rows = rows.slice().sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0));
-  }
-  const needsYou = rows.filter((i) => statusField(i).kind === "attention").length;
+  const { rows, needsYou } = useMemo(() => {
+    const dec = issues.filter((i) => !nested.has(i.repo + "#" + i.number)).map((i) => ({ i, kind: statusField(i).kind, t: new Date(i.updated_at || 0).getTime() }));
+    if (group === "smart") dec.sort((a, b) => { const ka = KIND_ORDER[a.kind] ?? 9, kb = KIND_ORDER[b.kind] ?? 9; return ka !== kb ? ka - kb : b.t - a.t; });
+    else dec.sort((a, b) => b.t - a.t);
+    return { rows: dec.map((d) => d.i), needsYou: dec.filter((d) => d.kind === "attention").length };
+  }, [issues, group]);
   const avatarsOn = (data && data.config && data.config.avatars) !== "off";
 
   return html`<div class="ptable-wrap">

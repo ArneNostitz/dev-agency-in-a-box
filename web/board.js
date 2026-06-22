@@ -1,9 +1,10 @@
 // Dev Agency dashboard — board module (split from app.js; Preact + htm, no build step).
-import { html, useState, useEffect } from "/web/vendor/standalone.mjs";
+import { html, useState, useEffect, useMemo } from "/web/vendor/standalone.mjs";
 import { Avatar, COLS, Icon, ProviderLogo, Select, Spinner, ago, api, boardSortCmp, classify, defaultModelLogo, filterByTime, fmtTok, getSetupProgress, ghUrl, isDone, shortModel, statusChip, toast, usageTitle } from "./core.js";
 
 // ---------- sort / group / time options ----------
 
+const EMPTY_STREAM = [];
 function parseBoardSort(v) { const m = /^([a-z]+)_(asc|desc)$/.exec(v || "updated_desc"); return m ? [m[1], m[2]] : ["updated", "desc"]; }
 const SORT_FIELDS = [
   { f: "updated", icon: "clock", tip: "Last updated" },
@@ -79,7 +80,14 @@ export function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, onOpe
   const filtered = filterByTime(issues, boardTime);
   const sortedAll = filtered.slice().sort(boardSortCmp(boardSort));
 
-  const renderCard = (i) => html`<${Card} key=${i.repo + "#" + i.number} i=${i} subs=${subsFor(i)} multi=${!repoFilter && repos.length > 1} onOpen=${onOpen} onOpenChild=${onOpenChild} act=${act} data=${data}/>`;
+  // Group activity by issue ONCE per render (was O(cards × activity) — each card re-filtered the
+  // whole ~150-row activity array on every poll).
+  const streamByKey = useMemo(() => {
+    const m = new Map();
+    for (const a of (data && data.activity) || []) { const k = a.repo + "#" + a.number; let arr = m.get(k); if (!arr) { arr = []; m.set(k, arr); } arr.push(a); }
+    return m;
+  }, [data && data.activity]);
+  const renderCard = (i) => html`<${Card} key=${i.repo + "#" + i.number} i=${i} subs=${subsFor(i)} multi=${!repoFilter && repos.length > 1} onOpen=${onOpen} onOpenChild=${onOpenChild} act=${act} data=${data} stream=${streamByKey.get(i.repo + "#" + i.number) || EMPTY_STREAM}/>`;
   const controls = html`<${BoardControls} boardSort=${boardSort} setBoardSort=${setBoardSort} boardGroup=${boardGroup} setBoardGroup=${setBoardGroup} boardTime=${boardTime} setBoardTime=${setBoardTime}/>`;
 
   // --- group by workflow state (default) ---
@@ -141,7 +149,7 @@ export function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, onOpe
 
 }
 
-function Card({ i, subs, multi, onOpen, onOpenChild, act, data }) {
+function Card({ i, subs, multi, onOpen, onOpenChild, act, data, stream = EMPTY_STREAM }) {
   const st = statusChip(i);
   const done = isDone(i);
   const tmp = i._tmp || i.number < 0; // optimistic, not yet confirmed by GitHub
@@ -149,7 +157,7 @@ function Card({ i, subs, multi, onOpen, onOpenChild, act, data }) {
   useEffect(() => { setModelSel(i.modelOverride ? i.modelOverride.providerId + "/" + i.modelOverride.model : ""); }, [i.modelOverride?.providerId, i.modelOverride?.model]);
 
   const providers = data?.providers || [];
-  const modelOpts = providers.flatMap((p) => (p.models || []).map((m) => ({ value: p.id + "/" + m, short: m, provider: p.name, label: p.name + " · " + m })));
+  const modelOpts = useMemo(() => providers.flatMap((p) => (p.models || []).map((m) => ({ value: p.id + "/" + m, short: m, provider: p.name, label: p.name + " · " + m }))), [providers]);
 
   // The canonical IssueState enum + BlockedReason drive the quick (CTA) action (ADR-0001).
   let quick = null;
@@ -181,7 +189,6 @@ function Card({ i, subs, multi, onOpen, onOpenChild, act, data }) {
   const engaged = !tmp && !done && (i.active || i.queued || i.running);
   const avatarsOn = (data && data.config && data.config.avatars) !== "off";
   const dotColor = tmp ? "var(--accent)" : (DOT_COLOR[st.cls] || "var(--ink-3)");
-  const stream = (data && data.activity && data.activity.filter((a) => a.repo === i.repo && a.number === i.number)) || [];
   const excerpt = stream.length ? stream[stream.length - 1].text : "";
 
   return html`<div class=${"card" + (tmp ? " busy" : "") + (i.active ? " active-now" : "")} onClick=${tmp ? null : () => onOpen(i)}>
