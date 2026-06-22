@@ -713,6 +713,12 @@ textarea{resize:vertical;min-height:64px}
 .prow>td{border-top:1px solid var(--line);padding:11px 12px;vertical-align:middle;background:var(--surface)}
 .prow:hover>td{background:var(--surface-2)}
 .prow-attention>td{box-shadow:inset 3px 0 0 var(--amber)}
+.prow-done .pt-title{color:var(--ink-3);font-weight:500}
+.prow-done .pt-timeline,.prow-done .pt-av{opacity:.55}
+.prow-done .pstat-done{opacity:.85}
+.pt-group>td{background:var(--surface-2);padding:6px 12px;border-top:1px solid var(--line);position:sticky;top:0}
+.pt-group-l{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-2);font-weight:700}
+.pt-group-n{font-size:11px;color:var(--ink-3);margin-left:6px}
 .prow-attention>td:first-child{box-shadow:inset 3px 0 0 var(--amber)}
 .pt-issue{max-width:0;width:42%}
 .pt-title-row{display:flex;align-items:center;gap:7px;min-width:0}

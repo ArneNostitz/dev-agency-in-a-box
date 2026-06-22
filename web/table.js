@@ -2,7 +2,7 @@
 // whose hero column is a live WORKFLOW TIMELINE (plan → dev → test → review) showing exactly where
 // it is, plus a STATUS field that flags what needs you. Reads the same /data payload as the board.
 import { html, useState, useMemo } from "/web/vendor/standalone.mjs";
-import { Avatar, Icon, Spinner, ago, classify, isDone, statusChip } from "./core.js";
+import { Avatar, Icon, Spinner, ago, classify, isDone, statusChip, filterByTime } from "./core.js";
 import { nestedChildKeys } from "./board.js";
 
 // Canonical pipeline steps + the role that owns each (so we can light the right one from i.role).
@@ -102,7 +102,9 @@ function Row({ i, multi, onOpen, act, avatarsOn, child = false, expandable = fal
     <td class="pt-timeline"><${Timeline} i=${i}/></td>
     <td class="pt-status"><span class=${"pstat pstat-" + sf.kind}><${Icon} name=${sf.icon} size=${12}/> ${sf.label}</span><span class="pt-when">${ago(i.updated_at)}</span></td>
     <td class="pt-act" onClick=${(e) => e.stopPropagation()}>
-      ${q ? html`<button class=${"cardbtn cta " + q.cls + (qBusy ? " busy" : "")} disabled=${qBusy} onClick=${(e) => { e.stopPropagation(); q.fn(); }}>${qBusy ? html`<${Spinner} size=${12}/>` : html`<${Icon} name=${q.icon} size=${12}/>`} <span class="pt-act-lbl">${qBusy ? "…" : q.label}</span></button>` : null}
+      ${sf.kind === "done"
+        ? html`<button class="iconbtn-sm tip" data-tip="Archive — remove from the list" disabled=${act.isBusy("archive", i.repo, i.number)} onClick=${(e) => { e.stopPropagation(); act.archive(i.repo, i.number); }}>${act.isBusy("archive", i.repo, i.number) ? html`<${Spinner} size=${12}/>` : html`<${Icon} name="archive" size=${14}/>`}</button>`
+        : q ? html`<button class=${"cardbtn cta " + q.cls + (qBusy ? " busy" : "")} disabled=${qBusy} onClick=${(e) => { e.stopPropagation(); q.fn(); }}>${qBusy ? html`<${Spinner} size=${12}/>` : html`<${Icon} name=${q.icon} size=${12}/>`} <span class="pt-act-lbl">${qBusy ? "…" : q.label}</span></button>` : null}
     </td>
   </tr>`;
 }
@@ -110,27 +112,70 @@ function Row({ i, multi, onOpen, act, avatarsOn, child = false, expandable = fal
 // Order: needs-you first, then running, then queued/planned, then done — most-actionable on top.
 const KIND_ORDER = { attention: 0, ready: 1, running: 2, queued: 3, planned: 4, done: 5 };
 
+const SORTS = [
+  { k: "smart", icon: "alert", tip: "most actionable first" },
+  { k: "updated", icon: "clock", tip: "last updated" },
+  { k: "created", icon: "hash", tip: "created (issue #)" },
+];
+const TIMES = [["all", "All"], ["24h", "24h"], ["7d", "7d"], ["30d", "30d"]];
+const GROUPS = [["none", "—"], ["repo", "Repo"], ["status", "Status"]];
+const KIND_LABEL = { attention: "Needs you", ready: "Ready to merge", running: "Running", queued: "Queued", planned: "Planned", done: "Done" };
+function smartCmp(a, b) {
+  const ka = KIND_ORDER[statusField(a).kind] ?? 9, kb = KIND_ORDER[statusField(b).kind] ?? 9;
+  return ka !== kb ? ka - kb : new Date(b.updated_at || 0) - new Date(a.updated_at || 0);
+}
+
 export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, onAnalyze, auditRepos, act, data }) {
-  const [group, setGroup] = useState(() => { try { return localStorage.getItem("ptGroup") || "smart"; } catch (e) { return "smart"; } });
-  const setG = (g) => { setGroup(g); try { localStorage.setItem("ptGroup", g); } catch (e) {} };
+  const ls = (k, d) => { try { return localStorage.getItem(k) || d; } catch (e) { return d; } };
+  const [sort, setSort] = useState(() => ls("ptSort", "smart"));
+  const [group, setGroup] = useState(() => ls("ptGroup", "none"));
+  const [time, setTime] = useState(() => ls("ptTime", "all"));
+  const save = (k, v, set) => { set(v); try { localStorage.setItem(k, v); } catch (e) {} };
+  const cyc = (arr, cur) => arr[(arr.findIndex((x) => x[0] === cur) + 1) % arr.length][0];
+
   const multi = !repoFilter && (repos || []).length > 1;
   const target = repoFilter || (repos.length === 1 ? repos[0] : null);
   const analyzing = target && (auditRepos || []).includes(target);
-
-  // Decorate each row with its status-kind + time ONCE (statusField was previously recomputed O(n log n)
-  // times inside the comparator, on every 5s poll), then sort the decorated array.
   const nested = nestedChildKeys(issues);
   const liveBy = useMemo(() => new Map(issues.map((i) => [i.repo + "#" + i.number, i])), [issues]);
-  // Epics are unfolded by DEFAULT (sub-issues shown as full indented rows); track collapsed ones.
+  // Epics unfold their sub-issues by default; track collapsed ones.
   const [collapsed, setCollapsed] = useState(() => new Set());
   const toggle = (key) => setCollapsed((prev) => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
-  const { rows, needsYou } = useMemo(() => {
-    const dec = issues.filter((i) => !nested.has(i.repo + "#" + i.number)).map((i) => ({ i, kind: statusField(i).kind, t: new Date(i.updated_at || 0).getTime() }));
-    if (group === "smart") dec.sort((a, b) => { const ka = KIND_ORDER[a.kind] ?? 9, kb = KIND_ORDER[b.kind] ?? 9; return ka !== kb ? ka - kb : b.t - a.t; });
-    else dec.sort((a, b) => b.t - a.t);
-    return { rows: dec.map((d) => d.i), needsYou: dec.filter((d) => d.kind === "attention").length };
-  }, [issues, group]);
+
+  const { sections, needsYou, total } = useMemo(() => {
+    let base = issues.filter((i) => !nested.has(i.repo + "#" + i.number) && !i.archived);
+    base = filterByTime(base, time === "all" ? "any" : time);
+    const cmp = sort === "smart" ? smartCmp : sort === "created" ? (a, b) => (b.number || 0) - (a.number || 0) : (a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0);
+    const need = base.filter((i) => statusField(i).kind === "attention").length;
+    let secs;
+    if (group === "repo") {
+      const m = new Map();
+      for (const i of base) { let a = m.get(i.repo); if (!a) { a = []; m.set(i.repo, a); } a.push(i); }
+      secs = [...m.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([r, items]) => ({ label: r.split("/").pop(), items: items.slice().sort(cmp) }));
+    } else if (group === "status") {
+      const m = new Map();
+      for (const i of base) { const k = statusField(i).kind; let a = m.get(k); if (!a) { a = []; m.set(k, a); } a.push(i); }
+      secs = Object.keys(KIND_ORDER).filter((k) => m.has(k)).map((k) => ({ label: KIND_LABEL[k] || k, items: m.get(k).slice().sort(cmp) }));
+    } else {
+      secs = [{ label: null, items: base.slice().sort(cmp) }];
+    }
+    return { sections: secs, needsYou: need, total: base.length };
+  }, [issues, sort, group, time]);
+
   const avatarsOn = (data && data.config && data.config.avatars) !== "off";
+  const renderRows = (items) => items.flatMap((i) => {
+    const key = i.repo + "#" + i.number;
+    const kids = i.epic && i.epic.children ? i.epic.children : null;
+    const isEpic = kids && kids.length > 0;
+    const open = isEpic && !collapsed.has(key);
+    const out = [html`<${Row} key=${key} i=${i} multi=${multi} onOpen=${onOpen} act=${act} avatarsOn=${avatarsOn} expandable=${!!isEpic} expanded=${open} onToggle=${() => toggle(key)}/>`];
+    if (open) for (const c of kids) {
+      const ck = i.repo + "#" + c.child;
+      const ci = liveBy.get(ck) || { repo: i.repo, number: c.child, title: c.title, state: c.closed ? "done" : (c.state || "planned"), updated_at: i.updated_at };
+      out.push(html`<${Row} key=${ck} i=${ci} multi=${multi} onOpen=${onOpen} act=${act} avatarsOn=${avatarsOn} child=${true}/>`);
+    }
+    return out;
+  });
 
   return html`<div class="ptable-wrap">
     <div class="ptable-bar">
@@ -139,25 +184,17 @@ export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, o
       <span style="flex:1"></span>
       ${needsYou ? html`<span class="pt-needsyou"><${Icon} name="alert" size=${13}/> ${needsYou} need${needsYou > 1 ? "" : "s"} you</span>` : null}
       <div class="seg">
-        <button class=${"segbtn" + (group === "smart" ? " on" : "")} onClick=${() => setG("smart")} data-tip="Most actionable first"><${Icon} name="alert" size=${14}/></button>
-        <button class=${"segbtn" + (group === "time" ? " on" : "")} onClick=${() => setG("time")} data-tip="By last updated"><${Icon} name="clock" size=${14}/></button>
+        ${SORTS.map((srt) => html`<button key=${srt.k} class=${"segbtn tip" + (sort === srt.k ? " on" : "")} data-tip=${"Sort: " + srt.tip} onClick=${() => save("ptSort", srt.k, setSort)}><${Icon} name=${srt.icon} size=${14}/></button>`)}
       </div>
+      <button class=${"segbtn tip" + (time !== "all" ? " on" : "")} data-tip="Filter by last updated — click to cycle" onClick=${() => save("ptTime", cyc(TIMES, time), setTime)}><${Icon} name="hourglass" size=${14}/> <span class="segx">${(TIMES.find((t) => t[0] === time) || TIMES[0])[1]}</span></button>
+      <button class=${"segbtn tip" + (group !== "none" ? " on" : "")} data-tip="Group — click to cycle" onClick=${() => save("ptGroup", cyc(GROUPS, group), setGroup)}><${Icon} name="layers" size=${14}/> <span class="segx">${(GROUPS.find((g) => g[0] === group) || GROUPS[0])[1]}</span></button>
     </div>
-    ${rows.length ? html`<table class="ptable">
+    ${total ? html`<table class="ptable">
       <thead><tr><th>Issue</th><th class="pt-h-tl">Workflow timeline</th><th>Status</th><th></th></tr></thead>
-      <tbody>${rows.flatMap((i) => {
-        const key = i.repo + "#" + i.number;
-        const kids = i.epic && i.epic.children ? i.epic.children : null;
-        const isEpic = kids && kids.length > 0;
-        const open = isEpic && !collapsed.has(key);
-        const out = [html`<${Row} key=${key} i=${i} multi=${multi} onOpen=${onOpen} act=${act} avatarsOn=${avatarsOn} expandable=${!!isEpic} expanded=${open} onToggle=${() => toggle(key)}/>`];
-        if (open) for (const c of kids) {
-          const ck = i.repo + "#" + c.child;
-          const ci = liveBy.get(ck) || { repo: i.repo, number: c.child, title: c.title, state: c.closed ? "done" : (c.state || "planned"), updated_at: i.updated_at };
-          out.push(html`<${Row} key=${ck} i=${ci} multi=${multi} onOpen=${onOpen} act=${act} avatarsOn=${avatarsOn} child=${true}/>`);
-        }
-        return out;
-      })}</tbody>
-    </table>` : html`<div class="empty" style="padding:40px;text-align:center">No issues yet — start one with “New issue” or the Chat.</div>`}
+      <tbody>${sections.flatMap((sec) => [
+        sec.label != null ? html`<tr class="pt-group" key=${"g-" + sec.label}><td colspan="4"><span class="pt-group-l">${sec.label}</span> <span class="pt-group-n">${sec.items.length}</span></td></tr>` : null,
+        ...renderRows(sec.items),
+      ])}</tbody>
+    </table>` : html`<div class="empty" style="padding:40px;text-align:center">No issues ${time !== "all" ? "in this time range." : "yet — start one with “New issue” or the Chat."}</div>`}
   </div>`;
 }
