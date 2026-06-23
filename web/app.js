@@ -276,7 +276,6 @@ function App() {
     <div class="app">
       <${TopBar} working=${working} scanning=${data.scanning} env=${data.env} theme=${theme} setTheme=${setThemeP} onSettings=${() => setSheet("settings")} onUsage=${() => setSheet("usage")} onAgents=${() => setSheet("workflows")} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${load} auto=${data.auto || {}} autoRepos=${data.autoRepos || {}} setAuto=${act.setAuto}/>
       ${data.secretsHealth ? html`<${SecretBanner} h=${data.secretsHealth} onFix=${() => setSheet("settings")}/>` : null}
-      <${StatusLine} working=${working} session=${data.session} spend=${data.spendToday} analyzer=${data.analyzer} reload=${load} offlineQ=${offlineQ} syncing=${syncing}/>
       ${repos.length ? html`<div class="viewbar">
         <div class="viewseg">
           <button class=${view === "chat" ? "on" : ""} onClick=${() => setViewP("chat")}><${Icon} name="messages" size=${15}/> Chat</button>
@@ -310,6 +309,7 @@ function App() {
       ${sheet === "workflows" && html`<${WorkflowBuilder} data=${data} onClose=${() => setSheet(null)} reload=${load} onEditAgent=${(which) => setSheet(which === "skills" ? "skills" : "agents")}/>`}
       ${sheet === "skills" && html`<${SkillEditor} data=${data} onClose=${() => setSheet("agents")} reload=${load}/>`}
       ${data.user && data.onboarded === false && html`<${Onboarding} repos=${repos} github=${data.github} reload=${load}/>`}
+      <${StatusLine} working=${working} session=${data.session} spend=${data.spendToday} analyzer=${data.analyzer} reload=${load} offlineQ=${offlineQ} syncing=${syncing}/>
       <${Toasts} toasts=${toasts} onDismiss=${dismissToast}/>
       ${tip ? html`<div class="gtip" style=${"left:" + tip.x + "px;top:" + tip.y + "px"}>${tip.text}</div>` : null}
     </div>`;

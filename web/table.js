@@ -105,7 +105,7 @@ function Row({ i, multi, onOpen, act, avatarsOn, excerpt, open = false, child = 
       <div class="pt-title-row">
         ${expandable ? html`<button class=${"pt-exp" + (expanded ? " open" : "")} aria-label=${expanded ? "Collapse sub-issues" : "Expand sub-issues"} onClick=${(e) => { e.stopPropagation(); onToggle && onToggle(); }}><${Icon} name="chevron" size=${14}/></button>` : null}
         ${avatarsOn && working && i.role ? html`<span class="pt-av tip" data-tip=${i.role + " agent — working"}><${Avatar} role=${i.role} size=${20} crop="head"/></span>` : null}
-        <span class="pt-title">${i.title || "#" + i.number}</span>
+        <span class="pt-title" title=${i.title || ""}>${i.title || "#" + i.number}</span>
         ${i.byAgent ? html`<span class="pt-byagent tip" data-tip="Proposed by an agent — review & start"><${Icon} name="rocket" size=${10}/> agent</span>` : null}
         ${i.editing && i.editing.length ? html`<span class="pt-lock tip" data-tip=${"Editing now (file lock): " + i.editing.join(", ")}><${Icon} name="lock" size=${10}/> ${i.editing.length}</span>` : null}
       </div>
@@ -115,7 +115,7 @@ function Row({ i, multi, onOpen, act, avatarsOn, excerpt, open = false, child = 
     <td class="pt-c pt-c-num">${i.number > 0 ? "#" + i.number : "…"}</td>
     <td class="pt-c pt-c-pr">${i.pr_number ? html`<a class="pt-pr" href=${i.pr_url || ghUrl(i.repo, i.pr_number)} target="_blank" rel="noopener" onClick=${(e) => e.stopPropagation()}><${Icon} name="pr" size=${11}/> ${i.pr_number}</a>` : html`<span class="pt-dash">—</span>`}</td>
     <td class="pt-timeline"><${Timeline} i=${i}/></td>
-    <td class="pt-status"><span class=${"pstat pstat-" + sf.kind}><${Icon} name=${sf.icon} size=${12}/> ${sf.label}</span><span class="pt-when">${ago(i.updated_at)}</span></td>
+    <td class="pt-status"><span class=${"pstat pstat-" + sf.kind}><${Icon} name=${sf.icon} size=${12}/> ${sf.label}</span></td>
     <td class="pt-c pt-c-cost">${(() => {
       const real = (i.usage && i.usage.costUsd) || 0, est = (i.estCost && i.estCost.usd) || 0;
       if (!real && !est) return html`<span class="pt-dash">\u2014</span>`;
@@ -123,7 +123,9 @@ function Row({ i, multi, onOpen, act, avatarsOn, excerpt, open = false, child = 
       if (real > 0) { if ((est > 0 && real > est * 3) || real > 3) { cls = "hot"; hot = true; } else if ((est > 0 && real > est * 1.5) || real > 1) { cls = "warn"; hot = true; } }
       return html`<span class=${"pt-cost pt-cost-" + cls} data-tip=${"Spent $" + real.toFixed(2) + " of an estimated ~$" + est.toFixed(2)}>${hot ? html`<${Icon} name="flame" size=${11}/>` : null}$${real.toFixed(2)}</span><span class="pt-cost-est">~$${est.toFixed(2)}</span>`;
     })()}</td>
+    <td class="pt-c pt-c-when" title=${i.updated_at ? new Date(i.updated_at).toLocaleString() : ""}>${ago(i.updated_at)}</td>
     <td class="pt-act" onClick=${(e) => e.stopPropagation()}>
+      <button class="pt-act-open tip" data-tip="Open" onClick=${(e) => { e.stopPropagation(); onOpen(i); }}><${Icon} name="maximize" size=${13}/></button>
       ${sf.kind === "done"
         ? html`<button class="iconbtn-sm tip" data-tip="Archive — remove from the list" disabled=${act.isBusy("archive", i.repo, i.number)} onClick=${(e) => { e.stopPropagation(); act.archive(i.repo, i.number); }}>${act.isBusy("archive", i.repo, i.number) ? html`<${Spinner} size=${12}/>` : html`<${Icon} name="archive" size=${14}/>`}</button>`
         : q ? html`<button class=${"cardbtn cta " + q.cls + (qBusy ? " busy" : "")} disabled=${qBusy} onClick=${(e) => { e.stopPropagation(); q.fn(); }}>${qBusy ? html`<${Spinner} size=${12}/>` : html`<${Icon} name=${q.icon} size=${12}/>`} <span class="pt-act-lbl">${qBusy ? "…" : q.label}</span></button>` : null}
@@ -227,15 +229,15 @@ export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, o
       ${data && data.spendToday && data.spendToday.costUsd > 0 ? html`<div class="pt-stat pt-stat-spend"><span class="pt-stat-n">$${data.spendToday.costUsd.toFixed(2)}</span><span class="pt-stat-l">today</span></div>` : null}
     </div>
     <div class="ptable-bar">
-      <button class="colbtn primary" onClick=${() => onAddIssue(target)}><${Icon} name="plus" size=${14}/> New issue</button>
-      <button class="colbtn" disabled=${!target || analyzing} title=${target ? "Analyze " + target.split("/").pop() : "Pick a repo first"} onClick=${() => target && onAnalyze(target)}>${analyzing ? html`<${Spinner} size=${14}/>` : html`<${Icon} name="search" size=${14}/>`} Analyze</button>
-      <span style="flex:1"></span>
       ${needsYou ? html`<span class="pt-needsyou"><${Icon} name="alert" size=${13}/> ${needsYou} need${needsYou > 1 ? "" : "s"} you</span>` : null}
+      <span style="flex:1"></span>
       <div class="seg">
         ${SORTS.map((srt) => html`<button key=${srt.k} class=${"segbtn tip" + (sort === srt.k ? " on" : "")} data-tip=${"Sort: " + srt.tip} onClick=${() => save("ptSort", srt.k, setSort)}><${Icon} name=${srt.icon} size=${14}/></button>`)}
       </div>
       <button class=${"segbtn tip" + (time !== "all" ? " on" : "")} data-tip="Filter by last updated — click to cycle" onClick=${() => save("ptTime", cyc(TIMES, time), setTime)}><${Icon} name="hourglass" size=${14}/> <span class="segx">${(TIMES.find((t) => t[0] === time) || TIMES[0])[1]}</span></button>
       <button class=${"segbtn tip" + (group !== "none" ? " on" : "")} data-tip="Group — click to cycle" onClick=${() => save("ptGroup", cyc(GROUPS, group), setGroup)}><${Icon} name="layers" size=${14}/> <span class="segx">${(GROUPS.find((g) => g[0] === group) || GROUPS[0])[1]}</span></button>
+      <button class="colbtn" disabled=${!target || analyzing} title=${target ? "Analyze " + target.split("/").pop() : "Pick a repo first"} onClick=${() => target && onAnalyze(target)}>${analyzing ? html`<${Spinner} size=${14}/>` : html`<${Icon} name="search" size=${14}/>`} Analyze</button>
+      <button class="colbtn primary" onClick=${() => onAddIssue(target)}><${Icon} name="plus" size=${14}/> New issue</button>
     </div>
     ${total ? html`<table class=${"ptable" + (compact ? " ptable-compact" : "")}>
       <thead><tr>
@@ -246,10 +248,11 @@ export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, o
         <th class="pt-h-tl"><${Icon} name="loader" size=${11}/> Workflow</th>
         <th class=${"pt-sortable" + (sort === "smart" ? " on" : "")} onClick=${() => save("ptSort", "smart", setSort)}><${Icon} name="alert" size=${11}/> Status</th>
         <th class="pt-c pt-c-cost"><${Icon} name="flame" size=${11}/> Cost</th>
+        <th class=${"pt-c pt-c-when pt-sortable" + (sort === "updated" ? " on" : "")} onClick=${() => save("ptSort", "updated", setSort)}><${Icon} name="clock" size=${11}/> Updated</th>
         <th></th>
       </tr></thead>
       <tbody>${sections.flatMap((sec) => [
-        sec.label != null ? html`<tr class="pt-group" key=${"g-" + sec.label}><td colspan="8"><span class="pt-group-l">${sec.label}</span> <span class="pt-group-n">${sec.items.length}</span></td></tr>` : null,
+        sec.label != null ? html`<tr class="pt-group" key=${"g-" + sec.label}><td colspan="9"><span class="pt-group-l">${sec.label}</span> <span class="pt-group-n">${sec.items.length}</span></td></tr>` : null,
         ...renderRows(sec.items),
       ])}</tbody>
     </table>` : html`<div class="empty" style="padding:40px;text-align:center">No issues ${time !== "all" ? "in this time range." : "yet — start one with “New issue” or the Chat."}</div>`}

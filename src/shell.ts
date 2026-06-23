@@ -82,7 +82,7 @@ html,body{overflow-x:hidden}
 .chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
 .chip.dash{border-style:dashed;color:var(--accent)}
 .content{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch}
-.statusline{padding:6px 14px;color:var(--ink-2);font-size:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.statusline{flex:none;padding:5px 14px calc(5px + var(--safe-b));color:var(--ink-3);font-size:11.5px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-top:1px solid var(--line);background:var(--surface)}
 .buildstamp{font:11px ui-monospace,Menlo,monospace;color:var(--ink-3);cursor:default}
 .anstat{display:inline-flex;align-items:center;gap:5px;color:var(--ink-3);cursor:default}
 .andot{width:7px;height:7px;border-radius:50%;display:inline-block}
@@ -699,9 +699,9 @@ textarea{resize:vertical;min-height:64px}
 
 /* ── v4 view switcher ── */
 .viewseg{display:inline-flex;gap:2px;background:var(--surface-2);border:1px solid var(--line);border-radius:11px;padding:3px}
-.viewseg button{display:inline-flex;align-items:center;gap:6px;border:none;background:transparent;color:var(--ink-2);padding:6px 13px;border-radius:8px;font:13px inherit;font-weight:600;cursor:pointer}
+.viewseg button{display:inline-flex;align-items:center;gap:5px;border:none;background:transparent;color:var(--ink-2);padding:4px 10px;border-radius:7px;font:12px inherit;font-weight:600;cursor:pointer}
 .viewseg button.on{background:var(--surface);color:var(--ink);box-shadow:var(--shadow)}
-.viewbar{display:flex;align-items:center;gap:10px;padding:10px 14px 0}
+.viewbar{display:flex;align-items:center;gap:10px;padding:8px 14px 0}
 '
 /* ── master-detail + chat split workspace ── */
 .content.is-split{overflow:hidden;display:flex;flex-direction:column;padding:0}
@@ -720,8 +720,8 @@ textarea{resize:vertical;min-height:64px}
 .ptable th.pt-sortable:hover{color:var(--ink-2)}
 .ptable th.pt-sortable.on{color:var(--accent)}
 .pt-c{font-size:13px;color:var(--ink-2);white-space:nowrap;vertical-align:middle;padding:11px 12px;border-top:1px solid var(--line)}
-.pt-c-repo{color:var(--ink);display:flex;align-items:center;gap:6px;max-width:160px;overflow:hidden;text-overflow:ellipsis}
-.pt-repo-dot{width:8px;height:8px;border-radius:50%;flex:none}
+.pt-c-repo{color:var(--ink);max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pt-repo-dot{width:8px;height:8px;border-radius:50%;display:inline-block;vertical-align:middle;margin-right:6px}
 .pt-c-num{color:var(--ink-3);font-variant-numeric:tabular-nums}
 .pt-c-pr a.pt-pr{display:inline-flex;align-items:center;gap:3px;color:var(--accent);font-variant-numeric:tabular-nums}
 .pt-dash{color:var(--line-2)}
@@ -743,6 +743,24 @@ textarea{resize:vertical;min-height:64px}
 .pt-cost-warn{color:var(--amber)}
 .pt-cost-hot{color:var(--red)}
 .pt-cost-est{display:block;font-size:10.5px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+
+
+/* ── table row polish (Figma table) ── */
+.prow>td{vertical-align:middle}
+.pt-title-row{display:flex;align-items:center;gap:7px;min-width:0;flex-wrap:nowrap}
+.pt-title{display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;color:var(--ink)}
+.prow:hover .pt-title{overflow:visible;max-width:none;position:relative;z-index:6;background:var(--surface);box-shadow:10px 0 10px -6px rgba(0,0,0,.18);padding-right:10px;border-radius:4px}
+.prow-open:hover .pt-title,.prow-open .pt-title{background:var(--accent-weak)}
+.pt-issue{max-width:0;width:40%}
+.pt-c-when{color:var(--ink-3);font-size:12px;white-space:nowrap}
+.pt-act{text-align:right;white-space:nowrap}
+.pt-act-open{opacity:0;border:none;background:transparent;color:var(--ink-3);cursor:pointer;padding:4px;border-radius:7px;vertical-align:middle;transition:opacity .12s}
+.prow:hover .pt-act-open{opacity:1}
+.pt-act-open:hover{background:var(--surface-2);color:var(--ink)}
+.ptable-compact .pt-c-when,.ptable-compact th.pt-c-when{display:none}
+/* ── sticky, nicer header (Figma) ── */
+.ptable thead th{position:sticky;top:0;z-index:3;background:var(--surface);box-shadow:inset 0 -1px 0 var(--line);padding:9px 12px}
+.ptable thead th.pt-sortable.on::after{content:"";display:inline-block;margin-left:5px;border:3px solid transparent;border-top-color:var(--accent);vertical-align:1px}
 
 /* ── overview stat strip (data-driven "what needs me?") ── */
 .pt-overview{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
