@@ -246,6 +246,8 @@ function App() {
   if (foundOpen) openIssueRef.current = foundOpen;
   const cachedOpen = openIssueRef.current && openIssueRef.current.repo + "#" + openIssueRef.current.number === openKey ? openIssueRef.current : null;
   const open = openKey ? foundOpen || cachedOpen : null;
+  const dockDetail = isDesktop && view === "list" && !!open; // master-detail: list + docked detail side by side
+  const chatSplit = isDesktop && view === "chat" && repos.length > 0; // chat beside the live issue list
   // Open any issue's detail by repo+number (used by the sub-issue checklist). Seeds a stub so a
   // child that isn't in the polled list still opens (the detail loads its own thread/PR/app info).
   function openIssue(r, n, title) {
@@ -282,18 +284,22 @@ function App() {
           <button class=${view === "board" ? "on" : ""} onClick=${() => setViewP("board")}><${Icon} name="columns" size=${15}/> Board</button>
         </div>
       </div>` : null}
-      <div class="content">
-        ${view === "chat" && repos.length
+      <div class=${"content" + ((dockDetail || chatSplit) ? " is-split" : "")}>
+        ${chatSplit
+          ? html`<div class="split chat-split"><div class="split-left"><${Orchestrator} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${load} onOpenIssue=${openIssue} issues=${issues}/></div><div class="split-right"><${ProgressTable} issues=${shown} repos=${repos} repoFilter=${repoFilter} openKey=${openKey} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data}/></div></div>`
+          : view === "chat" && repos.length
           ? html`<${Orchestrator} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${load} onOpenIssue=${openIssue} issues=${issues}/>`
           : view === "board"
           ? html`<${Board} issues=${shown} repos=${repos} repoFilter=${repoFilter} tab=${tab} isDesktop=${isDesktop} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onOpenChild=${openIssue} onAddRepo=${() => setSheet("addrepo")} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data}/>`
+          : dockDetail
+          ? html`<div class="split list-split"><div class="split-left"><${ProgressTable} issues=${shown} repos=${repos} repoFilter=${repoFilter} compact=${true} openKey=${openKey} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data}/></div><div class="split-right"><${Detail} key=${openKey} docked=${true} issue=${open} activity=${activity} act=${act} isDesktop=${isDesktop} startError=${detailError} onClose=${() => { setOpenKey(null); setDetailError(null); }} onOpenIssue=${openIssue} data=${data} isOnline=${isOnline} onQueueComment=${oqPush}/></div></div>`
           : (repos.length
-            ? html`<${ProgressTable} issues=${shown} repos=${repos} repoFilter=${repoFilter} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data}/>`
+            ? html`<${ProgressTable} issues=${shown} repos=${repos} repoFilter=${repoFilter} openKey=${openKey} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data}/>`
             : html`<${Board} issues=${shown} repos=${repos} repoFilter=${repoFilter} tab=${tab} isDesktop=${isDesktop} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onOpenChild=${openIssue} onAddRepo=${() => setSheet("addrepo")} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data}/>`)}
       </div>
       ${!isDesktop && view === "board" && html`<${TabBar} issues=${shown} tab=${tab} setTab=${setTab}/>`}
-      ${open && html`<div class="dscrim" onClick=${() => setOpenKey(null)}></div>`}
-      ${open && html`<${Detail} key=${openKey} issue=${open} activity=${activity} act=${act} isDesktop=${isDesktop} startError=${detailError} onClose=${() => { setOpenKey(null); setDetailError(null); }} onOpenIssue=${openIssue} data=${data} isOnline=${isOnline} onQueueComment=${oqPush}/>`}
+      ${open && !dockDetail && html`<div class="dscrim" onClick=${() => setOpenKey(null)}></div>`}
+      ${open && !dockDetail && html`<${Detail} key=${openKey} issue=${open} activity=${activity} act=${act} isDesktop=${isDesktop} startError=${detailError} onClose=${() => { setOpenKey(null); setDetailError(null); }} onOpenIssue=${openIssue} data=${data} isOnline=${isOnline} onQueueComment=${oqPush}/>`}
       ${sheet === "composer" && html`<${Composer} repos=${repos} repo=${composerRepo} setRepo=${setComposerRepo} onClose=${() => setSheet(null)} onCreate=${createIssue} data=${data}/>`}
       ${sheet === "settings" && html`<${Settings} data=${data} onClose=${() => setSheet(null)} reload=${load} openGithubTokens=${() => setSheet("github")} openModels=${() => setSheet("models")} openAgents=${() => setSheet("agents")} openWorkflows=${() => setSheet("workflows")}/>`}
       ${sheet === "github" && html`<${GithubTokensModal} secretKeys=${data.secretKeys || []} github=${data.github} onClose=${() => setSheet("settings")} reload=${load}/>`}

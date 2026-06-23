@@ -227,7 +227,7 @@ test("v4: default List view renders the rich progress table + timeline; Chat vie
     fetch: async (u) => ({ ok: true, json: async () => route(u), text: async () => "" }),
   });
   await new Promise((r) => setTimeout(r, 150));
-  assert.match(root.innerHTML, /Workflow timeline/, "table header renders by default");
+  assert.match(root.innerHTML, /Workflow/, "table header renders by default");
   assert.match(root.innerHTML, /A planned task/, "planned row renders");
   assert.match(root.innerHTML, /ptable/, "the rich progress table is the default list view");
   assert.match(root.innerHTML, /Running/, "a working+running issue shows a Running status");

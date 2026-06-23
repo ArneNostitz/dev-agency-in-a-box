@@ -2,7 +2,7 @@
 // whose hero column is a live WORKFLOW TIMELINE (plan → dev → test → review) showing exactly where
 // it is, plus a STATUS field that flags what needs you. Reads the same /data payload as the board.
 import { html, useState, useMemo } from "/web/vendor/standalone.mjs";
-import { Avatar, Icon, Spinner, ago, classify, isDone, statusChip, filterByTime } from "./core.js";
+import { Avatar, Icon, Spinner, ago, classify, isDone, statusChip, filterByTime, ghUrl } from "./core.js";
 import { nestedChildKeys } from "./board.js";
 
 // Canonical pipeline steps + the role that owns each (so we can light the right one from i.role).
@@ -85,20 +85,25 @@ function rowQuick(i, act) {
   return null;
 }
 
-function Row({ i, multi, onOpen, act, avatarsOn, child = false, expandable = false, expanded = false, onToggle }) {
+function Row({ i, multi, onOpen, act, avatarsOn, excerpt, open = false, child = false, expandable = false, expanded = false, onToggle }) {
   const sf = statusField(i);
   const q = rowQuick(i, act);
   const qBusy = q && act.isBusy(q.a, i.repo, i.number);
-  return html`<tr class=${"prow prow-" + sf.kind + (child ? " prow-child" : "")} onClick=${() => onOpen(i)}>
+  const working = i.active || i.queued || i.running;
+  return html`<tr class=${"prow prow-" + sf.kind + (child ? " prow-child" : "") + (open ? " prow-open" : "")} onClick=${() => onOpen(i)}>
     <td class=${"pt-issue" + (child ? " pt-issue-child" : "")}>
       <div class="pt-title-row">
         ${expandable ? html`<button class=${"pt-exp" + (expanded ? " open" : "")} aria-label=${expanded ? "Collapse sub-issues" : "Expand sub-issues"} onClick=${(e) => { e.stopPropagation(); onToggle && onToggle(); }}><${Icon} name="chevron" size=${14}/></button>` : null}
-        ${avatarsOn && (i.active || i.queued) && i.role ? html`<span class="pt-av"><${Avatar} role=${i.role} size=${18} crop="head"/></span>` : null}
+        ${avatarsOn && working && i.role ? html`<span class="pt-av tip" data-tip=${i.role + " agent — working"}><${Avatar} role=${i.role} size=${20} crop="head"/></span>` : null}
         <span class="pt-title">${i.title || "#" + i.number}</span>
         ${i.byAgent ? html`<span class="pt-byagent tip" data-tip="Proposed by an agent — review & start"><${Icon} name="rocket" size=${10}/> agent</span>` : null}
+        ${i.editing && i.editing.length ? html`<span class="pt-lock tip" data-tip=${"Editing now (file lock): " + i.editing.join(", ")}><${Icon} name="lock" size=${10}/> ${i.editing.length}</span>` : null}
       </div>
-      <div class="pt-sub">${multi ? html`<span class="pt-repo">${i.repo.split("/").pop()}</span> · ` : null}<span class="pt-num">#${i.number > 0 ? i.number : "…"}</span>${i.pr_number ? html` · <span class="pt-pr"><${Icon} name="pr" size=${10}/> #${i.pr_number}</span>` : null}${i.editing && i.editing.length ? html` · <span class="pt-lock tip" data-tip=${"Editing now (file lock): " + i.editing.join(", ")}><${Icon} name="lock" size=${10}/> ${i.editing.length}</span>` : null}</div>
+      ${working && excerpt ? html`<div class="pt-activity">${i.role ? html`<span class="pt-act-role">${i.role}</span> ` : null}${excerpt}</div>` : null}
     </td>
+    <td class="pt-c pt-c-repo" title=${i.repo}><span class="pt-repo-dot" style=${"background:" + repoColor(i.repo)}></span>${i.repo.split("/").pop()}</td>
+    <td class="pt-c pt-c-num">${i.number > 0 ? "#" + i.number : "…"}</td>
+    <td class="pt-c pt-c-pr">${i.pr_number ? html`<a class="pt-pr" href=${i.pr_url || ghUrl(i.repo, i.pr_number)} target="_blank" rel="noopener" onClick=${(e) => e.stopPropagation()}><${Icon} name="pr" size=${11}/> ${i.pr_number}</a>` : html`<span class="pt-dash">—</span>`}</td>
     <td class="pt-timeline"><${Timeline} i=${i}/></td>
     <td class="pt-status"><span class=${"pstat pstat-" + sf.kind}><${Icon} name=${sf.icon} size=${12}/> ${sf.label}</span><span class="pt-when">${ago(i.updated_at)}</span></td>
     <td class="pt-act" onClick=${(e) => e.stopPropagation()}>
@@ -109,6 +114,9 @@ function Row({ i, multi, onOpen, act, avatarsOn, child = false, expandable = fal
   </tr>`;
 }
 
+// A stable category color per repo (Figma clue: category pills carry a colored dot).
+const REPO_HUES = ["var(--accent)", "var(--green)", "var(--amber)", "var(--purple)", "var(--red)", "#0ea5e9"];
+function repoColor(repo) { let h = 0; for (let n = 0; n < (repo || "").length; n++) h = (h * 31 + repo.charCodeAt(n)) >>> 0; return REPO_HUES[h % REPO_HUES.length]; }
 // Order: needs-you first, then running, then queued/planned, then done — most-actionable on top.
 const KIND_ORDER = { attention: 0, ready: 1, running: 2, queued: 3, planned: 4, done: 5 };
 
@@ -133,7 +141,7 @@ function smartCmp(a, b) {
   return ka !== kb ? ka - kb : new Date(b.updated_at || 0) - new Date(a.updated_at || 0);
 }
 
-export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, onAnalyze, auditRepos, act, data }) {
+export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, onAnalyze, auditRepos, act, data, openKey, compact = false }) {
   const ls = (k, d) => { try { return localStorage.getItem(k) || d; } catch (e) { return d; } };
   const [sort, setSort] = useState(() => ls("ptSort", "smart"));
   const [group, setGroup] = useState(() => ls("ptGroup", "none"));
@@ -147,6 +155,7 @@ export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, o
   const analyzing = target && (auditRepos || []).includes(target);
   const nested = nestedChildKeys(issues);
   const liveBy = useMemo(() => new Map(issues.map((i) => [i.repo + "#" + i.number, i])), [issues]);
+  const streamByKey = useMemo(() => { const m = new Map(); for (const a of (data && data.activity) || []) m.set(a.repo + "#" + a.number, a.text); return m; }, [data && data.activity]);
   // Epics unfold their sub-issues by default; track collapsed ones.
   const [collapsed, setCollapsed] = useState(() => new Set());
   const toggle = (key) => setCollapsed((prev) => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
@@ -182,11 +191,11 @@ export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, o
     const kids = i.epic && i.epic.children ? i.epic.children : null;
     const isEpic = kids && kids.length > 0;
     const open = isEpic && !collapsed.has(key);
-    const out = [html`<${Row} key=${key} i=${i} multi=${multi} onOpen=${onOpen} act=${act} avatarsOn=${avatarsOn} expandable=${!!isEpic} expanded=${open} onToggle=${() => toggle(key)}/>`];
+    const out = [html`<${Row} key=${key} i=${i} multi=${multi} onOpen=${onOpen} act=${act} avatarsOn=${avatarsOn} excerpt=${streamByKey.get(key)} open=${openKey === key} expandable=${!!isEpic} expanded=${open} onToggle=${() => toggle(key)}/>`];
     if (open) for (const c of kids) {
       const ck = i.repo + "#" + c.child;
       const ci = liveBy.get(ck) || { repo: i.repo, number: c.child, title: c.title, state: c.closed ? "done" : (c.state || "planned"), updated_at: i.updated_at };
-      out.push(html`<${Row} key=${ck} i=${ci} multi=${multi} onOpen=${onOpen} act=${act} avatarsOn=${avatarsOn} child=${true}/>`);
+      out.push(html`<${Row} key=${ck} i=${ci} multi=${multi} onOpen=${onOpen} act=${act} avatarsOn=${avatarsOn} excerpt=${streamByKey.get(ck)} open=${openKey === ck} child=${true}/>`);
     }
     return out;
   });
@@ -211,10 +220,18 @@ export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, o
       <button class=${"segbtn tip" + (time !== "all" ? " on" : "")} data-tip="Filter by last updated — click to cycle" onClick=${() => save("ptTime", cyc(TIMES, time), setTime)}><${Icon} name="hourglass" size=${14}/> <span class="segx">${(TIMES.find((t) => t[0] === time) || TIMES[0])[1]}</span></button>
       <button class=${"segbtn tip" + (group !== "none" ? " on" : "")} data-tip="Group — click to cycle" onClick=${() => save("ptGroup", cyc(GROUPS, group), setGroup)}><${Icon} name="layers" size=${14}/> <span class="segx">${(GROUPS.find((g) => g[0] === group) || GROUPS[0])[1]}</span></button>
     </div>
-    ${total ? html`<table class="ptable">
-      <thead><tr><th>Issue</th><th class="pt-h-tl">Workflow timeline</th><th>Status</th><th></th></tr></thead>
+    ${total ? html`<table class=${"ptable" + (compact ? " ptable-compact" : "")}>
+      <thead><tr>
+        <th>Issue</th>
+        <th class=${"pt-c pt-c-repo pt-sortable" + (group === "repo" ? " on" : "")} onClick=${() => save("ptGroup", group === "repo" ? "none" : "repo", setGroup)}><${Icon} name="pr" size=${11}/> Repo</th>
+        <th class=${"pt-c pt-c-num pt-sortable" + (sort === "created" ? " on" : "")} onClick=${() => save("ptSort", "created", setSort)}><${Icon} name="hash" size=${11}/> #</th>
+        <th class="pt-c pt-c-pr"><${Icon} name="merge" size=${11}/> PR</th>
+        <th class="pt-h-tl"><${Icon} name="loader" size=${11}/> Workflow</th>
+        <th class=${"pt-sortable" + (sort === "smart" ? " on" : "")} onClick=${() => save("ptSort", "smart", setSort)}><${Icon} name="alert" size=${11}/> Status</th>
+        <th></th>
+      </tr></thead>
       <tbody>${sections.flatMap((sec) => [
-        sec.label != null ? html`<tr class="pt-group" key=${"g-" + sec.label}><td colspan="4"><span class="pt-group-l">${sec.label}</span> <span class="pt-group-n">${sec.items.length}</span></td></tr>` : null,
+        sec.label != null ? html`<tr class="pt-group" key=${"g-" + sec.label}><td colspan="7"><span class="pt-group-l">${sec.label}</span> <span class="pt-group-n">${sec.items.length}</span></td></tr>` : null,
         ...renderRows(sec.items),
       ])}</tbody>
     </table>` : html`<div class="empty" style="padding:40px;text-align:center">No issues ${time !== "all" ? "in this time range." : "yet — start one with “New issue” or the Chat."}</div>`}

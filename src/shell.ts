@@ -702,7 +702,42 @@ textarea{resize:vertical;min-height:64px}
 .viewseg button{display:inline-flex;align-items:center;gap:6px;border:none;background:transparent;color:var(--ink-2);padding:6px 13px;border-radius:8px;font:13px inherit;font-weight:600;cursor:pointer}
 .viewseg button.on{background:var(--surface);color:var(--ink);box-shadow:var(--shadow)}
 .viewbar{display:flex;align-items:center;gap:10px;padding:10px 14px 0}
-'/* ── overview stat strip (data-driven "what needs me?") ── */
+'
+/* ── master-detail + chat split workspace ── */
+.content.is-split{overflow:hidden;display:flex;flex-direction:column;padding:0}
+.split{flex:1;display:flex;min-height:0;width:100%}
+.split-left{flex:1;min-width:0;overflow-y:auto}
+.split-right{flex:none;width:min(660px,46vw);min-width:380px;overflow-y:auto;border-left:1px solid var(--line);background:var(--surface)}
+.chat-split .split-left{flex:none;width:min(460px,40vw);min-width:340px;overflow:hidden;border-right:1px solid var(--line);border-left:none}
+.chat-split .split-right{flex:1;overflow-y:auto}
+.chat-split .orch{height:100%;max-width:none;border:none;border-radius:0}
+.detail.docked{position:relative;inset:auto;transform:none;height:100%;width:100%;z-index:auto;box-shadow:none;border:none}
+.detail.docked .detail-close,.detail.docked .dt-back{display:inline-flex}
+/* ── table: new columns, header icons, category dot, greying, open row ── */
+.ptable th.pt-c,.ptable th.pt-h-tl{white-space:nowrap}
+.ptable thead th .ti,.ptable thead th svg{vertical-align:-2px;opacity:.6;margin-right:2px}
+.ptable th.pt-sortable{cursor:pointer;user-select:none}
+.ptable th.pt-sortable:hover{color:var(--ink-2)}
+.ptable th.pt-sortable.on{color:var(--accent)}
+.pt-c{font-size:13px;color:var(--ink-2);white-space:nowrap;vertical-align:middle;padding:11px 12px;border-top:1px solid var(--line)}
+.pt-c-repo{color:var(--ink);display:flex;align-items:center;gap:6px;max-width:160px;overflow:hidden;text-overflow:ellipsis}
+.pt-repo-dot{width:8px;height:8px;border-radius:50%;flex:none}
+.pt-c-num{color:var(--ink-3);font-variant-numeric:tabular-nums}
+.pt-c-pr a.pt-pr{display:inline-flex;align-items:center;gap:3px;color:var(--accent);font-variant-numeric:tabular-nums}
+.pt-dash{color:var(--line-2)}
+.pt-activity{font-size:11.5px;color:var(--ink-3);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:60ch}
+.pt-act-role{color:var(--accent);font-weight:600}
+.prow-open>td{background:var(--accent-weak)}
+.prow-open .pt-title{color:var(--accent)}
+.prow-open:hover>td{background:var(--accent-weak)}
+/* greyed-out done/merged rows — whole row mutes (Figma: inactive rows) */
+.prow-done .pt-title,.prow-done .pt-c-repo,.prow-done .pt-c-num,.prow-done .pt-c-pr a{color:var(--ink-3)}
+.prow-done .pt-repo-dot{opacity:.4}
+/* compact (detail docked beside): drop the wide columns so the list stays usable */
+.ptable-compact .pt-c-repo,.ptable-compact th.pt-c-repo,.ptable-compact .pt-c-pr,.ptable-compact th.pt-c-pr,.ptable-compact .pt-timeline,.ptable-compact th.pt-h-tl{display:none}
+.ptable-compact .pt-when{display:none}
+
+/* ── overview stat strip (data-driven "what needs me?") ── */
 .pt-overview{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
 .pt-stat{display:flex;flex-direction:column;gap:3px;min-width:96px;border:1px solid var(--line);background:var(--surface);border-radius:14px;padding:11px 14px;cursor:pointer;text-align:left;transition:border-color .12s ease,transform .12s ease,box-shadow .12s ease}
 .pt-stat:hover{border-color:var(--line-2);transform:translateY(-1px)}

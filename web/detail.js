@@ -4,7 +4,7 @@ import { Avatar, Icon, Modal, ProviderLogo, Select, Sheet, Spinner, agentOptions
 
 
 // ---------- Detail ----------
-export function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIssue, data, isOnline = true, onQueueComment }) {
+export function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIssue, data, isOnline = true, onQueueComment, docked = false }) {
   const [tab, setTab] = useState("chat"); // mobile sub-tab: chat | stream
   const [thread, setThread] = useState(null);
   const [pr, setPr] = useState(null);
@@ -343,7 +343,7 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
     ${prBar}
   </div>`;
 
-  return html`<div class="detail on">
+  return html`<div class=${"detail on" + (docked ? " docked" : "")}>
     <div class="dhead">
       <button class="iconbtn dclose" aria-label="Close" data-tip="Close" onClick=${onClose}><${Icon} name="x"/></button>
       <div class="tt">${issue.title || "#" + number} <span class="dmeta">· ${repo.split("/").pop()} #${number}${st ? " · " + st.replace("agency:", "") : ""}</span></div>
