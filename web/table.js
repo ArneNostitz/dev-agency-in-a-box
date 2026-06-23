@@ -1,7 +1,7 @@
 // Dev Agency dashboard — rich progress table (v4). The list view re-imagined: each row is an issue
 // whose hero column is a live WORKFLOW TIMELINE (plan → dev → test → review) showing exactly where
 // it is, plus a STATUS field that flags what needs you. Reads the same /data payload as the board.
-import { html, useState, useMemo } from "/web/vendor/standalone.mjs";
+import { html, useState, useMemo, useRef } from "/web/vendor/standalone.mjs";
 import { Avatar, Icon, Spinner, ago, classify, isDone, statusChip, filterByTime, ghUrl } from "./core.js";
 import { nestedChildKeys } from "./board.js";
 
@@ -95,12 +95,34 @@ function rowQuick(i, act) {
   return null;
 }
 
-function Row({ i, multi, onOpen, act, avatarsOn, excerpt, open = false, child = false, expandable = false, expanded = false, onToggle }) {
+// Context actions for a row's floating hover menu (replaces the always-visible CTA column).
+function rowActions(i, act, onOpen) {
+  const out = [{ icon: "maximize", label: "Open", fn: () => onOpen(i) }];
+  const q = rowQuick(i, act);
+  if (q) out.push({ icon: q.icon, label: q.label, cls: q.cls, fn: q.fn, primary: q.a !== "stop", danger: q.a === "stop" });
+  const planned = i.state === "planned" || i.state === "notPlanned";
+  if (planned && i.number > 0) out.push({ icon: "trash", label: "Delete", danger: true, fn: () => { if (window.confirm("Permanently delete #" + i.number + "?")) act.del(i.repo, i.number); } });
+  if (isDone(i)) out.push({ icon: "archive", label: "Archive", fn: () => act.archive(i.repo, i.number) });
+  return out;
+}
+
+// A small floating action menu that pops up at the cursor on row hover.
+function RowActionMenu({ menu, act, onOpen, onEnter, onLeave }) {
+  const acts = rowActions(menu.i, act, onOpen);
+  const w = 42 + acts.length * 34;
+  const left = Math.max(8, Math.min(menu.x + 6, (typeof window !== "undefined" ? window.innerWidth : 1200) - w - 8));
+  const top = Math.max(8, menu.y - 44);
+  return html`<div class="rowmenu" style=${"left:" + left + "px;top:" + top + "px"} onMouseEnter=${onEnter} onMouseLeave=${onLeave} onClick=${(e) => e.stopPropagation()}>
+    ${acts.map((a, n) => html`<button key=${n} class=${"rowmenu-btn tip" + (a.primary ? " primary" : "") + (a.danger ? " danger" : "")} data-tip=${a.label} onClick=${() => a.fn()}><${Icon} name=${a.icon} size=${15}/></button>`)}
+  </div>`;
+}
+
+function Row({ i, multi, onOpen, act, avatarsOn, excerpt, open = false, child = false, expandable = false, expanded = false, onToggle, onHover, onHoverEnd }) {
   const sf = statusField(i);
   const q = rowQuick(i, act);
   const qBusy = q && act.isBusy(q.a, i.repo, i.number);
   const working = i.active || i.queued || i.running;
-  return html`<tr class=${"prow prow-" + sf.kind + (child ? " prow-child" : "") + (open ? " prow-open" : "")} onClick=${() => onOpen(i)}>
+  return html`<tr class=${"prow prow-" + sf.kind + (child ? " prow-child" : "") + (open ? " prow-open" : "")} onClick=${() => onOpen(i)} onMouseEnter=${(e) => onHover && onHover(i, e)} onMouseLeave=${() => onHoverEnd && onHoverEnd()}>
     <td class=${"pt-issue" + (child ? " pt-issue-child" : "")}>
       <div class="pt-title-row">
         ${expandable ? html`<button class=${"pt-exp" + (expanded ? " open" : "")} aria-label=${expanded ? "Collapse sub-issues" : "Expand sub-issues"} onClick=${(e) => { e.stopPropagation(); onToggle && onToggle(); }}><${Icon} name="chevron" size=${14}/></button>` : null}
@@ -124,12 +146,6 @@ function Row({ i, multi, onOpen, act, avatarsOn, excerpt, open = false, child = 
       return html`<span class=${"pt-cost pt-cost-" + cls} data-tip=${"Spent $" + real.toFixed(2) + " of an estimated ~$" + est.toFixed(2)}>${hot ? html`<${Icon} name="flame" size=${11}/>` : null}$${real.toFixed(2)}</span><span class="pt-cost-est">~$${est.toFixed(2)}</span>`;
     })()}</td>
     <td class="pt-c pt-c-when" title=${(i.created_at || i.updated_at) ? new Date(i.created_at || i.updated_at).toLocaleString() : ""}>${ago(i.created_at || i.updated_at)}</td>
-    <td class="pt-act" onClick=${(e) => e.stopPropagation()}>
-      <button class="pt-act-open tip" data-tip="Open" onClick=${(e) => { e.stopPropagation(); onOpen(i); }}><${Icon} name="maximize" size=${13}/></button>
-      ${sf.kind === "done"
-        ? html`<button class="iconbtn-sm tip" data-tip="Archive — remove from the list" disabled=${act.isBusy("archive", i.repo, i.number)} onClick=${(e) => { e.stopPropagation(); act.archive(i.repo, i.number); }}>${act.isBusy("archive", i.repo, i.number) ? html`<${Spinner} size=${12}/>` : html`<${Icon} name="archive" size=${14}/>`}</button>`
-        : q ? html`<button class=${"cardbtn cta " + q.cls + (qBusy ? " busy" : "")} disabled=${qBusy} onClick=${(e) => { e.stopPropagation(); q.fn(); }}>${qBusy ? html`<${Spinner} size=${12}/>` : html`<${Icon} name=${q.icon} size=${12}/>`} <span class="pt-act-lbl">${qBusy ? "…" : q.label}</span></button>` : null}
-    </td>
   </tr>`;
 }
 
@@ -189,6 +205,12 @@ export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, o
   // Epics unfold their sub-issues by default; track collapsed ones.
   const [collapsed, setCollapsed] = useState(() => new Set());
   const toggle = (key) => setCollapsed((prev) => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
+  // Floating action menu anchored at the cursor on row hover (replaces the always-on CTA column).
+  const [menu, setMenu] = useState(null);
+  const closeT = useRef(null);
+  const onHover = (i, e) => { clearTimeout(closeT.current); setMenu({ i, x: e.clientX, y: e.clientY }); };
+  const onHoverEnd = () => { clearTimeout(closeT.current); closeT.current = setTimeout(() => setMenu(null), 140); };
+  const keepMenu = () => clearTimeout(closeT.current);
 
   const { sections, needsYou, total, counts } = useMemo(() => {
     let base = issues.filter((i) => !nested.has(i.repo + "#" + i.number) && !i.archived);
@@ -221,11 +243,11 @@ export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, o
     const kids = i.epic && i.epic.children ? i.epic.children : null;
     const isEpic = kids && kids.length > 0;
     const open = isEpic && !collapsed.has(key);
-    const out = [html`<${Row} key=${key} i=${i} multi=${multi} onOpen=${onOpen} act=${act} avatarsOn=${avatarsOn} excerpt=${streamByKey.get(key)} open=${openKey === key} expandable=${!!isEpic} expanded=${open} onToggle=${() => toggle(key)}/>`];
+    const out = [html`<${Row} key=${key} i=${i} multi=${multi} onOpen=${onOpen} act=${act} avatarsOn=${avatarsOn} excerpt=${streamByKey.get(key)} open=${openKey === key} expandable=${!!isEpic} expanded=${open} onToggle=${() => toggle(key)} onHover=${onHover} onHoverEnd=${onHoverEnd}/>`];
     if (open) for (const c of kids) {
       const ck = i.repo + "#" + c.child;
       const ci = liveBy.get(ck) || { repo: i.repo, number: c.child, title: c.title, state: c.closed ? "done" : (c.state || "planned"), updated_at: i.updated_at };
-      out.push(html`<${Row} key=${ck} i=${ci} multi=${multi} onOpen=${onOpen} act=${act} avatarsOn=${avatarsOn} excerpt=${streamByKey.get(ck)} open=${openKey === ck} child=${true}/>`);
+      out.push(html`<${Row} key=${ck} i=${ci} multi=${multi} onOpen=${onOpen} act=${act} avatarsOn=${avatarsOn} excerpt=${streamByKey.get(ck)} open=${openKey === ck} child=${true} onHover=${onHover} onHoverEnd=${onHoverEnd}/>`);
     }
     return out;
   });
@@ -243,6 +265,7 @@ export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, o
       <button class="colbtn primary" onClick=${() => onAddIssue(target)}><${Icon} name="plus" size=${14}/> New issue</button>
     </div>
     ${total ? html`<table class=${"ptable" + (compact ? " ptable-compact" : "")}>
+      <colgroup><col/><col class="cw-repo"/><col class="cw-num"/><col class="cw-pr"/><col class="cw-wf"/><col class="cw-status"/><col class="cw-cost"/><col class="cw-when"/></colgroup>
       <thead><tr>
         <th>Issue</th>
         <th class=${"pt-c pt-c-repo pt-sortable" + (group === "repo" ? " on" : "")} onClick=${() => save("ptGroup", group === "repo" ? "none" : "repo", setGroup)}><${Icon} name="pr" size=${11}/> Repo</th>
@@ -252,12 +275,12 @@ export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, o
         <th class=${"pt-sortable" + (sort === "smart" ? " on" : "")} onClick=${() => save("ptSort", "smart", setSort)}><${Icon} name="alert" size=${11}/> Status</th>
         <th class="pt-c pt-c-cost"><${Icon} name="flame" size=${11}/> Cost</th>
         <th class=${"pt-c pt-c-when pt-sortable" + (sort === "created" ? " on" : "")} onClick=${() => save("ptSort", "created", setSort)}><${Icon} name="clock" size=${11}/> Created</th>
-        <th></th>
       </tr></thead>
       <tbody>${sections.flatMap((sec) => [
-        sec.label != null ? html`<tr class="pt-group" key=${"g-" + sec.label}><td colspan="9"><span class="pt-group-l">${sec.label}</span> <span class="pt-group-n">${sec.items.length}</span></td></tr>` : null,
+        sec.label != null ? html`<tr class="pt-group" key=${"g-" + sec.label}><td colspan="8"><span class="pt-group-l">${sec.label}</span> <span class="pt-group-n">${sec.items.length}</span></td></tr>` : null,
         ...renderRows(sec.items),
       ])}</tbody>
     </table>` : html`<div class="empty" style="padding:40px;text-align:center">No issues ${time !== "all" ? "in this time range." : "yet — start one with “New issue” or the Chat."}</div>`}
+    ${menu ? html`<${RowActionMenu} menu=${menu} act=${act} onOpen=${onOpen} onEnter=${keepMenu} onLeave=${onHoverEnd}/>` : null}
   </div>`;
 }
