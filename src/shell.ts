@@ -707,12 +707,16 @@ textarea{resize:vertical;min-height:64px}
 .content.is-split{overflow:hidden;display:flex;flex-direction:column;padding:0}
 .split{flex:1;display:flex;min-height:0;width:100%}
 .split-left{flex:1;min-width:0;overflow-y:auto}
-.split-right{flex:none;width:min(660px,46vw);min-width:380px;overflow-y:auto;border-left:1px solid var(--line);background:var(--surface)}
+.split-right{flex:none;width:min(660px,46vw);min-width:380px;overflow:hidden;border-left:1px solid var(--line);background:var(--surface)}
 .chat-split .split-left{flex:none;width:min(460px,40vw);min-width:340px;overflow:hidden;border-right:1px solid var(--line);border-left:none}
-.chat-split .split-right{flex:1;overflow-y:auto}
-.chat-split .orch{height:100%;max-width:none;border:none;border-radius:0}
-.detail.docked{position:relative;inset:auto;transform:none;height:100%;width:100%;z-index:auto;box-shadow:none;border:none}
+.chat-split .split-right{flex:1;overflow-y:auto;overflow-x:hidden}
+.chat-split .orch{height:100%;max-width:none;border:none;border-radius:0;overflow:hidden}
+.detail.docked{position:relative;inset:auto;transform:none;height:100%;width:100%;z-index:auto;box-shadow:none;border:none;display:flex;flex-direction:column;overflow:hidden}
 .detail.docked .detail-close,.detail.docked .dt-back{display:inline-flex}
+.detail.docked .dhead{position:relative;flex:none}
+.detail.docked .dtoolbar{position:relative;flex:none}
+.detail.docked .dpanes{flex:1;min-height:0;overflow:hidden}
+.detail.docked .dcompose{position:relative;flex:none}
 /* ── table: new columns, header icons, category dot, greying, open row ── */
 .ptable th.pt-c,.ptable th.pt-h-tl{white-space:nowrap}
 .ptable thead th .ti,.ptable thead th svg{vertical-align:-2px;opacity:.6;margin-right:2px}
@@ -743,14 +747,17 @@ textarea{resize:vertical;min-height:64px}
 .pt-cost-warn{color:var(--amber)}
 .pt-cost-hot{color:var(--red)}
 .pt-cost-est{display:block;font-size:10.5px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.pt-c-est{text-align:right;white-space:nowrap;padding:11px 8px}
+.pt-cost-est-cell{font-size:12px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.cw-est{width:62px}
 
 
 /* ── table row polish (Figma table) ── */
 .prow>td{vertical-align:middle}
 .pt-title-row{display:flex;align-items:center;gap:7px;min-width:0;flex-wrap:nowrap}
 .pt-title{display:inline-block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;color:var(--ink)}
-.prow:hover .pt-title{overflow:visible;max-width:none;position:relative;z-index:6;background:var(--surface);box-shadow:10px 0 10px -6px rgba(0,0,0,.18);padding-right:10px;border-radius:4px}
-.prow-open:hover .pt-title,.prow-open .pt-title{background:var(--accent-weak)}
+.prow:hover .pt-title{overflow:visible;max-width:none;position:relative;z-index:6;background:var(--row-hover);box-shadow:10px 0 10px -6px rgba(0,0,0,.18);padding-right:10px;border-radius:4px}
+.prow-open:hover .pt-title,.prow-open .pt-title{background:var(--row-sel)}
 .pt-issue{max-width:0;width:40%}
 .pt-c-when{color:var(--ink-3);font-size:12px;white-space:nowrap}
 .pt-act{text-align:right;white-space:nowrap}
@@ -914,7 +921,7 @@ textarea{resize:vertical;min-height:64px}
 .prow-open>td,.prow-open:hover>td{background:var(--row-sel)}
 .prow-open>td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
 .prow-open .pt-title{color:var(--accent)}
-.pt-title,.prow:hover .pt-title,.prow-open .pt-title{position:static;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;background:none;box-shadow:none;padding-right:0;z-index:auto}
+.pt-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;color:var(--ink)}
 .pt-activity{display:none}
 .ptable th,.prow>td{border-right:1px solid var(--hair)}
 .ptable th:last-child,.prow>td:last-child{border-right:none}
@@ -930,8 +937,16 @@ textarea{resize:vertical;min-height:64px}
 .chat-split .split-right{overflow:hidden}
 .split-left .ptable-wrap,.chat-split .split-right .ptable-wrap{height:100%;padding:0 12px 0}
 /* docked compact list scrolls sideways instead of hiding columns */
-.ptable-compact .pt-c-repo,.ptable-compact th.pt-c-repo,.ptable-compact .pt-c-pr,.ptable-compact th.pt-c-pr,.ptable-compact .pt-timeline,.ptable-compact th.pt-h-tl,.ptable-compact .pt-c-cost,.ptable-compact th.pt-c-cost,.ptable-compact .pt-c-when,.ptable-compact th.pt-c-when{display:table-cell}
-.ptable-compact .ptable{min-width:860px}`;
+.ptable-compact .pt-c-repo,.ptable-compact th.pt-c-repo,.ptable-compact .pt-c-pr,.ptable-compact th.pt-c-pr,.ptable-compact .pt-timeline,.ptable-compact th.pt-h-tl,.ptable-compact .pt-c-cost,.ptable-compact th.pt-c-cost,.ptable-compact .pt-c-est,.ptable-compact th.pt-c-est,.ptable-compact .pt-c-when,.ptable-compact th.pt-c-when{display:table-cell}
+.ptable-compact .ptable{min-width:860px}
+/* ── floating row action menu (cursor-anchored) ── */
+.rowmenu{position:fixed;z-index:70;display:inline-flex;align-items:center;gap:2px;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow-md);padding:4px}
+.rowmenu-btn{flex:0 0 auto;border:none;background:transparent;color:var(--ink-2);border-radius:7px;width:32px;height:32px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
+.rowmenu-btn:hover{background:var(--surface-2);color:var(--ink)}
+.rowmenu-btn.primary{background:var(--accent-weak);color:var(--accent)}
+.rowmenu-btn.primary:hover{background:var(--accent);color:#fff}
+.rowmenu-btn.danger{color:var(--red)}
+.rowmenu-btn.danger:hover{background:var(--red-weak);color:var(--red)}`;
 
 function cssHash(x: string): string { let h = 5381; for (let i = 0; i < x.length; i++) h = ((h << 5) + h + x.charCodeAt(i)) >>> 0; return h.toString(36); }
 const CSS_VER = cssHash(SHELL_CSS);

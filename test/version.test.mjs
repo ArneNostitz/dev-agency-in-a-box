@@ -1,4 +1,6 @@
-// Version label + the SOURCE_COMMIT runtime overlay (so a Coolify deploy shows its real commit).
+// Version label tests. The SHA is now baked in at build time by scripts/version.mjs; there is no
+// longer a runtime SOURCE_COMMIT override (removed in v1.7.7 — the label must always reflect the
+// running code, not a deploy-time env injection that could mismatch the actual build).
 import test from "node:test";
 import assert from "node:assert/strict";
 import { buildLabel, versionInfo } from "../dist/version.js";
@@ -9,14 +11,15 @@ test("buildLabel drops 'build 0' and leads with the SHA", () => {
   assert.equal(buildLabel("2.0.0", 0, "", "2026-06-19 09:56"), "v2.0.0 · 2026-06-19 09:56");
 });
 
-test("versionInfo overlays SOURCE_COMMIT (short) over the build file", () => {
+test("versionInfo ignores SOURCE_COMMIT — sha comes only from the baked build file", () => {
   const prev = process.env.SOURCE_COMMIT;
   try {
     process.env.SOURCE_COMMIT = "deadbeefcafebabe1234";
     const v = versionInfo();
-    assert.equal(v.sha, "deadbee");
-    assert.ok(v.label.includes("deadbee"), v.label);
+    // SOURCE_COMMIT must NOT override the sha — the build file is authoritative
+    assert.ok(v.sha !== "deadbee", "sha must not be set from SOURCE_COMMIT at runtime");
     assert.ok(v.label.startsWith("v"), v.label);
+    assert.ok(!v.label.includes("deadbee"), "label must not contain the runtime SOURCE_COMMIT sha");
   } finally {
     if (prev === undefined) delete process.env.SOURCE_COMMIT; else process.env.SOURCE_COMMIT = prev;
   }

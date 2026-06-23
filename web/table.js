@@ -140,10 +140,15 @@ function Row({ i, multi, onOpen, act, avatarsOn, excerpt, open = false, child = 
     <td class="pt-status"><span class=${"pstat pstat-" + sf.kind}><${Icon} name=${sf.icon} size=${12}/> ${sf.label}</span></td>
     <td class="pt-c pt-c-cost">${(() => {
       const real = (i.usage && i.usage.costUsd) || 0, est = (i.estCost && i.estCost.usd) || 0;
-      if (!real && !est) return html`<span class="pt-dash">\u2014</span>`;
+      if (!real) return html`<span class="pt-dash">\u2014</span>`;
       let cls = "ok", hot = false;
       if (real > 0) { if ((est > 0 && real > est * 3) || real > 3) { cls = "hot"; hot = true; } else if ((est > 0 && real > est * 1.5) || real > 1) { cls = "warn"; hot = true; } }
-      return html`<span class=${"pt-cost pt-cost-" + cls} data-tip=${"Spent $" + real.toFixed(2) + " of an estimated ~$" + est.toFixed(2)}>${hot ? html`<${Icon} name="flame" size=${11}/>` : null}$${real.toFixed(2)}</span><span class="pt-cost-est">~$${est.toFixed(2)}</span>`;
+      return html`<span class=${"pt-cost pt-cost-" + cls} title=${"Spent $" + real.toFixed(2)}>${hot ? html`<${Icon} name="flame" size=${11}/>` : null}$${real.toFixed(2)}</span>`;
+    })()}</td>
+    <td class="pt-c pt-c-est">${(() => {
+      const est = (i.estCost && i.estCost.usd) || 0;
+      if (!est) return html`<span class="pt-dash">\u2014</span>`;
+      return html`<span class="pt-cost-est-cell" title=${"Estimated ~$" + est.toFixed(2)}>~$${est.toFixed(2)}</span>`;
     })()}</td>
     <td class="pt-c pt-c-when" title=${(i.created_at || i.updated_at) ? new Date(i.created_at || i.updated_at).toLocaleString() : ""}>${ago(i.created_at || i.updated_at)}</td>
   </tr>`;
@@ -265,7 +270,7 @@ export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, o
       <button class="colbtn primary" onClick=${() => onAddIssue(target)}><${Icon} name="plus" size=${14}/> New issue</button>
     </div>
     ${total ? html`<div class="ptable-scroll"><table class=${"ptable" + (compact ? " ptable-compact" : "")}>
-      <colgroup><col/><col class="cw-repo"/><col class="cw-num"/><col class="cw-pr"/><col class="cw-wf"/><col class="cw-status"/><col class="cw-cost"/><col class="cw-when"/></colgroup>
+      <colgroup><col/><col class="cw-repo"/><col class="cw-num"/><col class="cw-pr"/><col class="cw-wf"/><col class="cw-status"/><col class="cw-cost"/><col class="cw-est"/><col class="cw-when"/></colgroup>
       <thead><tr>
         <th>Issue</th>
         <th class=${"pt-c pt-c-repo pt-sortable" + (group === "repo" ? " on" : "")} onClick=${() => save("ptGroup", group === "repo" ? "none" : "repo", setGroup)}><${Icon} name="pr" size=${11}/> Repo</th>
@@ -274,13 +279,14 @@ export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, o
         <th class="pt-h-tl"><${Icon} name="loader" size=${11}/> Workflow</th>
         <th class=${"pt-sortable" + (sort === "smart" ? " on" : "")} onClick=${() => save("ptSort", "smart", setSort)}><${Icon} name="alert" size=${11}/> Status</th>
         <th class="pt-c pt-c-cost"><${Icon} name="flame" size=${11}/> Cost</th>
+        <th class="pt-c pt-c-est"><${Icon} name="chart" size=${11}/> Est</th>
         <th class=${"pt-c pt-c-when pt-sortable" + (sort === "created" ? " on" : "")} onClick=${() => save("ptSort", "created", setSort)}><${Icon} name="clock" size=${11}/> Created</th>
       </tr></thead>
       <tbody>${sections.flatMap((sec) => [
-        sec.label != null ? html`<tr class="pt-group" key=${"g-" + sec.label}><td colspan="8"><span class="pt-group-l">${sec.label}</span> <span class="pt-group-n">${sec.items.length}</span></td></tr>` : null,
+        sec.label != null ? html`<tr class="pt-group" key=${"g-" + sec.label}><td colspan="9"><span class="pt-group-l">${sec.label}</span> <span class="pt-group-n">${sec.items.length}</span></td></tr>` : null,
         ...renderRows(sec.items),
       ])}</tbody>
-    </table>` : html`<div class="empty" style="padding:40px;text-align:center">No issues ${time !== "all" ? "in this time range." : "yet — start one with “New issue” or the Chat."}</div>`}
+    </table></div>` : html`<div class="empty" style="padding:40px;text-align:center">No issues ${time !== "all" ? "in this time range." : "yet — start one with “New issue” or the Chat."}</div>`}
     ${menu ? html`<${RowActionMenu} menu=${menu} act=${act} onOpen=${onOpen} onEnter=${keepMenu} onLeave=${onHoverEnd}/>` : null}
   </div>`;
 }
