@@ -8,14 +8,14 @@ import { versionInfo } from "./version.js";
 export const SHELL_CSS = `:root{
   --bg:#f5f6f8;--surface:#ffffff;--surface-2:#eef0f3;--ink:#1c1e22;--ink-2:#5a6069;--ink-3:#9aa0a8;
   --line:#e4e7eb;--line-2:#d3d8de;--accent:#2f6df6;--accent-weak:#e7efff;--green:#0b8a52;--green-weak:#e6f7ef;
-  --amber:#a76a00;--amber-weak:#fff3da;--red:#c0392b;--red-weak:#fdeceb;--purple:#6741d9;--purple-weak:#efe9ff;--row-hover:rgba(18,28,48,.035);--row-sel:rgba(47,109,246,.07);--hair:#edeef1;
+  --amber:#a76a00;--amber-weak:#fff3da;--red:#c0392b;--red-weak:#fdeceb;--purple:#6741d9;--purple-weak:#efe9ff;--row-hover:rgba(18,28,48,.03);--row-sel:rgba(47,109,246,.10);--hair:#e9ebee;
   --shadow:0 1px 2px rgba(20,20,40,.06);--shadow-md:0 2px 8px rgba(0,0,0,.18);--radius:14px;--radius-sm:9px;
   --safe-b:env(safe-area-inset-bottom,0px);--safe-t:env(safe-area-inset-top,0px);
 }
 html[data-theme="dark"]{
   --bg:#0e1014;--surface:#171a1f;--surface-2:#1f242b;--ink:#e7e9ed;--ink-2:#9aa1ab;--ink-3:#6b727c;
   --line:#272c34;--line-2:#333a44;--accent:#5b8cff;--accent-weak:#172339;--green:#3ddc97;--green-weak:#10271d;
-  --amber:#e0a83a;--amber-weak:#2a2110;--red:#f1746a;--red-weak:#2c1614;--purple:#a99bf5;--purple-weak:#1d1933;--row-hover:rgba(255,255,255,.04);--row-sel:rgba(91,140,255,.13);--hair:#23272e;
+  --amber:#e0a83a;--amber-weak:#2a2110;--red:#f1746a;--red-weak:#2c1614;--purple:#a99bf5;--purple-weak:#1d1933;--row-hover:rgba(255,255,255,.035);--row-sel:rgba(91,140,255,.16);--hair:#262b33;
   --shadow:none;--shadow-md:0 2px 10px rgba(0,0,0,.45);
 }
 *{box-sizing:border-box}
@@ -910,8 +910,11 @@ textarea{resize:vertical;min-height:64px}
 .orch-send{width:42px;height:42px;padding:0;flex:none;border-radius:12px;display:inline-flex;align-items:center;justify-content:center}
 @media(max-width:760px){.orch{height:calc(100vh - 190px);border-radius:0;border-left:none;border-right:none}.obub-body{max-width:92%}}`;
 
+function cssHash(x: string): string { let h = 5381; for (let i = 0; i < x.length; i++) h = ((h << 5) + h + x.charCodeAt(i)) >>> 0; return h.toString(36); }
+const CSS_VER = cssHash(SHELL_CSS);
+
 export function renderShell(): string {
-  const __VER__ = encodeURIComponent(versionInfo().sha || versionInfo().version || "dev");
+  const __VER__ = CSS_VER; // bust the (immutable) /app.css cache by CONTENT hash — not the build sha, which can be stale
   return `<!doctype html><html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
