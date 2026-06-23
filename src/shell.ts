@@ -764,6 +764,12 @@ textarea{resize:vertical;min-height:64px}
 
 /* ── overview stat strip (data-driven "what needs me?") ── */
 .pt-overview{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+.pt-overview-top{margin-bottom:0;gap:6px}
+.pt-overview-top .pt-stat{min-width:0;padding:5px 10px;border-radius:10px;flex-direction:row;align-items:baseline;gap:6px}
+.pt-overview-top .pt-stat-n{font-size:16px}
+.pt-overview-top .pt-stat-l{font-size:10px}
+.pt-overview-top .pt-stat-spend{margin-left:0}
+@media(max-width:760px){.pt-overview-top{display:none}}
 .pt-stat{display:flex;flex-direction:column;gap:3px;min-width:96px;border:1px solid var(--line);background:var(--surface);border-radius:14px;padding:11px 14px;cursor:pointer;text-align:left;transition:border-color .12s ease,transform .12s ease,box-shadow .12s ease}
 .pt-stat:hover{border-color:var(--line-2);transform:translateY(-1px)}
 .pt-stat.on{box-shadow:0 0 0 2px var(--accent) inset;border-color:var(--accent)}

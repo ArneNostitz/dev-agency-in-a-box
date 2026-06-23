@@ -438,6 +438,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               editing: claimMap.get(`${i.repo}#${i.number}`) ?? [], // files this run has live-claimed (overwrite lock)
               estCost: estimateCost(filesFor(i.repo, i.number).length, kids ? kids.length : 0, (i.title || "").length),
               runs: runMap[`${i.repo}#${i.number}`] ?? {},
+              created_at: i.created_at ?? null,
               auto: {
                 resume: autoEnabled("resume", i.repo, i.number),
                 merge: autoEnabled("merge", i.repo, i.number),

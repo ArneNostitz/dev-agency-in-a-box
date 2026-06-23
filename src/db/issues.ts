@@ -35,12 +35,13 @@ export function recordIssueState(
   if (!d) return;
   try {
     d.prepare(
-      `INSERT INTO issues (repo, number, title, role, state, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?)
+      `INSERT INTO issues (repo, number, title, role, state, updated_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(repo, number) DO UPDATE SET
          title = COALESCE(excluded.title, issues.title),
          role  = COALESCE(excluded.role,  issues.role),
          state = COALESCE(excluded.state, issues.state),
+         created_at = COALESCE(issues.created_at, excluded.created_at),
          -- Only bump updated_at on a REAL change. The scan re-records every issue each pass; bumping
          -- it on a no-op made the board (sorted by updated_at) reshuffle constantly.
          updated_at = CASE WHEN
@@ -48,7 +49,7 @@ export function recordIssueState(
            OR COALESCE(excluded.role,  issues.role)  IS NOT issues.role
            OR COALESCE(excluded.state, issues.state) IS NOT issues.state
            THEN excluded.updated_at ELSE issues.updated_at END`,
-    ).run(repo, number, fields.title ?? null, fields.role ?? null, fields.state ?? null, now());
+    ).run(repo, number, fields.title ?? null, fields.role ?? null, fields.state ?? null, now(), now());
   } catch (err) {
     console.warn("[agency] memory write (issue) failed:", (err as Error).message);
   }
@@ -61,20 +62,21 @@ export function recordIssueStatus(repo: string, number: number, status: IssueSta
     const stateCol = stateColumnFor(status);
     const blockedCol = status.blocked;
     d.prepare(
-      `INSERT INTO issues (repo, number, title, role, state, blocked, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO issues (repo, number, title, role, state, blocked, updated_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(repo, number) DO UPDATE SET
          title   = COALESCE(excluded.title, issues.title),
          role    = COALESCE(excluded.role,  issues.role),
          state   = excluded.state,
          blocked = excluded.blocked,
+         created_at = COALESCE(issues.created_at, excluded.created_at),
          updated_at = CASE WHEN
               COALESCE(excluded.title, issues.title) IS NOT issues.title
            OR COALESCE(excluded.role,  issues.role)  IS NOT issues.role
            OR excluded.state IS NOT issues.state
            OR excluded.blocked IS NOT issues.blocked
            THEN excluded.updated_at ELSE issues.updated_at END`,
-    ).run(repo, number, extra.title ?? null, extra.role ?? null, stateCol, blockedCol, now());
+    ).run(repo, number, extra.title ?? null, extra.role ?? null, stateCol, blockedCol, now(), now());
   } catch (err) {
     console.warn("[agency] memory write (issue status) failed:", (err as Error).message);
   }
@@ -96,6 +98,7 @@ export interface IssueRow {
   state: string;
   blocked: string | null;
   updated_at: string;
+  created_at?: string | null;
   pr_number: number | null;
   pr_url: string | null;
   by_agent?: number;
@@ -127,7 +130,7 @@ export function getIssueRow(repo: string, number: number): IssueRow | null {
   if (!d) return null;
   try {
     return (d
-      .prepare(`SELECT repo, number, title, role, state, blocked, updated_at, pr_number, pr_url, by_agent FROM issues WHERE repo = ? AND number = ?`)
+      .prepare(`SELECT repo, number, title, role, state, blocked, updated_at, created_at, pr_number, pr_url, by_agent FROM issues WHERE repo = ? AND number = ?`)
       .get(repo, number) as unknown as IssueRow | null) ?? null;
   } catch {
     return null;
@@ -140,7 +143,7 @@ export function recentIssues(limit = 40): IssueRow[] {
   try {
     return d
       .prepare(
-        `SELECT i.repo, i.number, i.title, i.role, i.state, i.blocked, i.updated_at, i.pr_number, i.pr_url, i.by_agent FROM issues i
+        `SELECT i.repo, i.number, i.title, i.role, i.state, i.blocked, i.updated_at, i.created_at, i.pr_number, i.pr_url, i.by_agent FROM issues i
          WHERE NOT EXISTS (SELECT 1 FROM archived a WHERE a.repo = i.repo AND a.number = i.number)
          ORDER BY i.updated_at DESC LIMIT ?`,
       )

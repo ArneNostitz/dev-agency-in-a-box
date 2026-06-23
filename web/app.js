@@ -1,7 +1,7 @@
 // Dev Agency dashboard — app module (split from app.js; Preact + htm, no build step).
 import { html, render, useState, useEffect, useRef } from "/web/vendor/standalone.mjs";
 import { Icon, Toasts, api, getJSON, md, setToastFn, toast, useIsDesktop } from "./core.js";
-import { Board, TabBar } from "./board.js";
+import { Board, TabBar, nestedChildKeys } from "./board.js";
 import { Composer, Detail } from "./detail.js";
 import { GithubTokensModal, ModelsModal, Settings } from "./settings.js";
 import { AddRepo, Onboarding } from "./onboarding.js";
@@ -9,7 +9,7 @@ import { SecretBanner, StatusLine, TopBar } from "./topbar.js";
 import { Usage } from "./usage.js";
 import { AgentEditor, SkillEditor } from "./agents.js";
 import { WorkflowBuilder } from "./builder.js";
-import { ProgressTable } from "./table.js";
+import { ProgressTable, StatStrip, STAT_DEFS, statusField } from "./table.js";
 import { Orchestrator } from "./orch.js";
 
 
@@ -38,6 +38,7 @@ function App() {
   const [tab, setTab] = useState("planned");
   const [view, setView] = useState(() => { try { return localStorage.getItem("view") || "list"; } catch (e) { return "list"; } });
   const setViewP = (v) => { setView(v); try { localStorage.setItem("view", v); } catch (e) {} };
+  const [statFilter, setStatFilter] = useState(null);
   const [openKey, setOpenKey] = useState(null); // "repo#number"
   const [sheet, setSheet] = useState(null); // "composer" | "settings"
   const [tip, setTip] = useState(null); // global fixed tooltip {text,x,y}
@@ -150,6 +151,8 @@ function App() {
   // is now a real GitHub tracking issue, so it shows as a normal card + detail.)
   const auditRepos = (data.active || []).filter((a) => a.role === "auditor").map((a) => a.repo);
   const shown = issues.filter((i) => !repoFilter || i.repo === repoFilter);
+  const statNested = nestedChildKeys(shown);
+  const statCounts = (() => { const c = {}; STAT_DEFS.forEach((d) => (c[d.k] = 0)); for (const i of shown) { if (i.archived || statNested.has(i.repo + "#" + i.number)) continue; const k = statusField(i).kind; for (const d of STAT_DEFS) if (d.kinds.includes(k)) c[d.k]++; } return c; })();
   const activity = (data.activity || []).concat(liveRef.current);
 
   function override(repo, number, patch) { ov[repo + "#" + number] = { patch, t: Date.now() }; forceTick((x) => x + 1); }
@@ -282,18 +285,20 @@ function App() {
           <button class=${view === "list" ? "on" : ""} onClick=${() => setViewP("list")}><${Icon} name="layers" size=${15}/> List</button>
           <button class=${view === "board" ? "on" : ""} onClick=${() => setViewP("board")}><${Icon} name="columns" size=${15}/> Board</button>
         </div>
+        <span style="flex:1"></span>
+        ${view !== "board" ? html`<${StatStrip} counts=${statCounts} statFilter=${statFilter} setStatFilter=${setStatFilter} spend=${data.spendToday} compact=${true}/>` : null}
       </div>` : null}
       <div class=${"content" + ((dockDetail || chatSplit) ? " is-split" : "")}>
         ${chatSplit
-          ? html`<div class="split chat-split"><div class="split-left"><${Orchestrator} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${load} onOpenIssue=${openIssue} issues=${issues}/></div><div class="split-right"><${ProgressTable} issues=${shown} repos=${repos} repoFilter=${repoFilter} openKey=${openKey} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data}/></div></div>`
+          ? html`<div class="split chat-split"><div class="split-left"><${Orchestrator} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${load} onOpenIssue=${openIssue} issues=${issues}/></div><div class="split-right"><${ProgressTable} issues=${shown} repos=${repos} repoFilter=${repoFilter} openKey=${openKey} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data} statFilter=${statFilter}/></div></div>`
           : view === "chat" && repos.length
           ? html`<${Orchestrator} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${load} onOpenIssue=${openIssue} issues=${issues}/>`
           : view === "board"
           ? html`<${Board} issues=${shown} repos=${repos} repoFilter=${repoFilter} tab=${tab} isDesktop=${isDesktop} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onOpenChild=${openIssue} onAddRepo=${() => setSheet("addrepo")} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data}/>`
           : dockDetail
-          ? html`<div class="split list-split"><div class="split-left"><${ProgressTable} issues=${shown} repos=${repos} repoFilter=${repoFilter} compact=${true} openKey=${openKey} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data}/></div><div class="split-right"><${Detail} key=${openKey} docked=${true} issue=${open} activity=${activity} act=${act} isDesktop=${isDesktop} startError=${detailError} onClose=${() => { setOpenKey(null); setDetailError(null); }} onOpenIssue=${openIssue} data=${data} isOnline=${isOnline} onQueueComment=${oqPush}/></div></div>`
+          ? html`<div class="split list-split"><div class="split-left"><${ProgressTable} issues=${shown} repos=${repos} repoFilter=${repoFilter} compact=${true} openKey=${openKey} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data} statFilter=${statFilter}/></div><div class="split-right"><${Detail} key=${openKey} docked=${true} issue=${open} activity=${activity} act=${act} isDesktop=${isDesktop} startError=${detailError} onClose=${() => { setOpenKey(null); setDetailError(null); }} onOpenIssue=${openIssue} data=${data} isOnline=${isOnline} onQueueComment=${oqPush}/></div></div>`
           : (repos.length
-            ? html`<${ProgressTable} issues=${shown} repos=${repos} repoFilter=${repoFilter} openKey=${openKey} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data}/>`
+            ? html`<${ProgressTable} issues=${shown} repos=${repos} repoFilter=${repoFilter} openKey=${openKey} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data} statFilter=${statFilter}/>`
             : html`<${Board} issues=${shown} repos=${repos} repoFilter=${repoFilter} tab=${tab} isDesktop=${isDesktop} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onOpenChild=${openIssue} onAddRepo=${() => setSheet("addrepo")} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data}/>`)}
       </div>
       ${!isDesktop && view === "board" && html`<${TabBar} issues=${shown} tab=${tab} setTab=${setTab}/>`}

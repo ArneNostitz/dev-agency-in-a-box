@@ -112,6 +112,7 @@ export function getDb(): DatabaseSync | null {
         state TEXT,
         by_agent INTEGER NOT NULL DEFAULT 0,
         updated_at TEXT,
+        created_at TEXT,
         PRIMARY KEY (repo, number)
       );
       CREATE TABLE IF NOT EXISTS runs (
@@ -275,6 +276,7 @@ export function getDb(): DatabaseSync | null {
       `ALTER TABLE agent_def ADD COLUMN avatar TEXT`,
       `ALTER TABLE workflows ADD COLUMN hooks TEXT`,
       `ALTER TABLE issues ADD COLUMN by_agent INTEGER NOT NULL DEFAULT 0`,
+      `ALTER TABLE issues ADD COLUMN created_at TEXT`,
     ]) {
       try {
         d.exec(sql);
@@ -282,6 +284,9 @@ export function getDb(): DatabaseSync | null {
         /* column already there */
       }
     }
+    // DB-first backfill: existing rows predate the created_at column. Their true creation time is
+    // unknown, so use the earliest timestamp the DB itself holds (updated_at) — never GitHub.
+    try { d.exec("UPDATE issues SET created_at = updated_at WHERE created_at IS NULL AND updated_at IS NOT NULL"); } catch { /* noop */ }
     db = d; // set early so the data migration below can use getDb()
     // One-time data migration: legacy agency:* composite state → canonical enum + blocked column.
     // Guarded by a settings flag so it runs exactly once per database. Idempotent regardless.

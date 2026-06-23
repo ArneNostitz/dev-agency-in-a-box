@@ -123,7 +123,7 @@ function Row({ i, multi, onOpen, act, avatarsOn, excerpt, open = false, child = 
       if (real > 0) { if ((est > 0 && real > est * 3) || real > 3) { cls = "hot"; hot = true; } else if ((est > 0 && real > est * 1.5) || real > 1) { cls = "warn"; hot = true; } }
       return html`<span class=${"pt-cost pt-cost-" + cls} data-tip=${"Spent $" + real.toFixed(2) + " of an estimated ~$" + est.toFixed(2)}>${hot ? html`<${Icon} name="flame" size=${11}/>` : null}$${real.toFixed(2)}</span><span class="pt-cost-est">~$${est.toFixed(2)}</span>`;
     })()}</td>
-    <td class="pt-c pt-c-when" title=${i.updated_at ? new Date(i.updated_at).toLocaleString() : ""}>${ago(i.updated_at)}</td>
+    <td class="pt-c pt-c-when" title=${(i.created_at || i.updated_at) ? new Date(i.created_at || i.updated_at).toLocaleString() : ""}>${ago(i.created_at || i.updated_at)}</td>
     <td class="pt-act" onClick=${(e) => e.stopPropagation()}>
       <button class="pt-act-open tip" data-tip="Open" onClick=${(e) => { e.stopPropagation(); onOpen(i); }}><${Icon} name="maximize" size=${13}/></button>
       ${sf.kind === "done"
@@ -148,24 +148,35 @@ const TIMES = [["all", "All"], ["24h", "24h"], ["7d", "7d"], ["30d", "30d"]];
 const GROUPS = [["none", "—"], ["repo", "Repo"], ["status", "Status"]];
 const KIND_LABEL = { attention: "Needs you", ready: "Ready to merge", running: "Running", queued: "Queued", planned: "Planned", done: "Done" };
 // Overview stats: data drives the UI — surface "what needs me?" before any row is read.
-const STAT_DEFS = [
+export const STAT_DEFS = [
   { k: "needs", label: "Needs you", kinds: ["attention", "ready"], cls: "attention", icon: "alert" },
   { k: "running", label: "Running", kinds: ["running"], cls: "running", icon: "loader" },
   { k: "queued", label: "Queued", kinds: ["queued"], cls: "queued", icon: "clock" },
   { k: "planned", label: "Planned", kinds: ["planned"], cls: "planned", icon: "planned" },
   { k: "done", label: "Done", kinds: ["done"], cls: "done", icon: "check" },
 ];
+
+// At-a-glance status counts + one-click filter. Lives in the top bar (lifted out of the table).
+export function StatStrip({ counts, statFilter, setStatFilter, spend, compact = false }) {
+  const allClear = counts.needs === 0 && (counts.running || counts.queued || counts.planned || counts.done);
+  return html`<div class=${"pt-overview" + (compact ? " pt-overview-top" : "")}>
+    ${STAT_DEFS.map((d) => html`<button key=${d.k} class=${"pt-stat pt-stat-" + d.cls + (statFilter === d.k ? " on" : "") + (counts[d.k] === 0 ? " zero" : "")} data-tip=${counts[d.k] ? "Show only " + d.label.toLowerCase() : null} onClick=${() => setStatFilter(statFilter === d.k ? null : d.k)}>
+      <span class="pt-stat-n">${d.k === "needs" && counts.needs === 0 && allClear ? html`<${Icon} name="check" size=${compact ? 15 : 18}/>` : counts[d.k]}</span>
+      <span class="pt-stat-l"><${Icon} name=${d.icon} size=${11}/> ${d.k === "needs" && counts.needs === 0 && allClear ? "All clear" : d.label}</span>
+    </button>`)}
+    ${spend && spend.costUsd > 0 ? html`<div class="pt-stat pt-stat-spend"><span class="pt-stat-n">$${spend.costUsd.toFixed(2)}</span><span class="pt-stat-l">today</span></div>` : null}
+  </div>`;
+}
 function smartCmp(a, b) {
   const ka = KIND_ORDER[statusField(a).kind] ?? 9, kb = KIND_ORDER[statusField(b).kind] ?? 9;
   return ka !== kb ? ka - kb : new Date(b.updated_at || 0) - new Date(a.updated_at || 0);
 }
 
-export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, onAnalyze, auditRepos, act, data, openKey, compact = false }) {
+export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, onAnalyze, auditRepos, act, data, openKey, compact = false, statFilter = null }) {
   const ls = (k, d) => { try { return localStorage.getItem(k) || d; } catch (e) { return d; } };
   const [sort, setSort] = useState(() => ls("ptSort", "smart"));
   const [group, setGroup] = useState(() => ls("ptGroup", "none"));
   const [time, setTime] = useState(() => ls("ptTime", "all"));
-  const [statFilter, setStatFilter] = useState(null);
   const save = (k, v, set) => { set(v); try { localStorage.setItem(k, v); } catch (e) {} };
   const cyc = (arr, cur) => arr[(arr.findIndex((x) => x[0] === cur) + 1) % arr.length][0];
 
@@ -219,15 +230,7 @@ export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, o
     return out;
   });
 
-  const allClear = counts.needs === 0 && (counts.running || counts.queued || counts.planned || counts.done);
   return html`<div class="ptable-wrap">
-    <div class="pt-overview">
-      ${STAT_DEFS.map((d) => html`<button key=${d.k} class=${"pt-stat pt-stat-" + d.cls + (statFilter === d.k ? " on" : "") + (counts[d.k] === 0 ? " zero" : "")} data-tip=${counts[d.k] ? "Show only " + d.label.toLowerCase() : null} onClick=${() => setStatFilter(statFilter === d.k ? null : d.k)}>
-        <span class="pt-stat-n">${d.k === "needs" && counts.needs === 0 && allClear ? html`<${Icon} name="check" size=${18}/>` : counts[d.k]}</span>
-        <span class="pt-stat-l"><${Icon} name=${d.icon} size=${11}/> ${d.k === "needs" && counts.needs === 0 && allClear ? "All clear" : d.label}</span>
-      </button>`)}
-      ${data && data.spendToday && data.spendToday.costUsd > 0 ? html`<div class="pt-stat pt-stat-spend"><span class="pt-stat-n">$${data.spendToday.costUsd.toFixed(2)}</span><span class="pt-stat-l">today</span></div>` : null}
-    </div>
     <div class="ptable-bar">
       ${needsYou ? html`<span class="pt-needsyou"><${Icon} name="alert" size=${13}/> ${needsYou} need${needsYou > 1 ? "" : "s"} you</span>` : null}
       <span style="flex:1"></span>
@@ -248,7 +251,7 @@ export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, o
         <th class="pt-h-tl"><${Icon} name="loader" size=${11}/> Workflow</th>
         <th class=${"pt-sortable" + (sort === "smart" ? " on" : "")} onClick=${() => save("ptSort", "smart", setSort)}><${Icon} name="alert" size=${11}/> Status</th>
         <th class="pt-c pt-c-cost"><${Icon} name="flame" size=${11}/> Cost</th>
-        <th class=${"pt-c pt-c-when pt-sortable" + (sort === "updated" ? " on" : "")} onClick=${() => save("ptSort", "updated", setSort)}><${Icon} name="clock" size=${11}/> Updated</th>
+        <th class=${"pt-c pt-c-when pt-sortable" + (sort === "created" ? " on" : "")} onClick=${() => save("ptSort", "created", setSort)}><${Icon} name="clock" size=${11}/> Created</th>
         <th></th>
       </tr></thead>
       <tbody>${sections.flatMap((sec) => [
