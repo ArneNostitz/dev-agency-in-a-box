@@ -19,7 +19,7 @@ import { join } from "node:path";
 import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import type { Config } from "./config.js";
-import { recentRuns, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordIssueStatus, recordPr, tokensSince, tokensByModelSince, tokensByRoleSince, tokensByDaySince, topIssuesByTokensSince, tokensByIssueAll, toolStatsSince, runStepCountSince, recentLessons, recordConflict, getConflict, clearConflict, listConflicts, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getGlobalModel, setGlobalModel, getFallbackChain, setFallbackChain, getAutoSwitchOnLimit, setIssueModelOverride, getIssueModelOverride, clearIssueModelOverride, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, getIssueRow, getModelsPresets, listAgentDefs, upsertAgentDef, deleteAgentDef, listWorkflows, upsertWorkflow, deleteWorkflow, listSkills, upsertSkill, deleteSkill, listHooks, upsertHook, deleteHook, type AutoKind, type Provider, type AgentDef, type Skill, type Hook } from "./store.js";
+import { recentRuns, roleRunsByIssue, filesFor, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordIssueStatus, recordPr, tokensSince, tokensByModelSince, tokensByRoleSince, tokensByDaySince, topIssuesByTokensSince, tokensByIssueAll, toolStatsSince, runStepCountSince, recentLessons, recordConflict, getConflict, clearConflict, listConflicts, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getGlobalModel, setGlobalModel, getFallbackChain, setFallbackChain, getAutoSwitchOnLimit, setIssueModelOverride, getIssueModelOverride, clearIssueModelOverride, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, getIssueRow, getModelsPresets, listAgentDefs, upsertAgentDef, deleteAgentDef, listWorkflows, upsertWorkflow, deleteWorkflow, listSkills, upsertSkill, deleteSkill, listHooks, upsertHook, deleteHook, type AutoKind, type Provider, type AgentDef, type Skill, type Hook } from "./store.js";
 import { mergeEpic, isEpic } from "./epics.js";
 import { versionInfo } from "./version.js";
 import { startDeviceFlow, pollDeviceToken, fetchGitHubUser } from "./github-oauth.js";
@@ -110,6 +110,17 @@ function verifySignature(secret: string, body: Buffer, header: string | undefine
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+// Complexity-based cost ESTIMATE per issue ("should" cost) — a deterministic heuristic from the
+// signals we have (declared file footprint, epic size, scope text). Compared against real spend in
+// the dashboard so an issue that's running hot is obvious. ~$5/Mtok blended.
+function estimateCost(footprint: number, epicTotal: number, titleLen: number): { tokens: number; usd: number } {
+  let tokens = 25000; // base: orient + plan
+  tokens += footprint * 18000; // each declared file ~ a focused edit + tests
+  tokens += epicTotal * 60000; // each sub-issue is a whole build
+  tokens += Math.min(titleLen, 140) * 250; // rough scope from the title length
+  const usd = Math.round((tokens / 1e6) * 5 * 100) / 100;
+  return { tokens, usd };
+}
 // Throttle the /data PR-number backfill: at most one `gh` lookup per issue per 60s (was per 5s poll).
 const prBackfillChecked = new Map<string, number>();
 function readBody(req: IncomingMessage): Promise<Buffer> {
@@ -386,6 +397,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           const tokenMap = tokensByIssueAll(); // lifetime tokens/cost/model per "repo#number"
           const conflictMap = listConflicts(); // conflicting files per "repo#number"
           const claimMap = new Map(activeClaims().map((c) => [`${c.repo}#${c.number}`, c.files])); // live file locks per issue
+          const runMap = roleRunsByIssue(); // per-role run counts → loop-back badges
           const enriched = issues.map((i) => {
             const byParent = epicCache[i.repo] ?? {};
             const dbKids = byParent[i.number];
@@ -424,6 +436,8 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               running: hasActiveRun(i.repo, i.number),
               byAgent: !!(i.by_agent),
               editing: claimMap.get(`${i.repo}#${i.number}`) ?? [], // files this run has live-claimed (overwrite lock)
+              estCost: estimateCost(filesFor(i.repo, i.number).length, kids ? kids.length : 0, (i.title || "").length),
+              runs: runMap[`${i.repo}#${i.number}`] ?? {},
               auto: {
                 resume: autoEnabled("resume", i.repo, i.number),
                 merge: autoEnabled("merge", i.repo, i.number),

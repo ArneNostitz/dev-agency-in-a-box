@@ -736,6 +736,13 @@ textarea{resize:vertical;min-height:64px}
 /* compact (detail docked beside): drop the wide columns so the list stays usable */
 .ptable-compact .pt-c-repo,.ptable-compact th.pt-c-repo,.ptable-compact .pt-c-pr,.ptable-compact th.pt-c-pr,.ptable-compact .pt-timeline,.ptable-compact th.pt-h-tl{display:none}
 .ptable-compact .pt-when{display:none}
+.ptable-compact .pt-c-cost,.ptable-compact th.pt-c-cost{display:none}
+.pt-c-cost{text-align:right;white-space:nowrap;padding:11px 12px}
+.pt-cost{font-variant-numeric:tabular-nums;font-weight:600;display:inline-flex;align-items:center;gap:3px;justify-content:flex-end}
+.pt-cost-ok{color:var(--ink-2)}
+.pt-cost-warn{color:var(--amber)}
+.pt-cost-hot{color:var(--red)}
+.pt-cost-est{display:block;font-size:10.5px;color:var(--ink-3);font-variant-numeric:tabular-nums}
 
 /* ── overview stat strip (data-driven "what needs me?") ── */
 .pt-overview{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
@@ -793,9 +800,11 @@ textarea{resize:vertical;min-height:64px}
 .pt-lock{display:inline-flex;align-items:center;gap:3px;color:var(--accent)}
 /* timeline */
 .tl{display:flex;align-items:center}
-.tl-nd{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;border:1.5px solid var(--line-2);color:var(--ink-3);background:var(--surface)}
+.tl-nd{width:17px;height:17px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:none;border:1.5px solid var(--line-2);color:var(--ink-3);background:var(--surface)}
 .tl-num{font-size:11px;font-weight:600}
-.tl-seg{width:20px;height:2px;background:var(--line-2)}
+.tl-seg{width:13px;height:2px;background:var(--line-2)}
+.tl-cell{position:relative;display:inline-flex;align-items:center}
+.tl-loop{position:absolute;top:-10px;left:50%;transform:translateX(-50%);font-size:9px;font-weight:700;color:var(--amber);background:var(--amber-weak);border-radius:6px;padding:0 3px;line-height:1.35;white-space:nowrap;z-index:1;cursor:default}
 .tl-seg.on{background:var(--green)}
 .tl-done{background:var(--green-weak);border-color:var(--green);color:var(--green)}
 .tl-running{background:var(--accent-weak);border-color:var(--accent);color:var(--accent);animation:tlpulse 1.4s ease-in-out infinite}

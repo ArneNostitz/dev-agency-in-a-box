@@ -21,7 +21,7 @@ export { setSession, getSession } from "./db/agent_sessions.js";
 export { appendOrchMsg, listOrchThread, clearOrchThread, type OrchMsg } from "./db/threads.js";
 export { recordChange, recentChanges, changesTouchingFiles, type ChangeEntry, type ChangedFile } from "./db/journal.js";
 export { getAutofixCount, incAutofix, resetAutofix } from "./db/autofix.js";
-export { recentRuns } from "./db/runs.js";
+export { recentRuns, roleRunsByIssue } from "./db/runs.js";
 export { upsertWorkflow, getWorkflow, listWorkflows, getWorkflowByTrigger, deleteWorkflow, seedWorkflows } from "./db/workflows.js";
 export type { Workflow, WorkflowStep, WorkflowGate } from "./db/workflows.js";
 export type { RunRow } from "./db/runs.js";

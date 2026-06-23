@@ -53,6 +53,10 @@ export function statusField(i) {
   }
 }
 
+// Which agent role(s) own each pipeline step — a role running >1 time = a loop-back to that step.
+const STEP_ROLES = { plan: ["planner", "architect"], dev: ["developer"], test: ["tester"], review: ["reviewer"] };
+function loopsFor(i, k) { const r = (i && i.runs) || {}; let c = 0; for (const role of STEP_ROLES[k] || []) c += r[role] || 0; return Math.max(0, c - 1); }
+
 // The compact stepper rendered in the timeline column.
 function Timeline({ i }) {
   const m = timelineModel(i);
@@ -65,11 +69,17 @@ function Timeline({ i }) {
   }
   if (!m.started) return html`<span class="tl-idle">not started${i.byAgent ? " — awaiting your approval" : ""}</span>`;
   return html`<div class="tl">
-    ${m.steps.map((s, idx) => html`
-      ${idx ? html`<span class=${"tl-seg " + (s.st === "done" || (idx > 0 && m.steps[idx - 1].st === "done") ? "on" : "")}></span>` : null}
-      <span class=${"tl-nd tl-" + s.st} title=${s.label + " — " + s.st}>
-        ${s.st === "done" ? html`<${Icon} name="check" size=${11}/>` : s.st === "running" ? html`<${Icon} name="loader" size=${11}/>` : s.st === "attention" ? html`<${Icon} name="alert" size=${11}/>` : html`<span class="tl-num">${idx + 1}</span>`}
-      </span>`)}
+    ${m.steps.map((s, idx) => {
+      const loops = loopsFor(i, s.k);
+      return html`
+        ${idx ? html`<span class=${"tl-seg " + (s.st === "done" || (idx > 0 && m.steps[idx - 1].st === "done") ? "on" : "")}></span>` : null}
+        <span class="tl-cell">
+          ${loops ? html`<span class="tl-loop tip" data-tip=${"Looped back to " + s.label + " " + loops + "\u00d7"}>\u21ba${loops}</span>` : null}
+          <span class=${"tl-nd tl-" + s.st} title=${s.label + " \u2014 " + s.st}>
+            ${s.st === "done" ? html`<${Icon} name="check" size=${10}/>` : s.st === "running" ? html`<${Icon} name="loader" size=${10}/>` : s.st === "attention" ? html`<${Icon} name="alert" size=${10}/>` : html`<span class="tl-num">${idx + 1}</span>`}
+          </span>
+        </span>`;
+    })}
   </div>`;
 }
 
@@ -106,6 +116,13 @@ function Row({ i, multi, onOpen, act, avatarsOn, excerpt, open = false, child = 
     <td class="pt-c pt-c-pr">${i.pr_number ? html`<a class="pt-pr" href=${i.pr_url || ghUrl(i.repo, i.pr_number)} target="_blank" rel="noopener" onClick=${(e) => e.stopPropagation()}><${Icon} name="pr" size=${11}/> ${i.pr_number}</a>` : html`<span class="pt-dash">—</span>`}</td>
     <td class="pt-timeline"><${Timeline} i=${i}/></td>
     <td class="pt-status"><span class=${"pstat pstat-" + sf.kind}><${Icon} name=${sf.icon} size=${12}/> ${sf.label}</span><span class="pt-when">${ago(i.updated_at)}</span></td>
+    <td class="pt-c pt-c-cost">${(() => {
+      const real = (i.usage && i.usage.costUsd) || 0, est = (i.estCost && i.estCost.usd) || 0;
+      if (!real && !est) return html`<span class="pt-dash">\u2014</span>`;
+      let cls = "ok", hot = false;
+      if (real > 0) { if ((est > 0 && real > est * 3) || real > 3) { cls = "hot"; hot = true; } else if ((est > 0 && real > est * 1.5) || real > 1) { cls = "warn"; hot = true; } }
+      return html`<span class=${"pt-cost pt-cost-" + cls} data-tip=${"Spent $" + real.toFixed(2) + " of an estimated ~$" + est.toFixed(2)}>${hot ? html`<${Icon} name="flame" size=${11}/>` : null}$${real.toFixed(2)}</span><span class="pt-cost-est">~$${est.toFixed(2)}</span>`;
+    })()}</td>
     <td class="pt-act" onClick=${(e) => e.stopPropagation()}>
       ${sf.kind === "done"
         ? html`<button class="iconbtn-sm tip" data-tip="Archive — remove from the list" disabled=${act.isBusy("archive", i.repo, i.number)} onClick=${(e) => { e.stopPropagation(); act.archive(i.repo, i.number); }}>${act.isBusy("archive", i.repo, i.number) ? html`<${Spinner} size=${12}/>` : html`<${Icon} name="archive" size=${14}/>`}</button>`
@@ -228,10 +245,11 @@ export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, o
         <th class="pt-c pt-c-pr"><${Icon} name="merge" size=${11}/> PR</th>
         <th class="pt-h-tl"><${Icon} name="loader" size=${11}/> Workflow</th>
         <th class=${"pt-sortable" + (sort === "smart" ? " on" : "")} onClick=${() => save("ptSort", "smart", setSort)}><${Icon} name="alert" size=${11}/> Status</th>
+        <th class="pt-c pt-c-cost"><${Icon} name="flame" size=${11}/> Cost</th>
         <th></th>
       </tr></thead>
       <tbody>${sections.flatMap((sec) => [
-        sec.label != null ? html`<tr class="pt-group" key=${"g-" + sec.label}><td colspan="7"><span class="pt-group-l">${sec.label}</span> <span class="pt-group-n">${sec.items.length}</span></td></tr>` : null,
+        sec.label != null ? html`<tr class="pt-group" key=${"g-" + sec.label}><td colspan="8"><span class="pt-group-l">${sec.label}</span> <span class="pt-group-n">${sec.items.length}</span></td></tr>` : null,
         ...renderRows(sec.items),
       ])}</tbody>
     </table>` : html`<div class="empty" style="padding:40px;text-align:center">No issues ${time !== "all" ? "in this time range." : "yet — start one with “New issue” or the Chat."}</div>`}
