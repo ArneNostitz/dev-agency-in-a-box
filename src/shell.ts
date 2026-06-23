@@ -8,14 +8,14 @@ import { versionInfo } from "./version.js";
 export const SHELL_CSS = `:root{
   --bg:#f5f6f8;--surface:#ffffff;--surface-2:#eef0f3;--ink:#1c1e22;--ink-2:#5a6069;--ink-3:#9aa0a8;
   --line:#e4e7eb;--line-2:#d3d8de;--accent:#2f6df6;--accent-weak:#e7efff;--green:#0b8a52;--green-weak:#e6f7ef;
-  --amber:#a76a00;--amber-weak:#fff3da;--red:#c0392b;--red-weak:#fdeceb;--purple:#6741d9;--purple-weak:#efe9ff;--row-hover:rgba(18,28,48,.03);--row-sel:rgba(47,109,246,.10);--hair:#e9ebee;
+  --amber:#a76a00;--amber-weak:#fff3da;--red:#c0392b;--red-weak:#fdeceb;--purple:#6741d9;--purple-weak:#efe9ff;--row-hover:rgba(47,109,246,.055);--row-sel:rgba(47,109,246,.12);--hair:#e6e8ec;
   --shadow:0 1px 2px rgba(20,20,40,.06);--shadow-md:0 2px 8px rgba(0,0,0,.18);--radius:14px;--radius-sm:9px;
   --safe-b:env(safe-area-inset-bottom,0px);--safe-t:env(safe-area-inset-top,0px);
 }
 html[data-theme="dark"]{
   --bg:#0e1014;--surface:#171a1f;--surface-2:#1f242b;--ink:#e7e9ed;--ink-2:#9aa1ab;--ink-3:#6b727c;
   --line:#272c34;--line-2:#333a44;--accent:#5b8cff;--accent-weak:#172339;--green:#3ddc97;--green-weak:#10271d;
-  --amber:#e0a83a;--amber-weak:#2a2110;--red:#f1746a;--red-weak:#2c1614;--purple:#a99bf5;--purple-weak:#1d1933;--row-hover:rgba(255,255,255,.035);--row-sel:rgba(91,140,255,.16);--hair:#262b33;
+  --amber:#e0a83a;--amber-weak:#2a2110;--red:#f1746a;--red-weak:#2c1614;--purple:#a99bf5;--purple-weak:#1d1933;--row-hover:rgba(91,140,255,.10);--row-sel:rgba(91,140,255,.20);--hair:#262b33;
   --shadow:none;--shadow-md:0 2px 10px rgba(0,0,0,.45);
 }
 *{box-sizing:border-box}
@@ -908,13 +908,35 @@ textarea{resize:vertical;min-height:64px}
 .orch-compose textarea{flex:1;resize:none;border:1px solid var(--line);border-radius:12px;padding:10px 12px;font:14.5px inherit;background:var(--bg);color:var(--ink);max-height:160px;line-height:1.5}
 .orch-compose textarea:focus{outline:none;border-color:var(--accent)}
 .orch-send{width:42px;height:42px;padding:0;flex:none;border-radius:12px;display:inline-flex;align-items:center;justify-content:center}
-@media(max-width:760px){.orch{height:calc(100vh - 190px);border-radius:0;border-left:none;border-right:none}.obub-body{max-width:92%}}`;
+@media(max-width:760px){.orch{height:calc(100vh - 190px);border-radius:0;border-left:none;border-right:none}.obub-body{max-width:92%}}
+/* ── FINAL table look (v1.7.6) ── */
+.prow:hover>td{background:var(--row-hover)}
+.prow-open>td,.prow-open:hover>td{background:var(--row-sel)}
+.prow-open>td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
+.prow-open .pt-title{color:var(--accent)}
+.pt-title,.prow:hover .pt-title,.prow-open .pt-title{position:static;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;background:none;box-shadow:none;padding-right:0;z-index:auto}
+.pt-activity{display:none}
+.ptable th,.prow>td{border-right:1px solid var(--hair)}
+.ptable th:last-child,.prow>td:last-child{border-right:none}
+.ptable thead th{box-shadow:none;border-bottom:1px solid var(--line);padding:10px 14px}
+.prow:hover .pstat-planned,.prow:hover .pstat-done{background:transparent}
+/* sticky regions: page chrome + controls + table header stay; ONLY rows scroll */
+.content.view-list{overflow:hidden;display:flex;flex-direction:column;padding:0}
+.view-list .ptable-wrap{flex:1;min-height:0;display:flex;flex-direction:column;padding:0 16px 0}
+.ptable-wrap{display:flex;flex-direction:column;min-height:0}
+.ptable-bar{flex:none}
+.ptable-scroll{flex:1;min-height:0;overflow:auto}
+.split-left{overflow:hidden}
+.chat-split .split-right{overflow:hidden}
+.split-left .ptable-wrap,.chat-split .split-right .ptable-wrap{height:100%;padding:0 12px 0}
+/* docked compact list scrolls sideways instead of hiding columns */
+.ptable-compact .pt-c-repo,.ptable-compact th.pt-c-repo,.ptable-compact .pt-c-pr,.ptable-compact th.pt-c-pr,.ptable-compact .pt-timeline,.ptable-compact th.pt-h-tl,.ptable-compact .pt-c-cost,.ptable-compact th.pt-c-cost,.ptable-compact .pt-c-when,.ptable-compact th.pt-c-when{display:table-cell}
+.ptable-compact .ptable{min-width:860px}`;
 
 function cssHash(x: string): string { let h = 5381; for (let i = 0; i < x.length; i++) h = ((h << 5) + h + x.charCodeAt(i)) >>> 0; return h.toString(36); }
 const CSS_VER = cssHash(SHELL_CSS);
 
 export function renderShell(): string {
-  const __VER__ = CSS_VER; // bust the (immutable) /app.css cache by CONTENT hash — not the build sha, which can be stale
   return `<!doctype html><html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -927,7 +949,7 @@ export function renderShell(): string {
 <link rel="apple-touch-icon" href="/web/icons/icon-192.png">
 <link rel="icon" href="/web/icons/icon.svg" type="image/svg+xml">
 <title>Dev Agency in a Box</title>
-<link rel="stylesheet" href="/app.css?v=${__VER__}">
+<style>${SHELL_CSS}</style>
 </head>
 <body>
 <div id="root" aria-busy="true"></div>

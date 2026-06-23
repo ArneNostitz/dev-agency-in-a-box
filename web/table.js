@@ -264,7 +264,7 @@ export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, o
       <button class="colbtn" disabled=${!target || analyzing} title=${target ? "Analyze " + target.split("/").pop() : "Pick a repo first"} onClick=${() => target && onAnalyze(target)}>${analyzing ? html`<${Spinner} size=${14}/>` : html`<${Icon} name="search" size=${14}/>`} Analyze</button>
       <button class="colbtn primary" onClick=${() => onAddIssue(target)}><${Icon} name="plus" size=${14}/> New issue</button>
     </div>
-    ${total ? html`<table class=${"ptable" + (compact ? " ptable-compact" : "")}>
+    ${total ? html`<div class="ptable-scroll"><table class=${"ptable" + (compact ? " ptable-compact" : "")}>
       <colgroup><col/><col class="cw-repo"/><col class="cw-num"/><col class="cw-pr"/><col class="cw-wf"/><col class="cw-status"/><col class="cw-cost"/><col class="cw-when"/></colgroup>
       <thead><tr>
         <th>Issue</th>

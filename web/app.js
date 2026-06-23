@@ -288,7 +288,7 @@ function App() {
         <span style="flex:1"></span>
         ${view !== "board" ? html`<${StatStrip} counts=${statCounts} statFilter=${statFilter} setStatFilter=${setStatFilter} spend=${data.spendToday} compact=${true}/>` : null}
       </div>` : null}
-      <div class=${"content" + ((dockDetail || chatSplit) ? " is-split" : "")}>
+      <div class=${"content" + ((dockDetail || chatSplit) ? " is-split" : "") + (view === "list" && !dockDetail && !chatSplit ? " view-list" : "")}>
         ${chatSplit
           ? html`<div class="split chat-split"><div class="split-left"><${Orchestrator} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${load} onOpenIssue=${openIssue} issues=${issues}/></div><div class="split-right"><${ProgressTable} issues=${shown} repos=${repos} repoFilter=${repoFilter} openKey=${openKey} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data} statFilter=${statFilter}/></div></div>`
           : view === "chat" && repos.length
