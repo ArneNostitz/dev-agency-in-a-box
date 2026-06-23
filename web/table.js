@@ -120,6 +120,14 @@ const SORTS = [
 const TIMES = [["all", "All"], ["24h", "24h"], ["7d", "7d"], ["30d", "30d"]];
 const GROUPS = [["none", "—"], ["repo", "Repo"], ["status", "Status"]];
 const KIND_LABEL = { attention: "Needs you", ready: "Ready to merge", running: "Running", queued: "Queued", planned: "Planned", done: "Done" };
+// Overview stats: data drives the UI — surface "what needs me?" before any row is read.
+const STAT_DEFS = [
+  { k: "needs", label: "Needs you", kinds: ["attention", "ready"], cls: "attention", icon: "alert" },
+  { k: "running", label: "Running", kinds: ["running"], cls: "running", icon: "loader" },
+  { k: "queued", label: "Queued", kinds: ["queued"], cls: "queued", icon: "clock" },
+  { k: "planned", label: "Planned", kinds: ["planned"], cls: "planned", icon: "planned" },
+  { k: "done", label: "Done", kinds: ["done"], cls: "done", icon: "check" },
+];
 function smartCmp(a, b) {
   const ka = KIND_ORDER[statusField(a).kind] ?? 9, kb = KIND_ORDER[statusField(b).kind] ?? 9;
   return ka !== kb ? ka - kb : new Date(b.updated_at || 0) - new Date(a.updated_at || 0);
@@ -130,6 +138,7 @@ export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, o
   const [sort, setSort] = useState(() => ls("ptSort", "smart"));
   const [group, setGroup] = useState(() => ls("ptGroup", "none"));
   const [time, setTime] = useState(() => ls("ptTime", "all"));
+  const [statFilter, setStatFilter] = useState(null);
   const save = (k, v, set) => { set(v); try { localStorage.setItem(k, v); } catch (e) {} };
   const cyc = (arr, cur) => arr[(arr.findIndex((x) => x[0] === cur) + 1) % arr.length][0];
 
@@ -142,11 +151,16 @@ export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, o
   const [collapsed, setCollapsed] = useState(() => new Set());
   const toggle = (key) => setCollapsed((prev) => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
 
-  const { sections, needsYou, total } = useMemo(() => {
+  const { sections, needsYou, total, counts } = useMemo(() => {
     let base = issues.filter((i) => !nested.has(i.repo + "#" + i.number) && !i.archived);
     base = filterByTime(base, time === "all" ? "any" : time);
     const cmp = sort === "smart" ? smartCmp : sort === "created" ? (a, b) => (b.number || 0) - (a.number || 0) : (a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0);
-    const need = base.filter((i) => statusField(i).kind === "attention").length;
+    // Counts over the (time-filtered) set, independent of the active stat filter so you can switch.
+    const cnt = {}; STAT_DEFS.forEach((d) => (cnt[d.k] = 0));
+    for (const i of base) { const k = statusField(i).kind; for (const d of STAT_DEFS) if (d.kinds.includes(k)) cnt[d.k]++; }
+    const need = cnt.needs;
+    const fdef = statFilter && STAT_DEFS.find((d) => d.k === statFilter);
+    if (fdef) base = base.filter((i) => fdef.kinds.includes(statusField(i).kind));
     let secs;
     if (group === "repo") {
       const m = new Map();
@@ -159,8 +173,8 @@ export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, o
     } else {
       secs = [{ label: null, items: base.slice().sort(cmp) }];
     }
-    return { sections: secs, needsYou: need, total: base.length };
-  }, [issues, sort, group, time]);
+    return { sections: secs, needsYou: need, total: base.length, counts: cnt };
+  }, [issues, sort, group, time, statFilter]);
 
   const avatarsOn = (data && data.config && data.config.avatars) !== "off";
   const renderRows = (items) => items.flatMap((i) => {
@@ -177,7 +191,15 @@ export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, o
     return out;
   });
 
+  const allClear = counts.needs === 0 && (counts.running || counts.queued || counts.planned || counts.done);
   return html`<div class="ptable-wrap">
+    <div class="pt-overview">
+      ${STAT_DEFS.map((d) => html`<button key=${d.k} class=${"pt-stat pt-stat-" + d.cls + (statFilter === d.k ? " on" : "") + (counts[d.k] === 0 ? " zero" : "")} data-tip=${counts[d.k] ? "Show only " + d.label.toLowerCase() : null} onClick=${() => setStatFilter(statFilter === d.k ? null : d.k)}>
+        <span class="pt-stat-n">${d.k === "needs" && counts.needs === 0 && allClear ? html`<${Icon} name="check" size=${18}/>` : counts[d.k]}</span>
+        <span class="pt-stat-l"><${Icon} name=${d.icon} size=${11}/> ${d.k === "needs" && counts.needs === 0 && allClear ? "All clear" : d.label}</span>
+      </button>`)}
+      ${data && data.spendToday && data.spendToday.costUsd > 0 ? html`<div class="pt-stat pt-stat-spend"><span class="pt-stat-n">$${data.spendToday.costUsd.toFixed(2)}</span><span class="pt-stat-l">today</span></div>` : null}
+    </div>
     <div class="ptable-bar">
       <button class="colbtn primary" onClick=${() => onAddIssue(target)}><${Icon} name="plus" size=${14}/> New issue</button>
       <button class="colbtn" disabled=${!target || analyzing} title=${target ? "Analyze " + target.split("/").pop() : "Pick a repo first"} onClick=${() => target && onAnalyze(target)}>${analyzing ? html`<${Spinner} size=${14}/>` : html`<${Icon} name="search" size=${14}/>`} Analyze</button>

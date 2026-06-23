@@ -702,6 +702,26 @@ textarea{resize:vertical;min-height:64px}
 .viewseg button{display:inline-flex;align-items:center;gap:6px;border:none;background:transparent;color:var(--ink-2);padding:6px 13px;border-radius:8px;font:13px inherit;font-weight:600;cursor:pointer}
 .viewseg button.on{background:var(--surface);color:var(--ink);box-shadow:var(--shadow)}
 .viewbar{display:flex;align-items:center;gap:10px;padding:10px 14px 0}
+'/* ── overview stat strip (data-driven "what needs me?") ── */
+.pt-overview{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+.pt-stat{display:flex;flex-direction:column;gap:3px;min-width:96px;border:1px solid var(--line);background:var(--surface);border-radius:14px;padding:11px 14px;cursor:pointer;text-align:left;transition:border-color .12s ease,transform .12s ease,box-shadow .12s ease}
+.pt-stat:hover{border-color:var(--line-2);transform:translateY(-1px)}
+.pt-stat.on{box-shadow:0 0 0 2px var(--accent) inset;border-color:var(--accent)}
+.pt-stat-n{font-size:26px;font-weight:700;line-height:1;letter-spacing:-.02em;color:var(--ink);display:inline-flex;align-items:center}
+.pt-stat-l{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;color:var(--ink-3);text-transform:uppercase;letter-spacing:.03em}
+.pt-stat.zero{opacity:.55}
+.pt-stat.zero:hover{opacity:.8}
+.pt-stat-attention{background:var(--amber-weak);border-color:transparent}
+.pt-stat-attention .pt-stat-n{color:var(--amber)}.pt-stat-attention .pt-stat-l{color:var(--amber)}
+.pt-stat-attention.zero{background:var(--green-weak)}
+.pt-stat-attention.zero .pt-stat-n,.pt-stat-attention.zero .pt-stat-l{color:var(--green)}
+.pt-stat-running .pt-stat-n{color:var(--accent)}
+.pt-stat-running:not(.zero) .pt-stat-l{color:var(--accent)}
+.pt-stat-running:not(.zero){animation:tlpulse 1.6s ease-in-out infinite}
+.pt-stat-done .pt-stat-n,.pt-stat-spend .pt-stat-n{color:var(--ink-3);font-weight:600}
+.pt-stat-spend{cursor:default;margin-left:auto}
+.pt-stat-spend:hover{transform:none;border-color:var(--line)}
+@media(max-width:760px){.pt-stat{min-width:0;flex:1 1 28%;padding:9px 10px}.pt-stat-n{font-size:21px}.pt-stat-spend{flex-basis:100%;margin-left:0}}
 /* ── v4 rich progress table ── */
 .ptable-wrap{padding:10px 14px 24px;max-width:100%;overflow-x:auto}
 .ptable-bar{display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap}
