@@ -227,9 +227,9 @@ test("v4: default List view renders the rich progress table + timeline; Chat vie
     fetch: async (u) => ({ ok: true, json: async () => route(u), text: async () => "" }),
   });
   await new Promise((r) => setTimeout(r, 150));
-  assert.match(root.innerHTML, /Workflow/, "table header renders by default");
+  assert.ok(window.document.querySelector(".irow"), "card-row List renders by default");
   assert.match(root.innerHTML, /A planned task/, "planned row renders");
-  assert.match(root.innerHTML, /ptable/, "the rich progress table is the default list view");
+  assert.ok(window.document.querySelector(".listsec") || window.document.querySelector(".pane-list"), "the card List is the default list view");
   assert.match(root.innerHTML, /Running/, "a working+running issue shows a Running status");
 
   // Switch to Chat view via the view switcher → the Orchestrator panel mounts (chat compose).
@@ -262,8 +262,8 @@ test("v4: epics unfold their sub-issues as indented full rows in the List", asyn
   });
   await new Promise((r) => setTimeout(r, 150));
   assert.match(root.innerHTML, /Big epic/, "epic row renders");
-  assert.ok(window.document.querySelector(".pt-exp"), "epic has an expand toggle");
-  assert.ok(window.document.querySelector(".pt-issue-child"), "sub-issues render as indented child rows (default unfolded)");
+  assert.ok(window.document.querySelector(".irow__exp"), "epic has an expand toggle");
+  assert.ok(window.document.querySelector(".prow-child"), "sub-issues render as indented child rows (default unfolded)");
   assert.match(root.innerHTML, /Child one/, "stub sub-issue (#6, not in list) shows from epic.children");
   assert.match(root.innerHTML, /Child two/, "live sub-issue (#7) shows under the epic");
   dom.window.close();
