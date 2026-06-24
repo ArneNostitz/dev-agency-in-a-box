@@ -120,7 +120,7 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
   // Let the data fetch + effects flush, then the cards should appear.
   await new Promise((r) => setTimeout(r, 150));
   assert.match(root.innerHTML, /A planned task/, "planned issue card renders from /data");
-  assert.match(root.innerHTML, /statusdot/, "card uses the new header status dot");
+  assert.ok(window.document.querySelector(".bcard .statuschip") || window.document.querySelector(".bcard"), "card uses the new status chip header");
 
   // Verify lane placement for the fix flow: an issue with pr_number AND running:true must go to
   // Working, not Review. The mobile TabBar shows counts per column, so "Working · 1" confirms
@@ -198,7 +198,7 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
   await tick(40);
 
   // Detail (uses hooks) — open the first card.
-  click(q(".card"));
+  click(q(".bcard"));
   await tick(80);
   assert.match(root.innerHTML, /Conversation/, "detail opens with conversation pane");
 

@@ -149,6 +149,62 @@ export function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, onOpe
 
 }
 
+// ---------- board card: compact workflow timeline + cost heat (design parity) ----------
+// Local copies so board.js doesn't import table.js (table.js already imports board.js → cycle).
+const BSTEPS = [["plan", "Plan"], ["dev", "Dev"], ["test", "Test"], ["review", "Review"]];
+const BROLE_STEP = { planner: 0, architect: 0, decomposer: 0, spec: 0, "spec-creator": 0, developer: 1, dev: 1, coder: 1, tester: 2, test: 2, reviewer: 3, review: 3, auditor: 0 };
+function bTimeline(i) {
+  const sstate = i.state || "", done = isDone(i);
+  if (i.epic || sstate === "agency:epic") return { epic: true };
+  let cur;
+  if (done) cur = BSTEPS.length;
+  else if (sstate === "planned" || sstate === "notPlanned" || !sstate) cur = -1;
+  else if (sstate === "review") cur = 3;
+  else { const r = (i.role || "").toLowerCase(); cur = (r in BROLE_STEP) ? BROLE_STEP[r] : 1; }
+  const running = !!(i.active || i.running);
+  const attn = i.blocked === "needsAttention" || i.blocked === "awaitingApproval" || i.blocked === "awaitingAnswer" || i.blocked === "conflict" || i.blocked === "budgetExceeded";
+  const steps = BSTEPS.map(([k, label], idx) => {
+    let stt = "pending";
+    if (cur === -1) stt = "pending";
+    else if (idx < cur) stt = "done";
+    else if (idx === cur) stt = done ? "done" : attn ? "blocked" : running ? "current" : "pending";
+    return { k, label, st: stt };
+  });
+  if (sstate === "review") { steps[0].st = "done"; steps[1].st = "done"; steps[2].st = "done"; steps[3].st = i.review === "approved" ? "done" : "blocked"; }
+  if (done) steps.forEach((x) => (x.st = "done"));
+  return { epic: false, steps, current: cur, started: cur !== -1, live: running };
+}
+// Compact, label-less timeline for the board card (reveals on hover via .bcard__flow).
+function BFlow({ i, avatarsOn }) {
+  const m = bTimeline(i);
+  if (m.epic || !m.started) return null;
+  return html`<div class="flow flow--compact">
+    ${m.steps.map((s, idx) => {
+      const current = s.st === "current";
+      const showFace = current && i.role && avatarsOn;
+      return html`
+        ${idx ? html`<span class=${"flow__line" + (idx <= m.current ? " on" : "")}></span>` : null}
+        <span class=${"flow__step " + s.st} title=${s.label}>
+          <span class=${"flow__dot" + (current && m.live ? " pulse" : "") + (showFace ? " flow__dot--face" : "")}>
+            ${s.st === "done" ? html`<${Icon} name="check" size=${9}/>` : showFace ? html`<span class="flow__face"><${Avatar} role=${i.role} size=${20} crop="head"/></span>` : null}
+          </span>
+        </span>`;
+    })}
+  </div>`;
+}
+// Cost heat bar: live spend vs estimate (green<80%, amber<100%, red over).
+function BHeat({ i }) {
+  const real = (i.usage && i.usage.costUsd) || 0, est = (i.estCost && i.estCost.usd) || 0;
+  if (!real && !est) return null;
+  const max = est || Math.max(real, 1), ratio = max ? real / max : 0;
+  const pct = Math.max(4, Math.min(100, Math.round(ratio * 100)));
+  const color = ratio >= 1 ? "var(--red)" : ratio >= 0.8 ? "var(--amber)" : "var(--green)";
+  return html`<span class="heat tip" data-tip=${"$" + real.toFixed(2) + (est ? " of ~$" + est.toFixed(2) + " est" : "")}>
+    <span class="heat__track"><span class="heat__fill" style=${"width:" + pct + "%;background:" + color}></span></span>
+    <span class="heat__lbl" style=${"color:" + (ratio >= 1 ? "var(--red)" : "var(--ink-2)")}>${real ? "$" + real.toFixed(2) : "~$" + est.toFixed(2)}</span>
+  </span>`;
+}
+
 function Card({ i, subs, multi, onOpen, onOpenChild, act, data, stream = EMPTY_STREAM }) {
   const st = statusChip(i);
   const done = isDone(i);
@@ -191,54 +247,56 @@ function Card({ i, subs, multi, onOpen, onOpenChild, act, data, stream = EMPTY_S
   const dotColor = tmp ? "var(--accent)" : (DOT_COLOR[st.cls] || "var(--ink-3)");
   const excerpt = stream.length ? stream[stream.length - 1].text : "";
 
-  return html`<div class=${"card" + (tmp ? " busy" : "") + (i.active ? " active-now" : "")} onClick=${tmp ? null : () => onOpen(i)}>
-    <div class="card-h">
-      <span class="statusdot tip" data-tip=${tmp ? "creating…" : statusTip(i, st)} style=${"background:" + dotColor}>${tmp ? html`<${Spinner} size=${10}/>` : html`<${Icon} name=${st.icon} size=${11}/>`}</span>
+  const live = !!(i.active || i.running);
+  return html`<div class=${"bcard" + (tmp ? " busy" : "") + (live ? " live" : "")} onClick=${tmp ? null : () => onOpen(i)}>
+    <div class="bcard__h">
+      <span class=${"statuschip da-status " + st.cls + (live ? " da-status--live" : "")} data-tip=${tmp ? "creating…" : statusTip(i, st)}><span class="da-status__dot"></span>${tmp ? "creating…" : st.label}</span>
       <span class="card-repo">${i.repo.split("/").pop()}</span>
-      <span class="card-num">#${i.number > 0 ? i.number : "…"}</span>
+      <span style="margin-left:auto" class="card-num">#${i.number > 0 ? i.number : "…"}</span>
       <span class="card-hicons">
-        ${i.byAgent ? html`<span class="card-byagent tip" data-tip="Created by an agent — review &amp; start"><${Icon} name="rocket" size=${11}/> agent</span>` : null}
-        ${(i.state === "planned" || i.state === "notPlanned") && i.number > 0 ? html`<button class="card-del tip" data-tip="Delete permanently" disabled=${act.isBusy("del", i.repo, i.number)} onClick=${(e) => { e.stopPropagation(); if (window.confirm("Permanently delete #" + i.number + "? This can’t be undone.")) act.del(i.repo, i.number); }}>${act.isBusy("del", i.repo, i.number) ? html`<${Spinner} size=${11}/>` : html`<${Icon} name="x" size=${13}/>`}</button>` : null}
+        ${i.byAgent ? html`<span class="card-byagent tip" data-tip="Created by an agent — review &amp; start"><${Icon} name="rocket" size=${11}/></span>` : null}
         ${i.conflict ? html`<span class="card-hicon tip" data-tip=${(i.conflict.files || []).join(", ") || "Merge conflict"} style="color:var(--amber)"><${Icon} name="merge" size=${14}/></span>` : null}
         ${autoOn ? html`<span class="card-hicon tip" data-tip=${"Auto-" + (i.auto.merge ? "merge" : "resume") + " on"} style="color:var(--green)"><${Icon} name=${i.auto.merge ? "merge" : "refresh"} size=${13}/></span>` : null}
         ${i.pr_number ? html`<a class="card-pr tip" data-tip=${"Open PR #" + i.pr_number} href=${i.pr_url || ghUrl(i.repo, i.pr_number)} target="_blank" rel="noopener" onClick=${(e) => e.stopPropagation()}><${Icon} name="pr" size=${12}/> #${i.pr_number}</a>` : null}
+        ${(i.state === "planned" || i.state === "notPlanned") && i.number > 0 ? html`<button class="card-del tip" data-tip="Delete permanently" disabled=${act.isBusy("del", i.repo, i.number)} onClick=${(e) => { e.stopPropagation(); if (window.confirm("Permanently delete #" + i.number + "? This can’t be undone.")) act.del(i.repo, i.number); }}>${act.isBusy("del", i.repo, i.number) ? html`<${Spinner} size=${11}/>` : html`<${Icon} name="x" size=${13}/>`}</button>` : null}
       </span>
     </div>
 
-    <div class="card-m">
-      <div class="card-title">${i.title || "#" + i.number}</div>
-      <div class="card-meta">
-        ${engaged && i.role && avatarsOn ? html`<span class="tip" data-tip=${i.role + " agent"} style="display:inline-flex"><${Avatar} role=${i.role} size=${20} crop="head"/></span>` : null}
-        ${engaged && i.role ? html`<span class="role">${i.role}</span>` : null}
-        <span class="card-excerpt">${excerpt || (i.usage && i.usage.tokens ? fmtTok(i.usage.tokens) + " tok" + (i.usage.model ? " · " + shortModel(i.usage.model) : "") : ago(i.updated_at))}</span>
-      </div>
-      ${(i.active || tmp) ? (() => {
-        const sp = getSetupProgress(stream);
-        if (!sp) return null;
-        const pct = sp.percent == null ? null : sp.percent;
-        return html`<div class="setupbar" title=${sp.phase}><div class="setupbar-track"><div class="setupbar-fill" style=${pct == null ? "width:100%" : "width:" + pct + "%"}></div></div><span class="setupbar-lbl">${pct == null ? html`<${Spinner} size=${11}/> ` : pct + "% · "}${sp.phase}</span></div>`;
-      })() : null}
-    </div>
+    <div class="bcard__title">${i.title || "#" + i.number}</div>
+
+    ${engaged && excerpt ? html`<div class="card-excerpt">${i.role ? html`<span class="role">${i.role}</span> ` : null}${excerpt}</div>` : null}
+
+    ${(i.active || tmp) ? (() => {
+      const sp = getSetupProgress(stream);
+      if (!sp) return null;
+      const pct = sp.percent == null ? null : sp.percent;
+      return html`<div class="setupbar" title=${sp.phase}><div class="setupbar-track"><div class="setupbar-fill" style=${pct == null ? "width:100%" : "width:" + pct + "%"}></div></div><span class="setupbar-lbl">${pct == null ? html`<${Spinner} size=${11}/> ` : pct + "% · "}${sp.phase}</span></div>`;
+    })() : null}
+
+    <div class="bcard__flow"><${BFlow} i=${i} avatarsOn=${avatarsOn}/></div>
 
     ${!tmp && subs && subs.length ? html`<${SubList} subs=${subs} repo=${i.repo} onOpenChild=${onOpenChild}/>` : null}
 
     ${tmp ? null : (() => {
       const isStop = quick && quick.action === "stop";
       const notPlanned = quick && i.state === "planned";
-      return html`<div class="card-f" onClick=${(e) => e.stopPropagation()}>
+      return html`<div class="bcard__f card-f" onClick=${(e) => e.stopPropagation()}>
         <div class="card-f-l">
-          ${notPlanned ? html`<button class="iconbtn-sm tip" data-tip="Close as not planned" disabled=${act.isBusy("close-not-planned", i.repo, i.number)} onClick=${(e) => { e.stopPropagation(); act.closeNotPlanned(i.repo, i.number); }}>${act.isBusy("close-not-planned", i.repo, i.number) ? html`<${Spinner} size=${13}/>` : html`<${Icon} name="x" size=${14}/>`}</button>` : null}
-          ${isStop ? html`<button class=${"cardbtn cta stop" + (qBusy ? " busy" : "")} disabled=${qBusy} onClick=${runQuick}>${qBusy ? html`<${Spinner} size=${13}/>` : html`<${Icon} name="stop" size=${13}/>`} ${qBusy ? "working…" : quick.label}</button>` : null}
+          ${engaged && i.role && avatarsOn ? html`<span class="tip" data-tip=${i.role + " agent"} style="display:inline-flex"><span class="barehead" style="width:24px;height:24px"><${Avatar} role=${i.role} size=${24} crop="head"/></span></span>` : null}
+          ${(i.usage && i.usage.costUsd) || (i.estCost && i.estCost.usd) ? html`<${BHeat} i=${i}/>` : (!quick ? html`<span class="card-time">${ago(i.updated_at)}</span>` : null)}
         </div>
         <div class="card-f-r">
+          ${notPlanned ? html`<button class="iconbtn-sm tip" data-tip="Close as not planned" disabled=${act.isBusy("close-not-planned", i.repo, i.number)} onClick=${(e) => { e.stopPropagation(); act.closeNotPlanned(i.repo, i.number); }}>${act.isBusy("close-not-planned", i.repo, i.number) ? html`<${Spinner} size=${13}/>` : html`<${Icon} name="x" size=${14}/>`}</button>` : null}
           ${modelOpts.length && !isStop ? html`<${ModelPicker} opts=${modelOpts} value=${modelSel} onPick=${onPickModel} defaultLogo=${defaultModelLogo(data)}/>` : null}
-          ${quick && !isStop
+          ${isStop
+            ? html`<button class=${"cardbtn cta stop" + (qBusy ? " busy" : "")} disabled=${qBusy} onClick=${runQuick}>${qBusy ? html`<${Spinner} size=${13}/>` : html`<${Icon} name="stop" size=${13}/>`} ${qBusy ? "working…" : quick.label}</button>`
+            : quick
             ? html`<button class=${"cardbtn cta " + quick.cls + (qBusy ? " busy" : "")} disabled=${qBusy} onClick=${runQuick}>${qBusy ? html`<${Spinner} size=${13}/>` : html`<${Icon} name=${quick.icon} size=${13}/>`} ${qBusy ? "working…" : quick.label}</button>`
-            : (!quick ? html`<span class="card-time">${ago(i.updated_at)}</span>` : null)}
+            : null}
         </div>
       </div>`;
     })()}
-  </div>`;
+  </div>`
 }
 
 // Friendly one-line explanation of a status, for the dot tooltip.
