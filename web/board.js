@@ -63,10 +63,9 @@ export function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, onOpe
     </div>`;
   }
 
-  // The Add Issue / Analyze buttons act on the active repo. With "All" + multiple repos there's no
-  // single target: Add Issue still opens the composer (it has a repo picker); Analyze is disabled.
+  // The Add Issue button acts on the active repo (or opens the composer's repo picker under "All").
+  // Analyze/Audit now lives in the Orchestrator chat header, not the board.
   const target = repoFilter || (repos.length === 1 ? repos[0] : null);
-  const analyzing = target && (auditRepos || []).includes(target);
 
   // Epic grouping: a sub-issue is its own open issue, so it normally shows as a standalone card AND
   // its parent epic card — duplicating it. When the parent epic card is on the board we hide the
@@ -126,7 +125,6 @@ export function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, onOpe
         const byCol = {}; COLS.forEach((c) => (byCol[c.k] = []));
         repoItems.forEach((i) => byCol[classify(i)].push(i));
         const short = r.split("/").pop();
-        const rAnalyzing = (auditRepos || []).includes(r);
         return html`<div class="band" key=${r}>
           <div class="band-head"><${Icon} name="pr" size=${15}/> <b>${short}</b> <span class="n">${repoItems.length || ""}</span>
             <span style="flex:1"></span>
