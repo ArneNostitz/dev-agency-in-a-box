@@ -1,15 +1,17 @@
-// Dev Agency dashboard — rich progress table (v4). The list view re-imagined: each row is an issue
-// whose hero column is a live WORKFLOW TIMELINE (plan → dev → test → review) showing exactly where
-// it is, plus a STATUS field that flags what needs you. Reads the same /data payload as the board.
+// Dev Agency dashboard — the List view (design-system redesign). The dense table is retired in
+// favour of comfortable issue CARDS: each row is an entity with a breadcrumb (repo › epic › #num),
+// a canonical status chip, the agent's illustrated head, a one-line excerpt, a cost HEAT bar, and a
+// WORKFLOW TIMELINE that reveals on hover. Sort / group / time-filter + a hover action menu are kept.
+// Reads the same /data payload as the board; exports the same surface app.js already imports.
 import { html, useState, useMemo, useRef } from "/web/vendor/standalone.mjs";
 import { Avatar, Icon, Spinner, ago, classify, isDone, statusChip, filterByTime, ghUrl } from "./core.js";
 import { nestedChildKeys } from "./board.js";
 
-// Canonical pipeline steps + the role that owns each (so we can light the right one from i.role).
+// Canonical pipeline steps + the role that owns each (lights the right one from i.role).
 const STEPS = [["plan", "Plan"], ["dev", "Dev"], ["test", "Test"], ["review", "Review"]];
 const ROLE_STEP = { planner: 0, architect: 0, decomposer: 0, spec: 0, "spec-creator": 0, developer: 1, dev: 1, coder: 1, tester: 2, test: 2, reviewer: 3, review: 3, auditor: 0 };
 
-// Derive the timeline model for an issue from the DB-known facts (state, role, running, blocked).
+// Derive the timeline model for an issue from DB-known facts (state, role, running, blocked).
 export function timelineModel(i) {
   const s = i.state || "";
   const done = isDone(i);
@@ -34,7 +36,7 @@ export function timelineModel(i) {
   });
   if (s === "review") { steps[0].st = "done"; steps[1].st = "done"; steps[2].st = "done"; steps[3].st = i.review === "approved" ? "done" : "attention"; }
   if (done) steps.forEach((x) => (x.st = "done"));
-  return { epic: false, steps, started: cur !== -1 };
+  return { epic: false, steps, started: cur !== -1, current: cur, running, attn };
 }
 
 // The status field: a friendly label + kind (drives the pill colour) built from the status chip.
@@ -42,14 +44,14 @@ export function statusField(i) {
   const st = statusChip(i);
   const role = i.role ? " · " + i.role : "";
   switch (st.cls) {
-    case "s-done": return { label: i.pr_number ? "Merged" : "Done", kind: "done", icon: i.pr_number ? "merge" : "check" };
-    case "s-ready": return { label: "Ready to merge", kind: "ready", icon: "merge" };
-    case "s-changes": return { label: st.label === "conflict" ? "Conflict — needs you" : "Changes requested", kind: "attention", icon: "alert" };
-    case "s-attn": return { label: st.label === "approve?" ? "Needs you · approve" : st.label === "reply" ? "Needs you · reply" : st.label === "over budget" ? "Over budget" : "Needs you", kind: "attention", icon: "alert" };
-    case "s-auto": return { label: "Auto-resume", kind: "queued", icon: "hourglass" };
-    case "s-epic": return { label: "Epic " + (i.epic ? i.epic.done + "/" + i.epic.total : ""), kind: i.epic && i.epic.done >= i.epic.total ? "ready" : "running", icon: "layers" };
-    case "s-working": return i.queued && !i.active ? { label: "Queued", kind: "queued", icon: "clock" } : { label: "Running" + role, kind: "running", icon: "loader" };
-    default: return { label: "Planned", kind: "planned", icon: "planned" };
+    case "s-done": return { label: i.pr_number ? "Merged" : "Done", kind: "done", icon: i.pr_number ? "merge" : "check", chip: "s-done" };
+    case "s-ready": return { label: "Ready to merge", kind: "ready", icon: "merge", chip: "s-ready" };
+    case "s-changes": return { label: st.label === "conflict" ? "Conflict — needs you" : "Changes requested", kind: "attention", icon: "alert", chip: "s-changes" };
+    case "s-attn": return { label: st.label === "approve?" ? "Needs you · approve" : st.label === "reply" ? "Needs you · reply" : st.label === "over budget" ? "Over budget" : "Needs you", kind: "attention", icon: "alert", chip: "s-attn" };
+    case "s-auto": return { label: "Auto-resume", kind: "queued", icon: "hourglass", chip: "s-auto" };
+    case "s-epic": return { label: "Epic " + (i.epic ? i.epic.done + "/" + i.epic.total : ""), kind: i.epic && i.epic.done >= i.epic.total ? "ready" : "running", icon: "layers", chip: "s-epic" };
+    case "s-working": return i.queued && !i.active ? { label: "Queued", kind: "queued", icon: "clock", chip: "s-working" } : { label: "Working" + role, kind: "running", icon: "loader", chip: "s-working", live: true };
+    default: return { label: "Planned", kind: "planned", icon: "planned", chip: "s-planned" };
   }
 }
 
@@ -57,8 +59,31 @@ export function statusField(i) {
 const STEP_ROLES = { plan: ["planner", "architect"], dev: ["developer"], test: ["tester"], review: ["reviewer"] };
 function loopsFor(i, k) { const r = (i && i.runs) || {}; let c = 0; for (const role of STEP_ROLES[k] || []) c += r[role] || 0; return Math.max(0, c - 1); }
 
-// The compact stepper rendered in the timeline column.
-function Timeline({ i }) {
+// Canonical status chip (design-system .da-status). Pulses when live.
+function StatusChip({ i }) {
+  const sf = statusField(i);
+  return html`<span class=${"da-status " + sf.chip + (sf.live ? " da-status--live" : "")}><span class="da-status__dot"></span>${sf.label}</span>`;
+}
+
+// Cost heat bar: live spend vs the estimate. Green under budget, amber past 80%, red over.
+function HeatBar({ i }) {
+  const real = (i.usage && i.usage.costUsd) || 0;
+  const est = (i.estCost && i.estCost.usd) || 0;
+  if (!real && !est) return null;
+  const max = est || Math.max(real, 1);
+  const ratio = max ? real / max : 0;
+  const pct = Math.max(4, Math.min(100, Math.round(ratio * 100)));
+  const color = ratio >= 1 ? "var(--red)" : ratio >= 0.8 ? "var(--amber)" : "var(--green)";
+  const lbl = real ? "$" + real.toFixed(2) : "~$" + est.toFixed(2);
+  return html`<span class="heat tip" data-tip=${"$" + real.toFixed(2) + (est ? " of ~$" + est.toFixed(2) + " est" : "")}>
+    <span class="heat__track"><span class="heat__fill" style=${"width:" + pct + "%;background:" + color}></span></span>
+    <span class="heat__lbl" style=${"color:" + (ratio >= 1 ? "var(--red)" : "var(--ink-2)")}>${lbl}</span>
+  </span>`;
+}
+
+// The agency pipeline as a compact timeline (design-system .flow). Current step shows the agent's
+// face + an accent pulse when live; done steps a green check; ↻N marks a looped step.
+function WorkflowTimeline({ i, labels = true }) {
   const m = timelineModel(i);
   if (m.epic) {
     const pct = m.total ? Math.round((100 * m.done) / m.total) : 0;
@@ -67,117 +92,115 @@ function Timeline({ i }) {
       <span class="tl-epic-lbl"><${Icon} name="layers" size=${12}/> ${m.done}/${m.total} epics</span>
     </div>`;
   }
-  if (!m.started) return html`<span class="tl-idle">not started${i.byAgent ? " — awaiting your approval" : ""}</span>`;
-  return html`<div class="tl">
+  if (!m.started) return null;
+  return html`<div class=${"flow" + (labels ? "" : " flow--compact")}>
     ${m.steps.map((s, idx) => {
       const loops = loopsFor(i, s.k);
+      const done = s.st === "done";
+      const current = idx === m.current && !done;
+      const blocked = s.st === "attention";
+      const cls = done ? "done" : current ? (blocked ? "blocked" : "current") : blocked ? "blocked" : "pending";
+      const showFace = current && i.role;
       return html`
-        ${idx ? html`<span class=${"tl-seg " + (s.st === "done" || (idx > 0 && m.steps[idx - 1].st === "done") ? "on" : "")}></span>` : null}
-        <span class="tl-cell">
-          ${loops ? html`<span class="tl-loop tip" data-tip=${"Looped back to " + s.label + " " + loops + "\u00d7"}>\u21ba${loops}</span>` : null}
-          <span class=${"tl-nd tl-" + s.st} title=${s.label + " \u2014 " + s.st}>
-            ${s.st === "done" ? html`<${Icon} name="check" size=${10}/>` : s.st === "running" ? html`<${Icon} name="loader" size=${10}/>` : s.st === "attention" ? html`<${Icon} name="alert" size=${10}/>` : html`<span class="tl-num">${idx + 1}</span>`}
+        ${idx ? html`<span class=${"flow__line" + (idx <= m.current ? " on" : "")}></span>` : null}
+        <span class=${"flow__step " + cls} title=${s.label + " — " + s.st}>
+          <span class=${"flow__dot" + (current && (i.active || i.running) ? " pulse" : "") + (showFace ? " flow__dot--face" : "")}>
+            ${done ? html`<${Icon} name="check" size=${10}/>` : showFace ? html`<span class="flow__face"><${Avatar} role=${i.role} size=${labels ? 26 : 20} crop="head"/></span>` : null}
           </span>
+          ${labels ? html`<span class="flow__lbl">${s.label}</span>` : null}
+          ${loops ? html`<span class="flow__loop" title=${loops + " loop" + (loops > 1 ? "s" : "")}>↻${loops}</span>` : null}
         </span>`;
     })}
   </div>`;
 }
+export { WorkflowTimeline };
 
 // The single primary action for a row (mirrors the board Card CTA logic, compacted).
 function rowQuick(i, act) {
   const done = isDone(i);
-  if (i.state === "planned" || i.state === "notPlanned" || (!i.state && !done)) return { a: "start", icon: "play", label: "Start", cls: "play", fn: () => act.start(i.repo, i.number) };
-  if (i.blocked === "awaitingApproval") return { a: "approve", icon: "check", label: "Approve", cls: "", fn: () => act.approve(i.repo, i.number) };
-  if (i.state === "review" && i.review === "changes") return { a: "fix", icon: "wrench", label: "Fix", cls: "fix", fn: () => act.fix(i.repo, i.number) };
-  if (i.state === "review" && i.review === "approved") return { a: "merge", icon: "merge", label: "Merge", cls: "play", fn: () => act.merge(i.repo, i.number) };
-  if (i.blocked === "needsAttention") return { a: "resume", icon: "refresh", label: "Resume", cls: "", fn: () => act.resume(i.repo, i.number) };
-  if (i.active || i.state === "working") return { a: "stop", icon: "stop", label: "Stop", cls: "stop", fn: () => act.stop(i.repo, i.number) };
+  if (i.state === "planned" || i.state === "notPlanned" || (!i.state && !done)) return { a: "start", icon: "play", label: i.byAgent ? "Approve" : "Start", cls: "primary", fn: () => i.byAgent ? act.approve(i.repo, i.number) : act.start(i.repo, i.number) };
+  if (i.blocked === "awaitingApproval") return { a: "approve", icon: "check", label: "Approve", cls: "primary", fn: () => act.approve(i.repo, i.number) };
+  if (i.state === "review" && i.review === "changes") return { a: "fix", icon: "wrench", label: "Fix", cls: "primary", fn: () => act.fix(i.repo, i.number) };
+  if (i.state === "review" && i.review === "approved") return { a: "merge", icon: "merge", label: "Merge", cls: "primary", fn: () => act.merge(i.repo, i.number) };
+  if (i.blocked === "needsAttention") return { a: "resume", icon: "refresh", label: "Resume", cls: "primary", fn: () => act.resume(i.repo, i.number) };
+  if (i.active || i.state === "working") return { a: "stop", icon: "stop", label: "Stop", cls: "danger", fn: () => act.stop(i.repo, i.number) };
   return null;
 }
 
-// Context actions for a row's floating hover menu (replaces the always-visible CTA column).
-function rowActions(i, act, onOpen) {
-  const out = [{ icon: "maximize", label: "Open", fn: () => onOpen(i) }];
+// Inline hover actions shown on the right of a row head.
+function RowActions({ i, act }) {
   const q = rowQuick(i, act);
-  if (q) out.push({ icon: q.icon, label: q.label, cls: q.cls, fn: q.fn, primary: q.a !== "stop", danger: q.a === "stop" });
-  const planned = i.state === "planned" || i.state === "notPlanned";
-  if (planned && i.number > 0) out.push({ icon: "trash", label: "Delete", danger: true, fn: () => { if (window.confirm("Permanently delete #" + i.number + "?")) act.del(i.repo, i.number); } });
-  if (isDone(i)) out.push({ icon: "archive", label: "Archive", fn: () => act.archive(i.repo, i.number) });
-  return out;
-}
-
-// A small floating action menu that pops up at the cursor on row hover.
-function RowActionMenu({ menu, act, onOpen, onEnter, onLeave }) {
-  const acts = rowActions(menu.i, act, onOpen);
-  const w = 42 + acts.length * 34;
-  const left = Math.max(8, Math.min(menu.x + 6, (typeof window !== "undefined" ? window.innerWidth : 1200) - w - 8));
-  const top = Math.max(8, menu.y - 44);
-  return html`<div class="rowmenu" style=${"left:" + left + "px;top:" + top + "px"} onMouseEnter=${onEnter} onMouseLeave=${onLeave} onClick=${(e) => e.stopPropagation()}>
-    ${acts.map((a, n) => html`<button key=${n} class=${"rowmenu-btn tip" + (a.primary ? " primary" : "") + (a.danger ? " danger" : "")} data-tip=${a.label} onClick=${() => a.fn()}><${Icon} name=${a.icon} size=${15}/></button>`)}
+  const busy = q && act.isBusy(q.a, i.repo, i.number);
+  return html`<div class="irow__actions" onClick=${(e) => e.stopPropagation()}>
+    ${q ? html`<button class=${"da-btn da-btn--sm" + (q.cls === "primary" ? " da-btn--primary" : q.cls === "danger" ? " da-btn--danger" : "")} disabled=${busy} onClick=${q.fn}>${busy ? html`<${Spinner} size=${13}/>` : null}${q.label}</button>` : null}
+    ${i.state !== "done" && !isDone(i) ? html`<button class="da-iconbtn da-iconbtn--sm tip" data-tip="Run checks" onClick=${() => act.runChecks(i.repo, i.number, i.title)}><${Icon} name="flask" size=${14}/></button>` : null}
   </div>`;
 }
 
-function Row({ i, multi, onOpen, act, avatarsOn, excerpt, open = false, child = false, expandable = false, expanded = false, onToggle, onHover, onHoverEnd }) {
-  const sf = statusField(i);
-  const q = rowQuick(i, act);
-  const qBusy = q && act.isBusy(q.a, i.repo, i.number);
-  const working = i.active || i.queued || i.running;
-  return html`<tr class=${"prow prow-" + sf.kind + (child ? " prow-child" : "") + (open ? " prow-open" : "")} onClick=${() => onOpen(i)} onMouseEnter=${(e) => onHover && onHover(i, e)} onMouseLeave=${() => onHoverEnd && onHoverEnd()}>
-    <td class=${"pt-issue" + (child ? " pt-issue-child" : "")}>
-      <div class="pt-title-row">
-        ${expandable ? html`<button class=${"pt-exp" + (expanded ? " open" : "")} aria-label=${expanded ? "Collapse sub-issues" : "Expand sub-issues"} onClick=${(e) => { e.stopPropagation(); onToggle && onToggle(); }}><${Icon} name="chevron" size=${14}/></button>` : null}
-        ${avatarsOn && working && i.role ? html`<span class="pt-av tip" data-tip=${i.role + " agent — working"}><${Avatar} role=${i.role} size=${20} crop="head"/></span>` : null}
-        <span class="pt-title" title=${i.title || ""}>${i.title || "#" + i.number}</span>
-        ${i.byAgent ? html`<span class="pt-byagent tip" data-tip="Proposed by an agent — review & start"><${Icon} name="rocket" size=${10}/> agent</span>` : null}
-        ${i.editing && i.editing.length ? html`<span class="pt-lock tip" data-tip=${"Editing now (file lock): " + i.editing.join(", ")}><${Icon} name="lock" size=${10}/> ${i.editing.length}</span>` : null}
+// A single issue card row.
+function IssueRow({ i, multi, onOpen, act, avatarsOn, excerpt, open = false, child = false, expandable = false, expanded = false, onToggle }) {
+  const live = !!(i.active || i.running);
+  const working = live || i.queued;
+  const repoName = (i.repo || "").split("/").pop();
+  const parent = i.epic && i.epic.parent;
+  return html`<div class=${"irow" + (open ? " sel" : "") + (live ? " live" : "") + (child ? " prow-child" : "")} role="button" tabindex="0" onClick=${() => onOpen(i)}>
+    <div class="irow__head">
+      <div class="irow__crumbs">
+        ${expandable ? html`<button class=${"irow__exp" + (expanded ? " open" : "")} aria-label="Toggle sub-issues" onClick=${(e) => { e.stopPropagation(); onToggle && onToggle(); }}><${Icon} name="chevright" size=${13}/></button>` : null}
+        ${multi ? html`<span class="irow__repo"><span class="irow__repo-dot" style=${"background:" + repoColor(i.repo)}></span>${repoName}</span><${Icon} name="chevright" size=${11}/>` : null}
+        ${i.parentNum ? html`<span class="irow__epic"><${Icon} name="layers" size=${11}/>#${i.parentNum}</span><${Icon} name="chevright" size=${11}/>` : null}
+        <span class="irow__num">${i.number > 0 ? "#" + i.number : "…"}</span>
+        ${i.byAgent ? html`<span class="irow__byagent tip" data-tip="Proposed by an agent — review & start"><${Icon} name="rocket" size=${10}/> agent</span>` : null}
+        ${i.editing && i.editing.length ? html`<span class="irow__lock tip" data-tip=${"Editing now: " + i.editing.join(", ")}><${Icon} name="lock" size=${10}/> ${i.editing.length}</span>` : null}
       </div>
-      ${working && excerpt ? html`<div class="pt-activity">${i.role ? html`<span class="pt-act-role">${i.role}</span> ` : null}${excerpt}</div>` : null}
-    </td>
-    <td class="pt-c pt-c-repo" title=${i.repo}><span class="pt-repo-dot" style=${"background:" + repoColor(i.repo)}></span>${i.repo.split("/").pop()}</td>
-    <td class="pt-c pt-c-num">${i.number > 0 ? "#" + i.number : "…"}</td>
-    <td class="pt-c pt-c-pr">${i.pr_number ? html`<a class="pt-pr" href=${i.pr_url || ghUrl(i.repo, i.pr_number)} target="_blank" rel="noopener" onClick=${(e) => e.stopPropagation()}><${Icon} name="pr" size=${11}/> ${i.pr_number}</a>` : html`<span class="pt-dash">—</span>`}</td>
-    <td class="pt-timeline"><${Timeline} i=${i}/></td>
-    <td class="pt-status"><span class=${"pstat pstat-" + sf.kind}><${Icon} name=${sf.icon} size=${12}/> ${sf.label}</span></td>
-    <td class="pt-c pt-c-cost">${(() => {
-      const real = (i.usage && i.usage.costUsd) || 0, est = (i.estCost && i.estCost.usd) || 0;
-      if (!real) return html`<span class="pt-dash">\u2014</span>`;
-      let cls = "ok", hot = false;
-      if (real > 0) { if ((est > 0 && real > est * 3) || real > 3) { cls = "hot"; hot = true; } else if ((est > 0 && real > est * 1.5) || real > 1) { cls = "warn"; hot = true; } }
-      return html`<span class=${"pt-cost pt-cost-" + cls} title=${"Spent $" + real.toFixed(2)}>${hot ? html`<${Icon} name="flame" size=${11}/>` : null}$${real.toFixed(2)}</span>`;
-    })()}</td>
-    <td class="pt-c pt-c-est">${(() => {
-      const est = (i.estCost && i.estCost.usd) || 0;
-      if (!est) return html`<span class="pt-dash">\u2014</span>`;
-      return html`<span class="pt-cost-est-cell" title=${"Estimated ~$" + est.toFixed(2)}>~$${est.toFixed(2)}</span>`;
-    })()}</td>
-    <td class="pt-c pt-c-when" title=${(i.created_at || i.updated_at) ? new Date(i.created_at || i.updated_at).toLocaleString() : ""}>${ago(i.created_at || i.updated_at)}</td>
-  </tr>`;
+      <div class="irow__headr">
+        <${StatusChip} i=${i}/>
+        <span class="irow__time">${ago(i.created_at || i.updated_at)}</span>
+        <${RowActions} i=${i} act=${act}/>
+      </div>
+    </div>
+    <div class="irow__body">
+      ${avatarsOn && i.role && (working || i.state === "review") ? html`<span class="irow__fig"><${Avatar} role=${i.role} size=${44} crop="full"/></span>` : null}
+      <div class="irow__main">
+        <div class="irow__title" title=${i.title || ""}>${i.title || "#" + i.number}</div>
+        ${excerpt ? html`<div class="irow__excerpt">${i.role && working ? html`<span class="irow__act-role">${i.role}</span> ` : null}${excerpt}</div>` : null}
+      </div>
+    </div>
+    ${timelineModel(i).started || i.epic ? html`<div class="irow__flow"><${WorkflowTimeline} i=${i}/></div>` : null}
+    <div class="irow__foot">
+      <div class="irow__cost"><${HeatBar} i=${i}/></div>
+      ${i.pr_number ? html`<a class="irow__pr" href=${i.pr_url || ghUrl(i.repo, i.pr_number)} target="_blank" rel="noopener" onClick=${(e) => e.stopPropagation()}><${Icon} name="pr" size=${11}/> ${i.pr_number}</a>` : null}
+      <span class="irow__elapsed"><${Icon} name="clock" size=${12}/> ${ago(i.created_at || i.updated_at)}</span>
+    </div>
+  </div>`;
 }
 
-// A stable category color per repo (Figma clue: category pills carry a colored dot).
+// A stable category color per repo (breadcrumb dot).
 const REPO_HUES = ["var(--accent)", "var(--green)", "var(--amber)", "var(--purple)", "var(--red)", "#0ea5e9"];
 function repoColor(repo) { let h = 0; for (let n = 0; n < (repo || "").length; n++) h = (h * 31 + repo.charCodeAt(n)) >>> 0; return REPO_HUES[h % REPO_HUES.length]; }
+
 // Order: needs-you first, then running, then queued/planned, then done — most-actionable on top.
 const KIND_ORDER = { attention: 0, ready: 1, running: 2, queued: 3, planned: 4, done: 5 };
-
 const SORTS = [
-  { k: "smart", icon: "alert", tip: "most actionable first" },
-  { k: "updated", icon: "clock", tip: "last updated" },
-  { k: "created", icon: "hash", tip: "created (issue #)" },
+  { k: "smart", label: "Actionable", icon: "alert" },
+  { k: "updated", label: "Recent", icon: "clock" },
+  { k: "created", label: "Newest", icon: "hash" },
 ];
 const TIMES = [["all", "All"], ["24h", "24h"], ["7d", "7d"], ["30d", "30d"]];
-const GROUPS = [["none", "—"], ["repo", "Repo"], ["status", "Status"]];
-const KIND_LABEL = { attention: "Needs you", ready: "Ready to merge", running: "Running", queued: "Queued", planned: "Planned", done: "Done" };
+const GROUPS = [["status", "State"], ["repo", "Repo"], ["none", "None"]];
+const KIND_LABEL = { attention: "Needs you", ready: "Ready to merge", running: "Working", queued: "Queued", planned: "Planned", done: "Done" };
+const KIND_ICON = { attention: "alert", ready: "merge", running: "loader", queued: "clock", planned: "planned", done: "check" };
+
 // Overview stats: data drives the UI — surface "what needs me?" before any row is read.
 export const STAT_DEFS = [
   { k: "needs", label: "Needs you", kinds: ["attention", "ready"], cls: "attention", icon: "alert" },
-  { k: "running", label: "Running", kinds: ["running"], cls: "running", icon: "loader" },
+  { k: "running", label: "Working", kinds: ["running"], cls: "running", icon: "loader" },
   { k: "queued", label: "Queued", kinds: ["queued"], cls: "queued", icon: "clock" },
   { k: "planned", label: "Planned", kinds: ["planned"], cls: "planned", icon: "planned" },
   { k: "done", label: "Done", kinds: ["done"], cls: "done", icon: "check" },
 ];
 
-// At-a-glance status counts + one-click filter. Lives in the top bar (lifted out of the table).
+// At-a-glance status counts + one-click filter. Lives in the view bar.
 export function StatStrip({ counts, statFilter, setStatFilter, spend, compact = false }) {
   const allClear = counts.needs === 0 && (counts.running || counts.queued || counts.planned || counts.done);
   return html`<div class=${"pt-overview" + (compact ? " pt-overview-top" : "")}>
@@ -188,6 +211,7 @@ export function StatStrip({ counts, statFilter, setStatFilter, spend, compact = 
     ${spend && spend.costUsd > 0 ? html`<div class="pt-stat pt-stat-spend"><span class="pt-stat-n">$${spend.costUsd.toFixed(2)}</span><span class="pt-stat-l">today</span></div>` : null}
   </div>`;
 }
+
 function smartCmp(a, b) {
   const ka = KIND_ORDER[statusField(a).kind] ?? 9, kb = KIND_ORDER[statusField(b).kind] ?? 9;
   return ka !== kb ? ka - kb : new Date(b.updated_at || 0) - new Date(a.updated_at || 0);
@@ -196,7 +220,7 @@ function smartCmp(a, b) {
 export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, onAnalyze, auditRepos, act, data, openKey, compact = false, statFilter = null }) {
   const ls = (k, d) => { try { return localStorage.getItem(k) || d; } catch (e) { return d; } };
   const [sort, setSort] = useState(() => ls("ptSort", "smart"));
-  const [group, setGroup] = useState(() => ls("ptGroup", "none"));
+  const [group, setGroup] = useState(() => ls("ptGroup", "status"));
   const [time, setTime] = useState(() => ls("ptTime", "all"));
   const save = (k, v, set) => { set(v); try { localStorage.setItem(k, v); } catch (e) {} };
   const cyc = (arr, cur) => arr[(arr.findIndex((x) => x[0] === cur) + 1) % arr.length][0];
@@ -207,21 +231,13 @@ export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, o
   const nested = nestedChildKeys(issues);
   const liveBy = useMemo(() => new Map(issues.map((i) => [i.repo + "#" + i.number, i])), [issues]);
   const streamByKey = useMemo(() => { const m = new Map(); for (const a of (data && data.activity) || []) m.set(a.repo + "#" + a.number, a.text); return m; }, [data && data.activity]);
-  // Epics unfold their sub-issues by default; track collapsed ones.
   const [collapsed, setCollapsed] = useState(() => new Set());
   const toggle = (key) => setCollapsed((prev) => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
-  // Floating action menu anchored at the cursor on row hover (replaces the always-on CTA column).
-  const [menu, setMenu] = useState(null);
-  const closeT = useRef(null);
-  const onHover = (i, e) => { clearTimeout(closeT.current); setMenu({ i, x: e.clientX, y: e.clientY }); };
-  const onHoverEnd = () => { clearTimeout(closeT.current); closeT.current = setTimeout(() => setMenu(null), 140); };
-  const keepMenu = () => clearTimeout(closeT.current);
 
-  const { sections, needsYou, total, counts } = useMemo(() => {
+  const { sections, needsYou, total } = useMemo(() => {
     let base = issues.filter((i) => !nested.has(i.repo + "#" + i.number) && !i.archived);
     base = filterByTime(base, time === "all" ? "any" : time);
     const cmp = sort === "smart" ? smartCmp : sort === "created" ? (a, b) => (b.number || 0) - (a.number || 0) : (a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0);
-    // Counts over the (time-filtered) set, independent of the active stat filter so you can switch.
     const cnt = {}; STAT_DEFS.forEach((d) => (cnt[d.k] = 0));
     for (const i of base) { const k = statusField(i).kind; for (const d of STAT_DEFS) if (d.kinds.includes(k)) cnt[d.k]++; }
     const need = cnt.needs;
@@ -231,15 +247,15 @@ export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, o
     if (group === "repo") {
       const m = new Map();
       for (const i of base) { let a = m.get(i.repo); if (!a) { a = []; m.set(i.repo, a); } a.push(i); }
-      secs = [...m.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([r, items]) => ({ label: r.split("/").pop(), items: items.slice().sort(cmp) }));
-    } else if (group === "status") {
+      secs = [...m.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([r, items]) => ({ key: r, label: r.split("/").pop(), sub: r.split("/")[0], icon: "pr", items: items.slice().sort(cmp) }));
+    } else if (group === "none") {
+      secs = [{ key: "all", label: null, items: base.slice().sort(cmp) }];
+    } else {
       const m = new Map();
       for (const i of base) { const k = statusField(i).kind; let a = m.get(k); if (!a) { a = []; m.set(k, a); } a.push(i); }
-      secs = Object.keys(KIND_ORDER).filter((k) => m.has(k)).map((k) => ({ label: KIND_LABEL[k] || k, items: m.get(k).slice().sort(cmp) }));
-    } else {
-      secs = [{ label: null, items: base.slice().sort(cmp) }];
+      secs = Object.keys(KIND_ORDER).filter((k) => m.has(k)).map((k) => ({ key: k, label: KIND_LABEL[k] || k, icon: KIND_ICON[k], items: m.get(k).slice().sort(cmp) }));
     }
-    return { sections: secs, needsYou: need, total: base.length, counts: cnt };
+    return { sections: secs, needsYou: need, total: base.length };
   }, [issues, sort, group, time, statFilter]);
 
   const avatarsOn = (data && data.config && data.config.avatars) !== "off";
@@ -248,45 +264,40 @@ export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, o
     const kids = i.epic && i.epic.children ? i.epic.children : null;
     const isEpic = kids && kids.length > 0;
     const open = isEpic && !collapsed.has(key);
-    const out = [html`<${Row} key=${key} i=${i} multi=${multi} onOpen=${onOpen} act=${act} avatarsOn=${avatarsOn} excerpt=${streamByKey.get(key)} open=${openKey === key} expandable=${!!isEpic} expanded=${open} onToggle=${() => toggle(key)} onHover=${onHover} onHoverEnd=${onHoverEnd}/>`];
+    const out = [html`<${IssueRow} key=${key} i=${i} multi=${multi} onOpen=${onOpen} act=${act} avatarsOn=${avatarsOn} excerpt=${streamByKey.get(key)} open=${openKey === key} expandable=${!!isEpic} expanded=${open} onToggle=${() => toggle(key)}/>`];
     if (open) for (const c of kids) {
       const ck = i.repo + "#" + c.child;
-      const ci = liveBy.get(ck) || { repo: i.repo, number: c.child, title: c.title, state: c.closed ? "done" : (c.state || "planned"), updated_at: i.updated_at };
-      out.push(html`<${Row} key=${ck} i=${ci} multi=${multi} onOpen=${onOpen} act=${act} avatarsOn=${avatarsOn} excerpt=${streamByKey.get(ck)} open=${openKey === ck} child=${true} onHover=${onHover} onHoverEnd=${onHoverEnd}/>`);
+      const ci = liveBy.get(ck) || { repo: i.repo, number: c.child, title: c.title, state: c.closed ? "done" : (c.state || "planned"), updated_at: i.updated_at, parentNum: i.number };
+      out.push(html`<${IssueRow} key=${ck} i=${Object.assign({ parentNum: i.number }, ci)} multi=${multi} onOpen=${onOpen} act=${act} avatarsOn=${avatarsOn} excerpt=${streamByKey.get(ck)} open=${openKey === ck} child=${true}/>`);
     }
     return out;
   });
 
-  return html`<div class="ptable-wrap">
-    <div class="ptable-bar">
-      ${needsYou ? html`<span class="pt-needsyou"><${Icon} name="alert" size=${13}/> ${needsYou} need${needsYou > 1 ? "" : "s"} you</span>` : null}
+  return html`<div class="pane">
+    <div class="listbar">
+      <button class="da-btn da-btn--primary da-btn--sm" onClick=${() => onAddIssue(target)}><${Icon} name="plus" size=${15}/> New</button>
+      <span class="listbar__count">${total} issue${total !== 1 ? "s" : ""}</span>
+      ${needsYou ? html`<span class="pt-needsyou"><${Icon} name="alert" size=${12}/> ${needsYou} need${needsYou > 1 ? "" : "s"} you</span>` : null}
       <span style="flex:1"></span>
+      <button class=${"colbtn tip"} data-tip=${target ? "Analyze " + target.split("/").pop() : "Pick a repo first"} disabled=${!target || analyzing} onClick=${() => target && onAnalyze(target)}>${analyzing ? html`<${Spinner} size=${14}/>` : html`<${Icon} name="search" size=${14}/>`}<span class="segx">Audit</span></button>
       <div class="seg">
-        ${SORTS.map((srt) => html`<button key=${srt.k} class=${"segbtn tip" + (sort === srt.k ? " on" : "")} data-tip=${"Sort: " + srt.tip} onClick=${() => save("ptSort", srt.k, setSort)}><${Icon} name=${srt.icon} size=${14}/></button>`)}
+        ${SORTS.map((srt) => html`<button key=${srt.k} class=${"segbtn tip" + (sort === srt.k ? " on" : "")} data-tip=${"Sort: " + srt.label} onClick=${() => save("ptSort", srt.k, setSort)}><${Icon} name=${srt.icon} size=${14}/></button>`)}
       </div>
-      <button class=${"segbtn tip" + (time !== "all" ? " on" : "")} data-tip="Filter by last updated — click to cycle" onClick=${() => save("ptTime", cyc(TIMES, time), setTime)}><${Icon} name="hourglass" size=${14}/> <span class="segx">${(TIMES.find((t) => t[0] === time) || TIMES[0])[1]}</span></button>
       <button class=${"segbtn tip" + (group !== "none" ? " on" : "")} data-tip="Group — click to cycle" onClick=${() => save("ptGroup", cyc(GROUPS, group), setGroup)}><${Icon} name="layers" size=${14}/> <span class="segx">${(GROUPS.find((g) => g[0] === group) || GROUPS[0])[1]}</span></button>
-      <button class="colbtn" disabled=${!target || analyzing} title=${target ? "Analyze " + target.split("/").pop() : "Pick a repo first"} onClick=${() => target && onAnalyze(target)}>${analyzing ? html`<${Spinner} size=${14}/>` : html`<${Icon} name="search" size=${14}/>`} Analyze</button>
-      <button class="colbtn primary" onClick=${() => onAddIssue(target)}><${Icon} name="plus" size=${14}/> New issue</button>
+      <button class=${"segbtn tip" + (time !== "all" ? " on" : "")} data-tip="Filter by last updated" onClick=${() => save("ptTime", cyc(TIMES, time), setTime)}><${Icon} name="hourglass" size=${14}/> <span class="segx">${(TIMES.find((t) => t[0] === time) || TIMES[0])[1]}</span></button>
     </div>
-    ${total ? html`<div class="ptable-scroll"><table class=${"ptable" + (compact ? " ptable-compact" : "")}>
-      <colgroup><col/><col class="cw-repo"/><col class="cw-num"/><col class="cw-pr"/><col class="cw-wf"/><col class="cw-status"/><col class="cw-cost"/><col class="cw-est"/><col class="cw-when"/></colgroup>
-      <thead><tr>
-        <th>Issue</th>
-        <th class=${"pt-c pt-c-repo pt-sortable" + (group === "repo" ? " on" : "")} onClick=${() => save("ptGroup", group === "repo" ? "none" : "repo", setGroup)}><${Icon} name="pr" size=${11}/> Repo</th>
-        <th class=${"pt-c pt-c-num pt-sortable" + (sort === "created" ? " on" : "")} onClick=${() => save("ptSort", "created", setSort)}><${Icon} name="hash" size=${11}/> #</th>
-        <th class="pt-c pt-c-pr"><${Icon} name="merge" size=${11}/> PR</th>
-        <th class="pt-h-tl"><${Icon} name="loader" size=${11}/> Workflow</th>
-        <th class=${"pt-sortable" + (sort === "smart" ? " on" : "")} onClick=${() => save("ptSort", "smart", setSort)}><${Icon} name="alert" size=${11}/> Status</th>
-        <th class="pt-c pt-c-cost"><${Icon} name="flame" size=${11}/> Cost</th>
-        <th class="pt-c pt-c-est"><${Icon} name="chart" size=${11}/> Est</th>
-        <th class=${"pt-c pt-c-when pt-sortable" + (sort === "created" ? " on" : "")} onClick=${() => save("ptSort", "created", setSort)}><${Icon} name="clock" size=${11}/> Created</th>
-      </tr></thead>
-      <tbody>${sections.flatMap((sec) => [
-        sec.label != null ? html`<tr class="pt-group" key=${"g-" + sec.label}><td colspan="9"><span class="pt-group-l">${sec.label}</span> <span class="pt-group-n">${sec.items.length}</span></td></tr>` : null,
-        ...renderRows(sec.items),
-      ])}</tbody>
-    </table></div>` : html`<div class="empty" style="padding:40px;text-align:center">No issues ${time !== "all" ? "in this time range." : "yet — start one with “New issue” or the Chat."}</div>`}
-    ${menu ? html`<${RowActionMenu} menu=${menu} act=${act} onOpen=${onOpen} onEnter=${keepMenu} onLeave=${onHoverEnd}/>` : null}
+    <div class="pane__body">
+      ${total ? html`<div class="pane-list">
+        ${sections.map((sec) => html`<div class="listsec" key=${sec.key}>
+          ${sec.label != null ? html`<div class="listsec__h">${sec.icon ? html`<span class="ic"><${Icon} name=${sec.icon} size=${14}/></span>` : null}${sec.label}${sec.sub ? html`<span class="listsec__sub">${sec.sub}</span>` : null}<span class="n">${sec.items.length}</span></div>` : null}
+          <div class="rows">${renderRows(sec.items)}</div>
+        </div>`)}
+      </div>` : html`<div class="da-empty">
+        <span class="da-empty__icon"><${Icon} name="inbox" size=${22}/></span>
+        <div class="da-empty__title">Nothing here yet</div>
+        <div class="da-empty__desc">${time !== "all" ? "No issues in this time range." : "Open a new issue and pin a teammate to put the agency to work."}</div>
+        <button class="da-btn da-btn--primary" onClick=${() => onAddIssue(target)}>New issue</button>
+      </div>`}
+    </div>
   </div>`;
 }

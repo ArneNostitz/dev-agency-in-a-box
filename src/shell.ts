@@ -332,6 +332,8 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .flow__dot--face{position:relative;width:26px;height:26px;margin-top:-5px;background:transparent;border:none;overflow:visible;padding:0}
 .flow__step.current .flow__dot--face{background:transparent;border-color:transparent}
 .flow__face{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;object-position:center;display:block}
+.flow__face .avi{width:100%!important;height:100%!important}
+.flow__face .avi img{object-fit:contain}
 .flow--compact .flow__dot--face{width:20px;height:20px;margin-top:-4px}
 .tl-idle,.tl-epic-lbl{font-size:12px;color:var(--ink-3)}
 .tl-epic{display:flex;flex-direction:column;gap:4px;width:100%;max-width:200px}
