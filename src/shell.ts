@@ -1062,6 +1062,73 @@ textarea{resize:vertical;min-height:64px}
 .rowmenu-btn.primary:hover{background:var(--accent);color:#fff}
 .rowmenu-btn.danger{color:var(--red)}
 .rowmenu-btn.danger:hover{background:var(--red-weak);color:var(--red)}
+
+/* ── Board card details (design-system aligned) ───────────────── */
+.statusdot{width:18px;height:18px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;color:#fff;flex:0 0 auto}
+.card-hicons{margin-left:auto;display:inline-flex;align-items:center;gap:6px}
+.card-hicon{display:inline-flex;color:var(--ink-3)}
+.card-byagent{display:inline-flex;align-items:center;gap:3px;font-size:10px;color:var(--purple);background:var(--purple-weak);border-radius:var(--radius-pill);padding:1px 7px}
+.card-del{border:none;background:transparent;color:var(--ink-3);cursor:pointer;display:inline-flex;padding:2px;border-radius:5px}
+.card-del:hover{background:var(--red-weak);color:var(--red)}
+.card-m,.card-meta{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--ink-3);flex-wrap:wrap}
+.card-time{font-size:11px;color:var(--ink-3)}
+.card-pr{display:inline-flex;align-items:center;gap:3px;font-family:var(--font-mono);font-size:11px;color:var(--accent)}
+.role{font-size:11px;color:var(--ink-2);text-transform:capitalize;display:inline-flex;align-items:center;gap:4px}
+.cardbtn,.cta{display:inline-flex;align-items:center;justify-content:center;gap:5px;border:1px solid var(--line);background:var(--surface);color:var(--ink-1);border-radius:var(--radius-xs);height:30px;padding:0 11px;font:500 12.5px var(--font-sans);cursor:pointer}
+.cardbtn:hover,.cta:hover{border-color:var(--line-2);background:var(--surface-2)}
+.cardbtn.play,.cta.play{background:var(--accent);border-color:var(--accent);color:#fff}
+.cardbtn.play:hover,.cta.play:hover{background:var(--accent-hover)}
+.cardbtn.stop,.cta.stop{background:var(--surface);border-color:var(--red-weak);color:var(--red)}
+.cardbtn.stop:hover,.cta.stop:hover{background:var(--red-weak);border-color:var(--red)}
+.cardbtn.fix,.cta.fix{background:var(--amber);border-color:var(--amber);color:#fff}
+.cardbtn.busy,.card.busy{opacity:.7;pointer-events:none}
+.planned-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.chev{transition:transform var(--dur-fast) var(--ease);display:inline-flex}
+.chev.open{transform:rotate(90deg)}
+
+/* sub-issue list on epic cards */
+.card-subs{display:flex;flex-direction:column;gap:2px;margin-top:4px;border-top:1px solid var(--line);padding-top:8px}
+.subtoggle{display:inline-flex;align-items:center;gap:5px;border:none;background:transparent;color:var(--ink-2);font:500 12px var(--font-sans);cursor:pointer;padding:2px 0}
+.sublist{display:flex;flex-direction:column;gap:1px}
+.subrow{display:flex;align-items:center;gap:7px;padding:4px 4px;border-radius:var(--radius-xs);cursor:pointer;font-size:12.5px}
+.subrow:hover{background:var(--surface-2)}
+.subdot{width:7px;height:7px;border-radius:50%;flex:0 0 auto}
+.subnum{font-family:var(--font-mono);color:var(--ink-3);font-size:11px}
+.subttl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.substate{font-size:10.5px;color:var(--ink-3)}
+
+/* board column band variant */
+.band{display:flex;flex-direction:column;gap:8px}
+
+/* setup progress bar */
+.setupbar{display:flex;flex-direction:column;gap:4px;margin:8px 0}
+.setupbar-track{height:6px;border-radius:var(--radius-pill);background:var(--surface-3);overflow:hidden}
+.setupbar-fill{height:100%;background:var(--green);border-radius:var(--radius-pill)}
+.setupbar-lbl{font-size:11.5px;color:var(--ink-3)}
+
+
+/* ── Misc: split wrappers, edit rows, conflict/epic detail, orch pstat ── */
+.list-split,.chat-split{flex:1;display:flex;min-height:0;overflow:hidden}
+.segwrap{display:inline-flex;align-items:center;gap:6px}
+.segctl{display:inline-flex;background:var(--surface-2);border-radius:var(--radius-sm);padding:3px;gap:2px}
+.cmt-edit-row{display:flex;align-items:center;gap:6px;margin-top:6px}
+.cmt-edit-ta{width:100%;min-height:64px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--surface);color:var(--ink-1);padding:8px 10px;font:14px/1.5 var(--font-sans);resize:vertical}
+.cmt-edit-ta:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--focus-ring);outline:none}
+.cmt-edit-btn{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);border-radius:var(--radius-xs);height:28px;padding:0 9px;font:500 12.5px var(--font-sans);cursor:pointer}
+.cmt-edit-btn:hover{border-color:var(--line-2);color:var(--ink-1)}
+.conflictbox-b{font-size:13px;color:var(--ink-1)}
+.conflictbox-files{display:flex;flex-direction:column;gap:3px;font-family:var(--font-mono);font-size:12px;color:var(--red)}
+.epiclist{display:flex;flex-direction:column;gap:2px;margin-top:6px}
+.epicalldone{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--green);font-weight:500}
+/* orchestrator inline status pill */
+.pstat{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:500;border-radius:var(--radius-pill);padding:2px 9px;background:var(--surface-2);color:var(--ink-2)}
+.pstat-running,.pstat-working{background:var(--accent-weak);color:var(--accent)}
+.pstat-attention{background:var(--amber-weak);color:var(--amber)}
+.pstat-ready{background:var(--green-weak);color:var(--green)}
+.pstat-done{background:var(--surface-2);color:var(--ink-3)}
+.pstat-planned{background:var(--surface-2);color:var(--ink-2)}
+.pstat-queued{background:var(--surface-2);color:var(--ink-2)}
+
 </style>
 </head>
 <body>
