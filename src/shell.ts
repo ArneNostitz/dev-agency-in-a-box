@@ -362,6 +362,7 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .card-f-r{margin-left:auto;display:flex;align-items:center;gap:8px}
 .bcard__crumbs{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--ink-3)}
 .bcard__crumbs .card-repo{color:var(--ink-2);font-weight:500}
+.wfchip{display:inline-flex;align-items:center;gap:3px;font-size:10px;color:var(--purple);background:var(--purple-weak);border-radius:var(--radius-pill);padding:1px 7px;white-space:nowrap}
 .bcard__actions{position:absolute;right:10px;bottom:10px;display:flex;align-items:center;gap:6px;opacity:0;transform:translateY(2px);pointer-events:none;background:var(--surface);box-shadow:-12px 0 12px 4px var(--surface);transition:opacity var(--dur-fast) var(--ease),transform var(--dur-fast) var(--ease)}
 .bcard:hover .bcard__actions{opacity:1;transform:none;pointer-events:auto}
 @media(max-width:880px){.board-cols,.board-bands{grid-template-columns:1fr 1fr}}

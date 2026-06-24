@@ -578,3 +578,14 @@ export function agentOptions(agentDefs, workflows) {
   const agents = defs.map((d) => ({ value: d.handle || ("@" + d.name), label: d.name, avatar: d.name, avatarSrc: d.avatar || "", hint: d.mode === "chat" ? "chat" : "code", hintCls: d.mode === "chat" ? "b-chat" : "b-code" }));
   return wf.concat(ROLE_PINS).concat(agents);
 }
+// AGENTS ONLY — role pins + defined agents, no workflows. Used by the reply composer (chat = talk to
+// a teammate; starting a workflow is a separate explicit action in the detail toolbar).
+export function agentOnlyOptions(agentDefs) {
+  const defs = agentDefs || [];
+  const agents = defs.map((d) => ({ value: d.handle || ("@" + d.name), label: d.name, avatar: d.name, avatarSrc: d.avatar || "", hint: d.mode === "chat" ? "chat" : "code", hintCls: d.mode === "chat" ? "b-chat" : "b-code" }));
+  return ROLE_PINS.concat(agents);
+}
+// Just the workflows, for the per-issue workflow picker + the toolbar "Run workflow" menu.
+export function workflowOptions(workflows) {
+  return (workflows || []).filter((w) => w.trigger || w.id).map((w) => ({ value: w.id, trigger: w.trigger || "", label: w.name, avatar: WF_AVATAR[w.id] || "developer", hint: "workflow", hintCls: "b-wf" }));
+}

@@ -1,6 +1,6 @@
 // Dev Agency dashboard — detail module (split from app.js; Preact + htm, no build step).
 import { html, useState, useEffect, useRef } from "/web/vendor/standalone.mjs";
-import { Avatar, Icon, Modal, ProviderLogo, Select, Sheet, Spinner, agentOptions, ago, statusChip, api, commentBadge, defaultModelLogo, fmtTok, getJSON, getSetupProgress, ghUrl, isDone, md, MarkdownArea, readAttach, roleFromComment, shortModel, stripBadge, toast, usageTitle } from "./core.js";
+import { Avatar, Icon, Modal, ProviderLogo, Select, Sheet, Spinner, agentOptions, agentOnlyOptions, workflowOptions, ago, statusChip, api, commentBadge, defaultModelLogo, fmtTok, getJSON, getSetupProgress, ghUrl, isDone, md, MarkdownArea, readAttach, roleFromComment, shortModel, stripBadge, toast, usageTitle } from "./core.js";
 
 
 // ---------- Detail ----------
@@ -20,10 +20,19 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
   );
   const providers = data?.providers || [];
   const modelOpts = providers.flatMap((p) => (p.models || []).map((m) => ({ value: p.id + "/" + m, label: p.name + " · " + m, short: m, provider: p.name })));
+  // Per-issue workflow pin (persisted via /issue-workflow; honored on resume). Empty = auto-resolve.
+  const wfOpts = workflowOptions(data && data.workflows);
+  const [issueWf, setIssueWf] = useState(issue.workflowId || "");
+  useEffect(() => { setIssueWf(issue.workflowId || ""); }, [issue.workflowId]);
+  const wfSelOpts = [{ value: "", label: "Auto (resolve from text)", icon: "sparkles" }].concat(wfOpts.map((w) => ({ value: w.value, label: w.label, avatar: w.avatar, hint: "workflow", hintCls: "b-wf" })));
+  const pinWorkflow = (id) => { setIssueWf(id); issue.workflowId = id || null; api("/issue-workflow", { repo, number, workflowId: id || "" }).catch((err) => toast("Couldn't set workflow: " + ((err && err.message) || ""), "error")); };
+  // Run a workflow now: pin it, then start (planned) or resume (existing branch).
+  const runWorkflow = (id) => { pinWorkflow(id); const planned = issue.state === "planned" || issue.state === "notPlanned" || !issue.state; (planned ? act.start(repo, number) : act.resume(repo, number)); setRunWfOpen(false); };
+  const [runWfOpen, setRunWfOpen] = useState(false);
   const defModelLogo = defaultModelLogo(data);
   const modelSelOpts = [{ value: "", label: "Default model", logo: defModelLogo }].concat(modelOpts.map((o) => ({ value: o.value, label: o.short, logo: o.provider, hint: o.provider })));
   const modelTrigger = (cur) => html`<span class="tip" data-tip=${cur ? cur.label : "Default model"} style="display:inline-flex"><${ProviderLogo} name=${cur && cur.logo ? cur.logo : defModelLogo} size=${16}/></span>`;
-  const agentSelOpts = [{ value: "", label: "Just comment", icon: "messages" }].concat(agentOptions(data && data.agentDefs, data && data.workflows));
+  const agentSelOpts = [{ value: "", label: "Just comment", icon: "messages" }].concat(agentOnlyOptions(data && data.agentDefs));
   const [pendingComments, setPendingComments] = useState([]); // optimistic skeleton comments
   const [chatAtBottom, setChatAtBottom] = useState(true);
   const [chatAtTop, setChatAtTop] = useState(true);
@@ -360,6 +369,16 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
       ${tb}
       ${tbLeft}
       <span style="flex:1"></span>
+      ${wfOpts.length ? html`<span class="dropwrap">
+        <button class="tbtn tip" data-tip="Run a workflow on this issue" onClick=${() => setRunWfOpen((o) => !o)}><${Icon} name="play" size=${15}/></button>
+        ${runWfOpen ? html`<div class="dropscrim" onClick=${() => setRunWfOpen(false)}></div><div class="dropmenu menu">
+          <div class="dropmenu-h">Run workflow</div>
+          ${wfOpts.map((w) => html`<button key=${w.value} class="dropmenu-item" onClick=${() => runWorkflow(w.value)}><${Avatar} role=${w.avatar} crop="head" size=${16}/><span>${w.label}</span>${issueWf === w.value ? html`<${Icon} name="check" size=${14} cls="dropmenu-sub"/>` : null}</button>`)}
+          <div class="menu-sep"></div>
+          <div class="dropmenu-foot">Pins this workflow — it sticks across runs &amp; resumes.</div>
+        </div>` : null}
+      </span>` : null}
+      ${wfOpts.length ? html`<${Select} value=${issueWf} options=${wfSelOpts} onChange=${pinWorkflow} menuAlign="right" placeholder="Workflow"/>` : null}
       ${modelOpts.length ? html`<${Select} value=${modelOverride} options=${modelSelOpts} onChange=${updateModelOverride} menuAlign="right" btnClass="iconbtn" trigger=${modelTrigger}/>` : null}
       ${tbRight}
       ${moreItems.length ? html`<span class="dropwrap">
