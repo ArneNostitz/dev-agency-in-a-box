@@ -732,12 +732,15 @@ textarea{resize:vertical;min-height:64px}
   .band-cols{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
   .col{margin:0}
   .cards{max-height:calc(100dvh - 200px);overflow-y:auto;padding-right:2px}
-  .detail{left:0;right:0;width:100vw;box-shadow:none}
-  .dpanes{flex-direction:column}
-  .dpane{padding:12px 14px}
-  .dpane.side{flex:1;max-width:none;border-left:none;border-top:1px solid var(--line)}
   .sheet.bottom{left:50%;top:50%;right:auto;bottom:auto;width:min(620px,92vw);max-height:88dvh;border-radius:16px;border:1px solid var(--line);transform:translate(-50%,-50%) scale(.97);opacity:0;pointer-events:none;transition:opacity .18s,transform .18s ease}
   .sheet.bottom.on{transform:translate(-50%,-50%) scale(1);opacity:1;pointer-events:auto}
+}
+@media(max-width:879px){
+  .detail{left:0;right:0;width:100vw;box-shadow:none}
+  .dpanes{flex-direction:column;overflow-y:auto}
+  .dpane{padding:12px 14px;overflow:visible}
+  .dpane.side{flex:1;max-width:none;border-left:none;border-top:1px solid var(--line)}
+  .board-cols,.board-bands,.board.group-repo{grid-template-columns:1fr 1fr}
 }
 .norepo{padding:48px 20px;display:flex;flex-direction:column;align-items:center;text-align:center}
 .searchrow{display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:10px;padding:0 8px;margin:6px 0}
