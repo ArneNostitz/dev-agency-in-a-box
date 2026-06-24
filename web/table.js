@@ -3,7 +3,7 @@
 // a canonical status chip, the agent's illustrated head, a one-line excerpt, a cost HEAT bar, and a
 // WORKFLOW TIMELINE that reveals on hover. Sort / group / time-filter + a hover action menu are kept.
 // Reads the same /data payload as the board; exports the same surface app.js already imports.
-import { html, useState, useMemo, useRef } from "/web/vendor/standalone.mjs";
+import { html, useState, useMemo, useRef, useEffect } from "/web/vendor/standalone.mjs";
 import { Avatar, Icon, Spinner, ago, classify, isDone, statusChip, filterByTime, ghUrl } from "./core.js";
 import { nestedChildKeys } from "./board.js";
 
@@ -181,13 +181,25 @@ function repoColor(repo) { let h = 0; for (let n = 0; n < (repo || "").length; n
 
 // Order: needs-you first, then running, then queued/planned, then done — most-actionable on top.
 const KIND_ORDER = { attention: 0, ready: 1, running: 2, queued: 3, planned: 4, done: 5 };
-const SORTS = [
-  { k: "smart", label: "Actionable", icon: "alert" },
-  { k: "updated", label: "Recent", icon: "clock" },
-  { k: "created", label: "Newest", icon: "hash" },
+const SORT_OPTS = [
+  { v: "smart", label: "Most actionable", short: "Actionable", icon: "alert" },
+  { v: "updated", label: "Recently updated", short: "Recent", icon: "clock" },
+  { v: "created", label: "Newest first", short: "Newest", icon: "hash" },
 ];
-const TIMES = [["all", "All"], ["24h", "24h"], ["7d", "7d"], ["30d", "30d"]];
-const GROUPS = [["status", "State"], ["repo", "Repo"], ["none", "None"]];
+const TIME_OPTS = [
+  { v: "all", label: "Any time", short: "All", icon: "hourglass" },
+  { v: "24h", label: "Last 24 hours", short: "24h", icon: "hourglass" },
+  { v: "7d", label: "Last 7 days", short: "7d", icon: "hourglass" },
+  { v: "30d", label: "Last 30 days", short: "30d", icon: "hourglass" },
+];
+const GROUP_OPTS = [
+  { v: "status", label: "By state", short: "State", icon: "layers" },
+  { v: "repo", label: "By repository", short: "Repo", icon: "pr" },
+  { v: "none", label: "No grouping", short: "None", icon: "list" },
+];
+// legacy aliases used by the cyc() helper / defaults
+const GROUPS = GROUP_OPTS.map((g) => [g.v, g.short]);
+const TIMES = TIME_OPTS.map((g) => [g.v, g.short]);
 const KIND_LABEL = { attention: "Needs you", ready: "Ready to merge", running: "Working", queued: "Queued", planned: "Planned", done: "Done" };
 const KIND_ICON = { attention: "alert", ready: "merge", running: "loader", queued: "clock", planned: "planned", done: "check" };
 
@@ -208,7 +220,6 @@ export function StatStrip({ counts, statFilter, setStatFilter, spend, compact = 
       <span class="pt-stat-n">${d.k === "needs" && counts.needs === 0 && allClear ? html`<${Icon} name="check" size=${compact ? 15 : 18}/>` : counts[d.k]}</span>
       <span class="pt-stat-l"><${Icon} name=${d.icon} size=${11}/> ${d.k === "needs" && counts.needs === 0 && allClear ? "All clear" : d.label}</span>
     </button>`)}
-    ${spend && spend.costUsd > 0 ? html`<div class="pt-stat pt-stat-spend"><span class="pt-stat-n">$${spend.costUsd.toFixed(2)}</span><span class="pt-stat-l">today</span></div>` : null}
   </div>`;
 }
 
@@ -217,7 +228,39 @@ function smartCmp(a, b) {
   return ka !== kb ? ka - kb : new Date(b.updated_at || 0) - new Date(a.updated_at || 0);
 }
 
-export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, onAnalyze, auditRepos, act, data, openKey, compact = false, statFilter = null }) {
+// A compact icon-button that opens a dropdown to pick one option (replaces cycle-on-click).
+function MenuBtn({ icon, label, value, options, onPick, align = "right", showLabel = false, active = false }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [open]);
+  const cur = options.find((o) => o.v === value);
+  return html`<span class="menuwrap" ref=${ref}>
+    <button class=${"segbtn tip" + ((active || (value && value !== options[0].v)) ? " on" : "")} data-tip=${label} onClick=${() => setOpen((o) => !o)}>
+      <${Icon} name=${cur && cur.icon ? cur.icon : icon} size=${14}/>${showLabel && cur ? html` <span class="segx">${cur.short || cur.label}</span>` : null}
+    </button>
+    ${open ? html`<div class=${"menu" + (align === "left" ? " menu--left" : "")}>
+      <div class="menu__h">${label}</div>
+      ${options.map((o) => html`<button key=${o.v} class=${"menu__item" + (o.v === value ? " on" : "")} onClick=${() => { onPick(o.v); setOpen(false); }}>${o.icon ? html`<${Icon} name=${o.icon} size=${14}/>` : null}<span>${o.label}</span>${o.v === value ? html`<${Icon} name="check" size=${14} cls="menu__ck"/>` : null}</button>`)}
+    </div>` : null}
+  </span>`;
+}
+
+// Status filter options (folds in the removed stat-strip click-to-filter).
+const STATUS_FILTER_OPTS = [
+  { v: "", label: "All statuses", icon: "layers" },
+  { v: "needs", label: "Needs you", icon: "alert" },
+  { v: "running", label: "Working", icon: "loader" },
+  { v: "queued", label: "Queued", icon: "clock" },
+  { v: "planned", label: "Planned", icon: "planned" },
+  { v: "done", label: "Done", icon: "check" },
+];
+
+export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, onAnalyze, auditRepos, act, data, openKey, compact = false, statFilter = null, setStatFilter = () => {} }) {
   const ls = (k, d) => { try { return localStorage.getItem(k) || d; } catch (e) { return d; } };
   const [sort, setSort] = useState(() => ls("ptSort", "smart"));
   const [group, setGroup] = useState(() => ls("ptGroup", "status"));
@@ -234,7 +277,7 @@ export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, o
   const [collapsed, setCollapsed] = useState(() => new Set());
   const toggle = (key) => setCollapsed((prev) => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
 
-  const { sections, needsYou, total } = useMemo(() => {
+  const { sections, needsYou, total, counts } = useMemo(() => {
     let base = issues.filter((i) => !nested.has(i.repo + "#" + i.number) && !i.archived);
     base = filterByTime(base, time === "all" ? "any" : time);
     const cmp = sort === "smart" ? smartCmp : sort === "created" ? (a, b) => (b.number || 0) - (a.number || 0) : (a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0);
@@ -255,7 +298,7 @@ export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, o
       for (const i of base) { const k = statusField(i).kind; let a = m.get(k); if (!a) { a = []; m.set(k, a); } a.push(i); }
       secs = Object.keys(KIND_ORDER).filter((k) => m.has(k)).map((k) => ({ key: k, label: KIND_LABEL[k] || k, icon: KIND_ICON[k], items: m.get(k).slice().sort(cmp) }));
     }
-    return { sections: secs, needsYou: need, total: base.length };
+    return { sections: secs, needsYou: need, total: base.length, counts: cnt };
   }, [issues, sort, group, time, statFilter]);
 
   const avatarsOn = (data && data.config && data.config.avatars) !== "off";
@@ -276,15 +319,11 @@ export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, o
   return html`<div class="pane">
     <div class="listbar">
       <button class="da-btn da-btn--primary da-btn--sm" onClick=${() => onAddIssue(target)}><${Icon} name="plus" size=${15}/> New</button>
-      <span class="listbar__count">${total} issue${total !== 1 ? "s" : ""}</span>
-      ${needsYou ? html`<span class="pt-needsyou"><${Icon} name="alert" size=${12}/> ${needsYou} need${needsYou > 1 ? "" : "s"} you</span>` : null}
       <span style="flex:1"></span>
-      <button class=${"colbtn tip"} data-tip=${target ? "Analyze " + target.split("/").pop() : "Pick a repo first"} disabled=${!target || analyzing} onClick=${() => target && onAnalyze(target)}>${analyzing ? html`<${Spinner} size=${14}/>` : html`<${Icon} name="search" size=${14}/>`}<span class="segx">Audit</span></button>
-      <div class="seg">
-        ${SORTS.map((srt) => html`<button key=${srt.k} class=${"segbtn tip" + (sort === srt.k ? " on" : "")} data-tip=${"Sort: " + srt.label} onClick=${() => save("ptSort", srt.k, setSort)}><${Icon} name=${srt.icon} size=${14}/></button>`)}
-      </div>
-      <button class=${"segbtn tip" + (group !== "none" ? " on" : "")} data-tip="Group — click to cycle" onClick=${() => save("ptGroup", cyc(GROUPS, group), setGroup)}><${Icon} name="layers" size=${14}/> <span class="segx">${(GROUPS.find((g) => g[0] === group) || GROUPS[0])[1]}</span></button>
-      <button class=${"segbtn tip" + (time !== "all" ? " on" : "")} data-tip="Filter by last updated" onClick=${() => save("ptTime", cyc(TIMES, time), setTime)}><${Icon} name="hourglass" size=${14}/> <span class="segx">${(TIMES.find((t) => t[0] === time) || TIMES[0])[1]}</span></button>
+      <${MenuBtn} icon="alert" label="Filter by status" value=${statFilter || ""} options=${STATUS_FILTER_OPTS} onPick=${(v) => setStatFilter(v || null)} active=${!!statFilter}/>
+      <${MenuBtn} icon="sort" label="Sort" value=${sort} options=${SORT_OPTS} onPick=${(v) => save("ptSort", v, setSort)}/>
+      <${MenuBtn} icon="layers" label="Group" value=${group} options=${GROUP_OPTS} onPick=${(v) => save("ptGroup", v, setGroup)}/>
+      <${MenuBtn} icon="hourglass" label="Time range" value=${time} options=${TIME_OPTS} onPick=${(v) => save("ptTime", v, setTime)}/>
     </div>
     <div class="pane__body">
       ${total ? html`<div class="pane-list">

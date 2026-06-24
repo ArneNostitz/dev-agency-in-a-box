@@ -52,9 +52,10 @@ function loadPersona(): string {
   return "You are the repo Orchestrator: converse with the user, ground answers in the repo, and propose concrete work when they're ready.";
 }
 
+const AGENCY = "*";
 function repoContext(repo: string): string {
-  const all = recentIssues(160).filter((i) => i.repo === repo);
-  if (!all.length) return "No issues tracked for this repo yet.";
+  const all = repo === AGENCY ? recentIssues(200) : recentIssues(160).filter((i) => i.repo === repo);
+  if (!all.length) return repo === AGENCY ? "No issues tracked across any repo yet." : "No issues tracked for this repo yet.";
   const recent = all.slice(0, 25).map((i) => {
     const f = filesFor(repo, i.number);
     return `#${i.number} [${i.state}${i.blocked ? "/" + i.blocked : ""}] ${i.title}${f.length ? ` — files: ${f.slice(0, 8).join(", ")}` : ""}`;
@@ -109,7 +110,9 @@ export async function runOrchestratorChat(repo: string, userText: string): Promi
   const rc = recallWiring(repo);
   const systemPrompt =
     `${loadPersona()}\n\n` +
-    `You are the Orchestrator for the repository **${repo}**.\n\n` +
+    (repo === "*"
+      ? `You are the **agency-wide Orchestrator** spanning ALL repositories. Reason across repos; when proposing work, name the target repo.\n\n`
+      : `You are the Orchestrator for the repository **${repo}**.\n\n`) +
     `## Live repo state (issues, what's in flight, epics, file ownership)\n${repoContext(repo)}\n\n` +
     `When you propose work, route it to files NOT already owned by open issues. If an idea must touch a file another issue owns, say so and propose to SEQUENCE it after that issue (so the second builds on the first's change) rather than running in parallel — two agents must never edit the same file at once.\n\n${RECALL_PROMPT}`;
 

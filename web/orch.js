@@ -61,7 +61,9 @@ function Bubble({ m, repo, reload, onOpenIssue }) {
 }
 
 export function Orchestrator({ repos, repoFilter, setRepoFilter, reload, onOpenIssue, issues = [], onAnalyze, auditRepos = [] }) {
-  const repo = repoFilter || (repos && repos[0]) || null;
+  const repo = repoFilter || "*"; // "*" = agency-wide chat across all repos
+  const isAgency = repo === "*";
+  const repoLabel = isAgency ? "all repositories" : repo.split("/").pop();
   const [thread, setThread] = useState([]);
   const [draft, setDraft] = useState("");
   const [busy, setBusy] = useState(false);
@@ -96,15 +98,15 @@ export function Orchestrator({ repos, repoFilter, setRepoFilter, reload, onOpenI
 
   // Live run-state for this repo — so the chat reflects where things are (a handoff's issues, once
   // started, and anything needing you), refreshed by the dashboard poll.
-  const live = (issues || []).filter((i) => i.repo === repo && (i.active || i.running || i.queued || i.state === "working" || i.blocked));
+  const live = (issues || []).filter((i) => (isAgency || i.repo === repo) && (i.active || i.running || i.queued || i.state === "working" || i.blocked));
 
-  if (!repo) return html`<div class="empty" style="padding:40px;text-align:center">Add a repo to start a conversation.</div>`;
+  if (!repos || !repos.length) return html`<div class="empty" style="padding:40px;text-align:center">Add a repo to start a conversation.</div>`;
 
   return html`<div class="orch">
     <div class="orch-head">
-      <div class="orch-title"><${Icon} name="sparkles" size=${16}/> Orchestrator <span class="orch-repo">${repo.split("/").pop()}</span></div>
+      <div class="orch-title"><${Icon} name="sparkles" size=${16}/> Orchestrator <span class="orch-repo">${repoLabel}</span></div>
       <span style="flex:1"></span>
-      ${onAnalyze ? html`<button class="colbtn tip" data-tip=${"Analyze " + repo.split("/").pop() + "'s codebase health — proposes refactor issues"} disabled=${auditRepos.includes(repo)} onClick=${() => onAnalyze(repo)}>${auditRepos.includes(repo) ? html`<${Spinner} size=${14}/>` : html`<${Icon} name="search" size=${14}/>`} <span class="segx">Analyze</span></button>` : null}
+      ${onAnalyze && !isAgency ? html`<button class="colbtn tip" data-tip=${"Analyze " + repoLabel + "'s codebase health — proposes refactor issues"} disabled=${auditRepos.includes(repo)} onClick=${() => onAnalyze(repo)}>${auditRepos.includes(repo) ? html`<${Spinner} size=${14}/>` : html`<${Icon} name="search" size=${14}/>`} <span class="segx">Analyze</span></button>` : null}
       <button class="iconbtn ghost" data-tip="New conversation" aria-label="New conversation" onClick=${clear}><${Icon} name="trash" size=${16}/></button>
     </div>
     ${live.length ? html`<div class="orch-live">
@@ -119,13 +121,13 @@ export function Orchestrator({ repos, repoFilter, setRepoFilter, reload, onOpenI
         : thread.length ? thread.map((m) => html`<${Bubble} key=${m.id} m=${m} repo=${repo} reload=${reload} onOpenIssue=${onOpenIssue}/>`)
         : html`<div class="orch-empty">
             <div class="obki"><${Icon} name="sparkles" size=${26}/></div>
-            <div class="obh">What can I help with in ${repo.split('/').pop()}?</div>
+            <div class="obh">What can I help with in ${repoLabel}?</div>
             <div class="obsub">Describe an idea, ask what's feasible, or sketch a feature. When it's ready, I'll propose scoped issues you can create with one click — or just say “quick fix: …” for a one-liner.</div>
           </div>`}
       ${busy ? html`<div class="obub obub-orch"><span class="obub-av"><${Avatar} role="auditor" size=${26} crop="head"/></span><div class="obub-body"><div class="obub-txt obub-think"><${Spinner} size=${13}/> thinking…</div></div></div>` : null}
     </div>
     <div class="orch-compose">
-      <textarea ref=${taRef} placeholder=${"Message the " + repo.split("/").pop() + " orchestrator…  (⌘/Ctrl+Enter to send)"} value=${draft} onInput=${(e) => { setDraft(e.target.value); e.target.style.height = "auto"; e.target.style.height = Math.min(160, e.target.scrollHeight) + "px"; }} onKeyDown=${onKey} rows=${1}></textarea>
+      <textarea ref=${taRef} placeholder=${"Message the " + repoLabel + " orchestrator…  (⌘/Ctrl+Enter to send)"} value=${draft} onInput=${(e) => { setDraft(e.target.value); e.target.style.height = "auto"; e.target.style.height = Math.min(160, e.target.scrollHeight) + "px"; }} onKeyDown=${onKey} rows=${1}></textarea>
       <button class="btn primary orch-send" disabled=${busy || !draft.trim()} onClick=${send}>${busy ? html`<${Spinner} size=${15}/>` : html`<${Icon} name="send" size=${15}/>`}</button>
     </div>
   </div>`;
