@@ -1,34 +1,14 @@
 // Dev Agency dashboard — app module (split from app.js; Preact + htm, no build step).
 import { html, render, useState, useEffect, useRef } from "/web/vendor/standalone.mjs";
-import { Icon, Toasts, api, getJSON, md, setToastFn, toast, useIsDesktop } from "./core.js";
-import { Board, TabBar, nestedChildKeys } from "./board.js";
+import { Toasts, api, getJSON, md, setToastFn, toast, useIsDesktop } from "./core.js";
+import { Board, TabBar } from "./board.js";
 import { Composer, Detail } from "./detail.js";
 import { GithubTokensModal, ModelsModal, Settings } from "./settings.js";
 import { AddRepo, Onboarding } from "./onboarding.js";
 import { SecretBanner, StatusLine, TopBar } from "./topbar.js";
 import { Usage } from "./usage.js";
 import { AgentEditor, SkillEditor } from "./agents.js";
-import { WorkflowBuilder } from "./builder.js";
-import { ProgressTable, StatStrip, STAT_DEFS, statusField } from "./table.js";
-import { Orchestrator } from "./orch.js";
 
-
-// ---------- offline queue ----------
-// Persists pending issues + comments in localStorage so they survive a page refresh.
-const OQ_KEY = "dab_offline_q";
-function oqLoad() { try { return JSON.parse(localStorage.getItem(OQ_KEY) || "[]"); } catch (e) { return []; } }
-function oqSave(q) { try { localStorage.setItem(OQ_KEY, JSON.stringify(q)); } catch (e) {} }
-
-// Track browser online/offline state reactively via the standard events.
-function useOnline() {
-  const [on, setOn] = useState(() => typeof navigator !== "undefined" ? navigator.onLine : true);
-  useEffect(() => {
-    const go = () => setOn(true), goff = () => setOn(false);
-    window.addEventListener("online", go); window.addEventListener("offline", goff);
-    return () => { window.removeEventListener("online", go); window.removeEventListener("offline", goff); };
-  }, []);
-  return on;
-}
 
 // ---------- App ----------
 function App() {
@@ -36,12 +16,10 @@ function App() {
   const [data, setData] = useState({ issues: [], repos: [], active: [], activity: [], session: {}, config: {}, auto: {}, autoRepos: {} });
   const [repoFilter, setRepoFilter] = useState(null);
   const [tab, setTab] = useState("planned");
-  const [view, setView] = useState(() => { try { return localStorage.getItem("view") || "list"; } catch (e) { return "list"; } });
-  const setViewP = (v) => { setView(v); try { localStorage.setItem("view", v); } catch (e) {} };
-  const [statFilter, setStatFilter] = useState(null);
+  const [sort, setSort] = useState(() => { try { return JSON.parse(localStorage.getItem("boardSort")) || { key: "time", dir: "desc" }; } catch (e) { return { key: "time", dir: "desc" }; } });
+  useEffect(() => { try { localStorage.setItem("boardSort", JSON.stringify(sort)); } catch (e) {} }, [sort]);
   const [openKey, setOpenKey] = useState(null); // "repo#number"
   const [sheet, setSheet] = useState(null); // "composer" | "settings"
-  const [tip, setTip] = useState(null); // global fixed tooltip {text,x,y}
   const [composerRepo, setComposerRepo] = useState(null);
   const [theme, setTheme] = useState(document.documentElement.getAttribute("data-theme") || "light");
   const [toasts, setToasts] = useState([]);
@@ -53,10 +31,6 @@ function App() {
   const openIssueRef = useRef(null); // last-known open issue, so polls don't flicker the detail closed
   const liveRef = useRef([]); // SSE-appended activity since last poll
   const [, forceTick] = useState(0);
-  const isOnline = useOnline();
-  const [offlineQ, setOfflineQ] = useState(oqLoad);
-  const [syncing, setSyncing] = useState(false);
-  const flushingRef = useRef(false);
 
   useEffect(() => {
     setToastFn((t, kind) => {
@@ -66,30 +40,18 @@ function App() {
     });
   }, []);
 
-  // load(true) = lightweight poll (?lite=1, no heavy static config) merged onto the retained copy;
-  // load(false) = full payload (initial load + any user action), which carries config + replaces.
-  function load(lite) {
-    getJSON(lite ? "/data?lite=1" : "/data").then((d) => {
+  function load() {
+    getJSON("/data").then((d) => {
       liveRef.current = [];
       // prune stale optimistic overrides (server has caught up after ~10s)
       const ov = overridesRef.current, now = Date.now();
       Object.keys(ov).forEach((k) => { if (now - ov[k].t > 10000) delete ov[k]; });
-      setData((prev) => (lite ? { ...prev, ...d } : d));
+      setData(d);
       // drop optimistic pendings that now exist on the server
       setPending((ps) => ps.filter((p) => !(d.issues || []).some((i) => i.repo === p.repo && (i.number === p.number || (i.title || "") === p.title))));
     }).catch(() => {});
   }
-  // Poll /data every 5s, but NEVER while the tab is hidden (a backgrounded tab used to hammer the
-  // server + re-render forever). On becoming visible again, refresh immediately. SSE (/events) still
-  // streams live deltas, so a hidden tab loses nothing it can't catch up on instantly.
-  useEffect(() => {
-    const tick = () => { if (typeof document === "undefined" || !document.hidden) load(true); };
-    load(false);
-    const t = setInterval(tick, 5000);
-    const onVis = () => { if (!document.hidden) load(false); };
-    document.addEventListener("visibilitychange", onVis);
-    return () => { clearInterval(t); document.removeEventListener("visibilitychange", onVis); };
-  }, []);
+  useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, []);
   useEffect(() => {
     let es; try { es = new EventSource("/events"); es.onmessage = (ev) => { try { const a = JSON.parse(ev.data); liveRef.current = liveRef.current.concat(a).slice(-200);
       // Surface run failures the user would otherwise only see on GitHub: an agent error is pushed
@@ -99,60 +61,17 @@ function App() {
     return () => { try { es && es.close(); } catch (e) {} };
   }, []);
 
-  // Push an item onto the offline queue (issues or comments).
-  function oqPush(item) {
-    const q = oqLoad().concat(Object.assign({}, item, { _qid: Date.now() + Math.random() }));
-    oqSave(q); setOfflineQ(q);
-  }
-
-  // Flush the offline queue as soon as we (re)connect. Processes items in order; stops on first failure.
-  useEffect(() => {
-    if (!isOnline || flushingRef.current) return;
-    const q = oqLoad();
-    if (!q.length) return;
-    flushingRef.current = true;
-    setSyncing(true);
-    (async () => {
-      for (const item of q) {
-        try {
-          if (item.type === "issue") {
-            const d = await api("/new-issue", { repo: item.repo, role: item.role, title: item.title, body: item.body || "", start: !!item.start, ...(item.model ? { model: item.model } : {}) });
-            if (d && d.number && item.tmpNum) setPending((ps) => ps.map((p) => p.number === item.tmpNum ? Object.assign({}, p, { number: d.number, _offline: false }) : p));
-          } else if (item.type === "comment") {
-            await api("/comment", { repo: item.repo, number: item.number, body: item.body, ...(item.model ? { model: item.model } : {}) });
-          }
-          const remaining = oqLoad().filter((x) => x._qid !== item._qid);
-          oqSave(remaining); setOfflineQ(remaining);
-        } catch (e) { break; }
-      }
-    })().finally(() => { flushingRef.current = false; setSyncing(false); setTimeout(load, 600); });
-  }, [isOnline]);
-
-  function setThemeP(t) { setTheme(t); try { localStorage.setItem("theme", t); } catch (e) {} document.documentElement.setAttribute("data-theme", t); const m = document.getElementById("metatheme"); if (m) m.setAttribute("content", t === "dark" ? "#0e1014" : "#f5f6f8"); }
+  function setThemeP(t) { setTheme(t); try { localStorage.setItem("theme", t); } catch (e) {} document.documentElement.setAttribute("data-theme", t); const m = document.getElementById("metatheme"); if (m) m.setAttribute("content", t === "dark" ? "#0d0f12" : "#f4f5f7"); }
 
   // merge server issues with optimistic overrides + pendings
   const repos = data.repos || [];
   const ov = overridesRef.current;
   let issues = (data.issues || []).map((i) => { const o = ov[i.repo + "#" + i.number]; return o ? Object.assign({}, i, o.patch) : i; });
   issues = issues.concat(pending.filter((p) => !issues.some((i) => i.repo === p.repo && i.number === p.number)));
-  // Wire active/queued per issue: active = agent genuinely running now; queued = in-progress state but no live run.
-  const activeSet = new Set((data.active || []).map((a) => a.repo + "#" + a.number));
-  issues = issues.map((i) => {
-    const key = i.repo + "#" + i.number;
-    const isActive = i.running || activeSet.has(key);
-    if (isActive) return Object.assign({}, i, { active: true });
-    // queued = genuinely dispatched, no live run yet. A BLOCKED "working" issue (needs-attention,
-    // awaiting, rate-limited, …) is parked, NOT running — marking it queued hid Resume behind Stop
-    // and showed "queued until run finishes". Only an UNBLOCKED working issue counts as queued.
-    if ((i.state || "") === "working" && !i.blocked) return Object.assign({}, i, { queued: true });
-    return i;
-  });
   // Repos with a running audit — drives the spinner on the top-bar Audit dropdown. (The audit itself
   // is now a real GitHub tracking issue, so it shows as a normal card + detail.)
   const auditRepos = (data.active || []).filter((a) => a.role === "auditor").map((a) => a.repo);
   const shown = issues.filter((i) => !repoFilter || i.repo === repoFilter);
-  const statNested = nestedChildKeys(shown);
-  const statCounts = (() => { const c = {}; STAT_DEFS.forEach((d) => (c[d.k] = 0)); for (const i of shown) { if (i.archived || statNested.has(i.repo + "#" + i.number)) continue; const k = statusField(i).kind; for (const d of STAT_DEFS) if (d.kinds.includes(k)) c[d.k]++; } return c; })();
   const activity = (data.activity || []).concat(liveRef.current);
 
   function override(repo, number, patch) { ov[repo + "#" + number] = { patch, t: Date.now() }; forceTick((x) => x + 1); }
@@ -171,19 +90,18 @@ function App() {
   // actions (optimistic + reconcile). Each is guarded: spins + blocks until the server responds.
   const act = {
     isBusy: (action, repo, number) => Boolean(busyRef.current[bkey(action, repo, number)]),
-    start(repo, number, model) { return guard("start", repo, number, () => { override(repo, number, { state: "working" }); return api("/start", { repo, number, ...(model ? { model } : {}) }).then(() => toast("Starting" + (model ? ` with model ${model.model}` : "") + "…")).catch(() => { toast("Couldn’t start", "error"); delete ov[repo + "#" + number]; }).then(load); }); },
-    approve(repo, number, model) { return guard("approve", repo, number, () => { override(repo, number, { state: "working" }); return api("/approve", { repo, number, ...(model ? { model } : {}) }).then(() => toast("Approved" + (model ? ` with model ${model.model}` : "") + " — building")).catch(() => toast("Couldn’t approve", "error")).then(load); }); },
-    resume(repo, number, model) { return guard("resume", repo, number, () => { override(repo, number, { state: "working" }); return api("/resume", { repo, number, ...(model ? { model } : {}) }).then(() => toast("Resuming" + (model ? ` with model ${model.model}` : "") + "…")).catch(() => toast("Couldn’t resume", "error")).then(load); }); },
+    start(repo, number, model) { return guard("start", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/start", { repo, number, ...(model ? { model } : {}) }).then(() => toast("Starting" + (model ? ` with model ${model.model}` : "") + "…")).catch(() => { toast("Couldn’t start", "error"); delete ov[repo + "#" + number]; }).then(load); }); },
+    approve(repo, number, model) { return guard("approve", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/approve", { repo, number, ...(model ? { model } : {}) }).then(() => toast("Approved" + (model ? ` with model ${model.model}` : "") + " — building")).catch(() => toast("Couldn’t approve", "error")).then(load); }); },
+    resume(repo, number, model) { return guard("resume", repo, number, () => { override(repo, number, { state: "agency:in-progress" }); return api("/resume", { repo, number, ...(model ? { model } : {}) }).then(() => toast("Resuming" + (model ? ` with model ${model.model}` : "") + "…")).catch(() => toast("Couldn’t resume", "error")).then(load); }); },
     stop(repo, number) { return guard("stop", repo, number, () => { override(repo, number, { state: "planned" }); return api("/stop", { repo, number }).then(() => toast("Stopped — moved to Planned")).catch(() => toast("Couldn’t stop", "error")).then(load); }); },
     cancel(repo, number) { return guard("cancel", repo, number, () => { override(repo, number, { state: "planned", active: false }); return api("/cancel", { repo, number }).then(() => toast("Reset to Planned")).catch((e) => toast((e && e.message) || "Couldn’t cancel", "error")).then(load); }); },
     updateIssue(repo, number) { return guard("update", repo, number, () => api("/refresh-issue", { repo, number }).then(() => toast("Updated from GitHub")).catch((e) => toast((e && e.message) || "Couldn’t update", "error")).then(load)); },
-    fix(repo, number, model) { return guard("fix", repo, number, () => { override(repo, number, { state: "working", active: true }); return api("/fix", { repo, number, ...(model ? { model } : {}) }).then(() => toast("Fixing the review" + (model ? ` with model ${model.model}` : "") + "…")).catch(() => toast("Couldn’t fix", "error")).then(load); }); },
+    fix(repo, number, model) { return guard("fix", repo, number, () => { override(repo, number, { state: "agency:in-progress", active: true }); return api("/fix", { repo, number, ...(model ? { model } : {}) }).then(() => toast("Fixing the review" + (model ? ` with model ${model.model}` : "") + "…")).catch(() => toast("Couldn’t fix", "error")).then(load); }); },
     merge(repo, number) { return guard("merge", repo, number, () => api("/merge", { repo, number }).then((r) => { toast("Merged"); load(); return r; }).catch(() => toast("Couldn’t merge — conflicts?", "error"))); },
     close(repo, number) { return guard("close", repo, number, () => { override(repo, number, { state: "closed" }); return api("/close", { repo, number }).then(() => { toast("Closed"); setOpenKey(null); }).catch((e) => toast((e && e.message) || "Couldn’t close", "error")).then(load); }); },
     closeNotPlanned(repo, number) { return guard("close-not-planned", repo, number, () => { override(repo, number, { state: "done" }); return api("/close-not-planned", { repo, number }).then(() => { toast("Closed as not planned"); setOpenKey(null); }).catch((e) => toast((e && e.message) || "Couldn’t close", "error")).then(load); }); },
-    createPr(repo, number) { return guard("createPr", repo, number, () => { override(repo, number, { state: "review" }); return api("/create-pr", { repo, number }).then((r) => toast(r && r.url ? "PR opened" : "PR opened")).catch((e) => toast((e && e.message) || "Couldn’t open PR", "error")).then(load); }); },
+    createPr(repo, number) { return guard("createPr", repo, number, () => { override(repo, number, { state: "agency:ready" }); return api("/create-pr", { repo, number }).then((r) => toast(r && r.url ? "PR opened" : "PR opened")).catch((e) => toast((e && e.message) || "Couldn’t open PR", "error")).then(load); }); },
     del(repo, number) { return guard("del", repo, number, () => { override(repo, number, { state: "done" }); return api("/delete", { repo, number }).then(() => { toast("Deleted"); setOpenKey(null); }).catch(() => toast("Couldn’t delete", "error")).then(load); }); },
-    archive(repo, number) { return guard("archive", repo, number, () => { override(repo, number, { archived: true }); return api("/archive", { repo, number }).then(() => toast("Archived")).catch(() => toast("Couldn’t archive", "error")).then(load); }); },
     runChecks(repo, number, title) { return guard("runChecks", repo, number, () => api("/run-checks", { repo, number, title }).then(() => toast("Running checks…")).catch(() => toast("Couldn’t run checks", "error"))); },
 
     setAuto(kind, value, repo, number) { return guard("auto-" + kind, repo || "global", number || 0, () => { const b = { kind, value }; if (repo) b.repo = repo; if (number) b.number = number; return api("/auto", b).then(() => { toast("auto-" + kind + ": " + value); }).then(load); }); },
@@ -195,49 +113,20 @@ function App() {
   function openComposer(repo) { setComposerRepo(repo || repoFilter || (repos[0] || null)); setSheet("composer"); }
   function createIssue(repo, role, title, body, start, atts, model) {
     const tmpNum = -Date.now();
-    const tmp = { repo, number: tmpNum, title, role, state: start ? "working" : "planned", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), _tmp: true, _offline: !isOnline };
-    setPending((ps) => ps.concat(tmp)); setSheet(null);
-    if (!isOnline) {
-      // Offline: queue the issue (attachments are skipped — network required for uploads)
-      toast("Queued offline — will create when back online");
-      oqPush({ type: "issue", repo, role, title, body: body || "", start: !!start, model: model || null, tmpNum, tmpRepo: repo });
-      return;
-    }
-    toast(start ? "Creating & starting…" : "Added to Planned");
+    const tmp = { repo, number: tmpNum, title, role, state: start ? "agency:in-progress" : "planned", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), _tmp: true };
+    setPending((ps) => ps.concat(tmp)); setSheet(null); toast(start ? "Creating & starting…" : "Added to Planned");
     if (start) { setOpenKey(repo + "#" + tmpNum); setDetailError(null); }
-    // Sequential upload (concurrent repo commits collide → only one attachment survives), then
-    // swap inline [image N] refs for their markdown and append the rest.
-    (atts || []).reduce((chain, a) => chain.then(async (acc) => {
-      const j = await api("/upload-file", { repo, number: 0, dataUrl: a.dataUrl, name: a.name }).catch(() => null);
-      acc.push(j && j.md ? { md: j.md, refId: a.refId } : null);
-      return acc;
-    }), Promise.resolve([]))
-      .then((results) => {
-        let full = body || "";
-        const appended = [];
-        for (const r of results.filter(Boolean)) {
-          if (r.refId && r.md) full = full.split("[" + r.refId + "]").join(r.md);
-          else if (r.md) appended.push(r.md);
-        }
-        if (appended.length) full = [full].concat(appended).filter(Boolean).join("\n\n");
-        return api("/new-issue", { repo, role, title, body: full, start: !!start, ...(model ? { model } : {}) });
-      })
+    Promise.all((atts || []).map((a) => api("/upload-file", { repo, number: 0, dataUrl: a.dataUrl, name: a.name }).then((j) => j && j.md).catch(() => null)))
+      .then((mds) => { const full = [body].concat(mds.filter(Boolean)).filter(Boolean).join("\n\n"); return api("/new-issue", { repo, role, title, body: full, start: !!start, ...(model ? { model } : {}) }); })
       .then((d) => {
         if (start && d && d.number) setOpenKey(repo + "#" + d.number);
         setPending((ps) => ps.map((p) => (p === tmp ? Object.assign({}, p, { number: d.number || p.number }) : p)));
         setTimeout(load, 700);
       })
       .catch((e) => {
-        if (e instanceof TypeError) {
-          // Network error mid-flight — queue and mark offline
-          oqPush({ type: "issue", repo, role, title, body: body || "", start: !!start, model: model || null, tmpNum, tmpRepo: repo });
-          setPending((ps) => ps.map((p) => p === tmp ? Object.assign({}, p, { _offline: true }) : p));
-          toast("Network error — issue queued offline");
-        } else {
-          const msg = (e && e.message) || "Couldn’t create";
-          if (start) { setDetailError(msg); } else { toast(msg, "error"); }
-          setPending((ps) => ps.filter((p) => p !== tmp));
-        }
+        const msg = (e && e.message) || "Couldn’t create";
+        if (start) { setDetailError(msg); } else { toast(msg, "error"); }
+        setPending((ps) => ps.filter((p) => p !== tmp));
       });
   }
 
@@ -249,8 +138,6 @@ function App() {
   if (foundOpen) openIssueRef.current = foundOpen;
   const cachedOpen = openIssueRef.current && openIssueRef.current.repo + "#" + openIssueRef.current.number === openKey ? openIssueRef.current : null;
   const open = openKey ? foundOpen || cachedOpen : null;
-  const dockDetail = isDesktop && view === "list" && !!open; // master-detail: list + docked detail side by side
-  const chatSplit = isDesktop && view === "chat" && repos.length > 0; // chat beside the live issue list
   // Open any issue's detail by repo+number (used by the sub-issue checklist). Seeds a stub so a
   // child that isn't in the polled list still opens (the detail loads its own thread/PR/app info).
   function openIssue(r, n, title) {
@@ -258,65 +145,29 @@ function App() {
     if (!issues.some((i) => i.repo + "#" + i.number === key)) openIssueRef.current = { repo: r, number: n, title: title || "#" + n, state: "" };
     setOpenKey(key);
   }
-  // Esc closes the top-most overlay (sheet first, else the detail pane).
-  useEffect(() => {
-    const onKey = (e) => { if (e.key === "Escape") { if (sheet) setSheet(null); else if (openKey) setOpenKey(null); } };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [sheet, openKey]);
-  // One global fixed-position tooltip for every [data-tip] — never clipped by a scroll container.
-  useEffect(() => {
-    const show = (e) => { const el = e.target.closest && e.target.closest("[data-tip]"); if (!el) return; const t = el.getAttribute("data-tip"); if (!t) return setTip(null); const r = el.getBoundingClientRect(); setTip({ text: t, x: r.left + r.width / 2, y: r.top - 7 }); };
-    const hide = (e) => { if (e.target.closest && e.target.closest("[data-tip]")) setTip(null); };
-    document.addEventListener("mouseover", show);
-    document.addEventListener("mouseout", hide);
-    document.addEventListener("click", () => setTip(null), true);
-    return () => { document.removeEventListener("mouseover", show); document.removeEventListener("mouseout", hide); };
-  }, []);
   const working = (data.active || []).length;
 
   return html`
     <div class="app">
-      <${TopBar} working=${working} scanning=${data.scanning} env=${data.env} theme=${theme} setTheme=${setThemeP} onSettings=${() => setSheet("settings")} onUsage=${() => setSheet("usage")} onAgents=${() => setSheet("workflows")} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${load} auto=${data.auto || {}} autoRepos=${data.autoRepos || {}} setAuto=${act.setAuto}/>
+      <${TopBar} working=${working} scanning=${data.scanning} env=${data.env} theme=${theme} setTheme=${setThemeP} onSettings=${() => setSheet("settings")} onUsage=${() => setSheet("usage")} onAgents=${() => setSheet("agents")} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${load} auto=${data.auto || {}} autoRepos=${data.autoRepos || {}} setAuto=${act.setAuto}/>
       ${data.secretsHealth ? html`<${SecretBanner} h=${data.secretsHealth} onFix=${() => setSheet("settings")}/>` : null}
-      ${repos.length ? html`<div class="viewbar">
-        <div class="viewseg">
-          <button class=${view === "chat" ? "on" : ""} onClick=${() => setViewP("chat")}><${Icon} name="messages" size=${15}/> Chat</button>
-          <button class=${view === "list" ? "on" : ""} onClick=${() => setViewP("list")}><${Icon} name="layers" size=${15}/> List</button>
-          <button class=${view === "board" ? "on" : ""} onClick=${() => setViewP("board")}><${Icon} name="columns" size=${15}/> Board</button>
-        </div>
-        <span style="flex:1"></span>
-        ${view !== "board" ? html`<${StatStrip} counts=${statCounts} statFilter=${statFilter} setStatFilter=${setStatFilter} spend=${data.spendToday} compact=${true}/>` : null}
-      </div>` : null}
-      <div class=${"content" + ((dockDetail || chatSplit) ? " is-split" : "") + (view === "list" && !dockDetail && !chatSplit ? " view-list" : "")}>
-        ${chatSplit
-          ? html`<div class="split chat-split"><div class="split-left"><${Orchestrator} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${load} onOpenIssue=${openIssue} issues=${issues}/></div><div class="split-right"><${ProgressTable} issues=${shown} repos=${repos} repoFilter=${repoFilter} openKey=${openKey} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data} statFilter=${statFilter}/></div></div>`
-          : view === "chat" && repos.length
-          ? html`<${Orchestrator} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${load} onOpenIssue=${openIssue} issues=${issues}/>`
-          : view === "board"
-          ? html`<${Board} issues=${shown} repos=${repos} repoFilter=${repoFilter} tab=${tab} isDesktop=${isDesktop} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onOpenChild=${openIssue} onAddRepo=${() => setSheet("addrepo")} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data}/>`
-          : dockDetail
-          ? html`<div class="split list-split"><div class="split-left"><${ProgressTable} issues=${shown} repos=${repos} repoFilter=${repoFilter} compact=${true} openKey=${openKey} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data} statFilter=${statFilter}/></div><div class="split-right"><${Detail} key=${openKey} docked=${true} issue=${open} activity=${activity} act=${act} isDesktop=${isDesktop} startError=${detailError} onClose=${() => { setOpenKey(null); setDetailError(null); }} onOpenIssue=${openIssue} data=${data} isOnline=${isOnline} onQueueComment=${oqPush}/></div></div>`
-          : (repos.length
-            ? html`<${ProgressTable} issues=${shown} repos=${repos} repoFilter=${repoFilter} openKey=${openKey} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data} statFilter=${statFilter}/>`
-            : html`<${Board} issues=${shown} repos=${repos} repoFilter=${repoFilter} tab=${tab} isDesktop=${isDesktop} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onOpenChild=${openIssue} onAddRepo=${() => setSheet("addrepo")} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data}/>`)}
+      <${StatusLine} working=${working} session=${data.session} spend=${data.spendToday} analyzer=${data.analyzer} reload=${load} sort=${sort} setSort=${setSort}/>
+      <div class="content">
+        <${Board} issues=${shown} repos=${repos} repoFilter=${repoFilter} tab=${tab} sort=${sort} isDesktop=${isDesktop} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onOpenChild=${openIssue} onAddRepo=${() => setSheet("addrepo")} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data}/>
       </div>
-      ${!isDesktop && view === "board" && html`<${TabBar} issues=${shown} tab=${tab} setTab=${setTab}/>`}
-      ${open && !dockDetail && html`<div class="dscrim" onClick=${() => setOpenKey(null)}></div>`}
-      ${open && !dockDetail && html`<${Detail} key=${openKey} issue=${open} activity=${activity} act=${act} isDesktop=${isDesktop} startError=${detailError} onClose=${() => { setOpenKey(null); setDetailError(null); }} onOpenIssue=${openIssue} data=${data} isOnline=${isOnline} onQueueComment=${oqPush}/>`}
+      ${!isDesktop && html`<${TabBar} issues=${shown} tab=${tab} setTab=${setTab}/>`}
+      ${open && html`<div class="dscrim" onClick=${() => setOpenKey(null)}></div>`}
+      ${open && html`<${Detail} key=${openKey} issue=${open} activity=${activity} act=${act} isDesktop=${isDesktop} startError=${detailError} onClose=${() => { setOpenKey(null); setDetailError(null); }} onOpenIssue=${openIssue} data=${data}/>`}
       ${sheet === "composer" && html`<${Composer} repos=${repos} repo=${composerRepo} setRepo=${setComposerRepo} onClose=${() => setSheet(null)} onCreate=${createIssue} data=${data}/>`}
-      ${sheet === "settings" && html`<${Settings} data=${data} onClose=${() => setSheet(null)} reload=${load} openGithubTokens=${() => setSheet("github")} openModels=${() => setSheet("models")} openAgents=${() => setSheet("agents")} openWorkflows=${() => setSheet("workflows")}/>`}
-      ${sheet === "github" && html`<${GithubTokensModal} secretKeys=${data.secretKeys || []} github=${data.github} onClose=${() => setSheet("settings")} reload=${load}/>`}
+      ${sheet === "settings" && html`<${Settings} data=${data} onClose=${() => setSheet(null)} reload=${load} openGithubTokens=${() => setSheet("github")} openModels=${() => setSheet("models")}/>`}
+      ${sheet === "github" && html`<${GithubTokensModal} secretKeys=${data.secretKeys || []} onClose=${() => setSheet("settings")} reload=${load}/>`}
       ${sheet === "models" && html`<${ModelsModal} onClose=${() => setSheet("settings")} reload=${load}/>`}
       ${sheet === "addrepo" && html`<${AddRepo} repos=${repos} onClose=${() => setSheet(null)} reload=${load}/>`}
       ${sheet === "usage" && html`<${Usage} onClose=${() => setSheet(null)} onOpenIssue=${openIssue}/>`}
       ${sheet === "agents" && html`<${AgentEditor} data=${data} onClose=${() => setSheet(null)} onSkills=${() => setSheet("skills")} reload=${load}/>`}
-      ${sheet === "workflows" && html`<${WorkflowBuilder} data=${data} onClose=${() => setSheet(null)} reload=${load} onEditAgent=${(which) => setSheet(which === "skills" ? "skills" : "agents")}/>`}
       ${sheet === "skills" && html`<${SkillEditor} data=${data} onClose=${() => setSheet("agents")} reload=${load}/>`}
-      ${data.user && data.onboarded === false && html`<${Onboarding} repos=${repos} github=${data.github} reload=${load}/>`}
-      <${StatusLine} working=${working} session=${data.session} spend=${data.spendToday} analyzer=${data.analyzer} reload=${load} offlineQ=${offlineQ} syncing=${syncing}/>
+      ${data.user && data.onboarded === false && html`<${Onboarding} repos=${repos} reload=${load}/>`}
       <${Toasts} toasts=${toasts} onDismiss=${dismissToast}/>
-      ${tip ? html`<div class="gtip" style=${"left:" + tip.x + "px;top:" + tip.y + "px"}>${tip.text}</div>` : null}
     </div>`;
 }
 
