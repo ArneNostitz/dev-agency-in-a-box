@@ -347,7 +347,7 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .bcol__h,.colhead,.band-head{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-2);padding:4px 6px 10px}
 .bcol__h .n,.colhead .n,.band-head .n{color:var(--ink-3);margin-left:auto;font-weight:500}
 .bcol__cards,.cards,.band-cards{display:flex;flex-direction:column;gap:8px}
-.bcard,.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow-xs);padding:11px 12px;cursor:pointer;display:flex;flex-direction:column;gap:8px;transition:border-color var(--dur-fast) var(--ease),box-shadow var(--dur-fast) var(--ease)}
+.bcard,.card{position:relative;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow-xs);padding:11px 12px;cursor:pointer;display:flex;flex-direction:column;gap:8px;transition:border-color var(--dur-fast) var(--ease),box-shadow var(--dur-fast) var(--ease)}
 .bcard:hover,.card:hover{border-color:var(--line-2);box-shadow:var(--shadow-sm)}
 .bcard.sel,.card.sel{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-weak)}
 .bcard.live,.card.live{border-left:3px solid var(--accent)}
@@ -360,8 +360,10 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .bcard__f,.card-f{display:flex;align-items:center;gap:8px;border-top:1px solid var(--line);padding-top:8px}
 .card-f-l{display:flex;align-items:center;gap:8px}
 .card-f-r{margin-left:auto;display:flex;align-items:center;gap:8px}
-.bcard__actions{display:none}
-.bcard:hover .bcard__actions{display:flex}
+.bcard__crumbs{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--ink-3)}
+.bcard__crumbs .card-repo{color:var(--ink-2);font-weight:500}
+.bcard__actions{position:absolute;right:10px;bottom:10px;display:flex;align-items:center;gap:6px;opacity:0;transform:translateY(2px);pointer-events:none;background:var(--surface);box-shadow:-12px 0 12px 4px var(--surface);transition:opacity var(--dur-fast) var(--ease),transform var(--dur-fast) var(--ease)}
+.bcard:hover .bcard__actions{opacity:1;transform:none;pointer-events:auto}
 @media(max-width:880px){.board-cols,.board-bands{grid-template-columns:1fr 1fr}}
 
 /* ── Tab bar (mobile board) ───────────────────────────────────── */

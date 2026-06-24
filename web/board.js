@@ -248,9 +248,8 @@ function Card({ i, subs, multi, onOpen, onOpenChild, act, data, stream = EMPTY_S
   const live = !!(i.active || i.running);
   return html`<div class=${"bcard" + (tmp ? " busy" : "") + (live ? " live" : "")} onClick=${tmp ? null : () => onOpen(i)}>
     <div class="bcard__h">
-      <span class=${"statuschip da-status " + st.cls + (live ? " da-status--live" : "")} data-tip=${tmp ? "creating…" : statusTip(i, st)}><span class="da-status__dot"></span>${tmp ? "creating…" : st.label}</span>
-      <span class="card-repo">${i.repo.split("/").pop()}</span>
-      <span style="margin-left:auto" class="card-num">#${i.number > 0 ? i.number : "…"}</span>
+      <span class="bcard__crumbs"><span class="card-repo">${i.repo.split("/").pop()}</span><${Icon} name="chevright" size=${10}/><span class="card-num">#${i.number > 0 ? i.number : "…"}</span></span>
+      <span class=${"statuschip da-status " + st.cls + (live ? " da-status--live" : "")} style="margin-left:auto" data-tip=${tmp ? "creating…" : statusTip(i, st)}><span class="da-status__dot"></span>${tmp ? "creating…" : st.label}</span>
       <span class="card-hicons">
         ${i.byAgent ? html`<span class="card-byagent tip" data-tip="Created by an agent — review &amp; start"><${Icon} name="rocket" size=${11}/></span>` : null}
         ${i.conflict ? html`<span class="card-hicon tip" data-tip=${(i.conflict.files || []).join(", ") || "Merge conflict"} style="color:var(--amber)"><${Icon} name="merge" size=${14}/></span>` : null}
@@ -278,21 +277,24 @@ function Card({ i, subs, multi, onOpen, onOpenChild, act, data, stream = EMPTY_S
     ${tmp ? null : (() => {
       const isStop = quick && quick.action === "stop";
       const notPlanned = quick && i.state === "planned";
-      return html`<div class="bcard__f card-f" onClick=${(e) => e.stopPropagation()}>
-        <div class="card-f-l">
-          ${engaged && i.role && avatarsOn ? html`<span class="tip" data-tip=${i.role + " agent"} style="display:inline-flex"><span class="barehead" style="width:24px;height:24px"><${Avatar} role=${i.role} size=${24} crop="head"/></span></span>` : null}
-          ${(i.usage && i.usage.costUsd) || (i.estCost && i.estCost.usd) ? html`<${BHeat} i=${i}/>` : (!quick ? html`<span class="card-time">${ago(i.updated_at)}</span>` : null)}
-        </div>
-        <div class="card-f-r">
-          ${notPlanned ? html`<button class="iconbtn-sm tip" data-tip="Close as not planned" disabled=${act.isBusy("close-not-planned", i.repo, i.number)} onClick=${(e) => { e.stopPropagation(); act.closeNotPlanned(i.repo, i.number); }}>${act.isBusy("close-not-planned", i.repo, i.number) ? html`<${Spinner} size=${13}/>` : html`<${Icon} name="x" size=${14}/>`}</button>` : null}
-          ${modelOpts.length && !isStop ? html`<${ModelPicker} opts=${modelOpts} value=${modelSel} onPick=${onPickModel} defaultLogo=${defaultModelLogo(data)}/>` : null}
-          ${isStop
-            ? html`<button class=${"cardbtn cta stop" + (qBusy ? " busy" : "")} disabled=${qBusy} onClick=${runQuick}>${qBusy ? html`<${Spinner} size=${13}/>` : html`<${Icon} name="stop" size=${13}/>`} ${qBusy ? "working…" : quick.label}</button>`
-            : quick
-            ? html`<button class=${"cardbtn cta " + quick.cls + (qBusy ? " busy" : "")} disabled=${qBusy} onClick=${runQuick}>${qBusy ? html`<${Spinner} size=${13}/>` : html`<${Icon} name=${quick.icon} size=${13}/>`} ${qBusy ? "working…" : quick.label}</button>`
-            : null}
-        </div>
+      const actions = html`<div class="bcard__actions" onClick=${(e) => e.stopPropagation()}>
+        ${notPlanned ? html`<button class="iconbtn-sm tip" data-tip="Close as not planned" disabled=${act.isBusy("close-not-planned", i.repo, i.number)} onClick=${(e) => { e.stopPropagation(); act.closeNotPlanned(i.repo, i.number); }}>${act.isBusy("close-not-planned", i.repo, i.number) ? html`<${Spinner} size=${13}/>` : html`<${Icon} name="x" size=${14}/>`}</button>` : null}
+        ${modelOpts.length && !isStop ? html`<${ModelPicker} opts=${modelOpts} value=${modelSel} onPick=${onPickModel} defaultLogo=${defaultModelLogo(data)}/>` : null}
+        ${isStop
+          ? html`<button class=${"cardbtn cta stop" + (qBusy ? " busy" : "")} disabled=${qBusy} onClick=${runQuick}>${qBusy ? html`<${Spinner} size=${13}/>` : html`<${Icon} name="stop" size=${13}/>`} ${qBusy ? "working…" : quick.label}</button>`
+          : quick
+          ? html`<button class=${"cardbtn cta " + quick.cls + (qBusy ? " busy" : "")} disabled=${qBusy} onClick=${runQuick}>${qBusy ? html`<${Spinner} size=${13}/>` : html`<${Icon} name=${quick.icon} size=${13}/>`} ${qBusy ? "working…" : quick.label}</button>`
+          : null}
       </div>`;
+      return [
+        html`<div class="bcard__f card-f">
+          <div class="card-f-l">
+            ${engaged && i.role && avatarsOn ? html`<span class="tip" data-tip=${i.role + " agent"} style="display:inline-flex"><span class="barehead" style="width:24px;height:24px"><${Avatar} role=${i.role} size=${24} crop="head"/></span></span>` : null}
+            ${(i.usage && i.usage.costUsd) || (i.estCost && i.estCost.usd) ? html`<${BHeat} i=${i}/>` : html`<span class="card-time">${ago(i.updated_at)}</span>`}
+          </div>
+        </div>`,
+        actions
+      ];
     })()}
   </div>`
 }
