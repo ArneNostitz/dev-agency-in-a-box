@@ -377,8 +377,8 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .rowmenu-btn.danger{color:var(--red)}
 
 /* ── Detail drawer ─────────────────────────────────────────────── */
-.detail,.dpane{position:fixed;inset:0;z-index:50;background:var(--bg);display:flex;flex-direction:column}
-.split-right .detail,.split-right .dpane{position:static;inset:auto;z-index:auto;flex:1}
+.detail{position:fixed;top:0;right:0;bottom:0;left:auto;z-index:50;background:var(--bg);display:flex;flex-direction:column;width:min(900px,100vw);box-shadow:var(--shadow-lg);border-left:1px solid var(--line)}
+.split-right .detail{position:static;inset:auto;z-index:auto;flex:1;width:auto;box-shadow:none;border-left:none}
 .dscrim{position:fixed;inset:0;z-index:49;background:rgba(8,10,14,.5)}
 .dhead,.dh{flex:none;display:flex;align-items:flex-start;gap:10px;padding:14px 16px;background:var(--surface);border-bottom:1px solid var(--line)}
 .dh__t{flex:1;min-width:0}
@@ -394,7 +394,11 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .dtabs button,.tbtn{display:inline-flex;align-items:center;gap:6px;border:none;background:transparent;color:var(--ink-2);font:500 13px var(--font-sans);padding:8px 12px;border-bottom:2px solid transparent;cursor:pointer;margin-bottom:-1px}
 .dtabs button.on,.tbtn.on{color:var(--ink-1);border-bottom-color:var(--accent)}
 .dtabs button:disabled{color:var(--ink-3);cursor:default}
-.dbody,.dpanes{flex:1;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:12px}
+.dbody{flex:1;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:12px}
+.dpanes{flex:1;min-height:0;display:flex;flex-direction:row;overflow:hidden}
+.dpane{flex:1;min-width:0;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:12px}
+.dpane.chat{flex:1 1 auto}
+.dpane.side{flex:0 0 44%;max-width:520px;border-left:1px solid var(--line);background:var(--surface)}
 .epicbox{border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;background:var(--surface)}
 .epicbox-h,.epicbox__h{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
 .epicrow,.epicck{display:flex;align-items:center;gap:8px;padding:5px 2px;font-size:13px;cursor:pointer;border-radius:var(--radius-xs)}
@@ -728,10 +732,10 @@ textarea{resize:vertical;min-height:64px}
   .band-cols{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
   .col{margin:0}
   .cards{max-height:calc(100dvh - 200px);overflow-y:auto;padding-right:2px}
-  .detail{left:0;right:0;width:auto;box-shadow:none}
-  .dpanes{flex-direction:row}
-  .dpane.chat{flex:1 1 auto;border-right:1px solid var(--line)}
-  .dpane.side{flex:0 0 46%;width:46%;max-width:520px}
+  .detail{left:0;right:0;width:100vw;box-shadow:none}
+  .dpanes{flex-direction:column}
+  .dpane{padding:12px 14px}
+  .dpane.side{flex:1;max-width:none;border-left:none;border-top:1px solid var(--line)}
   .sheet.bottom{left:50%;top:50%;right:auto;bottom:auto;width:min(620px,92vw);max-height:88dvh;border-radius:16px;border:1px solid var(--line);transform:translate(-50%,-50%) scale(.97);opacity:0;pointer-events:none;transition:opacity .18s,transform .18s ease}
   .sheet.bottom.on{transform:translate(-50%,-50%) scale(1);opacity:1;pointer-events:auto}
 }
