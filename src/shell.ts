@@ -636,7 +636,6 @@ textarea{resize:vertical;min-height:64px}
 .useg-track{height:7px;border-radius:999px;background:var(--surface-2);overflow:hidden}
 .useg-track i{display:block;height:100%;border-radius:999px;background:var(--accent)}
 /* detail */
-.dscrim{position:fixed;inset:0;z-index:44;background:transparent}
 .toolmore{display:flex;flex-direction:column;gap:4px;min-width:200px}
 .toolmore-row{display:flex}
 .toolmore-row>*{flex:1;width:100%}
