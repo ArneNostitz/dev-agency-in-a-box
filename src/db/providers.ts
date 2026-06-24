@@ -150,3 +150,20 @@ export function clearIssueModelOverride(repo: string, number: number): void {
     /* best effort */
   }
 }
+
+// Per-issue WORKFLOW override — pins which workflow this issue runs, persisted across runs and
+// honored even on resume (unlike text-trigger resolution which only reads title/body on a fresh run).
+export function setIssueWorkflow(repo: string, number: number, workflowId: string): void {
+  setSetting(`issue_workflow.${repo}#${number}`, workflowId);
+}
+export function getIssueWorkflow(repo: string, number: number): string | null {
+  try {
+    const v = getSetting(`issue_workflow.${repo}#${number}`);
+    return v || null;
+  } catch {
+    return null;
+  }
+}
+export function clearIssueWorkflow(repo: string, number: number): void {
+  setSetting(`issue_workflow.${repo}#${number}`, "");
+}

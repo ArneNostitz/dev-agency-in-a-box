@@ -56,6 +56,8 @@ import { indexRepo } from "./gitnexus.js";
 import { pushActivity } from "./activity.js";
 import { loadHandleRoleMap, roleForText, ALL_ROLES, type RoleName } from "./agents/roles.js";
 import { resolveWorkflow, workflowLeadRole, workflowTriggers } from "./workflow.js";
+import { getWorkflow } from "./db/workflows.js";
+import { getIssueWorkflow } from "./db/providers.js";
 import { runPipeline, runWorkflowEngine, runDeveloperSolo, runPrFix, runFollowUp, runResumeBuild, runReviewFix } from "./pipeline.js";
 import { runRole } from "./agents/roleAgent.js";
 import { runChatAgent } from "./agents/chat.js";
@@ -257,18 +259,22 @@ async function processIssue(cfg: Config, repo: string, issue: Issue, opts: { fre
   }
 
   const resuming = issue.labels.some((l) => AWAITING_LABELS.includes(l));
-  // A workflow trigger (e.g. @build → Full build) resolves to its lead role and drives the existing
-  // flow; otherwise fall back to the role-pin handle map.
-  const wf = resuming ? null : resolveWorkflow(`${issue.title}\n${issue.body}`);
-  const handleRole = resuming ? null : roleForText(`${issue.title}\n${issue.body}`, loadHandleRoleMap());
-  const role: RoleName = resuming
+  // A persisted per-issue WORKFLOW override (set from the dashboard) wins over text-trigger
+  // resolution and is honored even on resume — so "run this workflow" sticks across runs.
+  const pinnedWf = (() => { const id = getIssueWorkflow(repo, issue.number); return id ? getWorkflow(id) : null; })();
+  // Otherwise a workflow trigger (e.g. @build → Full build) resolves to its lead role and drives the
+  // existing flow; failing that, fall back to the role-pin handle map.
+  const wf = pinnedWf ?? (resuming ? null : resolveWorkflow(`${issue.title}\n${issue.body}`));
+  const handleRole = resuming || pinnedWf ? null : roleForText(`${issue.title}\n${issue.body}`, loadHandleRoleMap());
+  const role: RoleName = wf
+    ? workflowLeadRole(wf)
+    : resuming
     ? ((getIssueRole(repo, issue.number) as RoleName) ?? "developer")
-    : wf ? workflowLeadRole(wf)
     : handleRole ?? "developer";
   // A single explicit pin (no workflow) runs JUST that one agent — @dev / a code agent = solo
   // developer + PR; @plan/@arch/@review/@test = a single specialist. The multi-step build is the
   // Full build workflow (@build). A bare issue with no recognised handle falls back to Full build.
-  const single = !resuming && !wf && handleRole !== null;
+  const single = !resuming && !wf && !pinnedWf && handleRole !== null;
   console.log(`[agency] ${repo} #${issue.number}: ${issue.title} -> role:${role}${resuming ? " (resume)" : ""}`);
   pushActivity(repo, issue.number, role, "start", "▶ starting…"); // instant feedback before the GitHub prep + clone
 

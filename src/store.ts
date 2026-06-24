@@ -36,6 +36,7 @@ export {
   getGlobalModel, setGlobalModel, setSessionFallback, clearSessionFallback, getSessionFallback,
   getFallbackChain, setFallbackChain, getAutoSwitchOnLimit,
   setIssueModelOverride, getIssueModelOverride, clearIssueModelOverride,
+  setIssueWorkflow, getIssueWorkflow, clearIssueWorkflow,
 } from "./db/providers.js";
 export type { Provider } from "./db/providers.js";
 export { upsertAgentDef, getAgentDef, listAgentDefs, deleteAgentDef, chatAgentForText, seedChatAgents } from "./db/agent_def.js";
