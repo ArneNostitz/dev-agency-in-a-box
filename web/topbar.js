@@ -15,7 +15,7 @@ export function SecretBanner({ h, onFix }) {
   return html`<div class="secbanner"><b>⚠ Credentials need attention.</b> ${msgs.map((m, i) => html`<div key=${i} style="margin-top:3px">${m}</div>`)} <button class="btn ghost" style="margin-top:7px" onClick=${onFix}>Open Settings</button></div>`;
 }
 
-export function TopBar({ working, scanning, env, theme, setTheme, onSettings, onUsage, onAgents, repos, repoFilter, setRepoFilter, reload, auto, autoRepos, setAuto, view, setView }) {
+export function TopBar({ working, scanning, env, theme, setTheme, onSettings, onUsage, onAgents, repos, repoFilter, setRepoFilter, reload, auto, autoRepos, setAuto, view, setView, chatOpen, setChatOpen }) {
   const [menu, setMenu] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   // Spin only while this manual refresh is in flight, and ALWAYS time out — never tie the spinner to
@@ -37,10 +37,10 @@ export function TopBar({ working, scanning, env, theme, setTheme, onSettings, on
     <${RepoDropdown} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${reload} auto=${auto} autoRepos=${autoRepos} setAuto=${setAuto}/>
     <div class="spacer"></div>
     ${repos && repos.length && view && setView ? html`<div class="viewseg">
-      <button class=${view === "chat" ? "on" : ""} data-tip="Chat" onClick=${() => setView("chat")}><${Icon} name="messages" size=${15}/> <span class="viewseg__txt">Chat</span></button>
       <button class=${view === "list" ? "on" : ""} data-tip="List" onClick=${() => setView("list")}><${Icon} name="layers" size=${15}/> <span class="viewseg__txt">List</span></button>
       <button class=${view === "board" ? "on" : ""} data-tip="Board" onClick=${() => setView("board")}><${Icon} name="columns" size=${15}/> <span class="viewseg__txt">Board</span></button>
     </div>` : null}
+    ${repos && repos.length && setChatOpen ? html`<button class=${"iconbtn tip" + (chatOpen ? " on" : "")} data-tip=${chatOpen ? "Hide chat" : "Show chat"} onClick=${() => setChatOpen(!chatOpen)}><${Icon} name="messages" size=${18}/></button>` : null}
     <div class="topbtns">
       ${acts.map((a) => html`<button class="iconbtn" aria-label=${a.label} data-tip=${a.label} disabled=${a.busy} onClick=${a.fn}>${a.busy ? html`<${Spinner} size=${18}/>` : html`<${Icon} name=${a.icon}/>`}</button>`)}
     </div>

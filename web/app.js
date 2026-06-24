@@ -1,6 +1,7 @@
 // Dev Agency dashboard — app module (split from app.js; Preact + htm, no build step).
 import { html, render, useState, useEffect, useRef } from "/web/vendor/standalone.mjs";
-import { Icon, Toasts, api, getJSON, md, setToastFn, toast, useIsDesktop } from "./core.js";
+import { Icon, Toasts, api, getJSON, md, setToastFn, toast, useIsDesktop, useViewportWidth } from "./core.js";
+import { Workspace } from "./layout.js";
 import { Board, TabBar, nestedChildKeys } from "./board.js";
 import { Composer, Detail } from "./detail.js";
 import { GithubTokensModal, ModelsModal, Settings } from "./settings.js";
@@ -36,7 +37,10 @@ function App() {
   const [data, setData] = useState({ issues: [], repos: [], active: [], activity: [], session: {}, config: {}, auto: {}, autoRepos: {} });
   const [repoFilter, setRepoFilter] = useState(null);
   const [tab, setTab] = useState("planned");
-  const [view, setView] = useState(() => { try { return localStorage.getItem("view") || "list"; } catch (e) { return "list"; } });
+  const [view, setView] = useState(() => { try { const v = localStorage.getItem("view"); return (v === "list" || v === "board") ? v : "list"; } catch (e) { return "list"; } });
+  const [chatOpen, setChatOpen] = useState(() => { try { return localStorage.getItem("chatOpen") === "1"; } catch (e) { return false; } });
+  const setChatOpenP = (v) => { setChatOpen(v); try { localStorage.setItem("chatOpen", v ? "1" : "0"); } catch (e) {} };
+  const vw = useViewportWidth();
   const setViewP = (v) => { setView(v); try { localStorage.setItem("view", v); } catch (e) {} };
   const [statFilter, setStatFilter] = useState(null);
   const [openKey, setOpenKey] = useState(null); // "repo#number"
@@ -249,8 +253,6 @@ function App() {
   if (foundOpen) openIssueRef.current = foundOpen;
   const cachedOpen = openIssueRef.current && openIssueRef.current.repo + "#" + openIssueRef.current.number === openKey ? openIssueRef.current : null;
   const open = openKey ? foundOpen || cachedOpen : null;
-  const dockDetail = isDesktop && view === "list" && !!open; // master-detail: list + docked detail side by side
-  const chatSplit = isDesktop && view === "chat" && repos.length > 0; // chat beside the live issue list
   // Open any issue's detail by repo+number (used by the sub-issue checklist). Seeds a stub so a
   // child that isn't in the polled list still opens (the detail loads its own thread/PR/app info).
   function openIssue(r, n, title) {
@@ -277,25 +279,20 @@ function App() {
 
   return html`
     <div class="app">
-      <${TopBar} working=${working} scanning=${data.scanning} env=${data.env} theme=${theme} setTheme=${setThemeP} onSettings=${() => setSheet("settings")} onUsage=${() => setSheet("usage")} onAgents=${() => setSheet("workflows")} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${load} auto=${data.auto || {}} autoRepos=${data.autoRepos || {}} setAuto=${act.setAuto} view=${view} setView=${setViewP}/>
+      <${TopBar} working=${working} scanning=${data.scanning} env=${data.env} theme=${theme} setTheme=${setThemeP} onSettings=${() => setSheet("settings")} onUsage=${() => setSheet("usage")} onAgents=${() => setSheet("workflows")} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${load} auto=${data.auto || {}} autoRepos=${data.autoRepos || {}} setAuto=${act.setAuto} view=${view} setView=${setViewP} chatOpen=${chatOpen} setChatOpen=${setChatOpenP}/>
       ${data.secretsHealth ? html`<${SecretBanner} h=${data.secretsHealth} onFix=${() => setSheet("settings")}/>` : null}
-      ${repos.length && (view === "list" || view === "board") ? html`<div class="statstrip-wrap"><${StatStrip} counts=${statCounts} statFilter=${statFilter} setStatFilter=${setStatFilter} compact=${true}/></div>` : null}
-      <div class=${"content" + ((dockDetail || chatSplit) ? " is-split" : "") + (view === "list" && !dockDetail && !chatSplit ? " view-list" : "")}>
-        ${chatSplit
-          ? html`<div class="split chat-split"><div class="split-left"><${Orchestrator} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${load} onOpenIssue=${openIssue} issues=${issues} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos}/></div><div class="split-right"><${ProgressTable} issues=${shown} repos=${repos} repoFilter=${repoFilter} openKey=${openKey} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data} statFilter=${statFilter} setStatFilter=${setStatFilter}/></div></div>`
-          : view === "chat" && repos.length
-          ? html`<${Orchestrator} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${load} onOpenIssue=${openIssue} issues=${issues} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos}/>`
-          : view === "board"
-          ? html`<${Board} issues=${shown} repos=${repos} repoFilter=${repoFilter} tab=${tab} isDesktop=${isDesktop} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onOpenChild=${openIssue} onAddRepo=${() => setSheet("addrepo")} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data}/>`
-          : dockDetail
-          ? html`<div class="split list-split"><div class="split-left"><${ProgressTable} issues=${shown} repos=${repos} repoFilter=${repoFilter} compact=${true} openKey=${openKey} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data} statFilter=${statFilter} setStatFilter=${setStatFilter}/></div><div class="split-right"><${Detail} key=${openKey} docked=${true} issue=${open} activity=${activity} act=${act} isDesktop=${isDesktop} startError=${detailError} onClose=${() => { setOpenKey(null); setDetailError(null); }} onOpenIssue=${openIssue} data=${data} isOnline=${isOnline} onQueueComment=${oqPush}/></div></div>`
-          : (repos.length
-            ? html`<${ProgressTable} issues=${shown} repos=${repos} repoFilter=${repoFilter} openKey=${openKey} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data} statFilter=${statFilter} setStatFilter=${setStatFilter}/>`
-            : html`<${Board} issues=${shown} repos=${repos} repoFilter=${repoFilter} tab=${tab} isDesktop=${isDesktop} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onOpenChild=${openIssue} onAddRepo=${() => setSheet("addrepo")} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data}/>`)}
+      <div class="content">
+        ${repos.length ? (() => {
+          const detailOpen = !!open;
+          const toolbar = html`<${StatStrip} counts=${statCounts} statFilter=${statFilter} setStatFilter=${setStatFilter} compact=${true}/>`;
+          const listLeaf = html`<${ProgressTable} issues=${shown} repos=${repos} repoFilter=${repoFilter} compact=${detailOpen} openKey=${openKey} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data} statFilter=${statFilter} setStatFilter=${setStatFilter} toolbarExtra=${toolbar}/>`;
+          const boardLeaf = html`<${Board} issues=${shown} repos=${repos} repoFilter=${repoFilter} tab=${tab} isDesktop=${isDesktop} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onOpenChild=${openIssue} onAddRepo=${() => setSheet("addrepo")} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data} statStrip=${toolbar}/>`;
+          const chatLeaf = html`<${Orchestrator} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${load} onOpenIssue=${openIssue} issues=${issues} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} onClose=${() => setChatOpenP(false)}/>`;
+          const detailLeaf = open ? html`<${Detail} key=${openKey} docked=${true} issue=${open} activity=${activity} act=${act} isDesktop=${isDesktop} startError=${detailError} onClose=${() => { setOpenKey(null); setDetailError(null); }} onOpenIssue=${openIssue} data=${data} isOnline=${isOnline} onQueueComment=${oqPush}/>` : null;
+          return html`<${Workspace} vw=${vw} view=${view} mainView=${view === "board" ? boardLeaf : listLeaf} chat=${chatLeaf} detail=${detailLeaf} chatOpen=${chatOpen} setChatOpen=${setChatOpenP} detailOpen=${detailOpen}/>`;
+        })() : html`<${Board} issues=${shown} repos=${repos} repoFilter=${repoFilter} tab=${tab} isDesktop=${isDesktop} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onOpenChild=${openIssue} onAddRepo=${() => setSheet("addrepo")} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data}/>`}
       </div>
       ${!isDesktop && view === "board" && html`<${TabBar} issues=${shown} tab=${tab} setTab=${setTab}/>`}
-      ${open && !dockDetail && html`<div class="dscrim" onClick=${() => setOpenKey(null)}></div>`}
-      ${open && !dockDetail && html`<${Detail} key=${openKey} issue=${open} activity=${activity} act=${act} isDesktop=${isDesktop} startError=${detailError} onClose=${() => { setOpenKey(null); setDetailError(null); }} onOpenIssue=${openIssue} data=${data} isOnline=${isOnline} onQueueComment=${oqPush}/>`}
       ${sheet === "composer" && html`<${Composer} repos=${repos} repo=${composerRepo} setRepo=${setComposerRepo} onClose=${() => setSheet(null)} onCreate=${createIssue} data=${data}/>`}
       ${sheet === "settings" && html`<${Settings} data=${data} onClose=${() => setSheet(null)} reload=${load} openGithubTokens=${() => setSheet("github")} openModels=${() => setSheet("models")} openAgents=${() => setSheet("agents")} openWorkflows=${() => setSheet("workflows")}/>`}
       ${sheet === "github" && html`<${GithubTokensModal} secretKeys=${data.secretKeys || []} github=${data.github} onClose=${() => setSheet("settings")} reload=${load}/>`}

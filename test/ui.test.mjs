@@ -60,7 +60,7 @@ async function mountApp(opts = {}) {
   const webDir = join(HERE, "..", "web");
   const vendorUrl = pathToFileURL(join(webDir, "vendor", "standalone.mjs")).href;
   const tmpDir = mkdtempSync(join(tmpdir(), "daui-"));
-  for (const f of ["core", "board", "detail", "settings", "onboarding", "topbar", "usage", "agents", "workflows", "builder", "table", "orch", "app"]) {
+  for (const f of ["core", "layout", "board", "detail", "settings", "onboarding", "topbar", "usage", "agents", "workflows", "builder", "table", "orch", "app"]) {
     const src = readFileSync(join(webDir, f + ".js"), "utf8").split("/web/vendor/standalone.mjs").join(vendorUrl);
     writeFileSync(join(tmpDir, f + ".js"), src);
   }
@@ -232,14 +232,15 @@ test("v4: default List view renders the rich progress table + timeline; Chat vie
   assert.ok(window.document.querySelector(".listsec") || window.document.querySelector(".pane-list"), "the card List is the default list view");
   assert.match(root.innerHTML, /Running/, "a working+running issue shows a Running status");
 
-  // Switch to Chat view via the view switcher → the Orchestrator panel mounts (chat compose).
+  // Chat is now a toggle (slide-over panel / docked slot) — open it and assert the Orchestrator mounts.
   const tick = (ms) => new Promise((r) => setTimeout(r, ms));
-  const chatBtn = Array.from(window.document.querySelectorAll(".viewseg button")).find((b) => /Chat/.test(b.textContent));
+  const chatBtn = Array.from(window.document.querySelectorAll(".topbar button")).find((b) => /chat/i.test(b.getAttribute("data-tip") || ""));
+  assert.ok(chatBtn, "chat toggle button exists in the top bar");
   chatBtn.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
   await tick(120);
-  assert.match(root.innerHTML, /Orchestrator/, "Chat view mounts the Orchestrator panel");
+  assert.match(root.innerHTML, /Orchestrator/, "chat toggle mounts the Orchestrator panel");
   assert.ok(window.document.querySelector(".orch-compose"), "orchestrator has a compose box");
-  // Live run-state: the running issue (#2) for this repo surfaces in the chat's "Working now" strip.
+  // Live run-state: the running issue (#2) surfaces in the chat's "Working now" strip.
   assert.match(root.innerHTML, /Working now/, "orchestrator reflects live run-state");
   assert.ok(window.document.querySelector(".orch-live"), "live work strip renders when a run is active");
   dom.window.close();

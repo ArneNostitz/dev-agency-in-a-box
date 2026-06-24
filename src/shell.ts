@@ -217,16 +217,38 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .viewseg button.on{background:var(--surface);color:var(--ink-1);box-shadow:var(--shadow-xs)}
 
 /* ── Content + split ───────────────────────────────────────────── */
-.content{flex:1;overflow:hidden;display:flex;min-height:0}
-.content.view-list,.content:not(.is-split){flex-direction:column}
-.split{flex:1;display:flex;min-height:0;overflow:hidden}
-.split-left{flex:1 1 auto;min-width:0;overflow-y:auto;display:flex;flex-direction:column}
-.split-right{flex:0 0 clamp(460px,54%,820px);border-left:1px solid var(--line);background:var(--bg);overflow:hidden;display:flex;flex-direction:column}
-.chat-split .split-left{border-right:1px solid var(--line)}
+.content{flex:1;overflow:hidden;display:flex;flex-direction:column;min-height:0}
+/* ── Workspace / resizable Split ──────────────────────────────── */
+.workspace{flex:1;min-height:0;display:flex;overflow:hidden;position:relative}
+.workspace__single{flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column}
+.splitx{flex:1;min-height:0;display:flex;overflow:hidden}
+.splitx__pane{min-width:0;overflow:hidden;display:flex;flex-direction:column}
+.splitx__grip{flex:0 0 7px;cursor:col-resize;display:flex;align-items:center;justify-content:center;background:transparent;position:relative}
+.splitx__grip:hover .splitx__grip-line,.splitx__grip:active .splitx__grip-line{background:var(--accent)}
+.splitx__grip-line{width:1px;height:100%;background:var(--line);transition:background var(--dur-fast) var(--ease)}
+.slot{flex:1;min-height:0;min-width:0;overflow:hidden;display:flex;flex-direction:column}
+.slot--chat{border-right:1px solid var(--line);background:var(--bg)}
+.slot--detail{border-left:1px solid var(--line);background:var(--bg)}
+.slot--main{background:var(--bg)}
+/* ── Slide-over overlays (chat / detail on smaller widths) ─────── */
+.overlay{position:fixed;inset:0;z-index:50;display:flex}
+.overlay__scrim{position:absolute;inset:0;background:rgba(8,10,14,.45)}
+.overlay__panel{position:absolute;top:0;bottom:0;background:var(--bg);box-shadow:var(--shadow-lg);display:flex;flex-direction:column;animation:slidein var(--dur) var(--ease)}
+.overlay__panel--chat{left:0;width:min(440px,92vw);border-right:1px solid var(--line)}
+.overlay__panel--detail{right:0;width:min(900px,100vw);border-left:1px solid var(--line)}
+@keyframes slidein{from{transform:translateX(-12px);opacity:.6}to{transform:none;opacity:1}}
+.overlay--detail .overlay__panel{animation:slideinR var(--dur) var(--ease)}
+@keyframes slideinR{from{transform:translateX(12px);opacity:.6}to{transform:none;opacity:1}}
+.listbar__stats{display:flex;align-items:center}
+.slot .detail{position:static;inset:auto;z-index:auto;flex:1;width:auto;box-shadow:none;border-left:none}
+.slot--detail .detail{border-left:none}
+.slot .pane,.slot .orch,.slot>div{flex:1;min-height:0}
+.overlay__panel--detail .detail{position:static;inset:auto;width:100%;flex:1;box-shadow:none}
+.overlay__panel--chat .orch{flex:1;min-height:0}
+
 
 /* ── At-a-glance stat strip ────────────────────────────────────── */
-.statstrip-wrap{display:flex;justify-content:center;padding:12px 16px;background:var(--bg);border-bottom:1px solid var(--line);flex:none}
-.pt-overview{display:flex;align-items:stretch;gap:8px;flex-wrap:wrap;justify-content:center}
+.pt-overview{display:flex;align-items:center;gap:6px;flex-wrap:nowrap}
 .pt-overview-top{gap:6px}
 .pt-stat{display:flex;flex-direction:column;gap:2px;align-items:flex-start;border:1px solid var(--line);background:var(--surface);border-radius:var(--radius-sm);padding:6px 12px;cursor:pointer;transition:border-color var(--dur-fast) var(--ease),background var(--dur-fast) var(--ease);min-width:74px}
 .pt-overview-top .pt-stat{padding:4px 10px;min-width:0}

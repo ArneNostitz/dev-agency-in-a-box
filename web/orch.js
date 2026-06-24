@@ -60,7 +60,7 @@ function Bubble({ m, repo, reload, onOpenIssue }) {
   </div>`;
 }
 
-export function Orchestrator({ repos, repoFilter, setRepoFilter, reload, onOpenIssue, issues = [], onAnalyze, auditRepos = [] }) {
+export function Orchestrator({ repos, repoFilter, setRepoFilter, reload, onOpenIssue, issues = [], onAnalyze, auditRepos = [], onClose }) {
   const repo = repoFilter || "*"; // "*" = agency-wide chat across all repos
   const isAgency = repo === "*";
   const repoLabel = isAgency ? "all repositories" : repo.split("/").pop();
@@ -108,6 +108,7 @@ export function Orchestrator({ repos, repoFilter, setRepoFilter, reload, onOpenI
       <span style="flex:1"></span>
       ${onAnalyze && !isAgency ? html`<button class="colbtn tip" data-tip=${"Analyze " + repoLabel + "'s codebase health — proposes refactor issues"} disabled=${auditRepos.includes(repo)} onClick=${() => onAnalyze(repo)}>${auditRepos.includes(repo) ? html`<${Spinner} size=${14}/>` : html`<${Icon} name="search" size=${14}/>`} <span class="segx">Analyze</span></button>` : null}
       <button class="iconbtn ghost" data-tip="New conversation" aria-label="New conversation" onClick=${clear}><${Icon} name="trash" size=${16}/></button>
+      ${onClose ? html`<button class="iconbtn ghost" data-tip="Hide chat" aria-label="Hide chat" onClick=${onClose}><${Icon} name="x" size=${18}/></button>` : null}
     </div>
     ${live.length ? html`<div class="orch-live">
       <div class="orch-live-h"><span class="orch-live-dot"></span> Working now · ${live.length}</div>

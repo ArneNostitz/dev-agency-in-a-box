@@ -260,7 +260,7 @@ const STATUS_FILTER_OPTS = [
   { v: "done", label: "Done", icon: "check" },
 ];
 
-export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, onAnalyze, auditRepos, act, data, openKey, compact = false, statFilter = null, setStatFilter = () => {} }) {
+export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, onAnalyze, auditRepos, act, data, openKey, compact = false, statFilter = null, setStatFilter = () => {}, toolbarExtra = null }) {
   const ls = (k, d) => { try { return localStorage.getItem(k) || d; } catch (e) { return d; } };
   const [sort, setSort] = useState(() => ls("ptSort", "smart"));
   const [group, setGroup] = useState(() => ls("ptGroup", "status"));
@@ -319,6 +319,7 @@ export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, o
   return html`<div class="pane">
     <div class="listbar">
       <button class="da-btn da-btn--primary da-btn--sm" onClick=${() => onAddIssue(target)}><${Icon} name="plus" size=${15}/> New</button>
+      ${toolbarExtra ? html`<div class="listbar__stats">${toolbarExtra}</div>` : null}
       <span style="flex:1"></span>
       <${MenuBtn} icon="alert" label="Filter by status" value=${statFilter || ""} options=${STATUS_FILTER_OPTS} onPick=${(v) => setStatFilter(v || null)} active=${!!statFilter}/>
       <${MenuBtn} icon="sort" label="Sort" value=${sort} options=${SORT_OPTS} onPick=${(v) => save("ptSort", v, setSort)}/>
