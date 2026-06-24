@@ -60,7 +60,7 @@ function Bubble({ m, repo, reload, onOpenIssue }) {
   </div>`;
 }
 
-export function Orchestrator({ repos, repoFilter, setRepoFilter, reload, onOpenIssue, issues = [] }) {
+export function Orchestrator({ repos, repoFilter, setRepoFilter, reload, onOpenIssue, issues = [], onAnalyze, auditRepos = [] }) {
   const repo = repoFilter || (repos && repos[0]) || null;
   const [thread, setThread] = useState([]);
   const [draft, setDraft] = useState("");
@@ -103,7 +103,9 @@ export function Orchestrator({ repos, repoFilter, setRepoFilter, reload, onOpenI
   return html`<div class="orch">
     <div class="orch-head">
       <div class="orch-title"><${Icon} name="sparkles" size=${16}/> Orchestrator <span class="orch-repo">${repo.split("/").pop()}</span></div>
-      <button class="iconbtn" data-tip="New conversation" aria-label="New conversation" onClick=${clear}><${Icon} name="trash" size=${16}/></button>
+      <span style="flex:1"></span>
+      ${onAnalyze ? html`<button class="colbtn tip" data-tip=${"Analyze " + repo.split("/").pop() + "'s codebase health — proposes refactor issues"} disabled=${auditRepos.includes(repo)} onClick=${() => onAnalyze(repo)}>${auditRepos.includes(repo) ? html`<${Spinner} size=${14}/>` : html`<${Icon} name="search" size=${14}/>`} <span class="segx">Analyze</span></button>` : null}
+      <button class="iconbtn ghost" data-tip="New conversation" aria-label="New conversation" onClick=${clear}><${Icon} name="trash" size=${16}/></button>
     </div>
     ${live.length ? html`<div class="orch-live">
       <div class="orch-live-h"><span class="orch-live-dot"></span> Working now · ${live.length}</div>
@@ -117,7 +119,7 @@ export function Orchestrator({ repos, repoFilter, setRepoFilter, reload, onOpenI
         : thread.length ? thread.map((m) => html`<${Bubble} key=${m.id} m=${m} repo=${repo} reload=${reload} onOpenIssue=${onOpenIssue}/>`)
         : html`<div class="orch-empty">
             <div class="obki"><${Icon} name="sparkles" size=${26}/></div>
-            <div class="obh">Talk through what you want to build</div>
+            <div class="obh">What can I help with in ${repo.split('/').pop()}?</div>
             <div class="obsub">Describe an idea, ask what's feasible, or sketch a feature. When it's ready, I'll propose scoped issues you can create with one click — or just say “quick fix: …” for a one-liner.</div>
           </div>`}
       ${busy ? html`<div class="obub obub-orch"><span class="obub-av"><${Avatar} role="auditor" size=${26} crop="head"/></span><div class="obub-body"><div class="obub-txt obub-think"><${Spinner} size=${13}/> thinking…</div></div></div>` : null}

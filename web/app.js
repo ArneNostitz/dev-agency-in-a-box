@@ -290,9 +290,9 @@ function App() {
       </div>` : null}
       <div class=${"content" + ((dockDetail || chatSplit) ? " is-split" : "") + (view === "list" && !dockDetail && !chatSplit ? " view-list" : "")}>
         ${chatSplit
-          ? html`<div class="split chat-split"><div class="split-left"><${Orchestrator} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${load} onOpenIssue=${openIssue} issues=${issues}/></div><div class="split-right"><${ProgressTable} issues=${shown} repos=${repos} repoFilter=${repoFilter} openKey=${openKey} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data} statFilter=${statFilter}/></div></div>`
+          ? html`<div class="split chat-split"><div class="split-left"><${Orchestrator} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${load} onOpenIssue=${openIssue} issues=${issues} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos}/></div><div class="split-right"><${ProgressTable} issues=${shown} repos=${repos} repoFilter=${repoFilter} openKey=${openKey} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data} statFilter=${statFilter}/></div></div>`
           : view === "chat" && repos.length
-          ? html`<${Orchestrator} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${load} onOpenIssue=${openIssue} issues=${issues}/>`
+          ? html`<${Orchestrator} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${load} onOpenIssue=${openIssue} issues=${issues} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos}/>`
           : view === "board"
           ? html`<${Board} issues=${shown} repos=${repos} repoFilter=${repoFilter} tab=${tab} isDesktop=${isDesktop} onOpen=${(i) => setOpenKey(i.repo + "#" + i.number)} onOpenChild=${openIssue} onAddRepo=${() => setSheet("addrepo")} onAddIssue=${(r) => openComposer(r)} onAnalyze=${(r) => act.audit(r)} auditRepos=${auditRepos} act=${act} data=${data}/>`
           : dockDetail

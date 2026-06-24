@@ -105,7 +105,6 @@ export function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, onOpe
           <div class="colhead"><${Icon} name=${c.icon} size=${15}/> ${c.label} <span class="n">${allItems.length || ""}</span></div>
           ${c.k === "planned" ? html`<div class="planned-actions">
             <button class="colbtn primary" onClick=${() => onAddIssue(target)}><${Icon} name="plus" size=${14}/> Add Issue</button>
-            <button class="colbtn" disabled=${!target || analyzing} title=${target ? "Analyze " + target.split("/").pop() + "'s codebase health" : "Pick a repo first"} onClick=${() => target && onAnalyze(target)}>${analyzing ? html`<${Spinner} size=${14}/>` : html`<${Icon} name="search" size=${14}/>`} Analyze Repo</button>
           </div>` : null}
           <div class="cards">
             ${allItems.length ? allItems.map(renderCard) : html`<div class="empty">—</div>`}
@@ -132,7 +131,6 @@ export function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, onOpe
           <div class="band-head"><${Icon} name="pr" size=${15}/> <b>${short}</b> <span class="n">${repoItems.length || ""}</span>
             <span style="flex:1"></span>
             <button class="colbtn primary" onClick=${() => onAddIssue(r)}><${Icon} name="plus" size=${14}/> Add Issue</button>
-            <button class="colbtn" disabled=${rAnalyzing} onClick=${() => onAnalyze(r)}>${rAnalyzing ? html`<${Spinner} size=${14}/>` : html`<${Icon} name="search" size=${14}/>`} Analyze</button>
           </div>
           <div class="band-cols">
             ${bandCols.map((c) => html`<div class="col" key=${c.k}>

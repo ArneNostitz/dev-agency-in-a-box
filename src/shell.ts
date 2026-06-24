@@ -220,8 +220,8 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .content{flex:1;overflow:hidden;display:flex;min-height:0}
 .content.view-list,.content:not(.is-split){flex-direction:column}
 .split{flex:1;display:flex;min-height:0;overflow:hidden}
-.split-left{flex:1;min-width:0;overflow-y:auto;display:flex;flex-direction:column}
-.split-right{flex:0 0 clamp(400px,44%,600px);border-left:1px solid var(--line);background:var(--bg);overflow:hidden;display:flex;flex-direction:column}
+.split-left{flex:1 1 auto;min-width:0;overflow-y:auto;display:flex;flex-direction:column}
+.split-right{flex:0 0 clamp(460px,54%,820px);border-left:1px solid var(--line);background:var(--bg);overflow:hidden;display:flex;flex-direction:column}
 .chat-split .split-left{border-right:1px solid var(--line)}
 
 /* ── At-a-glance stat strip ────────────────────────────────────── */
