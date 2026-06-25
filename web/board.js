@@ -1,6 +1,7 @@
 // Dev Agency dashboard — board module (split from app.js; Preact + htm, no build step).
 import { html, useState, useEffect, useMemo } from "/web/vendor/standalone.mjs";
 import { Avatar, COLS, Icon, ProviderLogo, Select, Spinner, ago, api, boardSortCmp, classify, defaultModelLogo, filterByTime, fmtTok, getSetupProgress, ghUrl, isDone, shortModel, statusChip, toast, usageTitle } from "./core.js";
+import { Breadcrumb } from "./ui.js";
 
 // ---------- sort / group / time options ----------
 
@@ -254,7 +255,7 @@ function Card({ i, subs, multi, onOpen, onOpenChild, act, data, stream = EMPTY_S
   const live = !!(i.active || i.running);
   return html`<div class=${"bcard" + (tmp ? " busy" : "") + (live ? " live" : "")} onClick=${tmp ? null : () => onOpen(i)}>
     <div class="bcard__h">
-      <span class="bcard__crumbs"><span class="card-repo">${i.repo.split("/").pop()}</span><${Icon} name="chevright" size=${10}/><span class="card-num">#${i.number > 0 ? i.number : "…"}</span>${i.workflowId ? html`<span class="wfchip tip" data-tip=${"Workflow: " + i.workflowId}><${Icon} name="sparkles" size=${10}/> ${i.workflowId}</span>` : null}</span>
+      <${Breadcrumb} repo=${i.repo} number=${i.number} className="bcard__crumbs"/>${i.workflowId ? html`<span class="wfchip tip" data-tip=${"Workflow: " + i.workflowId}><${Icon} name="sparkles" size=${10}/> ${i.workflowId}</span>` : null}
       <span class=${"statuschip da-status " + st.cls + (live ? " da-status--live" : "")} style="margin-left:auto" data-tip=${tmp ? "creating…" : statusTip(i, st)}><span class="da-status__dot"></span>${tmp ? "creating…" : st.label}</span>
       <span class="card-hicons">
         ${i.byAgent ? html`<span class="card-byagent tip" data-tip="Created by an agent — review &amp; start"><${Icon} name="rocket" size=${11}/></span>` : null}

@@ -60,7 +60,7 @@ async function mountApp(opts = {}) {
   const webDir = join(HERE, "..", "web");
   const vendorUrl = pathToFileURL(join(webDir, "vendor", "standalone.mjs")).href;
   const tmpDir = mkdtempSync(join(tmpdir(), "daui-"));
-  for (const f of ["core", "layout", "board", "detail", "settings", "onboarding", "topbar", "usage", "agents", "workflows", "builder", "table", "orch", "app"]) {
+  for (const f of ["core", "ui", "layout", "board", "detail", "settings", "onboarding", "topbar", "usage", "agents", "workflows", "builder", "table", "orch", "app"]) {
     const src = readFileSync(join(webDir, f + ".js"), "utf8").split("/web/vendor/standalone.mjs").join(vendorUrl);
     writeFileSync(join(tmpDir, f + ".js"), src);
   }
@@ -434,7 +434,7 @@ test("epic card nests its sub-issues and hides their standalone cards", async ()
   const webDir = join(HERE, "..", "web");
   const vendorUrl = pathToFileURL(join(webDir, "vendor", "standalone.mjs")).href;
   const tmpDir = mkdtempSync(join(tmpdir(), "dagrp-"));
-  for (const f of ["core", "board"]) {
+  for (const f of ["core", "ui", "board"]) {
     const src = readFileSync(join(webDir, f + ".js"), "utf8").split("/web/vendor/standalone.mjs").join(vendorUrl);
     writeFileSync(join(tmpDir, f + ".js"), src);
   }

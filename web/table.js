@@ -6,6 +6,7 @@
 import { html, useState, useMemo, useRef, useEffect } from "/web/vendor/standalone.mjs";
 import { Avatar, Icon, Spinner, ago, classify, isDone, statusChip, filterByTime, ghUrl } from "./core.js";
 import { nestedChildKeys } from "./board.js";
+import { Breadcrumb } from "./ui.js";
 
 // Canonical pipeline steps + the role that owns each (lights the right one from i.role).
 const STEPS = [["plan", "Plan"], ["dev", "Dev"], ["test", "Test"], ["review", "Review"]];
@@ -152,9 +153,8 @@ function IssueRow({ i, multi, onOpen, act, avatarsOn, excerpt, open = false, chi
     <div class="irow__head">
       <div class="irow__crumbs">
         ${expandable ? html`<button class=${"irow__exp" + (expanded ? " open" : "")} aria-label="Toggle sub-issues" onClick=${(e) => { e.stopPropagation(); onToggle && onToggle(); }}><${Icon} name="chevright" size=${13}/></button>` : null}
-        ${multi ? html`<span class="irow__repo"><span class="irow__repo-dot" style=${"background:" + repoColor(i.repo)}></span>${repoName}</span><${Icon} name="chevright" size=${11}/>` : null}
-        ${i.parentNum ? html`<span class="irow__epic"><${Icon} name="layers" size=${11}/>#${i.parentNum}</span><${Icon} name="chevright" size=${11}/>` : null}
-        <span class="irow__num">${i.number > 0 ? "#" + i.number : "…"}</span>${i.workflowId ? html`<span class="wfchip tip" data-tip=${"Workflow: " + i.workflowId}><${Icon} name="sparkles" size=${10}/> ${i.workflowId}</span>` : null}
+        <${Breadcrumb} repo=${i.repo} number=${i.number} parent=${i.parentNum ? { number: i.parentNum } : null} dot=${multi}/>
+        ${i.workflowId ? html`<span class="wfchip tip" data-tip=${"Workflow: " + i.workflowId}><${Icon} name="sparkles" size=${10}/> ${i.workflowId}</span>` : null}
         ${i.byAgent ? html`<span class="irow__byagent tip" data-tip="Proposed by an agent — review & start"><${Icon} name="rocket" size=${10}/> agent</span>` : null}
         ${i.editing && i.editing.length ? html`<span class="irow__lock tip" data-tip=${"Editing now: " + i.editing.join(", ")}><${Icon} name="lock" size=${10}/> ${i.editing.length}</span>` : null}
       </div>
