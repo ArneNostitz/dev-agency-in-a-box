@@ -154,6 +154,7 @@ export function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, onOpe
 // Local copies so board.js doesn't import table.js (table.js already imports board.js → cycle).
 const BSTEPS = [["plan", "Plan"], ["dev", "Dev"], ["test", "Test"], ["review", "Review"]];
 const BROLE_STEP = { planner: 0, architect: 0, decomposer: 0, spec: 0, "spec-creator": 0, developer: 1, dev: 1, coder: 1, tester: 2, test: 2, reviewer: 3, review: 3, auditor: 0 };
+const BSTEP_ROLES = { plan: ["planner", "architect"], dev: ["developer"], test: ["tester"], review: ["reviewer"] };
 function bTimeline(i) {
   const sstate = i.state || "", done = isDone(i);
   if (i.epic || sstate === "agency:epic") return { epic: true };
@@ -179,15 +180,17 @@ function bTimeline(i) {
 function BFlow({ i, avatarsOn }) {
   const m = bTimeline(i);
   if (m.epic || !m.started) return null;
+  const lastIdx = i.lastRole ? BSTEPS.findIndex(([k]) => (BSTEP_ROLES[k] || []).includes(i.lastRole)) : -1;
   return html`<div class="flow flow--compact">
     ${m.steps.map((s, idx) => {
       const current = s.st === "current";
-      const showFace = current && i.role && avatarsOn;
+      const faceRole = (current && m.live) ? i.role : (!m.live && idx === lastIdx && i.lastRole) ? i.lastRole : (current ? i.role : null);
+      const showFace = !!faceRole && avatarsOn;
       return html`
         ${idx ? html`<span class=${"flow__line" + (idx <= m.current ? " on" : "")}></span>` : null}
-        <span class=${"flow__step " + s.st} title=${s.label}>
+        <span class=${"flow__step " + s.st + (idx === lastIdx && !m.live ? " lastran" : "")} title=${s.label + (idx === lastIdx && i.lastRole ? " · last: " + i.lastRole : "")}>
           <span class=${"flow__dot" + (current && m.live ? " pulse" : "") + (showFace ? " flow__dot--face" : "")}>
-            ${s.st === "done" ? html`<${Icon} name="check" size=${9}/>` : showFace ? html`<span class="flow__face"><${Avatar} role=${i.role} size=${20} crop="head"/></span>` : null}
+            ${s.st === "done" && !showFace ? html`<${Icon} name="check" size=${9}/>` : showFace ? html`<span class="flow__face"><${Avatar} role=${faceRole} size=${20} crop="head"/></span>` : null}
           </span>
         </span>`;
     })}

@@ -375,6 +375,7 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .flow--compact .flow__dot{width:12px;height:12px;border-width:1.5px}
 .flow--compact .flow__line{min-width:14px;margin-top:5px}
 .flow__dot--face{position:relative;width:26px;height:26px;margin-top:-5px;background:transparent;border:none;overflow:visible;padding:0}
+.flow__step.lastran .flow__dot--face{box-shadow:0 0 0 2px var(--amber)}
 .flow__step.current .flow__dot--face{background:transparent;border-color:transparent}
 .flow__face{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;object-position:center;display:block}
 .flow__face .avi{width:100%!important;height:100%!important}
@@ -480,6 +481,7 @@ input,select,textarea{font-family:inherit;font-size:14px}
 
 .dstream,.stream{background:var(--term-bg);color:var(--term-ink);border-radius:var(--radius);padding:11px 13px;font:12px/1.55 var(--font-mono);white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;max-width:100%;overflow-x:hidden;display:flex;flex-direction:column;gap:2px}
 .stream__h{color:var(--term-muted);margin-bottom:4px;font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+.dstream .l-ts,.stream .l-ts{color:var(--term-muted);opacity:.7;font-size:10.5px;user-select:none}
 .dstream .tool,.stream .tool{color:var(--term-accent)}
 .dstream .muted,.stream .muted{color:var(--term-muted)}
 

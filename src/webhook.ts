@@ -392,6 +392,10 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           const conflictMap = listConflicts(); // conflicting files per "repo#number"
           const claimMap = new Map(activeClaims().map((c) => [`${c.repo}#${c.number}`, c.files])); // live file locks per issue
           const runMap = roleRunsByIssue(); // per-role run counts → loop-back badges
+          // Last agent that actually ran per issue, from recent activity (most recent role wins).
+          const _recentAct = recentActivity(300);
+          const lastRoleMap: Record<string, string> = {};
+          for (const a of _recentAct) { if (a && a.role) lastRoleMap[`${a.repo}#${a.number}`] = a.role; }
           const enriched = issues.map((i) => {
             const byParent = epicCache[i.repo] ?? {};
             const dbKids = byParent[i.number];
@@ -425,6 +429,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               review: reviews[`${i.repo}#${i.number}`] ?? null,
               modelOverride: getIssueModelOverride(i.repo, i.number),
               workflowId: getIssueWorkflow(i.repo, i.number),
+              lastRole: lastRoleMap[`${i.repo}#${i.number}`] ?? null,
               budget: getIssueBudget(i.repo, i.number),
               // True iff a Claude run is actually executing for this issue right now (abort registry
               // — the precise signal). Drives the Stop button so it's reliably shown only while live.

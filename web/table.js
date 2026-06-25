@@ -93,6 +93,9 @@ function WorkflowTimeline({ i, labels = true }) {
     </div>`;
   }
   if (!m.started) return null;
+  // Index of the step the LAST agent ran (so a parked issue still shows who ran last, not just the lead).
+  const lastIdx = i.lastRole ? (STEPS.findIndex(([k]) => (STEP_ROLES[k] || []).includes(i.lastRole))) : -1;
+  const live = !!(i.active || i.running);
   return html`<div class=${"flow" + (labels ? "" : " flow--compact")}>
     ${m.steps.map((s, idx) => {
       const loops = loopsFor(i, s.k);
@@ -100,12 +103,14 @@ function WorkflowTimeline({ i, labels = true }) {
       const current = idx === m.current && !done;
       const blocked = s.st === "attention";
       const cls = done ? "done" : current ? (blocked ? "blocked" : "current") : blocked ? "blocked" : "pending";
-      const showFace = current && i.role;
+      // Show a face on the current step (live lead) OR on the step the last agent ran (when idle).
+      const faceRole = (current && live) ? i.role : (!live && idx === lastIdx && i.lastRole) ? i.lastRole : (current ? i.role : null);
+      const showFace = !!faceRole;
       return html`
         ${idx ? html`<span class=${"flow__line" + (idx <= m.current ? " on" : "")}></span>` : null}
-        <span class=${"flow__step " + cls} title=${s.label + " — " + s.st}>
-          <span class=${"flow__dot" + (current && (i.active || i.running) ? " pulse" : "") + (showFace ? " flow__dot--face" : "")}>
-            ${done ? html`<${Icon} name="check" size=${10}/>` : showFace ? html`<span class="flow__face"><${Avatar} role=${i.role} size=${labels ? 26 : 20} crop="head"/></span>` : null}
+        <span class=${"flow__step " + cls + (idx === lastIdx && !live ? " lastran" : "")} title=${s.label + " — " + s.st + (idx === lastIdx && i.lastRole ? " · last: " + i.lastRole : "")}>
+          <span class=${"flow__dot" + (current && live ? " pulse" : "") + (showFace ? " flow__dot--face" : "")}>
+            ${done && !showFace ? html`<${Icon} name="check" size=${10}/>` : showFace ? html`<span class="flow__face"><${Avatar} role=${faceRole} size=${labels ? 26 : 20} crop="head"/></span>` : null}
           </span>
           ${labels ? html`<span class="flow__lbl">${s.label}</span>` : null}
           ${loops ? html`<span class="flow__loop" title=${loops + " loop" + (loops > 1 ? "s" : "")}>↻${loops}</span>` : null}
