@@ -238,11 +238,15 @@ function smartCmp(a, b) {
 }
 
 // A compact icon-button that opens a dropdown to pick one option (replaces cycle-on-click).
-function MenuBtn({ icon, label, value, options, onPick, align = "right", showLabel = false, active = false, className = "" }) {
+function MenuBtn({ icon, label, value, options, onPick, showLabel = false, active = false, className = "" }) {
   const [open, setOpen] = useState(false);
+  const [align, setAlign] = useState("right");
   const ref = useRef(null);
   useEffect(() => {
     if (!open) return;
+    // Edge-aware: open toward whichever side has room so the menu stays inside the viewport.
+    const r = ref.current && ref.current.getBoundingClientRect();
+    if (r) { const menuW = 200; setAlign(r.left - menuW < 8 && r.right + menuW < window.innerWidth ? "left" : "right"); }
     const close = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);

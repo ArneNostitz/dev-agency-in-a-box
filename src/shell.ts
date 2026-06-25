@@ -499,6 +499,9 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .cmt{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:11px 13px;margin-bottom:12px;min-width:0;max-width:100%;overflow:hidden}
 .cmt .h{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-2);margin-bottom:7px}
 .cmt .h>span{flex:1;min-width:0}
+.cmt-av{flex:0 0 auto;display:inline-flex;width:28px;height:28px}
+.cmt-av .avi,.cmt-av .barehead{width:28px!important;height:28px!important}
+.cmt-role{font-weight:600;color:var(--ink-1)}
 .cmt.ag{background:var(--surface-2)}
 .cmt.human{border-left:3px solid var(--accent)}
 .cmt-h,.cmt__h{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink-2);margin-bottom:5px}
@@ -541,8 +544,13 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .buildstamp{font-family:var(--font-mono);margin-left:auto}
 
 /* ── Global tooltip ────────────────────────────────────────────── */
-.gtip{position:fixed;z-index:301;transform:translate(-50%,-100%);background:var(--ink-1);color:var(--surface);font-size:11.5px;font-weight:500;line-height:1.4;padding:5px 9px;border-radius:6px;pointer-events:none;white-space:normal;overflow-wrap:anywhere;max-width:min(300px,80vw);text-align:center;box-shadow:var(--shadow-md)}
-.gtip--below{transform:translate(-50%,0)}
+.gtip{position:fixed;z-index:301;background:var(--ink-1);color:var(--surface);font-size:11.5px;font-weight:500;line-height:1.4;padding:5px 9px;border-radius:6px;pointer-events:none;white-space:normal;overflow-wrap:break-word;word-break:normal;max-width:min(320px,90vw);width:max-content;text-align:center;box-shadow:var(--shadow-md);transform:translate(-50%,-100%)}
+.gtip--center{transform:translate(-50%,-100%)}
+.gtip--left{transform:translate(0,-100%)}
+.gtip--right{transform:translate(-100%,-100%)}
+.gtip--below.gtip--center{transform:translate(-50%,0)}
+.gtip--below.gtip--left{transform:translate(0,0)}
+.gtip--below.gtip--right{transform:translate(-100%,0)}
 html[data-theme="dark"] .gtip{background:#000;color:#fff}
 .tip{cursor:default}
 

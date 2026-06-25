@@ -273,11 +273,15 @@ function App() {
       const t = el.getAttribute("data-tip"); if (!t) return setTip(null);
       const r = el.getBoundingClientRect();
       const vw = window.innerWidth, vh = window.innerHeight;
-      // Flip below the element if too close to the top; clamp x to stay on-screen.
-      const below = r.top < 56;
-      const x = Math.max(40, Math.min(r.left + r.width / 2, vw - 40));
+      const below = r.top < 56;                 // flip below when near the top edge
+      const cx = r.left + r.width / 2;           // ideal centered anchor x
+      const margin = 8, halfMax = 160;           // keep within 8px; tooltip max ~320px wide
+      // Pick an anchor side so the tooltip never overflows — SHIFT it, don't shrink/wrap it.
+      let align = "center", x = cx;
+      if (cx - halfMax < margin) { align = "left"; x = Math.max(margin, r.left); }
+      else if (cx + halfMax > vw - margin) { align = "right"; x = Math.min(vw - margin, r.right); }
       const y = below ? Math.min(r.bottom + 7, vh - 8) : Math.max(r.top - 7, 8);
-      setTip({ text: t, x, y, below });
+      setTip({ text: t, x, y, below, align });
     };
     const hide = (e) => { if (e.target.closest && e.target.closest("[data-tip]")) setTip(null); };
     document.addEventListener("mouseover", show);
@@ -315,7 +319,7 @@ function App() {
       ${data.user && data.onboarded === false && html`<${Onboarding} repos=${repos} github=${data.github} reload=${load}/>`}
       <${StatusLine} working=${working} session=${data.session} spend=${data.spendToday} analyzer=${data.analyzer} reload=${load} offlineQ=${offlineQ} syncing=${syncing}/>
       <${Toasts} toasts=${toasts} onDismiss=${dismissToast}/>
-      ${tip ? html`<div class=${"gtip" + (tip.below ? " gtip--below" : "")} style=${"left:" + tip.x + "px;top:" + tip.y + "px"}>${tip.text}</div>` : null}
+      ${tip ? html`<div class=${"gtip gtip--" + (tip.align || "center") + (tip.below ? " gtip--below" : "")} style=${"left:" + tip.x + "px;top:" + tip.y + "px"}>${tip.text}</div>` : null}
     </div>`;
 }
 

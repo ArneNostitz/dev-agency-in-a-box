@@ -336,7 +336,24 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
       : thread._err ? html`<div class="muted" style="color:var(--red);display:flex;align-items:center;gap:8px">${thread._err} <button class="btn" onClick=${loadThread}>Retry</button></div>`
       : html`<div>
         ${thread.body ? html`<${Comment} author=${thread.author} createdAt=${thread.createdAt} body=${thread.body} isAgency=${false}/>` : null}
-        ${(thread.comments || []).map((c) => html`<${Comment} key=${c.localId || c.id || c.createdAt} id=${c.id} author=${c.author} createdAt=${c.createdAt} body=${c.body} isAgency=${c.isAgency} incoming=${c.incoming} avatars=${(data && data.config && data.config.avatars) !== "off"} onEdit=${editComment}/>`)}
+        ${(() => {
+          const cs = thread.comments || [];
+          // Index of the LAST human (non-agency) comment — only that one is editable.
+          let lastHumanIdx = -1;
+          for (let n = 0; n < cs.length; n++) if (!cs[n].isAgency) lastHumanIdx = n;
+          // How many agent comments follow that last human comment.
+          const agentsAfter = lastHumanIdx >= 0 ? cs.slice(lastHumanIdx + 1).filter((x) => x.isAgency).length : 0;
+          return cs.map((c, n) => {
+            const isLastHuman = n === lastHumanIdx;
+            // Editable only on the last human comment, and only while ≤1 agent has replied after it.
+            const editable = isLastHuman && agentsAfter <= 1;
+            // If exactly one agent replied, editing must halt that agent. If >1, no edit — only stop.
+            const onEditFn = editable ? editComment : null;
+            const onStop = (isLastHuman && agentsAfter >= 1 && running) ? (() => act.stop(repo, number)) : null;
+            // editable+1-agent: saving the edit should also halt that one agent so it re-reads the edit.
+            return html`<${Comment} key=${c.localId || c.id || c.createdAt} id=${c.id} author=${c.author} createdAt=${c.createdAt} body=${c.body} isAgency=${c.isAgency} incoming=${c.incoming} avatars=${(data && data.config && data.config.avatars) !== "off"} onEdit=${onEditFn} editable=${editable} agentsAfter=${isLastHuman ? agentsAfter : 0} onStopAgent=${onStop}/>`;
+          });
+        })()}
         ${pendingComments.map((p) => html`<${Comment} key=${"skel-" + p.id} author=${p.author} createdAt=${p.createdAt} body=${p.body} isAgency=${false} isSkel=${true}/>`)}
       </div>`}
     ${!chatAtBottom ? html`<div class="scroll-fab-wrap"><button class="iconbtn scroll-fab" title="Scroll to bottom" onClick=${() => { chatRef.current.scrollTop = chatRef.current.scrollHeight; }}><${Icon} name="chevdown" size=${16}/></button></div>` : null}
@@ -412,7 +429,7 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
     </div>
   </div>`;
 }
-function Comment({ id, author, createdAt, body, isAgency, isSkel, incoming, avatars = true, onEdit }) {
+function Comment({ id, author, createdAt, body, isAgency, isSkel, incoming, avatars = true, onEdit, editable = false, agentsAfter = 0, onStopAgent = null }) {
   const [editing, setEditing] = useState(false);
   const [editVal, setEditVal] = useState(body || "");
   const [saving, setSaving] = useState(false);
@@ -421,13 +438,14 @@ function Comment({ id, author, createdAt, body, isAgency, isSkel, incoming, avat
   function save() {
     if (!onEdit || !editVal.trim() || saving) return;
     setSaving(true);
-    onEdit(id, editVal.trim()).then(() => { setEditing(false); setSaving(false); }).catch(() => setSaving(false));
+    onEdit(id, editVal.trim()).then(() => { setEditing(false); setSaving(false); if (agentsAfter >= 1 && onStopAgent) onStopAgent(); }).catch(() => setSaving(false));
   }
   return html`<div class=${"cmt " + (isAgency ? "ag" : "") + (isSkel ? " skel" : "") + (incoming ? " incoming" : "")}>
     <div class="h">
-      ${isAgency && avatars ? html`<${Avatar} role=${roleFromComment(body)} size=${44} crop="full"/>` : null}
+      ${isAgency && avatars ? html`<span class="cmt-av"><${Avatar} role=${roleFromComment(body)} size=${28} crop="head"/></span>` : null}
       <span>${incoming ? html`<span class="cmt-in" title="Incoming — posted on GitHub"><${Icon} name="incoming" size=${12}/></span> ` : ""}${(() => { const bd = isAgency ? commentBadge(body) : null; return bd ? html`<span class="cmt-role">${bd.emoji} ${bd.name}</span> · ` : ""; })()}${author || ""} · ${isSkel ? "just now" : ago(createdAt)}</span>
-      ${id && onEdit && !isSkel ? html`<button class="iconbtn cmt-edit-btn" title="Edit comment" onClick=${startEdit}><${Icon} name="edit" size=${13}/></button>` : null}
+      ${id && !isSkel && editable && onEdit ? html`<button class="iconbtn cmt-edit-btn tip" data-tip=${agentsAfter === 1 ? "Edit — this halts the agent that replied" : "Edit comment"} onClick=${startEdit}><${Icon} name="edit" size=${13}/></button>` : null}
+      ${id && !isSkel && !editable && onStopAgent ? html`<button class="iconbtn cmt-edit-btn tip" data-tip="An agent has already replied — can't edit. Stop the agent instead." onClick=${onStopAgent}><${Icon} name="stop" size=${13}/></button>` : null}
     </div>
     ${editing ? html`
       <textarea class="cmt-edit-ta" value=${editVal} onInput=${(e) => setEditVal(e.target.value)}></textarea>
