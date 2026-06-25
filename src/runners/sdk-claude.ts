@@ -22,8 +22,6 @@ export class ClaudeSdkRunner implements AgentRunner {
     let stderrBuf = "";
 
     const n = (u: Record<string, unknown>, k: string): number => (typeof u[k] === "number" ? (u[k] as number) : 0);
-    const sumUsage = (u: Record<string, unknown>): number =>
-      n(u, "input_tokens") + n(u, "output_tokens") + n(u, "cache_creation_input_tokens") + n(u, "cache_read_input_tokens");
     const sumBillable = (u: Record<string, unknown>): number =>
       n(u, "input_tokens") + n(u, "output_tokens") + n(u, "cache_creation_input_tokens");
 
@@ -56,8 +54,13 @@ export class ClaudeSdkRunner implements AgentRunner {
           emitAssistant(message);
           const au = (message as unknown as { message?: { usage?: Record<string, unknown> } }).message?.usage;
           if (au) {
-            tokens += sumUsage(au);
-            capTokens += sumBillable(au);
+            // Billable tokens (input + output + cache-CREATION). We deliberately EXCLUDE
+            // cache_read_input_tokens here: cached context is re-read every turn, so summing it
+            // per-turn balloons the count into the millions while costing almost nothing — a
+            // misleading "2.7M tokens" on a cheap run. Cost still comes from total_cost_usd.
+            const billable = sumBillable(au);
+            tokens += billable;
+            capTokens += billable;
           }
         }
         if ("result" in message && typeof (message as { result?: unknown }).result === "string") {
