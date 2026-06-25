@@ -268,7 +268,17 @@ function App() {
   }, [sheet, openKey]);
   // One global fixed-position tooltip for every [data-tip] — never clipped by a scroll container.
   useEffect(() => {
-    const show = (e) => { const el = e.target.closest && e.target.closest("[data-tip]"); if (!el) return; const t = el.getAttribute("data-tip"); if (!t) return setTip(null); const r = el.getBoundingClientRect(); setTip({ text: t, x: r.left + r.width / 2, y: r.top - 7 }); };
+    const show = (e) => {
+      const el = e.target.closest && e.target.closest("[data-tip]"); if (!el) return;
+      const t = el.getAttribute("data-tip"); if (!t) return setTip(null);
+      const r = el.getBoundingClientRect();
+      const vw = window.innerWidth, vh = window.innerHeight;
+      // Flip below the element if too close to the top; clamp x to stay on-screen.
+      const below = r.top < 44;
+      const x = Math.max(8, Math.min(r.left + r.width / 2, vw - 8));
+      const y = below ? r.bottom + 7 : r.top - 7;
+      setTip({ text: t, x, y, below });
+    };
     const hide = (e) => { if (e.target.closest && e.target.closest("[data-tip]")) setTip(null); };
     document.addEventListener("mouseover", show);
     document.addEventListener("mouseout", hide);
@@ -305,7 +315,7 @@ function App() {
       ${data.user && data.onboarded === false && html`<${Onboarding} repos=${repos} github=${data.github} reload=${load}/>`}
       <${StatusLine} working=${working} session=${data.session} spend=${data.spendToday} analyzer=${data.analyzer} reload=${load} offlineQ=${offlineQ} syncing=${syncing}/>
       <${Toasts} toasts=${toasts} onDismiss=${dismissToast}/>
-      ${tip ? html`<div class="gtip" style=${"left:" + tip.x + "px;top:" + tip.y + "px"}>${tip.text}</div>` : null}
+      ${tip ? html`<div class=${"gtip" + (tip.below ? " gtip--below" : "")} style=${"left:" + tip.x + "px;top:" + tip.y + "px"}>${tip.text}</div>` : null}
     </div>`;
 }
 
