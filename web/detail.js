@@ -228,7 +228,6 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
   if (issue.pr_url) tb.push(html`<a class="tbtn" data-tip="Open PR" href=${issue.pr_url} target="_blank" rel="noopener"><${Icon} name="pr"/></a>`);
   if (issue.previewUrl) tb.push(html`<a class="tbtn primary" data-tip="Open preview" href=${issue.previewUrl} target="_blank" rel="noopener"><${Icon} name="globe"/></a>`);
   // Re-pull this single issue (title + whole conversation) from GitHub.
-  if (isDesktop) tb.push(html`<button class=${"tbtn" + (bz("update") ? " busy" : "")} disabled=${bz("update")} data-tip="Update this issue from GitHub" onClick=${() => act.updateIssue(repo, number).then(loadThread)}>${tico("update", "refresh")}${lbl(bz("update") ? "Updating…" : "Update")}</button>`);
   if (!done) {
     // Decide actions from FACTS, not the (possibly stale) state label:
     //  • running  — something is actually executing right now (live registry), so the only
@@ -245,8 +244,6 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
     const mo = parts.length >= 2 ? { providerId: parts[0], model: parts.slice(1).join("/") } : null;
 
     const bStop = () => html`<button class=${"tbtn warn" + (bz("stop") ? " busy" : "")} disabled=${bz("stop")} data-tip="Stop & halt — parks at needs-attention (press Resume to continue; Cancel resets to Planned)" onClick=${() => act.stop(repo, number)}>${tico("stop", "stop")}${lbl(bz("stop") ? "Stopping…" : "Stop")}</button>`;
-    const bToPlanned = () => html`<button class=${"tbtn" + (bz("stop") ? " busy" : "")} disabled=${bz("stop")} data-tip="Move to Planned (park it — no AI until you start it)" onClick=${() => act.stop(repo, number).then(onClose)}>${tico("stop", "planned")}${lbl(bz("stop") ? "Moving…" : "To Planned")}</button>`;
-    const bStart = () => html`<button class=${"tbtn green" + (bz("start") ? " busy" : "")} disabled=${bz("start")} data-tip="Start building this" onClick=${() => act.start(repo, number, mo).then(onClose)}>${tico("start", "play")}${lbl("Start")}</button>`;
     const bApprove = () => html`<button class=${"tbtn primary" + (bz("approve") ? " busy" : "")} disabled=${bz("approve")} data-tip="Approve the plan & build" onClick=${() => act.approve(repo, number, mo).then(onClose)}>${tico("approve", "check")}${lbl("Approve")}</button>`;
     const bResume = () => html`<button class=${"tbtn" + (bz("resume") ? " busy" : "")} disabled=${bz("resume")} data-tip="Re-run the agent on this issue" onClick=${() => act.resume(repo, number, mo)}>${tico("resume", "refresh")}${lbl(bz("resume") ? "Resuming…" : "Resume")}</button>`;
     const bFix = () => html`<button class=${"tbtn primary" + (bz("fix") ? " busy" : "")} disabled=${bz("fix")} data-tip=${conflict ? "Resolve merge conflicts" : "Address the review's requested changes"} onClick=${() => act.fix(repo, number, mo).then(onClose)}>${tico("fix", "wrench")}${lbl(conflict ? "Resolve" : "Fix")}</button>`;
@@ -257,39 +254,39 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
     // Cancel → reset to Planned even when there's a PR / work in flight (the branch/PR stays on GitHub).
     const bCancel = () => html`<button class=${"tbtn warn" + (bz("cancel") ? " busy" : "")} disabled=${bz("cancel")} data-tip="Reset to Planned — discards the agency state but keeps the branch/PR on GitHub" onClick=${() => act.cancel(repo, number).then(onClose)}>${tico("cancel", "planned")}${lbl(bz("cancel") ? "Cancelling…" : "Cancel")}</button>`;
 
-    // CTA rule: positive actions go right (with the model select); stop/cancel/park go left.
+    // KISS: ONE state-relevant PRIMARY action stays in the bar. Everything secondary (reset-to-Planned,
+    // close & archive, create-PR, update, run-checks, budget, delete) lives in the hamburger.
     if (running) {
-      tbLeft.push(bStop()); // the only meaningful action while it's executing
+      tbRight.push(bStop()); // a run is executing → the only meaningful action is Stop
     } else if (hasPr) {
       if (conflict) tbRight.push(bFix());
-      else if (needsFix) { tbRight.push(bFix()); tbRight.push(bMerge(true)); }
+      else if (needsFix) tbRight.push(bFix());
       else tbRight.push(bMerge(false));
-      tbRight.push(bResume());
-      tbLeft.push(bCancel());
     } else if (parked) {
-      tbRight.push(bStart());
+      tbRight.push(bResume()); // a started-but-parked issue continues with Resume (no Start/Play)
     } else if (awaiting) {
       tbRight.push(bApprove());
-      tbLeft.push(bToPlanned());
     } else if (issue.epic) {
       tbRight.push(bClose(true));
-      tbRight.push(bResume());
-      tbLeft.push(bCancel());
     } else if (approved) {
       tbRight.push(bCreatePr());
-      tbRight.push(bResume());
-      tbLeft.push(bCancel());
     } else {
       tbRight.push(bResume());
-      tbRight.push(bClose(false));
-      tbLeft.push(bCancel());
     }
   }
   // Less-frequent controls live behind a "More" menu so the bar stays tidy.
   const da = armed === "del", db = bz("del");
   const moreItems = [];
-  if (!isDesktop) moreItems.push(html`<button class=${"menu-item" + (bz("update") ? " busy" : "")} disabled=${bz("update")} onClick=${() => act.updateIssue(repo, number).then(loadThread)}>${bz("update") ? html`<${Spinner} size=${15}/>` : html`<${Icon} name="refresh" size=${15}/>`}<span class="mi-label">${bz("update") ? "Updating…" : "Update from GitHub"}</span></button>`);
+  const ca2 = armed === "close", cb2 = bz("close");
+  // Secondary actions (KISS): the bar shows one primary action; everything else lives here.
+  if (!done) moreItems.push(html`<button class=${"menu-item" + (bz("runChecks") ? " busy" : "")} disabled=${bz("runChecks")} onClick=${() => act.runChecks(repo, number, issue.title)}>${bz("runChecks") ? html`<${Spinner} size=${15}/>` : html`<${Icon} name="flask" size=${15}/>`}<span class="mi-label">Run checks</span></button>`);
+  moreItems.push(html`<button class=${"menu-item" + (bz("update") ? " busy" : "")} disabled=${bz("update")} onClick=${() => act.updateIssue(repo, number).then(loadThread)}>${bz("update") ? html`<${Spinner} size=${15}/>` : html`<${Icon} name="refresh" size=${15}/>`}<span class="mi-label">${bz("update") ? "Updating…" : "Update from GitHub"}</span></button>`);
   if (!done) { moreItems.push(autoToggle("resume")); moreItems.push(autoToggle("merge")); }
+  moreItems.push({ sep: true });
+  // Reset to Planned — discards agency state, keeps the branch/PR.
+  if (!done) moreItems.push(html`<button class=${"menu-item" + (bz("cancel") ? " busy" : "")} disabled=${bz("cancel")} onClick=${() => act.cancel(repo, number).then(onClose)}>${bz("cancel") ? html`<${Spinner} size=${15}/>` : html`<${Icon} name="planned" size=${15}/>`}<span class="mi-label">${bz("cancel") ? "Resetting…" : "Reset to Planned"}</span></button>`);
+  // Close & archive — close the issue (NOT a merge); archive icon makes that clear.
+  if (!done) moreItems.push(html`<button class=${"menu-item" + (cb2 ? " busy" : "")} disabled=${cb2} onClick=${() => confirmAct("close", () => act.close(repo, number).then(onClose))}>${cb2 ? html`<${Spinner} size=${15}/>` : html`<${Icon} name="archive" size=${15}/>`}<span class="mi-label">${cb2 ? "Closing…" : ca2 ? "Tap again to close" : "Close & archive"}</span></button>`);
   // Per-issue budget (#67) — ONE control: unlimited / a $ cap / default, set from a single prompt.
   const isUnlimited = !!issue.budget?.unlimited;
   const budgetVal = isUnlimited ? "Unlimited" : (issue.budget?.maxCostUsd != null ? "$" + issue.budget.maxCostUsd : "Default");
