@@ -497,9 +497,10 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .conflictbox-h{display:inline-flex;align-items:center;gap:7px;font-weight:600;font-size:13.5px;color:var(--red)}
 
 .cmt{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:11px 13px;margin-bottom:12px;min-width:0;max-width:100%;overflow:hidden}
-.cmt .h{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-2);margin-bottom:7px}
-.cmt .h>span{flex:1;min-width:0}
-.cmt-av{flex:0 0 auto;display:inline-flex;width:28px;height:28px}
+.cmt .h{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-2);margin-bottom:7px;text-align:left}
+.cmt .h>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cmt .h .cmt-edit-btn{margin-left:auto}
+.cmt-av{flex:0 0 28px;display:inline-flex;align-items:center;justify-content:center;width:28px;min-width:28px;max-width:28px;height:28px;overflow:hidden}
 .cmt-av .avi,.cmt-av .barehead{width:28px!important;height:28px!important}
 .cmt-role{font-weight:600;color:var(--ink-1)}
 .cmt.ag{background:var(--surface-2)}
