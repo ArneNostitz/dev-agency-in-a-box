@@ -12,6 +12,20 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
   const [appInfo, setAppInfo] = useState(null);
   const [reply, setReply] = useState("");
   const [replyAgent, setReplyAgent] = useState(""); // address a specific agent in chat
+  // Preselect who you're talking to: the RUNNING agent while it works (a comment = a nudge), or the
+  // NEXT-in-line agent when parked "needs you" (so your reply briefs the right teammate).
+  const roleHandle = (role) => role ? ("@" + String(role).toLowerCase().replace("developer","dev").replace("planner","plan").replace("reviewer","review").replace("tester","test").replace("architect","arch")) : "";
+  useEffect(() => {
+    const runningNow = !!(issue.running || issue.active || issue.queued);
+    if (runningNow && issue.role) setReplyAgent(roleHandle(issue.role));
+    else if (issue.blocked && issue.lastRole) {
+      // next-in-line: a tiny plan→dev→test→review order map.
+      const order = ["planner", "developer", "tester", "reviewer"];
+      const i2 = order.indexOf(String(issue.lastRole).toLowerCase());
+      const next = i2 >= 0 && i2 < order.length - 1 ? order[i2 + 1] : issue.lastRole;
+      setReplyAgent(roleHandle(next));
+    }
+  }, [issue.running, issue.active, issue.queued, issue.role, issue.blocked, issue.lastRole]);
   const [atts, setAtts] = useState([]);
   const [busy, setBusy] = useState(false);
   const [armed, setArmed] = useState(""); // two-tap confirm: which destructive action is armed
