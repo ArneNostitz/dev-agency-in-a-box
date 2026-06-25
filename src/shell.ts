@@ -240,10 +240,10 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .overlay--detail .overlay__panel{animation:slideinR var(--dur) var(--ease)}
 @keyframes slideinR{from{transform:translateX(12px);opacity:.6}to{transform:none;opacity:1}}
 .listbar__stats{display:flex;align-items:center}
-.slot .detail{position:static;inset:auto;z-index:auto;flex:1;min-height:0;width:auto;box-shadow:none;border-left:none}
+.slot .detail{position:static;inset:auto;z-index:auto;flex:1;min-height:0;width:auto;box-shadow:none;border-left:none;container-type:inline-size;container-name:detailpane}
 .slot--detail .detail{border-left:none}
 .slot .pane,.slot .orch,.slot>div{flex:1;min-height:0}
-.overlay__panel--detail .detail{position:static;inset:auto;width:100%;flex:1;min-height:0;box-shadow:none}
+.overlay__panel--detail .detail{position:static;inset:auto;width:100%;flex:1;min-height:0;box-shadow:none;container-type:inline-size;container-name:detailpane}
 .overlay__panel--chat .orch,.slot--chat .orch{flex:1;min-height:0;height:auto;max-width:none;margin:0;border:none;border-radius:0;container-type:inline-size;container-name:chatpane}
 
 
@@ -426,7 +426,7 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .rowmenu-btn.danger{color:var(--red)}
 
 /* ── Detail drawer ─────────────────────────────────────────────── */
-.detail{position:fixed;top:0;right:0;bottom:0;left:auto;z-index:50;background:var(--bg);display:flex;flex-direction:column;width:min(900px,100vw);box-shadow:var(--shadow-lg);border-left:1px solid var(--line)}
+.detail{position:fixed;top:0;right:0;bottom:0;left:auto;z-index:50;background:var(--bg);display:flex;flex-direction:column;width:min(900px,100vw);box-shadow:var(--shadow-lg);border-left:1px solid var(--line);container-type:inline-size;container-name:detailpane}
 .split-right .detail{position:static;inset:auto;z-index:auto;flex:1;width:auto;box-shadow:none;border-left:none}
 .dscrim{position:fixed;inset:0;z-index:49;background:rgba(8,10,14,.5)}
 .dhead,.dh{flex:none;display:flex;align-items:flex-start;gap:10px;padding:14px 16px;background:var(--surface);border-bottom:1px solid var(--line)}
@@ -435,7 +435,22 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .dh__meta,.dmeta{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-3);margin-top:4px;flex-wrap:wrap}
 .dh__num{font-family:var(--font-mono)}
 .dclose{margin-left:auto}
-.dtoolbar{flex:none;display:flex;align-items:center;gap:6px;padding:9px 16px;background:var(--surface);border-bottom:1px solid var(--line);flex-wrap:wrap}
+.dtoolbar{flex:none;display:flex;align-items:center;gap:6px;padding:9px 16px;background:var(--surface);border-bottom:1px solid var(--line);flex-wrap:nowrap;overflow:hidden}
+
+.dtoolbar .tbtn{width:auto;min-width:38px;height:38px;padding:0 12px;gap:6px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--surface)}
+.dtoolbar .tbtn:hover{background:var(--surface-2);border-color:var(--line-2);color:var(--ink-1)}
+.dtoolbar .tbtn.warn{color:var(--amber);border-color:var(--amber-weak)}
+.tlabel{white-space:nowrap}
+/* ── Detail toolbar responds to the PANE width (container query) ── */
+@container detailpane (max-width: 560px){
+  .dtoolbar .tlabel{display:none}
+  .dtoolbar .tbtn{width:38px;padding:0;justify-content:center}
+  .dh__gh{display:none}
+}
+@container detailpane (max-width: 420px){
+  .dh__title{font-size:14px}
+  .dh__meta{gap:6px}
+}
 .dstatus{flex:none;display:flex;flex-direction:column;gap:10px;padding:12px 16px 0}
 .dstatus:empty{display:none}
 .dflow{padding:2px 0 4px}

@@ -205,7 +205,7 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
   }
 
   // toolbar actions. Text labels show on desktop (and on a confirm-armed destructive button).
-  const lbl = (t) => isDesktop ? html`<span class="tlabel">${t}</span>` : null;
+  const lbl = (t) => html`<span class="tlabel">${t}</span>`;
   const au = issue.auto || {};
   // Obvious ON/OFF toggle switch. Reflects the effective state; clicking flips it (explicit on/off).
   const autoToggle = (kind) => {
@@ -223,7 +223,6 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
   const bz = (a) => act.isBusy(a, repo, number);
   const tico = (a, name) => bz(a) ? html`<${Spinner} size=${18}/>` : html`<${Icon} name=${name}/>`;
   // Compact icon-only links (tooltips carry the meaning) so the toolbar stays uncluttered.
-  tb.push(html`<a class="tbtn" data-tip="Open on GitHub" href=${ghUrl(repo, number)} target="_blank" rel="noopener"><${Icon} name="link"/></a>`);
   if (issue.pr_url) tb.push(html`<a class="tbtn" data-tip="Open PR" href=${issue.pr_url} target="_blank" rel="noopener"><${Icon} name="pr"/></a>`);
   if (issue.previewUrl) tb.push(html`<a class="tbtn primary" data-tip="Open preview" href=${issue.previewUrl} target="_blank" rel="noopener"><${Icon} name="globe"/></a>`);
   // Re-pull this single issue (title + whole conversation) from GitHub.
