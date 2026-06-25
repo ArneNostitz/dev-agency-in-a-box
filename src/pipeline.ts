@@ -31,6 +31,12 @@ import {
 import { EPIC_LABEL, renderEpicTracker } from "./epics.js";
 import { runRole } from "./agents/roleAgent.js";
 import { isStopRequested } from "./abort.js";
+// True if the user has stopped this issue — every phase checks this before doing ANY work so Stop
+// means "no next agent, no next step, no commit/PR". (runRole has its own guard for the agent run.)
+function stopped(repo: string, number: number, where: string): boolean {
+  if (isStopRequested(repo, number)) { console.log(`[agency] ${where} skipped — Stop requested ${repo} #${number}`); return true; }
+  return false;
+}
 import type { RoleName } from "./agents/roles.js";
 import { recordRun, recordPlan, lastPlan, recordIssueState, recordIssueStatus, recordIssueFiles, recordPr, setByAgent, addEpicChild, listEpicChildren, getSession, issueActivity, recordReview, getReview, recordConflict, clearConflict, getSetting, skillsPrompt, listHooks, listAgentDefs, changesTouchingFiles, type Workflow } from "./store.js";
 import { conflictFiles } from "./github.js";
@@ -150,6 +156,7 @@ export function parsePlannerDecision(text: string): PlannerDecision {
 
 /** Run the Planner once. Returns the decision and the model used (for the ledger). */
 async function plan(repo: string, issue: Issue, workdir: string, thread: string): Promise<PlannerDecision> {
+  if (stopped(repo, issue.number, "plan")) return { kind: "questions", body: "", auto: false };
   const prior = lastPlan(repo, issue.number);
   const res = await runRole("planner", {
     workdir,
@@ -187,6 +194,7 @@ async function plan(repo: string, issue: Issue, workdir: string, thread: string)
  * if a PR now exists.
  */
 async function finalizeWithPr(repo: string, issue: Issue, workdir: string, branch: string, changesRequested = false): Promise<boolean> {
+  if (stopped(repo, issue.number, "finalizeWithPr")) return false;
   const hasCommits = await ensureBranchPushed(workdir, branch);
   const pr = hasCommits ? await ensureDraftPr(repo, issue.number, branch, issue.title) : await findPrForBranch(repo, branch);
   await removeLabel(repo, issue.number, IN_PROGRESS);
@@ -242,6 +250,7 @@ export function isApproval(thread: string): boolean {
 
 /** Approved either by a 👍 on the proposal comment or a short "ok" reply. */
 async function approved(repo: string, issue: Issue, thread: string): Promise<boolean> {
+  if (stopped(repo, issue.number, "approved")) return false;
   return isApproval(thread) || (await approvedByReaction(repo, issue.number));
 }
 
@@ -350,6 +359,7 @@ async function build(
   thread: string,
   resume?: { digest: string },
 ): Promise<void> {
+  if (stopped(repo, issue.number, "build")) return;
   const branch = `agency/issue-${issue.number}`;
 
   // Resuming an interrupted run: continue from the existing branch (don't redo committed work)
@@ -472,6 +482,7 @@ async function runDeveloperPipeline(
   workdir: string,
   thread: string,
 ): Promise<void> {
+  if (stopped(repo, issue.number, "runDeveloperPipeline")) return;
   // Resuming a proposal that the human approved (by 👍 or "ok")?
   if (issue.labels.includes(APPROVAL_LABEL) && (await approved(repo, issue, thread))) {
     const planText = lastPlan(repo, issue.number);
@@ -549,6 +560,7 @@ async function runSpecialist(
   workdir: string,
   thread: string,
 ): Promise<void> {
+  if (stopped(repo, issue.number, "runSpecialist")) return;
   const branch = `agency/issue-${issue.number}`;
 
   if (role === "planner") {
@@ -698,6 +710,7 @@ export function resumeDigest(repo: string, number: number): string {
  * committed work (and resumes its exact prior session if possible), then tester/reviewer/PR.
  */
 export async function runResumeBuild(repo: string, issue: Issue, workdir: string, thread: string): Promise<void> {
+  if (stopped(repo, issue.number, "runResumeBuild")) return;
   const planText = lastPlan(repo, issue.number) ?? "(plan unavailable — infer from the issue + branch)";
   await commentOnIssue(repo, issue.number, say("developer", "**Resuming** from where it stopped — continuing the existing branch, not redoing finished work."));
   await build(repo, issue, workdir, planText, thread, { digest: resumeDigest(repo, issue.number) });
@@ -724,6 +737,7 @@ function journalContextForFiles(repo: string, files: string[]): string {
 }
 
 export async function runReviewFix(repo: string, issue: Issue, workdir: string, opts?: { conflict?: boolean }): Promise<void> {
+  if (stopped(repo, issue.number, "runReviewFix")) return;
   const branch = `agency/issue-${issue.number}`;
   const rev = getReview(repo, issue.number);
   const wantsChanges = rev?.verdict === "changes"; // reviewer actually asked for changes
@@ -914,6 +928,7 @@ async function evalGate(cond: string, repo: string, issue: Issue, workdir: strin
  * Full build workflow (@build).
  */
 export async function runDeveloperSolo(repo: string, issue: Issue, workdir: string, thread: string): Promise<void> {
+  if (stopped(repo, issue.number, "runDeveloperSolo")) return;
   const branch = `agency/issue-${issue.number}`;
   const dev = await runRole("developer", {
     workdir,

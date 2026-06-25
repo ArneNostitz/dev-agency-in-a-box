@@ -21,7 +21,7 @@ import { recallWiring, RECALL_PROMPT } from "./recall.js";
 import { claudeToken, anthropicApiKey, ghBotToken, githubIdentity } from "../creds.js";
 import { noreplyEmail } from "../github-oauth.js";
 import { providerAuth } from "./provider-auth.js";
-import { registerRun } from "../abort.js";
+import { registerRun, isStopRequested } from "../abort.js";
 import { runHooks } from "../hooks.js";
 
 /**
@@ -173,6 +173,14 @@ async function buildSystemPrompt(role: RoleName): Promise<string> {
 }
 
 export async function runRole(role: RoleName, input: RoleRunInput): Promise<RoleRunResult> {
+  // HARD STOP: if the user pressed Stop on this issue, NO further agent may start — regardless of
+  // which pipeline/workflow path called us. This is the single chokepoint that makes "Stop" mean
+  // "cut everything now: no next agent, no next step". The flag is cleared only on an explicit
+  // start/resume. (stopRuns() already aborted the in-flight SDK run; this stops the NEXT one.)
+  if (isStopRequested(input.repo, input.issueNumber)) {
+    pushActivity(input.repo, input.issueNumber, role, "done", "■ Stopped — skipped (issue was stopped by you).");
+    return { text: "", turns: 0, model: "", costUsd: 0, tokens: 0, stopped: "user-stop" } as RoleRunResult;
+  }
   const def = ROLES[role];
   // Hand the agent the GitNexus code-intelligence tools if this clone is indexed (cuts the
   // tokens spent reading files to research the codebase).
