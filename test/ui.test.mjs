@@ -242,7 +242,7 @@ test("v4: default List view renders the rich progress table + timeline; Chat vie
   assert.ok(window.document.querySelector(".orch-compose"), "orchestrator has a compose box");
   // Live run-state: the running issue (#2) surfaces in the chat's "Working now" strip.
   assert.match(root.innerHTML, /Working now/, "orchestrator reflects live run-state");
-  assert.ok(window.document.querySelector(".orch-live"), "live work strip renders when a run is active");
+  assert.ok(window.document.querySelector(".orch-livecmt"), "live work comment renders when a run is active");
   dom.window.close();
 });
 

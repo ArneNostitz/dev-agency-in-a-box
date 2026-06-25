@@ -56,7 +56,7 @@ import { indexRepo } from "./gitnexus.js";
 import { pushActivity } from "./activity.js";
 import { loadHandleRoleMap, roleForText, ALL_ROLES, type RoleName } from "./agents/roles.js";
 import { resolveWorkflow, workflowLeadRole, workflowTriggers } from "./workflow.js";
-import { getWorkflow } from "./db/workflows.js";
+import { getWorkflow, getDefaultWorkflowId } from "./db/workflows.js";
 import { getIssueWorkflow } from "./db/providers.js";
 import { runPipeline, runWorkflowEngine, runDeveloperSolo, runPrFix, runFollowUp, runResumeBuild, runReviewFix } from "./pipeline.js";
 import { runRole } from "./agents/roleAgent.js";
@@ -264,8 +264,10 @@ async function processIssue(cfg: Config, repo: string, issue: Issue, opts: { fre
   const pinnedWf = (() => { const id = getIssueWorkflow(repo, issue.number); return id ? getWorkflow(id) : null; })();
   // Otherwise a workflow trigger (e.g. @build → Full build) resolves to its lead role and drives the
   // existing flow; failing that, fall back to the role-pin handle map.
-  const wf = pinnedWf ?? (resuming ? null : resolveWorkflow(`${issue.title}\n${issue.body}`));
   const handleRole = resuming || pinnedWf ? null : roleForText(`${issue.title}\n${issue.body}`, loadHandleRoleMap());
+  // pinned per-issue > explicit text trigger > a single-agent handle pin > the global DEFAULT workflow.
+  const textWf = resuming ? null : resolveWorkflow(`${issue.title}\n${issue.body}`);
+  const wf = pinnedWf ?? textWf ?? ((!resuming && handleRole === null) ? getWorkflow(getDefaultWorkflowId()) : null);
   const role: RoleName = wf
     ? workflowLeadRole(wf)
     : resuming

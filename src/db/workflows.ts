@@ -1,4 +1,5 @@
 import { getDb, now } from "./connection.js";
+import { getSetting, setSetting } from "./settings.js";
 
 /** A single agent step in a workflow. Forces skills/hooks; optional model + budget + parallelism. */
 export interface WorkflowStep {
@@ -111,4 +112,16 @@ export function seedWorkflows(): void {
     id: "review-only", name: "Review only", trigger: "@reviewonly", builtin: true,
     steps: [S("@review", "Review the open PR for this issue and leave actionable feedback.")], gates: [],
   });
+}
+
+// Global DEFAULT workflow — what an issue runs when its per-issue workflow is unset ("Default").
+// Configurable in the workflow manager; the built-in Full build ("full-build") is the default-default.
+export function getDefaultWorkflowId(): string {
+  const v = getSetting("default_workflow_id");
+  // Fall back to full-build if unset or pointing at a deleted workflow.
+  if (v && getWorkflow(v)) return v;
+  return "full-build";
+}
+export function setDefaultWorkflowId(id: string): void {
+  setSetting("default_workflow_id", id || "");
 }

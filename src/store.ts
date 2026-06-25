@@ -22,7 +22,7 @@ export { appendOrchMsg, listOrchThread, clearOrchThread, type OrchMsg } from "./
 export { recordChange, recentChanges, changesTouchingFiles, type ChangeEntry, type ChangedFile } from "./db/journal.js";
 export { getAutofixCount, incAutofix, resetAutofix } from "./db/autofix.js";
 export { recentRuns, roleRunsByIssue } from "./db/runs.js";
-export { upsertWorkflow, getWorkflow, listWorkflows, getWorkflowByTrigger, deleteWorkflow, seedWorkflows } from "./db/workflows.js";
+export { upsertWorkflow, getWorkflow, listWorkflows, getWorkflowByTrigger, deleteWorkflow, seedWorkflows, getDefaultWorkflowId, setDefaultWorkflowId } from "./db/workflows.js";
 export type { Workflow, WorkflowStep, WorkflowGate } from "./db/workflows.js";
 export type { RunRow } from "./db/runs.js";
 export { upsertLocalIssue, getLocalIssue, listLocalOpenIssues, nextLocalIssueNumber, addLocalComment, getLocalComments, recordOutgoingComment, setCommentGhId, foldInGitHubComment, updateCommentBody, getConversation, conversationCount } from "./db/local.js";

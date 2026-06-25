@@ -110,14 +110,14 @@ export function Orchestrator({ repos, repoFilter, setRepoFilter, reload, onOpenI
       <button class="iconbtn ghost" data-tip="New conversation" aria-label="New conversation" onClick=${clear}><${Icon} name="trash" size=${16}/></button>
       ${onClose ? html`<button class="iconbtn ghost" data-tip="Hide chat" aria-label="Hide chat" onClick=${onClose}><${Icon} name="x" size=${18}/></button>` : null}
     </div>
-    ${live.length ? html`<div class="orch-live">
-      <div class="orch-live-h"><span class="orch-live-dot"></span> Working now · ${live.length}</div>
-      <div class="orch-live-rows">${live.map((i) => { const sf = statusField(i); return html`<button class="orch-live-row" key=${i.number} onClick=${() => onOpenIssue && onOpenIssue(repo, i.number, i.title)}>
-        <span class=${"pstat pstat-" + sf.kind}><${Icon} name=${sf.icon} size=${11}/> ${sf.label}</span>
-        <span class="orch-live-ttl">#${i.number} ${i.title || ""}</span>
-      </button>`; })}</div>
-    </div>` : null}
     <div class="orch-scroll" ref=${scrollRef}>
+      ${live.length ? html`<div class="orch-livecmt">
+        <div class="orch-livecmt-h"><span class="orch-live-dot"></span> Working now · ${live.length}</div>
+        ${live.map((i) => { const sf = statusField(i); return html`<button class="orch-livecmt-row" key=${i.repo + "#" + i.number} onClick=${() => onOpenIssue && onOpenIssue(i.repo, i.number, i.title)}>
+          <span class=${"pstat pstat-" + sf.kind}><${Icon} name=${sf.icon} size=${11}/> ${sf.label}</span>
+          <span class="orch-livecmt-ttl"><span class="orch-livecmt-repo">${i.repo.split("/").pop()}</span> #${i.number} ${i.title || ""}</span>
+        </button>`; })}
+      </div>` : null}
       ${loading ? html`<div class="empty" style="padding:30px;text-align:center"><${Spinner} size=${18}/></div>`
         : thread.length ? thread.map((m) => html`<${Bubble} key=${m.id} m=${m} repo=${repo} reload=${reload} onOpenIssue=${onOpenIssue}/>`)
         : html`<div class="orch-empty">
