@@ -66,3 +66,38 @@ export function requestStop(repo: string, number: number): void { stopRequested.
 export function isStopRequested(repo: string, number: number): boolean { return stopRequested.has(keyOf(repo, number)); }
 /** Clear the stop flag — called when a fresh run is explicitly started/resumed. */
 export function clearStop(repo: string, number: number): void { stopRequested.delete(keyOf(repo, number)); }
+
+// ---- HOLD: pause-and-resume (distinct from STOP which cuts everything) ----
+// A hold lets the user interrupt a RUNNING workflow from chat to steer it, WITHOUT discarding work:
+// the current agent run finishes, then at the next step boundary the engine sees the hold, persists a
+// `held` state, and stops advancing. The queued STEER (the user's chat message) is applied to the
+// next step when the workflow resumes. Hold is cleared on an explicit resume/start.
+const holdRequested = new Set<string>();
+const steerQueue = new Map<string, string[]>();
+
+/** Interrupt a running issue: it will pause at the next safe (step) boundary, not mid-run. */
+export function requestHold(repo: string, number: number): void { holdRequested.add(keyOf(repo, number)); }
+/** Should the engine pause at the next step boundary? */
+export function isHoldRequested(repo: string, number: number): boolean { return holdRequested.has(keyOf(repo, number)); }
+/** Clear the hold — called on resume/start so the workflow advances again. */
+export function clearHold(repo: string, number: number): void { holdRequested.delete(keyOf(repo, number)); }
+
+/** Queue a steer (a chat message) to fold into the next workflow step when it runs/resumes. */
+export function queueSteer(repo: string, number: number, text: string): void {
+  if (!text || !text.trim()) return;
+  const k = keyOf(repo, number);
+  const arr = steerQueue.get(k) ?? [];
+  arr.push(text.trim());
+  steerQueue.set(k, arr);
+}
+/** Peek the pending steers (without consuming) — for display/state. */
+export function peekSteer(repo: string, number: number): string[] { return steerQueue.get(keyOf(repo, number))?.slice() ?? []; }
+/** Take and CLEAR all pending steers — the engine folds them into the next step's task. */
+export function takeSteer(repo: string, number: number): string[] {
+  const k = keyOf(repo, number);
+  const arr = steerQueue.get(k) ?? [];
+  steerQueue.delete(k);
+  return arr;
+}
+/** True if there's at least one queued steer for this issue. */
+export function hasSteer(repo: string, number: number): boolean { return (steerQueue.get(keyOf(repo, number))?.length ?? 0) > 0; }

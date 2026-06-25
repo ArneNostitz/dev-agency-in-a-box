@@ -30,11 +30,22 @@ import {
 } from "./github.js";
 import { EPIC_LABEL, renderEpicTracker } from "./epics.js";
 import { runRole } from "./agents/roleAgent.js";
-import { isStopRequested } from "./abort.js";
+import { isStopRequested, isHoldRequested } from "./abort.js";
 // True if the user has stopped this issue — every phase checks this before doing ANY work so Stop
 // means "no next agent, no next step, no commit/PR". (runRole has its own guard for the agent run.)
 function stopped(repo: string, number: number, where: string): boolean {
   if (isStopRequested(repo, number)) { console.log(`[agency] ${where} skipped — Stop requested ${repo} #${number}`); return true; }
+  return false;
+}
+// HOLD: pause the workflow at this boundary (resumable). Records a `held` status and tells the
+// caller to stop advancing. Distinct from stopped() (which cuts everything).
+function held(repo: string, number: number, where: string): boolean {
+  if (isHoldRequested(repo, number)) {
+    console.log(`[agency] ${where} held — workflow paused for steer ${repo} #${number}`);
+    recordIssueStatus(repo, number, setBlocked(withStatus("working"), "held"));
+    pushActivity(repo, number, "developer", "done", "⏸ Held — paused at a safe break for your steer. Press Resume to continue.");
+    return true;
+  }
   return false;
 }
 import type { RoleName } from "./agents/roles.js";
@@ -157,6 +168,7 @@ export function parsePlannerDecision(text: string): PlannerDecision {
 /** Run the Planner once. Returns the decision and the model used (for the ledger). */
 async function plan(repo: string, issue: Issue, workdir: string, thread: string): Promise<PlannerDecision> {
   if (stopped(repo, issue.number, "plan")) return { kind: "questions", body: "", auto: false };
+  if (held(repo, issue.number, "plan")) return { kind: "questions", body: "", auto: false };
   const prior = lastPlan(repo, issue.number);
   const res = await runRole("planner", {
     workdir,
@@ -195,6 +207,7 @@ async function plan(repo: string, issue: Issue, workdir: string, thread: string)
  */
 async function finalizeWithPr(repo: string, issue: Issue, workdir: string, branch: string, changesRequested = false): Promise<boolean> {
   if (stopped(repo, issue.number, "finalizeWithPr")) return false;
+  if (held(repo, issue.number, "finalizeWithPr")) return false;
   const hasCommits = await ensureBranchPushed(workdir, branch);
   const pr = hasCommits ? await ensureDraftPr(repo, issue.number, branch, issue.title) : await findPrForBranch(repo, branch);
   await removeLabel(repo, issue.number, IN_PROGRESS);
@@ -251,6 +264,7 @@ export function isApproval(thread: string): boolean {
 /** Approved either by a 👍 on the proposal comment or a short "ok" reply. */
 async function approved(repo: string, issue: Issue, thread: string): Promise<boolean> {
   if (stopped(repo, issue.number, "approved")) return false;
+  if (held(repo, issue.number, "approved")) return false;
   return isApproval(thread) || (await approvedByReaction(repo, issue.number));
 }
 
@@ -360,6 +374,7 @@ async function build(
   resume?: { digest: string },
 ): Promise<void> {
   if (stopped(repo, issue.number, "build")) return;
+  if (held(repo, issue.number, "build")) return;
   const branch = `agency/issue-${issue.number}`;
 
   // Resuming an interrupted run: continue from the existing branch (don't redo committed work)
@@ -414,6 +429,7 @@ async function build(
 
   for (;;) {
     if (isStopRequested(repo, issue.number)) { console.log(`[agency] build halted by Stop ${repo} #${issue.number}`); return; }
+    if (held(repo, issue.number, "build-loop")) return;
     // 1) Tests failing → fix them (errors only) and re-test before spending a review on broken code.
     if (!testPass) {
       const d = decideNext({ phase: "tested", devChanged: true, testPass: false, round, maxRounds: maxR });
@@ -483,6 +499,7 @@ async function runDeveloperPipeline(
   thread: string,
 ): Promise<void> {
   if (stopped(repo, issue.number, "runDeveloperPipeline")) return;
+  if (held(repo, issue.number, "runDeveloperPipeline")) return;
   // Resuming a proposal that the human approved (by 👍 or "ok")?
   if (issue.labels.includes(APPROVAL_LABEL) && (await approved(repo, issue, thread))) {
     const planText = lastPlan(repo, issue.number);
@@ -561,6 +578,7 @@ async function runSpecialist(
   thread: string,
 ): Promise<void> {
   if (stopped(repo, issue.number, "runSpecialist")) return;
+  if (held(repo, issue.number, "runSpecialist")) return;
   const branch = `agency/issue-${issue.number}`;
 
   if (role === "planner") {
@@ -711,6 +729,7 @@ export function resumeDigest(repo: string, number: number): string {
  */
 export async function runResumeBuild(repo: string, issue: Issue, workdir: string, thread: string): Promise<void> {
   if (stopped(repo, issue.number, "runResumeBuild")) return;
+  if (held(repo, issue.number, "runResumeBuild")) return;
   const planText = lastPlan(repo, issue.number) ?? "(plan unavailable — infer from the issue + branch)";
   await commentOnIssue(repo, issue.number, say("developer", "**Resuming** from where it stopped — continuing the existing branch, not redoing finished work."));
   await build(repo, issue, workdir, planText, thread, { digest: resumeDigest(repo, issue.number) });
@@ -738,6 +757,7 @@ function journalContextForFiles(repo: string, files: string[]): string {
 
 export async function runReviewFix(repo: string, issue: Issue, workdir: string, opts?: { conflict?: boolean }): Promise<void> {
   if (stopped(repo, issue.number, "runReviewFix")) return;
+  if (held(repo, issue.number, "runReviewFix")) return;
   const branch = `agency/issue-${issue.number}`;
   const rev = getReview(repo, issue.number);
   const wantsChanges = rev?.verdict === "changes"; // reviewer actually asked for changes
@@ -929,6 +949,7 @@ async function evalGate(cond: string, repo: string, issue: Issue, workdir: strin
  */
 export async function runDeveloperSolo(repo: string, issue: Issue, workdir: string, thread: string): Promise<void> {
   if (stopped(repo, issue.number, "runDeveloperSolo")) return;
+  if (held(repo, issue.number, "runDeveloperSolo")) return;
   const branch = `agency/issue-${issue.number}`;
   const dev = await runRole("developer", {
     workdir,

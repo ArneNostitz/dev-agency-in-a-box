@@ -106,7 +106,7 @@ import { isStructural, structuralFlagKey } from "./coordination.js";
 import { parseRateLimit, nextWindowReset } from "./ratelimit.js";
 import { startPreviewSweeper, killAllApps } from "./apprun.js";
 import { setActive, clearActive, getActive } from "./activity.js";
-import { stopRuns, requestStop, clearStop, isStopRequested } from "./abort.js";
+import { stopRuns, requestStop, clearStop, isStopRequested, requestHold, clearHold, queueSteer } from "./abort.js";
 import { flushOldAttachments } from "./db/attachments.js";
 import { pruneEphemeral } from "./db/connection.js";
 import { dispatch, drain, stop as stopPool, poolStatus, inFlightKeys } from "./pool.js";
@@ -239,6 +239,7 @@ function workdirFor(repo: string, key: string): string {
 /** Process one actionable issue end to end. */
 async function processIssue(cfg: Config, repo: string, issue: Issue, opts: { fresh?: boolean } = {}): Promise<void> {
   clearStop(repo, issue.number); // a fresh dispatch clears any prior Stop request
+  clearHold(repo, issue.number); // …and any prior Hold (resume/continue)
   // Chat agents (v3): interactive, non-repo. Route here and skip the clone/branch/PR machinery.
   const chatDef = chatAgentForText(`${issue.title}\n${issue.body}`);
   if (chatDef) {
@@ -559,6 +560,7 @@ export async function forceResume(cfg: Config, repo: string, number: number, add
 async function processResume(cfg: Config, repo: string, issue: Issue): Promise<void> {
   void cfg;
   clearStop(repo, issue.number); // explicit resume clears any prior Stop request
+  clearHold(repo, issue.number); // resume also lifts a Hold so the workflow advances
   await addLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
   recordIssueStatus(repo, issue.number, withStatus("working"), { title: issue.title, role: "developer" });
   await acknowledge(repo, issue.number);
@@ -709,6 +711,18 @@ export async function forceApprove(cfg: Config, repo: string, number: number): P
  * and park it back in Planned. The sweeper skips Planned, so nothing restarts it — no further AI
  * interaction until the user presses ▶ again.
  */
+/**
+ * Dashboard "Interrupt & steer": queue the user's message and request a HOLD. Unlike Stop, this does
+ * NOT abort the in-flight run — the current agent finishes, then the pipeline pauses at the next
+ * step boundary (status → held) and folds the steer into the next step when the user resumes.
+ */
+export function forceHold(repo: string, number: number, steer: string): void {
+  if (steer && steer.trim()) queueSteer(repo, number, steer.trim());
+  requestHold(repo, number);
+  pushActivity(repo, number, "developer", "text", "⏸ Interrupt queued — the agency will pause at the next safe break for your steer.");
+  console.log(`[agency] hold requested ${repo} #${number}`);
+}
+
 export async function forceStop(_cfg: Config, repo: string, number: number): Promise<void> {
   requestStop(repo, number); // authoritative halt — the workflow/pipeline checks this between steps
   const aborted = stopRuns(repo, number); // abort the live SDK subprocess(es)

@@ -302,6 +302,7 @@ export function statusChip(i) {
   // Distinct chips for each BlockedReason (the payoff of carrying `blocked` in the payload).
   if (i.blocked === "conflict") return { cls: "s-changes", label: "conflict", icon: "alert" };
   if (i.blocked === "budgetExceeded") return { cls: "s-attn", label: "over budget", icon: "alert" };
+  if (i.blocked === "held") return { cls: "s-working", label: "on hold", icon: "clock" };
   if (i.blocked === "needsAttention") return { cls: "s-attn", label: "needs you", icon: "alert" };
   if (i.blocked === "awaitingApproval") return { cls: "s-attn", label: "approve?", icon: "check" };
   if (i.blocked === "awaitingAnswer") return { cls: "s-attn", label: "reply", icon: "messages" };

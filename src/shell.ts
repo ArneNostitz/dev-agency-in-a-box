@@ -504,6 +504,8 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .conflictbox{border:1px solid var(--red);background:var(--red-weak);border-radius:var(--radius);padding:10px 13px;display:flex;flex-direction:column;gap:8px}
 .conflictbox-h{display:inline-flex;align-items:center;gap:7px;font-weight:600;font-size:13.5px;color:var(--red)}
 
+.heldbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;border:1px solid var(--amber);background:var(--amber-weak);border-radius:var(--radius);padding:9px 13px;margin-bottom:12px}
+.heldbar__l{display:inline-flex;align-items:center;gap:7px;font-weight:600;font-size:13px;color:var(--amber);margin-right:auto}
 .cmt{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:11px 13px;margin-bottom:12px;min-width:0;max-width:100%;overflow:hidden}
 .cmt .h{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-2);margin-bottom:7px;text-align:left}
 .cmt .h>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

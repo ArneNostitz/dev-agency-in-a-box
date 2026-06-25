@@ -41,11 +41,11 @@ import { masterKeyConfigured } from "./crypto.js";
 import { ghBotToken, ghUserToken } from "./creds.js";
 import { testClaudeAuth } from "./agents/roleAgent.js";
 import { ALL_ROLES } from "./agents/roles.js";
-import { hasActiveRun } from "./abort.js";
+import { hasActiveRun, requestHold, queueSteer, peekSteer, isHoldRequested } from "./abort.js";
 import { renderLogin, renderInvite, renderSetup, renderForgot, renderReset } from "./authpages.js";
 import { authenticate, createSession, revokeSession, getInvite, acceptInvite, createInvite, createUser, listUsers, listInvites, setUserSecret, listUserSecretKeys, countUsers, setUserPassword, getUserByName, getUserByNameOrEmail, createPasswordReset, consumePasswordReset, type User } from "./store.js";
 import { emailEnabled, sendPasswordReset } from "./email.js";
-import { subscribe, getActive } from "./activity.js";
+import { subscribe, getActive, pushActivity } from "./activity.js";
 import { inFlightKeys } from "./pool.js";
 import { listRateLimited } from "./store.js";
 import { getConversation, conversationCount, foldInGitHubComment, recordOutgoingComment, setCommentGhId, updateCommentBody } from "./store.js";
@@ -429,6 +429,8 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               review: reviews[`${i.repo}#${i.number}`] ?? null,
               modelOverride: getIssueModelOverride(i.repo, i.number),
               workflowId: getIssueWorkflow(i.repo, i.number),
+              held: isHoldRequested(i.repo, i.number) || undefined,
+              steers: peekSteer(i.repo, i.number),
               lastRole: lastRoleMap[`${i.repo}#${i.number}`] ?? null,
               budget: getIssueBudget(i.repo, i.number),
               // True iff a Claude run is actually executing for this issue right now (abort registry
@@ -922,7 +924,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
     }
 
     // Dashboard actions (auth required), not GitHub webhooks.
-    if (["/archive", "/comment", "/comment-edit", "/run-checks", "/merge", "/close", "/close-not-planned", "/create-pr", "/delete", "/resume", "/stop", "/fix", "/auto", "/start", "/new-issue", "/approve", "/audit", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude", "/model-override", "/issue-workflow", "/issue-budget", "/agent-def-save", "/agent-def-delete", "/skill-save", "/skill-delete", "/skill-import", "/hook-save", "/hook-delete", "/analyzer-run", "/refresh", "/refresh-issue", "/cancel", "/install-cli", "/gh-connect", "/gh-connect-poll", "/gh-disconnect", "/workflow-save", "/workflow-delete", "/default-workflow", "/orch-chat", "/orch-handoff", "/orch-clear"].includes(path)) {
+    if (["/archive", "/comment", "/comment-edit", "/run-checks", "/merge", "/close", "/close-not-planned", "/create-pr", "/delete", "/resume", "/stop", "/hold", "/fix", "/auto", "/start", "/new-issue", "/approve", "/audit", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude", "/model-override", "/issue-workflow", "/issue-budget", "/agent-def-save", "/agent-def-delete", "/skill-save", "/skill-delete", "/skill-import", "/hook-save", "/hook-delete", "/analyzer-run", "/refresh", "/refresh-issue", "/cancel", "/install-cli", "/gh-connect", "/gh-connect-poll", "/gh-disconnect", "/workflow-save", "/workflow-delete", "/default-workflow", "/orch-chat", "/orch-handoff", "/orch-clear"].includes(path)) {
       const actor = userFromReq(req);
       if (!actor) return void res.writeHead(401, { "content-type": "application/json" }).end('{"error":"auth required"}');
       void readBody(req).then(async (body) => {
@@ -1254,6 +1256,16 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           // Abort any in-flight agent run, turn off auto, and park the issue back in Planned.
           if (!repo || !number || !stop) return res.writeHead(400).end("{}");
           await stop(repo, number).catch(() => {});
+          return ok();
+        }
+        if (path === "/hold") {
+          // Interrupt & steer: queue the chat message and pause the workflow at the next safe break
+          // (does NOT abort the in-flight run — the current agent finishes, then the pipeline holds).
+          if (!repo || !number) return res.writeHead(400).end("{}");
+          const steerText = (p.body ?? "").trim();
+          if (steerText) queueSteer(repo, number, steerText);
+          requestHold(repo, number);
+          pushActivity(repo, number, "developer", "text", "⏸ Interrupt queued — pausing at the next safe break for your steer.");
           return ok();
         }
         if (path === "/test-claude") {

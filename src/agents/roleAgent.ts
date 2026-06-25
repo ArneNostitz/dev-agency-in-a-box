@@ -21,7 +21,7 @@ import { recallWiring, RECALL_PROMPT } from "./recall.js";
 import { claudeToken, anthropicApiKey, ghBotToken, githubIdentity } from "../creds.js";
 import { noreplyEmail } from "../github-oauth.js";
 import { providerAuth } from "./provider-auth.js";
-import { registerRun, isStopRequested } from "../abort.js";
+import { registerRun, isStopRequested, takeSteer } from "../abort.js";
 import { runHooks } from "../hooks.js";
 
 /**
@@ -180,6 +180,14 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
   if (isStopRequested(input.repo, input.issueNumber)) {
     pushActivity(input.repo, input.issueNumber, role, "done", "■ Stopped — skipped (issue was stopped by you).");
     return { text: "", turns: 0, model: "", costUsd: 0, tokens: 0, stopped: "user-stop" } as RoleRunResult;
+  }
+  // Fold any queued chat STEER (user interrupted to nudge/redirect) into this step's task so the
+  // agent reads it. Taken once — consumed here so it's applied to exactly the next step that runs.
+  const steers = takeSteer(input.repo, input.issueNumber);
+  if (steers.length) {
+    const NL = "\n";
+    input.task = input.task + NL + NL + "[user steer — incorporate this before proceeding]" + NL + steers.join(NL);
+    pushActivity(input.repo, input.issueNumber, role, "text", "\u21aa Folding in your steer: " + steers.join(" / ").slice(0, 160));
   }
   const def = ROLES[role];
   // Hand the agent the GitNexus code-intelligence tools if this clone is indexed (cuts the

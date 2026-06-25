@@ -25,7 +25,8 @@ export type BlockedReason =
   | "needsAttention" // parked: out of revise rounds, unresolved, etc.
   | "conflict" // merge conflict on the branch
   | "rateLimited" // transient — provider rate limit
-  | "budgetExceeded"; // over the per-issue token/$ budget
+  | "budgetExceeded" // over the per-issue token/$ budget
+  | "held"; // user interrupted to steer — paused at a step boundary, resumable
 
 export interface IssueStatus {
   state: IssueState;
@@ -43,6 +44,7 @@ export const BLOCKED_REASONS: readonly BlockedReason[] = [
   "conflict",
   "rateLimited",
   "budgetExceeded",
+  "held",
 ];
 
 const STATE_SET: ReadonlySet<string> = new Set(ISSUE_STATES);
@@ -131,6 +133,7 @@ const BLOCKED_LABEL: Record<BlockedReason, string> = {
   conflict: "🚧 blocked",
   rateLimited: "agency:rate-limited",
   budgetExceeded: "agency:needs-attention", // reuses the attention label; split later if useful
+  held: "agency:held",
 };
 
 /**
