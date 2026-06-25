@@ -233,17 +233,17 @@ input,select,textarea{font-family:inherit;font-size:14px}
 /* ── Slide-over overlays (chat / detail on smaller widths) ─────── */
 .overlay{position:fixed;inset:0;z-index:50;display:flex}
 .overlay__scrim{position:absolute;inset:0;background:rgba(8,10,14,.45)}
-.overlay__panel{position:absolute;top:0;bottom:0;background:var(--bg);box-shadow:var(--shadow-lg);display:flex;flex-direction:column;animation:slidein var(--dur) var(--ease)}
+.overlay__panel{position:absolute;top:0;bottom:0;background:var(--bg);box-shadow:var(--shadow-lg);display:flex;flex-direction:column;min-height:0;overflow:hidden;animation:slidein var(--dur) var(--ease)}
 .overlay__panel--chat{left:0;width:min(440px,92vw);border-right:1px solid var(--line)}
 .overlay__panel--detail{right:0;width:min(900px,100vw);border-left:1px solid var(--line)}
 @keyframes slidein{from{transform:translateX(-12px);opacity:.6}to{transform:none;opacity:1}}
 .overlay--detail .overlay__panel{animation:slideinR var(--dur) var(--ease)}
 @keyframes slideinR{from{transform:translateX(12px);opacity:.6}to{transform:none;opacity:1}}
 .listbar__stats{display:flex;align-items:center}
-.slot .detail{position:static;inset:auto;z-index:auto;flex:1;width:auto;box-shadow:none;border-left:none}
+.slot .detail{position:static;inset:auto;z-index:auto;flex:1;min-height:0;width:auto;box-shadow:none;border-left:none}
 .slot--detail .detail{border-left:none}
 .slot .pane,.slot .orch,.slot>div{flex:1;min-height:0}
-.overlay__panel--detail .detail{position:static;inset:auto;width:100%;flex:1;box-shadow:none}
+.overlay__panel--detail .detail{position:static;inset:auto;width:100%;flex:1;min-height:0;box-shadow:none}
 .overlay__panel--chat .orch{flex:1;min-height:0}
 
 
@@ -428,9 +428,9 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .dtabs button,.tbtn{display:inline-flex;align-items:center;gap:6px;border:none;background:transparent;color:var(--ink-2);font:500 13px var(--font-sans);padding:8px 12px;border-bottom:2px solid transparent;cursor:pointer;margin-bottom:-1px}
 .dtabs button.on,.tbtn.on{color:var(--ink-1);border-bottom-color:var(--accent)}
 .dtabs button:disabled{color:var(--ink-3);cursor:default}
-.dbody{flex:1;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:12px}
+.dbody{flex:1;min-height:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px 16px;display:flex;flex-direction:column;gap:12px}
 .dpanes{flex:1;min-height:0;display:flex;flex-direction:row;overflow:hidden}
-.dpane{flex:1;min-width:0;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:12px}
+.dpane{flex:1;min-width:0;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px 16px;display:flex;flex-direction:column;gap:12px}
 .dpane.chat{flex:1 1 auto}
 .dpane.side{flex:0 0 44%;max-width:520px;border-left:1px solid var(--line);background:var(--surface)}
 .epicbox{border:1px solid var(--line);border-radius:var(--radius);padding:12px 14px;background:var(--surface)}
@@ -749,8 +749,8 @@ textarea{resize:vertical;min-height:64px}
 }
 @media(max-width:879px){
   .detail{left:0;right:0;width:100vw;box-shadow:none}
-  .dpanes{flex-direction:column;overflow-y:auto}
-  .dpane{padding:12px 14px;overflow:visible}
+  .dpanes{flex-direction:column;overflow-y:auto;-webkit-overflow-scrolling:touch;min-height:0}
+  .dpane{padding:12px 14px;overflow:visible;flex:0 0 auto}
   .dpane.side{flex:1;max-width:none;border-left:none;border-top:1px solid var(--line)}
   .board-cols,.board-bands,.board.group-repo{grid-template-columns:1fr 1fr}
 }
