@@ -216,10 +216,14 @@ export const STAT_DEFS = [
 export function StatStrip({ counts, statFilter, setStatFilter, spend, compact = false }) {
   const allClear = counts.needs === 0 && (counts.running || counts.queued || counts.planned || counts.done);
   return html`<div class=${"pt-overview" + (compact ? " pt-overview-top" : "")}>
-    ${STAT_DEFS.map((d) => html`<button key=${d.k} class=${"pt-stat pt-stat-" + d.cls + (statFilter === d.k ? " on" : "") + (counts[d.k] === 0 ? " zero" : "")} data-tip=${counts[d.k] ? "Show only " + d.label.toLowerCase() : null} onClick=${() => setStatFilter(statFilter === d.k ? null : d.k)}>
-      <span class="pt-stat-n">${d.k === "needs" && counts.needs === 0 && allClear ? html`<${Icon} name="check" size=${compact ? 15 : 18}/>` : counts[d.k]}</span>
-      <span class="pt-stat-l"><${Icon} name=${d.icon} size=${11}/> ${d.k === "needs" && counts.needs === 0 && allClear ? "All clear" : d.label}</span>
-    </button>`)}
+    ${STAT_DEFS.map((d) => {
+      const clear = d.k === "needs" && counts.needs === 0 && allClear;
+      return html`<button key=${d.k} class=${"pt-stat pt-stat-" + d.cls + (statFilter === d.k ? " on" : "") + (counts[d.k] === 0 ? " zero" : "")} data-tip=${(clear ? "All clear" : d.label) + (counts[d.k] ? " · click to filter" : "")} onClick=${() => setStatFilter(statFilter === d.k ? null : d.k)}>
+        <span class="pt-stat-ic"><${Icon} name=${clear ? "check" : d.icon} size=${13}/></span>
+        <span class="pt-stat-n">${clear ? "" : counts[d.k]}</span>
+        <span class="pt-stat-l">${clear ? "All clear" : d.label}</span>
+      </button>`;
+    })}
   </div>`;
 }
 

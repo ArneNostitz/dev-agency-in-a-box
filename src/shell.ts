@@ -244,29 +244,43 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .slot--detail .detail{border-left:none}
 .slot .pane,.slot .orch,.slot>div{flex:1;min-height:0}
 .overlay__panel--detail .detail{position:static;inset:auto;width:100%;flex:1;min-height:0;box-shadow:none}
-.overlay__panel--chat .orch{flex:1;min-height:0}
+.overlay__panel--chat .orch,.slot--chat .orch{flex:1;min-height:0;height:auto;max-width:none;margin:0;border:none;border-radius:0;container-type:inline-size;container-name:chatpane}
 
 
 /* ── At-a-glance stat strip ────────────────────────────────────── */
-.pt-overview{display:flex;align-items:center;gap:6px;flex-wrap:nowrap}
+.pt-overview{display:flex;align-items:center;gap:6px;flex-wrap:nowrap;min-width:0}
 .pt-overview-top{gap:6px}
-.pt-stat{display:flex;flex-direction:column;gap:2px;align-items:flex-start;border:1px solid var(--line);background:var(--surface);border-radius:var(--radius-sm);padding:6px 12px;cursor:pointer;transition:border-color var(--dur-fast) var(--ease),background var(--dur-fast) var(--ease);min-width:74px}
-.pt-overview-top .pt-stat{padding:4px 10px;min-width:0}
+.pt-stat{display:inline-flex;align-items:center;gap:6px;height:30px;border:1px solid var(--line);background:var(--surface);border-radius:var(--radius-sm);padding:0 10px;cursor:pointer;flex:0 0 auto;transition:border-color var(--dur-fast) var(--ease),background var(--dur-fast) var(--ease)}
+.pt-stat-ic{display:inline-flex;color:var(--ink-3)}
+
 .pt-stat:hover{border-color:var(--line-2)}
 .pt-stat.on{border-color:var(--accent);background:var(--accent-weak)}
 .pt-stat.zero{opacity:.55}
-.pt-stat-n{font-size:20px;font-weight:700;line-height:1.1;font-variant-numeric:tabular-nums;color:var(--ink-1)}
-.pt-overview-top .pt-stat-n{font-size:16px}
-.pt-stat-l{font-size:10.5px;font-weight:500;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-3);display:inline-flex;align-items:center;gap:4px}
-.pt-stat-attention.on,.pt-stat-attention .pt-stat-n{color:var(--amber)}
+.pt-stat-n{font-size:14px;font-weight:700;line-height:1;font-variant-numeric:tabular-nums;color:var(--ink-1)}
+.pt-stat-n:empty{display:none}
+
+.pt-stat-l{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.03em;color:var(--ink-3);white-space:nowrap}
+.pt-stat-attention.on,.pt-stat-attention .pt-stat-n,.pt-stat-attention .pt-stat-ic{color:var(--amber)}
 .pt-stat-attention .pt-stat-n{color:var(--amber)}
-.pt-stat-running .pt-stat-n{color:var(--accent)}
+.pt-stat-running .pt-stat-n,.pt-stat-running .pt-stat-ic{color:var(--accent)}
 .pt-stat-done .pt-stat-n{color:var(--ink-3)}
 .pt-stat-spend{cursor:default;margin-left:auto}
 .pt-stat-spend .pt-stat-n{font-family:var(--font-mono);color:var(--green)}
 
 /* ── List toolbar ──────────────────────────────────────────────── */
-.listbar{position:sticky;top:0;z-index:6;display:flex;align-items:center;gap:8px;padding:10px 16px;background:var(--bg);border-bottom:1px solid var(--line)}
+.listbar{position:sticky;top:0;z-index:6;display:flex;align-items:center;gap:8px;padding:10px 16px;background:var(--bg);border-bottom:1px solid var(--line);flex-wrap:nowrap}
+/* ── Toolbar responds to its SLOT width (container query), not the viewport ── */
+@container listpane (max-width: 720px){
+  .pt-stat-l{display:none}
+  .pt-stat{padding:0 9px}
+  .listbar{gap:6px;padding:8px 12px}
+}
+@container listpane (max-width: 520px){
+  .listbar__stats{overflow-x:auto;scrollbar-width:none}
+  .listbar__stats::-webkit-scrollbar{display:none}
+  .pt-stat{padding:0 8px;gap:4px}
+}
+
 .listbar__count{font-size:12px;color:var(--ink-3);font-weight:500}
 .pt-needsyou{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600;color:var(--amber);background:var(--amber-weak);border-radius:var(--radius-pill);padding:3px 10px}
 .seg{display:inline-flex;background:var(--surface-2);border-radius:var(--radius-sm);padding:3px;gap:2px}
@@ -288,7 +302,7 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .menu__item:hover{background:var(--surface-2)}
 .menu__item.on{color:var(--accent)}
 .menu__item .menu__ck{margin-left:auto;color:var(--accent)}
-.pane{flex:1;overflow-y:auto}
+.pane{flex:1;overflow-y:auto;container-type:inline-size;container-name:listpane}
 .pane__body{padding:16px}
 .pane-list{max-width:820px;margin:0 auto;width:100%}
 .is-split .pane-list,.split-left .pane-list{max-width:none;margin:0}
@@ -373,7 +387,7 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .tl-epic-lbl{display:inline-flex;align-items:center;gap:5px}
 
 /* ── Board ─────────────────────────────────────────────────────── */
-.board{padding:16px;overflow-y:auto;flex:1}
+.board{padding:16px;overflow-y:auto;flex:1;container-type:inline-size;container-name:listpane}
 .board-cols,.board-bands{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;align-items:start}
 .bcol__h,.colhead,.band-head{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-2);padding:4px 6px 10px}
 .bcol__h .n,.colhead .n,.band-head .n{color:var(--ink-3);margin-left:auto;font-weight:500}
@@ -986,7 +1000,6 @@ textarea{resize:vertical;min-height:64px}
 .content.is-split{overflow:hidden;display:flex;flex-direction:column;padding:0}
 .chat-split .split-left{flex:none;width:min(460px,40vw);min-width:340px;overflow:hidden;border-right:1px solid var(--line);border-left:none}
 .chat-split .split-right{flex:1;overflow-y:auto;overflow-x:hidden}
-.chat-split .orch{height:100%;max-width:none;border:none;border-radius:0;overflow:hidden}
 /* ── table: new columns, header icons, category dot, greying, open row ── */
 .ptable th.pt-c,.ptable th.pt-h-tl{white-space:nowrap}
 /* greyed-out done/merged rows — whole row mutes (Figma: inactive rows) */
@@ -998,9 +1011,7 @@ textarea{resize:vertical;min-height:64px}
 /* ── sticky, nicer header (Figma) ── */
 .ptable thead th{position:sticky;top:0;z-index:3;background:var(--surface);box-shadow:inset 0 -1px 0 var(--line);padding:9px 12px}
 /* ── overview stat strip (data-driven "what needs me?") ── */
-.pt-overview{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
 @media(max-width:760px){.pt-overview-top{display:none}}
-@media(max-width:760px){.pt-stat{min-width:0;flex:1 1 28%;padding:9px 10px}.pt-stat-n{font-size:21px}.pt-stat-spend{flex-basis:100%;margin-left:0}}
 /* ── v4 rich progress table ── */
 .ptable-wrap{padding:0 0 22px;max-width:100%;overflow:visible}
 /* timeline */
@@ -1016,7 +1027,13 @@ textarea{resize:vertical;min-height:64px}
 /* ── v4 Orchestrator chat ── */
 .orch{display:flex;flex-direction:column;height:calc(100vh - 220px);min-height:420px;max-width:860px;margin:0 auto;border:1px solid var(--line);border-radius:16px;background:var(--surface);overflow:hidden}
 .orch-head{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line)}
-.orch-title{display:flex;align-items:center;gap:7px;font-weight:600;color:var(--ink)}
+@container chatpane (max-width: 380px){
+  .orch-head{padding:8px 10px;gap:6px}
+  .orch-title .orch-repo{display:none}
+  .orch-compose{padding:8px 10px}
+}
+
+.orch-title{display:flex;align-items:center;gap:7px;font-weight:600;color:var(--ink);min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .orch-repo{font-size:12px;font-weight:600;color:var(--accent);background:var(--accent-weak);border-radius:999px;padding:2px 9px}
 .orch-head .iconbtn{margin-left:auto}
 .orch-scroll{flex:1;overflow-y:auto;padding:16px 14px;display:flex;flex-direction:column;gap:14px}
