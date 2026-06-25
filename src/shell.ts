@@ -239,7 +239,12 @@ input,select,textarea{font-family:inherit;font-size:14px}
 @keyframes slidein{from{transform:translateX(-12px);opacity:.6}to{transform:none;opacity:1}}
 .overlay--detail .overlay__panel{animation:slideinR var(--dur) var(--ease)}
 @keyframes slideinR{from{transform:translateX(12px);opacity:.6}to{transform:none;opacity:1}}
-.listbar__stats{display:flex;align-items:center}
+.listbar__sp{flex:1 1 auto}
+.listbar__new{flex:0 0 auto}
+.listbar__stats{display:flex;align-items:center;flex:0 1 auto;min-width:0}
+.listbar__filters{display:flex;align-items:center;gap:6px;flex:0 0 auto}
+.listbar__filters .filter-collapse{display:none}
+
 .slot .detail{position:static;inset:auto;z-index:auto;flex:1;min-height:0;width:auto;box-shadow:none;border-left:none;container-type:inline-size;container-name:detailpane}
 .slot--detail .detail{border-left:none}
 .slot .pane,.slot .orch,.slot>div{flex:1;min-height:0}
@@ -274,6 +279,16 @@ input,select,textarea{font-family:inherit;font-size:14px}
   .pt-stat-l{display:none}
   .pt-stat{padding:0 9px}
   .listbar{gap:6px;padding:8px 12px}
+}
+
+@container listpane (max-width: 860px){
+  .listbar__new-txt{display:none}
+  .listbar__new{width:34px;padding:0;justify-content:center}
+}
+@container listpane (max-width: 640px){
+  .listbar__stats{display:none}
+  .listbar__filters .filter-collapse{display:inline-flex}
+  .listbar__sp{flex:0 0 0}
 }
 @container listpane (max-width: 520px){
   .listbar__stats{overflow-x:auto;scrollbar-width:none}

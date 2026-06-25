@@ -238,7 +238,7 @@ function smartCmp(a, b) {
 }
 
 // A compact icon-button that opens a dropdown to pick one option (replaces cycle-on-click).
-function MenuBtn({ icon, label, value, options, onPick, align = "right", showLabel = false, active = false }) {
+function MenuBtn({ icon, label, value, options, onPick, align = "right", showLabel = false, active = false, className = "" }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   useEffect(() => {
@@ -248,7 +248,7 @@ function MenuBtn({ icon, label, value, options, onPick, align = "right", showLab
     return () => document.removeEventListener("mousedown", close);
   }, [open]);
   const cur = options.find((o) => o.v === value);
-  return html`<span class="menuwrap" ref=${ref}>
+  return html`<span class=${"menuwrap " + className} ref=${ref}>
     <button class=${"segbtn tip" + ((active || (value && value !== options[0].v)) ? " on" : "")} data-tip=${label} onClick=${() => setOpen((o) => !o)}>
       <${Icon} name=${cur && cur.icon ? cur.icon : icon} size=${14}/>${showLabel && cur ? html` <span class="segx">${cur.short || cur.label}</span>` : null}
     </button>
@@ -327,13 +327,16 @@ export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, o
 
   return html`<div class="pane">
     <div class="listbar">
-      <button class="da-btn da-btn--primary da-btn--sm" onClick=${() => onAddIssue(target)}><${Icon} name="plus" size=${15}/> New</button>
+      <button class="da-btn da-btn--primary da-btn--sm listbar__new" data-tip="New issue" onClick=${() => onAddIssue(target)}><${Icon} name="plus" size=${15}/> <span class="listbar__new-txt">New</span></button>
+      <span class="listbar__sp"></span>
       ${toolbarExtra ? html`<div class="listbar__stats">${toolbarExtra}</div>` : null}
-      <span style="flex:1"></span>
-      <${MenuBtn} icon="alert" label="Filter by status" value=${statFilter || ""} options=${STATUS_FILTER_OPTS} onPick=${(v) => setStatFilter(v || null)} active=${!!statFilter}/>
-      <${MenuBtn} icon="sort" label="Sort" value=${sort} options=${SORT_OPTS} onPick=${(v) => save("ptSort", v, setSort)}/>
-      <${MenuBtn} icon="layers" label="Group" value=${group} options=${GROUP_OPTS} onPick=${(v) => save("ptGroup", v, setGroup)}/>
-      <${MenuBtn} icon="hourglass" label="Time range" value=${time} options=${TIME_OPTS} onPick=${(v) => save("ptTime", v, setTime)}/>
+      <span class="listbar__sp"></span>
+      <div class="listbar__filters">
+        <${MenuBtn} icon="alert" label="Filter by status" value=${statFilter || ""} options=${STATUS_FILTER_OPTS} onPick=${(v) => setStatFilter(v || null)} active=${!!statFilter} className="filter-collapse"/>
+        <${MenuBtn} icon="sort" label="Sort" value=${sort} options=${SORT_OPTS} onPick=${(v) => save("ptSort", v, setSort)}/>
+        <${MenuBtn} icon="layers" label="Group" value=${group} options=${GROUP_OPTS} onPick=${(v) => save("ptGroup", v, setGroup)}/>
+        <${MenuBtn} icon="hourglass" label="Time range" value=${time} options=${TIME_OPTS} onPick=${(v) => save("ptTime", v, setTime)}/>
+      </div>
     </div>
     <div class="pane__body">
       ${total ? html`<div class="pane-list">
