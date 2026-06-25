@@ -113,7 +113,7 @@ function WorkflowTimeline({ i, labels = true }) {
           <span class=${"flow__dot" + (current && live ? " pulse" : "") + (showFace ? " flow__dot--face" : "")}>
             ${done && !showFace ? html`<${Icon} name="check" size=${10}/>` : showFace ? html`<span class="flow__face"><${Avatar} role=${faceRole} size=${labels ? 26 : 20} crop="head"/></span>` : null}
           </span>
-          ${labels ? html`<span class="flow__lbl">${s.label}</span>` : null}
+          ${labels ? html`<span class="flow__lbl">${(showFace) ? html`<${Icon} name=${statusField(i).icon} size=${11} cls="flow__act"/> ` : null}${s.label}</span>` : null}
           ${loops ? html`<span class="flow__loop" title=${loops + " loop" + (loops > 1 ? "s" : "")}>↻${loops}</span>` : null}
         </span>`;
     })}

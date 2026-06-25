@@ -222,6 +222,8 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
   // A toolbar icon that swaps to a spinner + disables while its action is in flight.
   const bz = (a) => act.isBusy(a, repo, number);
   const tico = (a, name) => bz(a) ? html`<${Spinner} size=${18}/>` : html`<${Icon} name=${name}/>`;
+  // Run-the-app actions live in the issue toolbar (was a separate "Run the app" tile).
+  const runAppBtns = html`<${RunApp} repo=${repo} number=${number} appInfo=${appInfo} issue=${issue} done=${done}/>`;
   // Compact icon-only links (tooltips carry the meaning) so the toolbar stays uncluttered.
   if (issue.pr_url) tb.push(html`<a class="tbtn" data-tip="Open PR" href=${issue.pr_url} target="_blank" rel="noopener"><${Icon} name="pr"/></a>`);
   if (issue.previewUrl) tb.push(html`<a class="tbtn primary" data-tip="Open preview" href=${issue.previewUrl} target="_blank" rel="noopener"><${Icon} name="globe"/></a>`);
@@ -303,20 +305,12 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
   moreItems.push(html`<button class=${"menu-item danger" + (db ? " busy" : "")} disabled=${db} onClick=${() => confirmAct("del", () => act.del(repo, number))}>${db ? html`<${Spinner} size=${15}/>` : html`<${Icon} name="trash" size=${15}/>`}<span class="mi-label">${db ? "Deleting…" : da ? "Tap again to delete" : "Delete"}</span></button>`);
 
   const streamPane = html`<div class="dpane side">
-    <div class="sec">Live stream</div>
     ${startError ? html`<div class="secbanner">⚠ ${startError}</div>` : null}
     ${(() => { const sp = getSetupProgress(stream); if (!sp) return null; const pct = sp.percent == null ? null : sp.percent; return html`<div class="setupbar" title=${sp.phase}><div class="setupbar-track"><div class="setupbar-fill" style=${pct == null ? "width:100%" : "width:" + pct + "%"}></div></div><span class="setupbar-lbl">${pct == null ? html`<${Spinner} size=${11}/> ` : pct + "% · "}${sp.phase}</span></div>`; })()}
     <div class="dstream" ref=${streamRef} onScroll=${(e) => { const el = e.target; const atB = el.scrollHeight - el.scrollTop - el.clientHeight < 50; stickRef.current = atB; setStreamAtBottom(atB); }}>
       ${stream.length ? stream.map((a, idx) => { const ts = a.ts || (a.created_at ? new Date(a.created_at).getTime() : 0); const tstr = ts ? new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }) : ""; return html`<div key=${idx} class=${"l " + (a.kind === "tool" ? "tool" : a.kind === "start" || a.kind === "done" ? "muted" : "")}>${tstr ? html`<span class="l-ts">${tstr}</span> ` : null}${a.text}</div>`; }) : html`<div class="l muted">${startError ? "Failed to start." : "No live activity yet."}</div>`}
       ${!streamAtBottom ? html`<div class="scroll-fab-wrap"><button class="iconbtn scroll-fab" title="Scroll to bottom" onClick=${() => { const el = streamRef.current; if (el) el.scrollTop = el.scrollHeight; }}><${Icon} name="chevdown" size=${14}/></button></div>` : null}
     </div>
-    ${issue.usage && issue.usage.tokens ? html`<div class="dusage" title=${usageTitle(issue.usage)}>
-      <span><${Icon} name="chart" size=${13}/> ${fmtTok(issue.usage.tokens)} tokens</span>
-      <span>$${Number(issue.usage.costUsd || 0).toFixed(2)}</span>
-      ${issue.usage.model ? html`<span>${shortModel(issue.usage.model)}</span>` : null}
-      <span class="muted">${issue.usage.runs || 0} runs</span>
-    </div>` : null}
-    <${RunApp} repo=${repo} number=${number} appInfo=${appInfo} issue=${issue} done=${done}/>
   </div>`;
 
   const prBar = issue.pr_url ? (() => {
@@ -359,6 +353,18 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
         <div class="dh__meta dmeta">
           <${Breadcrumb} repo=${repo} number=${number} parent=${issue.epic && issue.epic.parent}/>
           ${(() => { const sc = statusChip(issue); return html`<span class=${"da-status " + sc.cls}><span class="da-status__dot"></span>${sc.label}</span>`; })()}
+          ${(() => {
+            const real = (issue.usage && issue.usage.costUsd) || 0;
+            const est = (issue.estCost && issue.estCost.usd) || 0;
+            if (!real && !est) return null;
+            const max = est || Math.max(real, 1), ratio = max ? real / max : 0;
+            const pct = Math.max(4, Math.min(100, Math.round(ratio * 100)));
+            const color = ratio >= 1 ? "var(--red)" : ratio >= 0.8 ? "var(--amber)" : "var(--green)";
+            return html`<span class="heat tip" data-tip=${usageTitle(issue.usage) + (est ? " · est ~$" + est.toFixed(2) : "")}>
+              <span class="heat__track"><span class="heat__fill" style=${"width:" + pct + "%;background:" + color}></span></span>
+              <span class="heat__lbl" style=${"color:" + (ratio >= 1 ? "var(--red)" : "var(--ink-2)")}>${real ? "$" + real.toFixed(2) : "~$" + est.toFixed(2)}</span>
+            </span>`;
+          })()}
           <a href=${ghUrl(repo, number)} target="_blank" rel="noopener" onClick=${(e) => e.stopPropagation()} class="dh__gh" style="display:inline-flex;align-items:center;gap:3px">GitHub<${Icon} name="link" size=${12}/></a>
         </div>
       </div>
@@ -379,6 +385,7 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
       </span>` : null}
       ${wfOpts.length ? html`<${Select} value=${issueWf} options=${wfSelOpts} onChange=${pinWorkflow} menuAlign="right" placeholder="Workflow"/>` : null}
       ${modelOpts.length ? html`<${Select} value=${modelOverride} options=${modelSelOpts} onChange=${updateModelOverride} menuAlign="right" btnClass="iconbtn" trigger=${modelTrigger}/>` : null}
+      ${runAppBtns}
       ${tbRight}
       ${moreItems.length ? html`<span class="dropwrap">
         <button class="tbtn" data-tip="More actions" onClick=${() => setMoreOpen((o) => !o)}><${Icon} name=${moreOpen ? "x" : "menu"}/></button>
@@ -462,12 +469,10 @@ function RunApp({ repo, number, appInfo, issue, done }) {
     const cmd = 'd=~/.devagency/' + nm + '; gh repo clone ' + repo + ' "$d" 2>/dev/null; cd "$d" && git fetch -q && ' + checkout + ' && { corepack enable 2>/dev/null; PM=npm; [ -f pnpm-lock.yaml ]&&PM=pnpm; [ -f yarn.lock ]&&PM=yarn; $PM install && ($PM run tauri:dev || $PM tauri dev || $PM run dev); }';
     (navigator.clipboard ? navigator.clipboard.writeText(cmd) : Promise.reject()).then(() => toast("Copied — paste in Terminal & Enter"), () => toast("Copy failed"));
   }
-  return html`<div class="sec">Run the app</div><div class="autorow">
-    ${kind === "tauri" ? html`<button class="btn" onClick=${copyRun}><${Icon} name="laptop" size=${15}/> Run on my Mac</button>` : null}
-    ${app && app.status === "running" ? html`<a class="btn primary" href=${app.url} target="_blank" rel="noopener"><${Icon} name="monitor" size=${15}/> Open app</a><button class="btn" onClick=${() => api("/app-stop", { repo, number }).then(() => toast("Stopped"))}><${Icon} name="stop" size=${15}/></button>`
-      : app && (app.status === "installing" || app.status === "starting") ? html`<span class="muted">⏳ ${app.status}…</span>`
-      : kind === "web" ? html`<button class="btn" onClick=${() => api("/app-run", { repo, number }).then((r) => toast(r && r.error ? r.error : "Starting preview…")).catch(() => toast("Couldn’t start", "error"))}><${Icon} name="play" size=${15}/> Run preview</button>` : null}
-  </div>`;
+  return html`${kind === "tauri" ? html`<button class="tbtn tip" data-tip="Run on my Mac — copies a one-liner to clone, checkout & launch this branch" onClick=${copyRun}><${Icon} name="laptop"/><span class="tlabel">Run on my Mac</span></button>` : null}
+    ${app && app.status === "running" ? html`<a class="tbtn tip" data-tip="Open the running app" href=${app.url} target="_blank" rel="noopener"><${Icon} name="monitor"/><span class="tlabel">Open app</span></a><button class="tbtn tip" data-tip="Stop the app" onClick=${() => api("/app-stop", { repo, number }).then(() => toast("Stopped"))}><${Icon} name="stop"/></button>`
+      : app && (app.status === "installing" || app.status === "starting") ? html`<span class="tbtn" style="pointer-events:none">⏳ ${app.status}…</span>`
+      : kind === "web" ? html`<button class="tbtn tip" data-tip="Run a web preview" onClick=${() => api("/app-run", { repo, number }).then((r) => toast(r && r.error ? r.error : "Starting preview…")).catch(() => toast("Couldn’t start", "error"))}><${Icon} name="play"/><span class="tlabel">Run preview</span></button>` : null}`;
 }
 
 // ---------- Composer ----------

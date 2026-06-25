@@ -274,9 +274,9 @@ function App() {
       const r = el.getBoundingClientRect();
       const vw = window.innerWidth, vh = window.innerHeight;
       // Flip below the element if too close to the top; clamp x to stay on-screen.
-      const below = r.top < 44;
-      const x = Math.max(8, Math.min(r.left + r.width / 2, vw - 8));
-      const y = below ? r.bottom + 7 : r.top - 7;
+      const below = r.top < 56;
+      const x = Math.max(40, Math.min(r.left + r.width / 2, vw - 40));
+      const y = below ? Math.min(r.bottom + 7, vh - 8) : Math.max(r.top - 7, 8);
       setTip({ text: t, x, y, below });
     };
     const hide = (e) => { if (e.target.closest && e.target.closest("[data-tip]")) setTip(null); };
