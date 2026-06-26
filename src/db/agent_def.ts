@@ -7,6 +7,7 @@ export interface AgentDef {
   model: string; // "" = default
   tools: string[];
   mode: "repo" | "chat";
+  interactive: boolean;
   pushesGithub: boolean;
   skills: string[];
   defaultTask: string; // pre-fills a workflow step's instruction for this agent
@@ -15,7 +16,7 @@ export interface AgentDef {
   updatedAt: string;
 }
 
-function rowToAgentDef(r: { name: string; handle: string | null; persona: string | null; model: string | null; tools: string | null; mode: string | null; pushes_github: number; skills: string | null; default_task: string | null; avatar: string | null; builtin: number; updated_at: string | null }): AgentDef {
+function rowToAgentDef(r: { name: string; handle: string | null; persona: string | null; model: string | null; tools: string | null; mode: string | null; interactive: number; pushes_github: number; skills: string | null; default_task: string | null; avatar: string | null; builtin: number; updated_at: string | null }): AgentDef {
   const parse = (s: string | null): string[] => { try { return s ? JSON.parse(s) : []; } catch { return []; } };
   return {
     name: r.name,
@@ -24,6 +25,7 @@ function rowToAgentDef(r: { name: string; handle: string | null; persona: string
     model: r.model ?? "",
     tools: parse(r.tools),
     mode: r.mode === "chat" ? "chat" : "repo",
+    interactive: !!r.interactive,
     pushesGithub: !!r.pushes_github,
     skills: parse(r.skills),
     defaultTask: r.default_task ?? "",
@@ -38,14 +40,14 @@ export function upsertAgentDef(a: Partial<AgentDef> & { name: string }): void {
   if (!d) return;
   try {
     d.prepare(
-      `INSERT INTO agent_def (name, handle, persona, model, tools, mode, pushes_github, skills, default_task, avatar, builtin, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO agent_def (name, handle, persona, model, tools, mode, interactive, pushes_github, skills, default_task, avatar, builtin, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(name) DO UPDATE SET
          handle=excluded.handle, persona=excluded.persona, model=excluded.model, tools=excluded.tools,
-         mode=excluded.mode, pushes_github=excluded.pushes_github, skills=excluded.skills, default_task=excluded.default_task, avatar=excluded.avatar, updated_at=excluded.updated_at`,
+         mode=excluded.mode, interactive=excluded.interactive, pushes_github=excluded.pushes_github, skills=excluded.skills, default_task=excluded.default_task, avatar=excluded.avatar, updated_at=excluded.updated_at`,
     ).run(
       a.name, a.handle ?? `@${a.name}`, a.persona ?? "", a.model ?? "",
-      JSON.stringify(a.tools ?? []), a.mode ?? "chat", a.pushesGithub === false ? 0 : 1,
+      JSON.stringify(a.tools ?? []), a.mode ?? "chat", a.interactive ? 1 : 0, a.pushesGithub === false ? 0 : 1,
       JSON.stringify(a.skills ?? []), a.defaultTask ?? "", a.avatar ?? "", a.builtin ? 1 : 0, now(),
     );
   } catch { /* best effort */ }
