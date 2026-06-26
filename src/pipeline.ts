@@ -151,6 +151,13 @@ const BADGE: Record<RoleName, string> = {
 function say(role: RoleName, body: string): string {
   return `${BADGE[role]} · _dev-agency_\n\n${body}`;
 }
+// Author a comment AS a custom workflow agent (its emoji + Name) so the dashboard shows that agent's
+// face + name — not the base role. DB-first: the step IS the agent; it runs, it isn't @-called.
+function sayAs(name: string, body: string): string {
+  const label = name.replace(/^@/, "");
+  const Cap = label.charAt(0).toUpperCase() + label.slice(1);
+  return `🤖 **${Cap}** · _dev-agency_\n\n${body}`;
+}
 
 export type PlannerDecision = { kind: "questions" | "plan"; body: string; auto: boolean };
 
@@ -974,7 +981,10 @@ function stepInstruction(step: { agent?: string; instruction?: string }): string
   if (own) return own;
   const handle = (step.agent || "").toLowerCase();
   const def = listAgentDefs().find((d) => (d.handle || `@${d.name}`).toLowerCase() === handle || d.name.toLowerCase() === handle.replace(/^@/, ""));
-  return (def && def.defaultTask && def.defaultTask.trim()) || WF_ROLE_DEFAULT_TASK[handle] || `Do your part for this issue as the ${handle || "developer"} agent.`;
+  if (def && def.defaultTask && def.defaultTask.trim()) return def.defaultTask.trim();
+  if (WF_ROLE_DEFAULT_TASK[handle]) return WF_ROLE_DEFAULT_TASK[handle];
+  const nm = (def?.name || handle.replace(/^@/, "") || "developer");
+  return `Work this issue as ${nm}. Do the part of the workflow this step is responsible for.`;
 }
 
 export async function runWorkflowEngine(cfg: Config, repo: string, issue: Issue, wf: Workflow, workdir: string, thread: string): Promise<void> {
@@ -997,9 +1007,11 @@ export async function runWorkflowEngine(cfg: Config, repo: string, issue: Issue,
     const skills = step.skills && step.skills.length ? `
 
 ${skillsPrompt(step.skills)}` : "";
-    setActive(repo, issue.number, "issue", role, issue.title);
+    setActive(repo, issue.number, "issue", customDef ? customDef.name : role, issue.title);
     const instr = stepInstruction(step);
-    await commentOnIssue(repo, issue.number, say(role, `▶ **Step ${i + 1}/${wf.steps.length}** · ${instr.split("\n")[0].slice(0, 90)}`));
+    const stepAuthor = customDef ? customDef.name : null;
+    const stepHeader = `▶ **Step ${i + 1}/${wf.steps.length}**`;
+    await commentOnIssue(repo, issue.number, stepAuthor ? sayAs(stepAuthor, stepHeader) : say(role, stepHeader));
     await runStepHooks(hookIds, "pre", workdir, repo, issue.number);
     const out = await runRole(role, {
       workdir, repo, issueNumber: issue.number,
@@ -1014,7 +1026,7 @@ ${thread}` : ""}${skills}`,
     });
     if (isStopRequested(repo, issue.number)) { console.log(`[agency] workflow halted mid-step by Stop ${repo} #${issue.number}`); return; }
     recordRun(repo, issue.number, role, out.model, out.turns, "workflow", out.costUsd);
-    await commentOnIssue(repo, issue.number, say(role, out.text));
+    await commentOnIssue(repo, issue.number, stepAuthor ? sayAs(stepAuthor, out.text) : say(role, out.text));
     await runStepHooks(hookIds, "post", workdir, repo, issue.number);
     if (role === "decomposer") { await splitIntoPlanned(repo, issue, out.text).catch(() => {}); return; } // split → planned epics, end this run
     if (role === "developer") await finalizeWithPr(repo, issue, workdir, branch).catch(() => {});

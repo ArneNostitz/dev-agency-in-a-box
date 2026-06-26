@@ -119,11 +119,18 @@ function avatarFile(role, crop) {
   return crop === "head" ? "/web/avatars/heads/" + n + ".svg" : "/web/avatars/" + n + ".svg";
 }
 // The author role of an agency comment, read from its leading badge ("🧠 **Planner**", "role: **developer**", …).
-export function roleFromComment(body) { const head = (body || "").slice(0, 90).toLowerCase(); for (const r of ROLE_WORDS) if (head.includes(r)) return r; return null; }
+export function roleFromComment(body) {
+  const raw = (body || "").slice(0, 90);
+  const head = raw.toLowerCase();
+  for (const r of ROLE_WORDS) if (head.includes(r)) return r;
+  // Custom workflow agent badge: "🤖 **Name** · _dev-agency_" → its name (resolves to a pooled face).
+  const m = raw.match(/^\s*🤖\s*\*\*([^*]+)\*\*/);
+  return m ? m[1].trim().toLowerCase() : null;
+}
 // Role badge for an agency comment, rendered inline in the comment header (emoji · Role) so the
 // redundant "💻 **Developer** · _dev-agency_" first body line can be stripped (see stripBadge).
 const ROLE_EMOJI = { planner: "🧠", architect: "🏛", developer: "💻", reviewer: "🔍", tester: "🧪", librarian: "📚", auditor: "🔎" };
-export function commentBadge(body) { const r = roleFromComment(body); return r ? { role: r, emoji: ROLE_EMOJI[r] || "", name: r[0].toUpperCase() + r.slice(1) } : null; }
+export function commentBadge(body) { const r = roleFromComment(body); if (!r) return null; const emoji = ROLE_EMOJI[r] || "🤖"; return { role: r, emoji, name: r[0].toUpperCase() + r.slice(1) }; }
 // Drop the leading "🧠 **Planner** · _dev-agency_" line (now shown in the header) from a comment body.
 export function stripBadge(body) { return (body || "").replace(/^\s*[^\n]*·\s*_dev-agency_\s*\r?\n+/, ""); }
 // Persona avatar. crop="head" (dashboard: pre-cropped head) | "full" (detail: whole figure).
