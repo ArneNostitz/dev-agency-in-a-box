@@ -988,7 +988,11 @@ export async function runWorkflowEngine(cfg: Config, repo: string, issue: Issue,
   while (i < wf.steps.length && guard++ < 30) {
     if (isStopRequested(repo, issue.number)) { console.log(`[agency] workflow halted by Stop ${repo} #${issue.number}`); return; }
     const step = wf.steps[i];
-    const role: RoleName = STEP_ROLE[(step.agent || "").toLowerCase()] ?? "developer";
+    const handle = (step.agent || "").toLowerCase();
+    // A built-in handle maps to its role; a CUSTOM agent (e.g. @grill) keeps its own persona/model
+    // and runs on a sensible base role (its mode → developer for repo work, planner for chat).
+    const customDef = STEP_ROLE[handle] ? null : listAgentDefs().find((d) => (d.handle || `@${d.name}`).toLowerCase() === handle || d.name.toLowerCase() === handle.replace(/^@/, ""));
+    const role: RoleName = STEP_ROLE[handle] ?? (customDef ? (customDef.mode === "chat" ? "planner" : "developer") : "developer");
     const hookIds = (step.hooks || []).map(Number).filter((n) => Number.isFinite(n));
     const skills = step.skills && step.skills.length ? `
 
@@ -999,13 +1003,14 @@ ${skillsPrompt(step.skills)}` : "";
     await runStepHooks(hookIds, "pre", workdir, repo, issue.number);
     const out = await runRole(role, {
       workdir, repo, issueNumber: issue.number,
+      ...(customDef ? { agentDef: { handle: customDef.handle || `@${customDef.name}`, name: customDef.name, persona: customDef.persona } } : {}),
       task: `${instr}
 
 ### ${issueHeader(issue)}${thread ? `
 
 ### Conversation
 ${thread}` : ""}${skills}`,
-      ...(step.model ? { model: step.model } : {}),
+      ...((step.model || customDef?.model) ? { model: (step.model || customDef?.model) as string } : {}),
     });
     if (isStopRequested(repo, issue.number)) { console.log(`[agency] workflow halted mid-step by Stop ${repo} #${issue.number}`); return; }
     recordRun(repo, issue.number, role, out.model, out.turns, "workflow", out.costUsd);

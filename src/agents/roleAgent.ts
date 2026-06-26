@@ -135,6 +135,10 @@ export interface RoleRunInput {
   issueNumber: number;
   /** Optional model override (else role default / env). */
   model?: string;
+  /** A custom agent definition (a workflow step naming a non-built-in handle like @grill). When set,
+   *  its persona drives the system prompt and its handle labels the activity, while `role` only
+   *  supplies sensible tool/pipeline defaults. */
+  agentDef?: { handle: string; name: string; persona: string; model?: string };
   /** Resume a prior interrupted run by its SDK session id (falls back to fresh on error). */
   resumeSessionId?: string;
 }
@@ -147,14 +151,15 @@ export interface RoleRunResult {
   costUsd: number;
 }
 
-async function buildSystemPrompt(role: RoleName): Promise<string> {
+async function buildSystemPrompt(role: RoleName, customPersona?: string): Promise<string> {
   const def = ROLES[role];
-  const [persona, constitution, playbooks, learned] = await Promise.all([
+  const [persona0, constitution, playbooks, learned] = await Promise.all([
     loadPersona(def.personaFile),
     loadConstitution(),
     loadPlaybooks(def.playbooks),
     loadLearned(def.personaFile),
   ]);
+  const persona = (customPersona && customPersona.trim()) ? customPersona : persona0;
   // Keep the self-improving parts bounded so the (cache-written) system prompt stays small.
   const lessons = recentLessons(8);
   const learnedCapped = learned.length > 3500 ? learned.slice(0, 3500) + "\n…(truncated)" : learned;
@@ -207,7 +212,7 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
   // The agency's own memory (past plans/lessons/reviews/issues) as an on-demand tool — so the agent
   // can PULL context when stuck instead of us pushing the whole thread into every prompt.
   const rc = recallWiring(input.repo);
-  const systemPrompt = (await buildSystemPrompt(role)) + (gn ? `\n\n${GITNEXUS_PROMPT}` : "") + `\n\n${RECALL_PROMPT}`;
+  const systemPrompt = (await buildSystemPrompt(role, input.agentDef?.persona)) + (gn ? `\n\n${GITNEXUS_PROMPT}` : "") + `\n\n${RECALL_PROMPT}`;
   // Per-role provider routing (keeps Claude roles on your subscription; others go to e.g. GLM).
   const route = resolveRoute(role, input.repo, input.issueNumber, input.model);
   // If the human EXPLICITLY selected a model but it couldn't be routed (provider missing/has no API
