@@ -33,17 +33,28 @@ import { runHooks } from "../hooks.js";
  * Returns the model + an env that points this run at the provider's Anthropic-compatible
  * endpoint — leaving every other role (and the default) on your Claude subscription untouched.
  */
-function resolveRoute(role: RoleName, repo: string, issueNumber: number): { model: string; env: Record<string, string> } | null {
-  // Per-issue override wins (set when the human picks a model in the chatbox).
-  const issueOverride = getIssueModelOverride(repo, issueNumber);
-  // Per-role permanent assignment
-  const roleOverride = getRoleModels()[role];
-  // Global default setting
-  const globalDefault = getGlobalModel();
-
-  // Fall back down the hierarchy: issue override -> role assignment -> global default -> session fallback
-  const explicit = issueOverride ?? roleOverride ?? globalDefault;
-  const assignment = explicit?.providerId ? explicit : getSessionFallback();
+// Parse a "providerId/model" string (workflow step.model or an explicit pick) into {providerId, model}.
+function parseModelStr(s: string | undefined): { providerId: string; model: string } | null {
+  if (!s) return null;
+  const i = s.indexOf("/");
+  if (i <= 0) return null;
+  return { providerId: s.slice(0, i), model: s.slice(i + 1) };
+}
+// The single source of truth for "which provider+model + which runner + which env" a run uses.
+// `explicitModel` (a "providerId/model" string from a workflow step or per-issue pick) wins; else the
+// per-issue → per-role → global hierarchy. Crucially this keeps the PROVIDER attached, so the runner
+// and env always match the chosen model (the bug: an explicit model used to drop its provider and
+// default to the Claude SDK, so GLM/Gemini runs errored).
+function resolveAssignment(role: RoleName, repo: string, issueNumber: number, explicitModel?: string): { providerId: string; model: string } | null {
+  const fromStr = parseModelStr(explicitModel);
+  if (fromStr) return fromStr;
+  const a = getIssueModelOverride(repo, issueNumber) ?? getRoleModels()[role] ?? getGlobalModel();
+  if (a?.providerId && a.model) return { providerId: a.providerId, model: a.model };
+  const fb = getSessionFallback();
+  return fb?.providerId && fb.model ? { providerId: fb.providerId, model: fb.model } : null;
+}
+function resolveRoute(role: RoleName, repo: string, issueNumber: number, explicitModel?: string): { model: string; env: Record<string, string>; providerId: string } | null {
+  const assignment = resolveAssignment(role, repo, issueNumber, explicitModel);
   if (!assignment?.providerId || !assignment.model) return null;
   const p = getProviders().find((x) => x.id === assignment.providerId);
   const ct = claudeToken();
@@ -68,14 +79,14 @@ function resolveRoute(role: RoleName, repo: string, issueNumber: number): { mode
       delete env.ANTHROPIC_AUTH_TOKEN;
       delete env.ANTHROPIC_BASE_URL;
     }
-    return { model: assignment.model, env };
+    return { model: assignment.model, env, providerId: assignment.providerId };
   }
   // Third-party Anthropic-compatible provider: its own key + endpoint.
   delete env.CLAUDE_CODE_OAUTH_TOKEN; // don't use the Claude subscription for this provider
   env.ANTHROPIC_BASE_URL = p!.baseUrl;
   env.ANTHROPIC_AUTH_TOKEN = p!.apiKey;
   env.ANTHROPIC_API_KEY = p!.apiKey;
-  return { model: assignment.model, env };
+  return { model: assignment.model, env, providerId: assignment.providerId };
 }
 
 // summarizeTool now lives in src/runners/registry.ts (the one shared copy — issue #61).
@@ -198,12 +209,12 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
   const rc = recallWiring(input.repo);
   const systemPrompt = (await buildSystemPrompt(role)) + (gn ? `\n\n${GITNEXUS_PROMPT}` : "") + `\n\n${RECALL_PROMPT}`;
   // Per-role provider routing (keeps Claude roles on your subscription; others go to e.g. GLM).
-  const route = input.model ? null : resolveRoute(role, input.repo, input.issueNumber);
+  const route = resolveRoute(role, input.repo, input.issueNumber, input.model);
   // If the human EXPLICITLY selected a model but it couldn't be routed (provider missing/has no API
   // key/base URL), do NOT silently fall back to the Claude subscription — that masks the problem as
   // a Claude rate-limit later. Fail loudly so the dashboard shows what's wrong.
-  if (!input.model && !route) {
-    const sel = getIssueModelOverride(input.repo, input.issueNumber) ?? getRoleModels()[role] ?? getGlobalModel();
+  if (!route) {
+    const sel = resolveAssignment(role, input.repo, input.issueNumber, input.model);
     if (sel?.providerId && sel.model) {
       const p = getProviders().find((x) => x.id === sel.providerId);
       // route is null only when providerAuth() == "missing". Distinguish a Claude-native provider
@@ -223,7 +234,7 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
       throw new Error(msg);
     }
   }
-  const model = canonicalModel(input.model ?? route?.model ?? modelFor(def));
+  const model = canonicalModel(route?.model ?? input.model ?? modelFor(def));
   // Build the agent subprocess env: inject the dashboard-stored Claude token (so the SDK
   // authenticates without CLAUDE_CODE_OAUTH_TOKEN in the container env) and the GitHub bot token
   // (so the agent's own `git commit && git push` authenticate via gh's credential helper).
@@ -276,7 +287,7 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
   console.log(`[agency] role:${role} ${repo}#${issueNumber} (model ${model}, ≤${maxTurns} turns)`);
   pushActivity(repo, issueNumber, role, "start", `started (${model}${input.resumeSessionId ? ", resuming" : ""})`);
 
-  const assignment = (input.model ? null : getIssueModelOverride(repo, issueNumber) ?? getRoleModels()[role] ?? getGlobalModel()) ?? getSessionFallback();
+  const assignment = resolveAssignment(role, repo, issueNumber, input.model);
   const provider = assignment?.providerId ? getProviders().find((x) => x.id === assignment.providerId) : null;
   const providerName = provider ? provider.name : "Claude/Anthropic Subscription";
   const baseUrl = provider ? provider.baseUrl : "https://api.anthropic.com";
@@ -316,8 +327,7 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
     // Route through the AgentRunner seam (#63): the backend is a swappable adapter. Default
     // claude-sdk (the verbatim port of this loop into ClaudeSdkRunner); per-provider / global
     // setting can switch to a CLI runner (pi, claude-cli, gemini, custom).
-    const providerForRunner = (input.model ? null : getIssueModelOverride(repo, issueNumber) ?? getRoleModels()[role] ?? getGlobalModel()) ?? getSessionFallback();
-    const providerRow = providerForRunner?.providerId ? getProviders().find((x) => x.id === providerForRunner.providerId) : null;
+    const providerRow = route?.providerId ? getProviders().find((x) => x.id === route.providerId) : null;
     let runnerKind = (providerRow && (providerRow as { runner?: string }).runner) || defaultRunnerKind();
     const cliCommand = (providerRow && (providerRow as { cliCommand?: string }).cliCommand) || undefined;
     // Preflight: a CLI runner needs its binary on PATH. If it's missing (e.g. `pi` isn't installed

@@ -38,8 +38,8 @@ export function canonicalModel(m: string): string {
   if (re) s = `claude-${re[2]}-${re[1].replace(/\./g, "-")}${re[3]}`;
   // Dots → dashes in the canonical "claude-<family>-4.6" form.
   s = s.replace(/^(claude-(?:sonnet|opus|haiku))-(\d+)\.(\d+)/i, "$1-$2-$3");
-  // Haiku needs its dated id on the subscription/API.
-  if (/^claude-haiku-4-5$/i.test(s)) s = MODELS.haiku;
+  // Haiku needs its dated id on the subscription/API (and there is no Haiku 4-6 — map any 4-x).
+  if (/^claude-haiku-4(-\d+)?$/i.test(s)) s = MODELS.haiku;
   return s;
 }
 
