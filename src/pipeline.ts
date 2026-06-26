@@ -1005,7 +1005,7 @@ export async function runWorkflowEngine(cfg: Config, repo: string, issue: Issue,
     // A built-in handle maps to its role; a CUSTOM agent (e.g. @grill) keeps its own persona/model
     // and runs on a sensible base role (its mode → developer for repo work, planner for chat).
     const customDef = STEP_ROLE[handle] ? null : listAgentDefs().find((d) => (d.handle || `@${d.name}`).toLowerCase() === handle || d.name.toLowerCase() === handle.replace(/^@/, ""));
-    const role: RoleName = STEP_ROLE[handle] ?? (customDef ? (customDef.mode === "chat" ? "planner" : "developer") : "developer");
+    const role: RoleName = STEP_ROLE[handle] ?? (customDef ? (customDef.canWriteCode ? "developer" : "planner") : "developer");
     const hookIds = (step.hooks || []).map(Number).filter((n) => Number.isFinite(n));
     const skills = step.skills && step.skills.length ? `
 
@@ -1021,7 +1021,7 @@ ${skillsPrompt(step.skills)}` : "";
     await runStepHooks(hookIds, "pre", workdir, repo, issue.number);
     const out = await runRole(role, {
       workdir, repo, issueNumber: issue.number,
-      ...(customDef ? { agentDef: { handle: customDef.handle || `@${customDef.name}`, name: customDef.name, persona: customDef.persona } } : {}),
+      ...(customDef ? { agentDef: { handle: customDef.handle || `@${customDef.name}`, name: customDef.name, persona: customDef.persona, canWriteCode: customDef.canWriteCode } } : {}),
       task: `${instr}
 
 ### ${issueHeader(issue)}${thread ? `

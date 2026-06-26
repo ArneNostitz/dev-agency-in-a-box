@@ -155,7 +155,7 @@ export interface RoleRunInput {
   /** A custom agent definition (a workflow step naming a non-built-in handle like @grill). When set,
    *  its persona drives the system prompt and its handle labels the activity, while `role` only
    *  supplies sensible tool/pipeline defaults. */
-  agentDef?: { handle: string; name: string; persona: string; model?: string };
+  agentDef?: { handle: string; name: string; persona: string; model?: string; canWriteCode?: boolean };
   /** Resume a prior interrupted run by its SDK session id (falls back to fresh on error). */
   resumeSessionId?: string;
 }
@@ -230,6 +230,17 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
   // can PULL context when stuck instead of us pushing the whole thread into every prompt.
   const rc = recallWiring(input.repo);
   const systemPrompt = (await buildSystemPrompt(role, input.agentDef?.persona)) + (gn ? `\n\n${GITNEXUS_PROMPT}` : "") + `\n\n${RECALL_PROMPT}`;
+  // Custom-agent tool gate (the single user-facing "Can write code" toggle). A docs-only agent reads
+  // anywhere but may write ONLY into the issue's _plan/ folder — enforced by (a) handing it just the
+  // Write tool (no Edit/Bash) and (b) a hard system-prompt constraint, since the SDK can't path-scope.
+  const cwc = input.agentDef ? input.agentDef.canWriteCode !== false : true;
+  const customTools = input.agentDef
+    ? (cwc ? ["Read", "Glob", "Grep", "Write", "Edit", "Bash"] : ["Read", "Glob", "Grep", "Write"])
+    : null;
+  const planScope = (input.agentDef && !cwc)
+    ? `\n\n## File-writing constraint (STRICT)\nYou are a docs/planning agent. You may READ anything in the repo, but you may WRITE ONLY inside the \`_plan/\` folder. Name your file \`_plan/issue-${input.issueNumber}_<YYYY-MM-DD>_<kind>.md\` (kind = spec, architecture, plan, notes…). Do NOT edit source code, run shell commands, or write anywhere outside \`_plan/\`. Put your full deliverable in that markdown file and summarize it in your reply.`
+    : "";
+  const systemPromptFinal = systemPrompt + planScope;
   // Per-role provider routing (keeps Claude roles on your subscription; others go to e.g. GLM).
   const agentKey = input.agentDef?.handle?.replace(/^@/, "") || role;
   let route = resolveRoute(role, input.repo, input.issueNumber, input.model, agentKey);
@@ -366,10 +377,10 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
       task: input.task + coordinationContext(repo, issueNumber, role),
       cwd: input.workdir,
       model,
-      allowedTools: [...def.tools, ...(gn?.tools ?? []), ...rc.tools],
+      allowedTools: [...(customTools ?? def.tools), ...(gn?.tools ?? []), ...rc.tools],
       mcpServers: { ...(gn?.servers ?? {}), ...rc.servers },
       env: runEnv,
-      systemPrompt,
+      systemPrompt: systemPromptFinal,
       abort: abortRun.controller,
       resumeId,
       maxTurns,
