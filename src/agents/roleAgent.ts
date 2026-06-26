@@ -10,6 +10,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join as pathJoin } from "node:path";
 import { ROLES, modelFor, canonicalModel, type RoleName } from "./roles.js";
+import { tierModel, getIssueProvider, getIssueAgentModels, parseModelRef, fallbackFor, getIssueUseFallback, type Tier } from "../db/providers.js";
 import { loadConstitution, loadPersona, loadPlaybooks, loadLearned } from "../memory.js";
 import { pushActivity } from "../activity.js";
 import { recentLessons, recordTokens, recordRunStep, getProviders, getRoleModels, getSessionFallback, setSession, getIssueModelOverride, getGlobalModel, addIssueFiles } from "../store.js";
@@ -45,16 +46,32 @@ function parseModelStr(s: string | undefined): { providerId: string; model: stri
 // per-issue → per-role → global hierarchy. Crucially this keeps the PROVIDER attached, so the runner
 // and env always match the chosen model (the bug: an explicit model used to drop its provider and
 // default to the Claude SDK, so GLM/Gemini runs errored).
-function resolveAssignment(role: RoleName, repo: string, issueNumber: number, explicitModel?: string): { providerId: string; model: string } | null {
+const TIERS: ReadonlySet<string> = new Set(["high", "medium", "low"]);
+function resolveAssignment(role: RoleName, repo: string, issueNumber: number, explicitModel?: string, agentKey?: string): { providerId: string; model: string } | null {
+  // 1) PER-AGENT override on the issue wins (set on the timeline). Key by the custom handle or role.
+  const agentModels = getIssueAgentModels(repo, issueNumber);
+  const ak = (agentKey || role).toLowerCase();
+  const perAgent = parseModelRef(agentModels[ak] || agentModels["@" + ak] || agentModels[role]);
+  if (perAgent) return perAgent;
+  // 2) The step's explicit selection: a TIER keyword resolves against the issue's provider; or a
+  //    concrete "providerId/model" ref; otherwise fall through.
+  const issueProvider = getIssueProvider(repo, issueNumber);
+  if (explicitModel && TIERS.has(explicitModel.toLowerCase())) {
+    const pid = issueProvider || getGlobalModel()?.providerId;
+    if (pid) { const tm = tierModel(pid, explicitModel.toLowerCase() as Tier); if (tm) return tm; }
+  }
   const fromStr = parseModelStr(explicitModel);
   if (fromStr) return fromStr;
+  // 3) The issue-wide provider (no explicit tier on the step) → its medium tier as a sane default.
+  if (issueProvider) { const tm = tierModel(issueProvider, "medium"); if (tm) return tm; }
+  // 4) Existing hierarchy: per-issue model → per-role → global → session fallback.
   const a = getIssueModelOverride(repo, issueNumber) ?? getRoleModels()[role] ?? getGlobalModel();
   if (a?.providerId && a.model) return { providerId: a.providerId, model: a.model };
   const fb = getSessionFallback();
   return fb?.providerId && fb.model ? { providerId: fb.providerId, model: fb.model } : null;
 }
-function resolveRoute(role: RoleName, repo: string, issueNumber: number, explicitModel?: string): { model: string; env: Record<string, string>; providerId: string } | null {
-  const assignment = resolveAssignment(role, repo, issueNumber, explicitModel);
+function resolveRoute(role: RoleName, repo: string, issueNumber: number, explicitModel?: string, agentKey?: string): { model: string; env: Record<string, string>; providerId: string } | null {
+  const assignment = resolveAssignment(role, repo, issueNumber, explicitModel, agentKey);
   if (!assignment?.providerId || !assignment.model) return null;
   const p = getProviders().find((x) => x.id === assignment.providerId);
   const ct = claudeToken();
@@ -214,12 +231,13 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
   const rc = recallWiring(input.repo);
   const systemPrompt = (await buildSystemPrompt(role, input.agentDef?.persona)) + (gn ? `\n\n${GITNEXUS_PROMPT}` : "") + `\n\n${RECALL_PROMPT}`;
   // Per-role provider routing (keeps Claude roles on your subscription; others go to e.g. GLM).
-  const route = resolveRoute(role, input.repo, input.issueNumber, input.model);
+  const agentKey = input.agentDef?.handle?.replace(/^@/, "") || role;
+  let route = resolveRoute(role, input.repo, input.issueNumber, input.model, agentKey);
   // If the human EXPLICITLY selected a model but it couldn't be routed (provider missing/has no API
   // key/base URL), do NOT silently fall back to the Claude subscription — that masks the problem as
   // a Claude rate-limit later. Fail loudly so the dashboard shows what's wrong.
   if (!route) {
-    const sel = resolveAssignment(role, input.repo, input.issueNumber, input.model);
+    const sel = resolveAssignment(role, input.repo, input.issueNumber, input.model, agentKey);
     if (sel?.providerId && sel.model) {
       const p = getProviders().find((x) => x.id === sel.providerId);
       // route is null only when providerAuth() == "missing". Distinguish a Claude-native provider
@@ -239,7 +257,7 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
       throw new Error(msg);
     }
   }
-  const model = canonicalModel(route?.model ?? input.model ?? modelFor(def));
+  let model = canonicalModel(route?.model ?? input.model ?? modelFor(def));
   // Build the agent subprocess env: inject the dashboard-stored Claude token (so the SDK
   // authenticates without CLAUDE_CODE_OAUTH_TOKEN in the container env) and the GitHub bot token
   // (so the agent's own `git commit && git push` authenticate via gh's credential helper).
@@ -292,7 +310,7 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
   console.log(`[agency] role:${role} ${repo}#${issueNumber} (model ${model}, ≤${maxTurns} turns)`);
   pushActivity(repo, issueNumber, role, "start", `started (${model}${input.resumeSessionId ? ", resuming" : ""})`);
 
-  const assignment = resolveAssignment(role, repo, issueNumber, input.model);
+  const assignment = resolveAssignment(role, repo, issueNumber, input.model, agentKey);
   const provider = assignment?.providerId ? getProviders().find((x) => x.id === assignment.providerId) : null;
   const providerName = provider ? provider.name : "Claude/Anthropic Subscription";
   const baseUrl = provider ? provider.baseUrl : "https://api.anthropic.com";
@@ -332,7 +350,7 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
     // Route through the AgentRunner seam (#63): the backend is a swappable adapter. Default
     // claude-sdk (the verbatim port of this loop into ClaudeSdkRunner); per-provider / global
     // setting can switch to a CLI runner (pi, claude-cli, gemini, custom).
-    const providerRow = route?.providerId ? getProviders().find((x) => x.id === route.providerId) : null;
+    const rt = route; const providerRow = rt?.providerId ? getProviders().find((x) => x.id === rt.providerId) : null;
     let runnerKind = (providerRow && (providerRow as { runner?: string }).runner) || defaultRunnerKind();
     const cliCommand = (providerRow && (providerRow as { cliCommand?: string }).cliCommand) || undefined;
     // Preflight: a CLI runner needs its binary on PATH. If it's missing (e.g. `pi` isn't installed
@@ -383,10 +401,38 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
   // Pre-hook: deterministic steps the orchestrator runs before the agent (zero tokens).
   await runHooks(role, "pre", input.workdir, (s) => pushActivity(repo, issueNumber, role, "tool", s)).catch(() => {});
 
+  // GRACEFUL FALLBACK: if the run errors (not a user stop) and the issue allows it, step to the
+  // selected model's fallback (defined per provider tier) and retry — best → worse — until one works
+  // or there are no more fallbacks. Disable per issue to stay on the chosen model and fail hard.
+  const useFallback = getIssueUseFallback(repo, issueNumber);
+  const triedModels = new Set<string>([`${route?.providerId}/${model}`]);
+  async function attempt(resumeId?: string): Promise<{ text: string; turns: number; costUsd: number; tokens: number; stopped: string; sessionId?: string }> {
+    try {
+      return await runQuery(resumeId);
+    } catch (e) {
+      if (wasAborted()) throw e;
+      // Try the fallback model if allowed and one exists that we haven't tried.
+      if (useFallback && route) {
+        const fb = fallbackFor(route.providerId, route.model);
+        const key = fb ? `${fb.providerId}/${fb.model}` : "";
+        if (fb && key && !triedModels.has(key)) {
+          triedModels.add(key);
+          const nr = resolveRoute(role, repo, issueNumber, `${fb.providerId}/${fb.model}`, agentKey);
+          if (nr) {
+            route = nr; model = canonicalModel(nr.model); runEnv = nr.env;
+            pushActivity(repo, issueNumber, role, "tool", `↘ ${(e as Error).message.slice(0, 80)} — falling back to ${model} (${getProviders().find((x) => x.id === nr.providerId)?.name || nr.providerId})`);
+            return attempt(undefined); // fresh run on the fallback model
+          }
+        }
+      }
+      throw e;
+    }
+  }
+
   let r: { text: string; turns: number; costUsd: number; tokens: number; stopped: string };
   try {
     try {
-      r = await runQuery(input.resumeSessionId);
+      r = await attempt(input.resumeSessionId);
     } catch (err) {
       if (wasAborted()) {
         if (inactiveAborted) throw new Error(`No response from ${route ? `the provider model (${model})` : "Claude"} for ${Math.round(INACTIVITY_MS / 60000)} minutes — the endpoint may be unreachable or the model id wrong.`);
@@ -398,7 +444,7 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
         console.warn(`[agency] role:${role} ${repo}#${issueNumber} resume failed — fresh: ${(err as Error).message.slice(0, 140)}`);
         pushActivity(repo, issueNumber, role, "tool", "↻ couldn't resume the prior session — starting fresh");
         try {
-          r = await runQuery(undefined);
+          r = await attempt(undefined);
         } catch (err2) {
           if (wasAborted()) {
             if (inactiveAborted) throw new Error(`No response from ${route ? `the provider model (${model})` : "Claude"} for ${Math.round(INACTIVITY_MS / 60000)} minutes — the endpoint may be unreachable or the model id wrong.`);
