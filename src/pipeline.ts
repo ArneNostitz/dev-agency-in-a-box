@@ -1010,6 +1010,9 @@ ${skillsPrompt(step.skills)}` : "";
     setActive(repo, issue.number, "issue", customDef ? customDef.name : role, issue.title);
     const instr = stepInstruction(step);
     const stepAuthor = customDef ? customDef.name : null;
+    // Custom agents flagged `interactive` pause the workflow after posting their step output,
+    // awaiting the user's reply (read the flag defensively — it may not exist on AgentDef on this branch).
+    const wantsPause = !!(customDef && (customDef as { interactive?: boolean }).interactive);
     const stepHeader = `▶ **Step ${i + 1}/${wf.steps.length}**`;
     await commentOnIssue(repo, issue.number, stepAuthor ? sayAs(stepAuthor, stepHeader) : say(role, stepHeader));
     await runStepHooks(hookIds, "pre", workdir, repo, issue.number);
@@ -1030,6 +1033,16 @@ ${thread}` : ""}${skills}`,
     await runStepHooks(hookIds, "post", workdir, repo, issue.number);
     if (role === "decomposer") { await splitIntoPlanned(repo, issue, out.text).catch(() => {}); return; } // split → planned epics, end this run
     if (role === "developer") await finalizeWithPr(repo, issue, workdir, branch).catch(() => {});
+
+    // Interactive agent: don't auto-advance — park the workflow awaiting the user's reply (same
+    // state the Planner uses for its awaiting-answer pause). The next human reply re-engages the
+    // workflow. NOTE: the engine restarts at step 0 on resume (see file-level resume caveat), so
+    // only the final step skips the pause to avoid stranding the workflow.
+    if (wantsPause && i + 1 < wf.steps.length) {
+      await pause(repo, issue, AWAITING_LABEL);
+      await commentOnIssue(repo, issue.number, stepAuthor ? sayAs(stepAuthor, "⏸ Waiting for your reply — answer above and I'll continue.") : say(role, "⏸ Waiting for your reply — answer above and I'll continue."));
+      return;
+    }
 
     const gate = (wf.gates || []).find((g) => g.after === i);
     let route = "continue";
