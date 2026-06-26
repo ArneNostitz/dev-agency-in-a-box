@@ -429,6 +429,28 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               review: reviews[`${i.repo}#${i.number}`] ?? null,
               modelOverride: getIssueModelOverride(i.repo, i.number),
               workflowId: getIssueWorkflow(i.repo, i.number),
+              providerOverride: getIssueProvider(i.repo, i.number),
+              agentModels: getIssueAgentModels(i.repo, i.number),
+              useFallback: getIssueUseFallback(i.repo, i.number),
+              ...(((): { wfSteps?: Array<{ agent: string; name: string; role: string }>; wfStep?: number } => {
+                // The issue's resolved workflow steps → ONE timeline dot per real step (8 for HolyMoly),
+                // each with its agent (custom name/avatar). Falls back to the generic 4 when none.
+                const wfId = getIssueWorkflow(i.repo, i.number);
+                const wf = wfId ? getWorkflow(wfId) : null;
+                if (!wf || !wf.steps?.length) return {};
+                const defs = listAgentDefs();
+                const ROLE_OF: Record<string, string> = { "@dev": "developer", "@plan": "planner", "@arch": "architect", "@review": "reviewer", "@test": "tester", "@split": "decomposer" };
+                const steps = wf.steps.map((st) => {
+                  const h = (st.agent || "").toLowerCase();
+                  const def = defs.find((d) => (d.handle || `@${d.name}`).toLowerCase() === h || d.name.toLowerCase() === h.replace(/^@/, ""));
+                  const name = def ? def.name : (h.replace(/^@/, "") || "developer");
+                  const role = ROLE_OF[h] || name.toLowerCase();
+                  return { agent: st.agent || "", name, role };
+                });
+                const wfRuns = (runMap[`${i.repo}#${i.number}`] || {}) as Record<string, number>;
+                const done = Object.values(wfRuns).reduce((a, b) => a + (b || 0), 0);
+                return { wfSteps: steps, wfStep: Math.min(done, steps.length) };
+              })()),
               held: isHoldRequested(i.repo, i.number) || undefined,
               steers: peekSteer(i.repo, i.number),
               lastRole: lastRoleMap[`${i.repo}#${i.number}`] ?? null,

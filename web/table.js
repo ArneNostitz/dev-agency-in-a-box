@@ -20,20 +20,33 @@ export function timelineModel(i) {
     const total = i.epic ? i.epic.total : 0, d = i.epic ? i.epic.done : 0;
     return { epic: true, done: d, total, complete: total > 0 && d >= total };
   }
+  const running = !!(i.active || i.running);
+  const blk = i.blocked;
+  const attn = blk === "needsAttention" || blk === "awaitingApproval" || blk === "awaitingAnswer" || blk === "conflict" || blk === "budgetExceeded";
+  // WORKFLOW-DRIVEN timeline: one dot per ACTUAL workflow step (e.g. 8 for HolyMoly), each with its
+  // own agent (name + avatar). Falls back to the generic plan/dev/test/review when no workflow.
+  const wfSteps = Array.isArray(i.wfSteps) && i.wfSteps.length ? i.wfSteps : null;
+  if (wfSteps) {
+    const cur = done ? wfSteps.length : (typeof i.wfStep === "number" ? i.wfStep : 0);
+    const steps = wfSteps.map((ws, idx) => {
+      let st = "pending";
+      if (done || idx < cur) st = "done";
+      else if (idx === cur) st = attn ? "attention" : running ? "running" : "queued";
+      return { k: ws.agent || ws.name, label: ws.name, role: ws.role || ws.name, st };
+    });
+    return { epic: false, steps, started: cur >= 0 && (running || done || cur > 0), current: cur, running, attn, workflow: true };
+  }
   let cur;
   if (done) cur = STEPS.length;
   else if (s === "planned" || s === "notPlanned" || !s) cur = -1;
   else if (s === "review") cur = 3;
   else { const r = (i.role || "").toLowerCase(); cur = (r in ROLE_STEP) ? ROLE_STEP[r] : 1; }
-  const running = !!(i.active || i.running);
-  const blk = i.blocked;
-  const attn = blk === "needsAttention" || blk === "awaitingApproval" || blk === "awaitingAnswer" || blk === "conflict" || blk === "budgetExceeded";
   const steps = STEPS.map(([k, label], idx) => {
     let st = "pending";
     if (cur === -1) st = "pending";
     else if (idx < cur) st = "done";
     else if (idx === cur) st = done ? "done" : attn ? "attention" : running ? "running" : "queued";
-    return { k, label, st };
+    return { k, label, role: k === "dev" ? "developer" : k, st };
   });
   if (s === "review") { steps[0].st = "done"; steps[1].st = "done"; steps[2].st = "done"; steps[3].st = i.review === "approved" ? "done" : "attention"; }
   if (done) steps.forEach((x) => (x.st = "done"));
@@ -105,7 +118,10 @@ function WorkflowTimeline({ i, labels = true }) {
       const blocked = s.st === "attention";
       const cls = done ? "done" : current ? (blocked ? "blocked" : "current") : blocked ? "blocked" : "pending";
       // Show a face on the current step (live lead) OR on the step the last agent ran (when idle).
-      const faceRole = (current && live) ? i.role : (!live && idx === lastIdx && i.lastRole) ? i.lastRole : (current ? i.role : null);
+      // Workflow timeline: EVERY step shows its OWN agent's face. Generic timeline: face only on the
+      // current/last-run step (as before).
+      const stepRole = s.role || s.k;
+      const faceRole = m.workflow ? stepRole : ((current && live) ? i.role : (!live && idx === lastIdx && i.lastRole) ? i.lastRole : (current ? i.role : null));
       const showFace = !!faceRole;
       return html`
         ${idx ? html`<span class=${"flow__line" + (idx <= m.current ? " on" : "")}></span>` : null}

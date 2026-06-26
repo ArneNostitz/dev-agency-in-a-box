@@ -166,6 +166,18 @@ function bTimeline(i) {
   else { const r = (i.role || "").toLowerCase(); cur = (r in BROLE_STEP) ? BROLE_STEP[r] : 1; }
   const running = !!(i.active || i.running);
   const attn = i.blocked === "needsAttention" || i.blocked === "awaitingApproval" || i.blocked === "awaitingAnswer" || i.blocked === "conflict" || i.blocked === "budgetExceeded";
+  // Workflow-driven: one dot per real workflow step with its own agent face.
+  const wfSteps = Array.isArray(i.wfSteps) && i.wfSteps.length ? i.wfSteps : null;
+  if (wfSteps) {
+    const c = done ? wfSteps.length : (typeof i.wfStep === "number" ? i.wfStep : 0);
+    const steps = wfSteps.map((ws, idx) => {
+      let stt = "pending";
+      if (done || idx < c) stt = "done";
+      else if (idx === c) stt = attn ? "blocked" : running ? "current" : "pending";
+      return { k: ws.agent || ws.name, label: ws.name, role: ws.role || ws.name, st: stt };
+    });
+    return { epic: false, steps, current: c, started: running || done || c > 0, live: running, workflow: true };
+  }
   const steps = BSTEPS.map(([k, label], idx) => {
     let stt = "pending";
     if (cur === -1) stt = "pending";
@@ -185,7 +197,7 @@ function BFlow({ i, avatarsOn }) {
   return html`<div class="flow flow--compact">
     ${m.steps.map((s, idx) => {
       const current = s.st === "current";
-      const faceRole = (current && m.live) ? i.role : (!m.live && idx === lastIdx && i.lastRole) ? i.lastRole : (current ? i.role : null);
+      const faceRole = m.workflow ? (s.role || s.k) : ((current && m.live) ? i.role : (!m.live && idx === lastIdx && i.lastRole) ? i.lastRole : (current ? i.role : null));
       const showFace = !!faceRole && avatarsOn;
       return html`
         ${idx ? html`<span class=${"flow__line" + (idx <= m.current ? " on" : "")}></span>` : null}
