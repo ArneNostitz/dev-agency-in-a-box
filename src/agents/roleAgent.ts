@@ -385,6 +385,9 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
       const m = message as { type?: string; delta?: string; summary?: string };
       if (m.type === "assistant") {
         emitAssistant(repo, issueNumber, role, message, input.workdir);
+      } else if (m.type === "stream_delta" && typeof m.delta === "string") {
+        // SDK partial-text fragment — live "typing" feed only, not persisted (final assistant text wins).
+        pushActivity(repo, issueNumber, role, "delta", m.delta);
       } else if (m.type === "text_delta" && typeof m.delta === "string") {
         pushActivity(repo, issueNumber, role, "text", m.delta);
       } else if (m.type === "tool" && typeof m.summary === "string") {

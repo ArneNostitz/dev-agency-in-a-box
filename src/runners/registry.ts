@@ -34,8 +34,21 @@ export function summarizeTool(name: string, input: Record<string, unknown> = {})
       return `🌐 search ${s(input.query)}`;
     case "WebFetch":
       return `🌐 fetch ${s(input.url)}`;
-    default:
+    case "TodoWrite":
+      return `📋 plan: ${(Array.isArray(input.todos) ? input.todos : []).map((t: unknown) => (t as { content?: string }).content || "").filter(Boolean).slice(0, 4).join(" · ").slice(0, 160) || "updated the todo list"}`;
+    case "Task":
+      return `🤝 subagent: ${s(input.description || input.prompt)}`;
+    default: {
+      // MCP tools — surface the server + tool + its key argument so GitNexus/recall calls are legible.
+      const mcp = /^mcp__([^_]+)__(.+)$/.exec(name);
+      if (mcp) {
+        const [, server, tool] = mcp;
+        const arg = s(input.symbol || input.query || input.name || input.q || input.path || input.cypher || Object.values(input)[0]);
+        const icon = server === "gitnexus" ? "🧠" : server === "recall" ? "📚" : "🔌";
+        return `${icon} ${server}.${tool}${arg ? `(${arg})` : ""}`;
+      }
       return `🔧 ${name}${input.description ? `: ${s(input.description)}` : ""}`;
+    }
   }
 }
 

@@ -10,7 +10,9 @@ export interface ActivityEvent {
   repo: string;
   number: number;
   role: string;
-  kind: "start" | "text" | "tool" | "done";
+  // "delta" = a live partial-text fragment for the streaming UI. Broadcast to SSE subscribers
+  // for the "typing" feel, but NOT persisted — the authoritative record is the final "text" event.
+  kind: "start" | "text" | "tool" | "done" | "delta";
   text: string;
 }
 
@@ -52,9 +54,11 @@ export function pushActivity(
 ): void {
   if (kind === "start") updateActiveRole(repo, number, role);
   const event: ActivityEvent = { ts: Date.now(), repo, number, role, kind, text };
-  buffer.push(event);
-  if (buffer.length > MAX) buffer.shift();
-  recordActivity(repo, number, role, kind, text);
+  if (kind !== "delta") {
+    buffer.push(event);
+    if (buffer.length > MAX) buffer.shift();
+    recordActivity(repo, number, role, kind, text);
+  }
   for (const fn of subscribers) {
     try {
       fn(event);

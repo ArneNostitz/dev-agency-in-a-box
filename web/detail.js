@@ -124,7 +124,19 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
     const t = setInterval(loadThread, 6000); return () => clearInterval(t);
   }, [repo, number, issue._audit, issue.pr_number]);
 
-  const stream = activity.filter((a) => a.repo === repo && a.number === number).slice(-60);
+  // Coalesce consecutive "delta" fragments (live partial-text "typing") from the same role into one
+  // growing line so the stream reads as a paragraph, not 50 single-token rows. Non-delta events pass through.
+  const stream = (() => {
+    const raw = activity.filter((a) => a.repo === repo && a.number === number);
+    const out = [];
+    for (const a of raw) {
+      const prev = out[out.length - 1];
+      if (a.kind === "delta" && prev && prev.kind === "delta" && prev.role === a.role) {
+        out[out.length - 1] = { ...prev, text: (prev.text || "") + (a.text || "") };
+      } else out.push(a);
+    }
+    return out.slice(-60);
+  })();
   useEffect(() => { const el = streamRef.current; if (el && stickRef.current) el.scrollTop = el.scrollHeight; });
 
   const review = (pr && pr.review && pr.review.verdict) || issue.review || null;
@@ -323,7 +335,7 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
     ${startError ? html`<div class="secbanner">⚠ ${startError}</div>` : null}
     ${(() => { const sp = getSetupProgress(stream); if (!sp) return null; const pct = sp.percent == null ? null : sp.percent; return html`<div class="setupbar" title=${sp.phase}><div class="setupbar-track"><div class="setupbar-fill" style=${pct == null ? "width:100%" : "width:" + pct + "%"}></div></div><span class="setupbar-lbl">${pct == null ? html`<${Spinner} size=${11}/> ` : pct + "% · "}${sp.phase}</span></div>`; })()}
     <div class="dstream" ref=${streamRef} onScroll=${(e) => { const el = e.target; const atB = el.scrollHeight - el.scrollTop - el.clientHeight < 50; stickRef.current = atB; setStreamAtBottom(atB); }}>
-      ${stream.length ? stream.map((a, idx) => { const ts = a.ts || (a.created_at ? new Date(a.created_at).getTime() : 0); const tstr = ts ? new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }) : ""; return html`<div key=${idx} class=${"l " + (a.kind === "tool" ? "tool" : a.kind === "start" || a.kind === "done" ? "muted" : "")}>${tstr ? html`<span class="l-ts">${tstr}</span> ` : null}${a.text}</div>`; }) : html`<div class="l muted">${startError ? "Failed to start." : "No live activity yet."}</div>`}
+      ${stream.length ? stream.map((a, idx) => { const ts = a.ts || (a.created_at ? new Date(a.created_at).getTime() : 0); const tstr = ts ? new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }) : ""; return html`<div key=${idx} class=${"l " + (a.kind === "tool" ? "tool" : a.kind === "start" || a.kind === "done" ? "muted" : a.kind === "delta" ? "delta" : "")}>${tstr ? html`<span class="l-ts">${tstr}</span> ` : null}${a.text}</div>`; }) : html`<div class="l muted">${startError ? "Failed to start." : "No live activity yet."}</div>`}
       ${!streamAtBottom ? html`<div class="scroll-fab-wrap"><button class="iconbtn scroll-fab" title="Scroll to bottom" onClick=${() => { const el = streamRef.current; if (el) el.scrollTop = el.scrollHeight; }}><${Icon} name="chevdown" size=${14}/></button></div>` : null}
     </div>
   </div>`;

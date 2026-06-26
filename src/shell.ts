@@ -532,6 +532,10 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .dstream,.stream{background:var(--term-bg);color:var(--term-ink);border-radius:var(--radius);padding:11px 13px;font:12px/1.55 var(--font-mono);white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;max-width:100%;overflow-x:hidden;display:flex;flex-direction:column;gap:2px}
 .stream__h{color:var(--term-muted);margin-bottom:4px;font-size:11px;text-transform:uppercase;letter-spacing:.04em}
 .dstream .l-ts,.stream .l-ts{color:var(--term-muted);opacity:.7;font-size:10.5px;user-select:none}
+/* live partial-text "typing" line — slightly dimmed with a blinking caret while it streams in */
+.dstream .l.delta,.stream .l.delta{opacity:.82}
+.dstream .l.delta::after,.stream .l.delta::after{content:"";display:inline-block;width:6px;height:1em;margin-left:2px;background:var(--term-fg,currentColor);vertical-align:text-bottom;animation:da-caret 1s steps(1) infinite}
+@keyframes da-caret{50%{opacity:0}}
 .dstream .tool,.stream .tool{color:var(--term-accent)}
 .dstream .muted,.stream .muted{color:var(--term-muted)}
 

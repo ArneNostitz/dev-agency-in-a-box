@@ -39,6 +39,7 @@ export class ClaudeSdkRunner implements AgentRunner {
           // Fully autonomous. Requires the container to run as a NON-root user (Claude Code
           // refuses --dangerously-skip-permissions as root) — see Dockerfile `USER node`.
           permissionMode: "bypassPermissions",
+          includePartialMessages: true,
           maxTurns: req.maxTurns,
           abortController: req.abort,
           stderr: (data: string) => {
@@ -49,6 +50,15 @@ export class ClaudeSdkRunner implements AgentRunner {
       })) {
         const sid = (message as { session_id?: string }).session_id;
         if (sid) sessionId = sid;
+        if (message.type === "stream_event") {
+          // Partial assistant text as it's generated — gives the live feed a "typing" pulse during a
+          // long turn instead of a frozen "still working". Forwarded as a delta (not persisted).
+          const ev = (message as { event?: { type?: string; delta?: { type?: string; text?: string } } }).event;
+          if (ev?.type === "content_block_delta" && ev.delta?.type === "text_delta" && ev.delta.text) {
+            emitAssistant({ type: "stream_delta", delta: ev.delta.text } as unknown);
+          }
+          continue;
+        }
         if (message.type === "assistant") {
           turns += 1;
           emitAssistant(message);
@@ -61,6 +71,18 @@ export class ClaudeSdkRunner implements AgentRunner {
             const billable = sumBillable(au);
             tokens += billable;
             capTokens += billable;
+          }
+        }
+        else if (message.type === "user") {
+          // Tool results come back as user messages — surface a short preview so the stream shows what
+          // a Read/Bash/MCP call actually returned, not just that it was invoked.
+          const uc = (message as { message?: { content?: unknown[] } }).message?.content;
+          if (Array.isArray(uc)) for (const b of uc as Array<{ type?: string; content?: unknown; is_error?: boolean }>) {
+            if (b.type === "tool_result") {
+              const txt = Array.isArray(b.content) ? (b.content as Array<{ text?: string }>).map((x) => x.text || "").join(" ") : String(b.content ?? "");
+              const prev = txt.replace(/\s+/g, " ").trim().slice(0, 200);
+              if (prev) emitAssistant({ type: "assistant", message: { content: [{ type: "text", text: `${b.is_error ? "⚠ " : "↳ "}${prev}` }] } });
+            }
           }
         }
         if ("result" in message && typeof (message as { result?: unknown }).result === "string") {
