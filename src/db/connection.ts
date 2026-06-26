@@ -185,7 +185,7 @@ export function getDb(): DatabaseSync | null {
       -- in the dashboard. Built-in repo roles still live in code; these are additive.
       CREATE TABLE IF NOT EXISTS agent_def (
         name TEXT PRIMARY KEY, handle TEXT, persona TEXT, model TEXT, tools TEXT,
-        mode TEXT, interactive INTEGER DEFAULT 0, pushes_github INTEGER NOT NULL DEFAULT 1, skills TEXT, builtin INTEGER NOT NULL DEFAULT 0,
+        mode TEXT, interactive INTEGER DEFAULT 0, can_write_code INTEGER, pushes_github INTEGER NOT NULL DEFAULT 1, skills TEXT, builtin INTEGER NOT NULL DEFAULT 0,
         default_task TEXT, avatar TEXT, updated_at TEXT
       );
       -- Skills (v3, Claude Code Agent Skill schema): name + description (triggers it) + markdown body.
@@ -275,6 +275,7 @@ export function getDb(): DatabaseSync | null {
       `ALTER TABLE agent_def ADD COLUMN default_task TEXT`,
       `ALTER TABLE agent_def ADD COLUMN avatar TEXT`,
       `ALTER TABLE agent_def ADD COLUMN interactive INTEGER DEFAULT 0`,
+      `ALTER TABLE agent_def ADD COLUMN can_write_code INTEGER`,
       `ALTER TABLE workflows ADD COLUMN hooks TEXT`,
       `ALTER TABLE issues ADD COLUMN by_agent INTEGER NOT NULL DEFAULT 0`,
       `ALTER TABLE issues ADD COLUMN created_at TEXT`,

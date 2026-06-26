@@ -41,3 +41,20 @@ test("chatAgentForText matches a mentioned handle", () => {
   assert.equal(s.chatAgentForText("@grill this plan")?.name, "grill-me");
   assert.equal(s.chatAgentForText("just a normal issue, no handle"), null);
 });
+
+test("canWriteCode gates the derived tool set + plan path", async () => {
+  const { toolsFor, planFilePath } = await import("../dist/store.js");
+  assert.deepEqual(toolsFor({ canWriteCode: true }), ["Read", "Glob", "Grep", "Write", "Edit", "Bash"]);
+  assert.deepEqual(toolsFor({ canWriteCode: false }), ["Read", "Glob", "Grep", "Write"]);
+  assert.match(planFilePath(12, "spec", new Date("2026-06-26")), /^_plan\/issue-12_2026-06-26_spec\.md$/);
+  assert.match(planFilePath(3), /^_plan\/issue-3_\d{4}-\d{2}-\d{2}_notes\.md$/);
+});
+
+test("canWriteCode round-trips + back-compat inference for legacy rows", () => {
+  s.upsertAgentDef({ name: "coder", handle: "@coder", canWriteCode: true, persona: "writes code" });
+  assert.equal(s.getAgentDef("coder").canWriteCode, true);
+  assert.deepEqual(s.getAgentDef("coder").tools, ["Read", "Glob", "Grep", "Write", "Edit", "Bash"], "tools derived from canWriteCode");
+  s.upsertAgentDef({ name: "speccer", handle: "@spec2", canWriteCode: false, persona: "writes specs" });
+  assert.equal(s.getAgentDef("speccer").canWriteCode, false);
+  s.deleteAgentDef("coder"); s.deleteAgentDef("speccer");
+});
