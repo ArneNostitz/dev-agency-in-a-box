@@ -314,14 +314,37 @@ function AgentModal({ data, which, onClose, reload }) {
   const defs = (data && data.agentDefs) || [];
   const existing = which === "__new__" ? null : defs.find((d) => (d.handle || ("@" + d.name)) === which || ("@" + d.name) === which || d.name === String(which).replace(/^@/, ""));
   const ROLE_NAMES = { "@plan": "planner", "@arch": "architect", "@dev": "developer", "@review": "reviewer", "@test": "tester" };
-  const roleSeed = !existing && ROLE_NAMES[which] ? { name: ROLE_NAMES[which], handle: which, mode: "repo", model: "", tools: ["Read", "Glob", "Grep"], persona: "", defaultTask: DEFAULT_TASK[which] || "", avatar: "", pushesGithub: true } : null;
+  const roleSeed = !existing && ROLE_NAMES[which] ? { name: ROLE_NAMES[which], handle: which, mode: "repo", model: "", tools: ["Read", "Glob", "Grep"], persona: "", defaultTask: DEFAULT_TASK[which] || "", avatar: "", pushesGithub: true, interactive: false } : null;
   const TOOLS = ["Read", "Glob", "Grep", "Edit", "Write", "Bash"];
-  const [f, setF] = useState(existing ? Object.assign({ defaultTask: "", avatar: "", tools: [] }, existing) : roleSeed || { name: "", handle: "", mode: "repo", model: "", tools: ["Read", "Glob", "Grep"], persona: "", defaultTask: "", avatar: "", pushesGithub: true });
+  const [f, setF] = useState(existing ? Object.assign({ defaultTask: "", avatar: "", tools: [], interactive: false }, existing) : roleSeed || { name: "", handle: "", mode: "repo", model: "", tools: ["Read", "Glob", "Grep"], persona: "", defaultTask: "", avatar: "", pushesGithub: true, interactive: false });
   const [busy, setBusy] = useState(false);
   const set = (k, v) => setF((o) => Object.assign({}, o, { [k]: v }));
   const toggleTool = (t) => setF((o) => Object.assign({}, o, { tools: (o.tools || []).includes(t) ? o.tools.filter((x) => x !== t) : (o.tools || []).concat(t) }));
+  // ---- Model picker (Default / Tier / Advanced) ----
+  // f.model holds one of: "" (default) | a bare tier word "high"|"medium"|"low" (resolves against
+  // the issue/global provider) | a concrete "providerId/model" ref (a tier pinned to a provider, or
+  // an advanced free-typed model). Parse f.model back into picker state when editing.
+  const TIER_WORDS = ["high", "medium", "low"];
+  const provs = (data && data.providers) || [];
+  const parsed = (() => {
+    const m = (f.model || "").trim();
+    if (!m) return { kind: "default", tier: "medium", prov: "", adv: "" };
+    if (TIER_WORDS.indexOf(m.toLowerCase()) >= 0) return { kind: "tier", tier: m.toLowerCase(), prov: "", adv: "" };
+    return { kind: "advanced", tier: "medium", prov: "", adv: m };
+  })();
+  const [mKind, setMKind] = useState(parsed.kind);
+  const [mTier, setMTier] = useState(parsed.tier);
+  const [mAdv, setMAdv] = useState(parsed.adv);
+  // Recompute f.model from picker state and store the right ref string.
+  const applyModel = (kind, tier, adv) => {
+    let v = "";
+    if (kind === "advanced") v = (adv || "").trim();
+    else if (kind === "tier") v = tier; // bare tier word
+    else v = ""; // default
+    set("model", v);
+  };
   function pickAvatar(e) { const file = (e.target.files || [])[0]; if (!file) return; readAttach(file, (a) => { api("/upload-file", { repo: "_agents", number: -1, dataUrl: a.d, name: (f.name || "avatar") }).then((j) => { if (j && j.url) set("avatar", j.url); else toast("Upload failed", "error"); }).catch(() => toast("Upload failed", "error")); }); e.target.value = ""; }
-  function save() { if (!f.name.trim()) { toast("Name required"); return; } setBusy(true); api("/agent-def-save", { agentDef: { name: f.name.trim(), handle: f.handle || "@" + f.name.trim(), mode: f.mode, model: f.model, tools: f.tools, persona: f.persona, defaultTask: f.defaultTask, avatar: f.avatar, pushesGithub: f.pushesGithub !== false } }).then(() => { toast("Agent saved"); reload && reload(); onClose(); }).catch((e) => toast((e && e.message) || "Couldn’t save", "error")).then(() => setBusy(false)); }
+  function save() { if (!f.name.trim()) { toast("Name required"); return; } setBusy(true); api("/agent-def-save", { agentDef: { name: f.name.trim(), handle: f.handle || "@" + f.name.trim(), mode: f.mode, model: f.model, tools: f.tools, persona: f.persona, defaultTask: f.defaultTask, avatar: f.avatar, pushesGithub: f.pushesGithub !== false, interactive: !!f.interactive } }).then(() => { toast("Agent saved"); reload && reload(); onClose(); }).catch((e) => toast((e && e.message) || "Couldn’t save", "error")).then(() => setBusy(false)); }
   const footer = html`<button class="btn" onClick=${onClose}>Cancel</button><button class="btn primary" disabled=${busy} onClick=${save}>${busy ? html`<${Spinner} size=${14}/>` : "Save agent"}</button>`;
   return html`<${Modal} title=${existing ? "Edit agent" : roleSeed ? "Edit " + roleSeed.name : "New agent"} onClose=${onClose} footer=${footer}>
     <div class="agm-top">
@@ -340,11 +363,15 @@ function AgentModal({ data, which, onClose, reload }) {
     <label class="bld-lbl">Mode</label>
     <${Select} value=${f.mode} options=${[{ value: "repo", label: "repo — writes code" }, { value: "chat", label: "chat — conversation, no code" }]} onChange=${(v) => set("mode", v)}/>
     <label class="bld-lbl">Model <span class="bld-hint">(blank = default)</span></label>
-    <input class="bld-num" value=${f.model} placeholder="e.g. glm-5.1, or blank" onInput=${(e) => set("model", e.target.value)}/>
+    <${Select} value=${mKind} options=${[{ value: "default", label: "Default — inherit" }, { value: "tier", label: "Tier — High / Medium / Low" }, { value: "advanced", label: "Advanced — specific model" }]} onChange=${(v) => { setMKind(v); applyModel(v, mTier, mAdv); }}/>
+    ${mKind === "tier" ? html`<div style="margin-top:6px"><${Select} value=${mTier} options=${[{ value: "high", label: "High" }, { value: "medium", label: "Medium" }, { value: "low", label: "Low" }]} onChange=${(v) => { setMTier(v); applyModel("tier", v, mAdv); }}/><div class="bld-hint" style="margin-top:4px">Resolves against the run\u2019s provider.</div></div>` : null}
+    ${mKind === "advanced" ? html`<input class="bld-num" style="margin-top:6px" value=${mAdv} placeholder="e.g. glm-5.1 or providerId/model" onInput=${(e) => { setMAdv(e.target.value); applyModel("advanced", mTier, e.target.value); }}/>` : null}
     <label class="bld-lbl">Default task <span class="bld-hint">— pre-fills a workflow step</span></label>
     <textarea class="bld-ta" rows="2" value=${f.defaultTask} placeholder="e.g. Implement the plan and open a PR." onInput=${(e) => set("defaultTask", e.target.value)}></textarea>
     <label class="bld-lbl">Tools</label>
     <div class="agm-tools">${TOOLS.map((t) => html`<label class=${"agm-tool" + ((f.tools || []).includes(t) ? " on" : "")} key=${t}><input type="checkbox" checked=${(f.tools || []).includes(t)} onChange=${() => toggleTool(t)}/> ${t}</label>`)}</div>
+    <label class="bld-lbl">Interactive chat <span class="bld-hint">(pauses to talk it through with you instead of running ahead)</span></label>
+    <div class="agm-tools"><label class=${"agm-tool" + (f.interactive ? " on" : "")}><input type="checkbox" checked=${!!f.interactive} onChange=${() => set("interactive", !f.interactive)}/> Interactive chat</label></div>
     <label class="bld-lbl">Persona <span class="bld-hint">(markdown)</span></label>
     <textarea class="bld-ta" rows="6" value=${f.persona} placeholder="How this agent thinks and behaves…" onInput=${(e) => set("persona", e.target.value)}></textarea>
   <//>`;
