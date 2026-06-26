@@ -27,6 +27,18 @@ export function roleRunsByIssue(): RoleRuns {
   return m;
 }
 
+/** How many workflow-engine STEP runs (kind='workflow') have completed for an issue. The step engine
+ * has no persisted cursor, so on resume it uses this count to continue at the next step instead of
+ * re-running from step 0. Matches the frontend's wfStep computation. */
+export function workflowStepRunCount(repo: string, number: number): number {
+  const d = getDb();
+  if (!d) return 0;
+  try {
+    const r = d.prepare("SELECT COUNT(*) AS c FROM runs WHERE repo = ? AND number = ? AND kind = 'workflow'").get(repo, number) as { c?: number } | undefined;
+    return r?.c ?? 0;
+  } catch { return 0; }
+}
+
 export function recentRuns(limit = 40): RunRow[] {
   const d = getDb();
   if (!d) return [];

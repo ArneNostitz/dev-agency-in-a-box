@@ -27,6 +27,14 @@ test("upsert + list + delete custom agent", () => {
   assert.equal(s.getAgentDef("researcher"), null);
 });
 
+test("interactive flag round-trips (default false)", () => {
+  s.upsertAgentDef({ name: "talker", handle: "@talk", mode: "chat", tools: ["Read"], persona: "Talks.", interactive: true });
+  assert.equal(s.getAgentDef("talker").interactive, true, "interactive persisted true");
+  s.upsertAgentDef({ name: "quiet", handle: "@quiet", mode: "repo", tools: ["Read"], persona: "Runs ahead." });
+  assert.equal(s.getAgentDef("quiet").interactive, false, "interactive defaults false");
+  s.deleteAgentDef("talker"); s.deleteAgentDef("quiet");
+});
+
 test("chatAgentForText matches a mentioned handle", () => {
   s.seedChatAgents();
   assert.equal(s.chatAgentForText("hey @spec help me scope this")?.name, "spec-creator");

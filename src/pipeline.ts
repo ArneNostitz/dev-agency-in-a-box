@@ -49,7 +49,7 @@ function held(repo: string, number: number, where: string): boolean {
   return false;
 }
 import type { RoleName } from "./agents/roles.js";
-import { recordRun, recordPlan, lastPlan, recordIssueState, recordIssueStatus, recordIssueFiles, recordPr, setByAgent, addEpicChild, listEpicChildren, getSession, issueActivity, recordReview, getReview, recordConflict, clearConflict, getSetting, skillsPrompt, listHooks, listAgentDefs, changesTouchingFiles, type Workflow } from "./store.js";
+import { recordRun, workflowStepRunCount, recordPlan, lastPlan, recordIssueState, recordIssueStatus, recordIssueFiles, recordPr, setByAgent, addEpicChild, listEpicChildren, getSession, issueActivity, recordReview, getReview, recordConflict, clearConflict, getSetting, skillsPrompt, listHooks, listAgentDefs, changesTouchingFiles, type Workflow } from "./store.js";
 import { conflictFiles } from "./github.js";
 import { pushActivity, setActive } from "./activity.js";
 import { execSync } from "node:child_process";
@@ -987,11 +987,14 @@ function stepInstruction(step: { agent?: string; instruction?: string }): string
   return `Work this issue as ${nm}. Do the part of the workflow this step is responsible for.`;
 }
 
-export async function runWorkflowEngine(cfg: Config, repo: string, issue: Issue, wf: Workflow, workdir: string, thread: string): Promise<void> {
+export async function runWorkflowEngine(cfg: Config, repo: string, issue: Issue, wf: Workflow, workdir: string, thread: string, resuming = false): Promise<void> {
   void cfg;
   const branch = `agency/issue-${issue.number}`;
   const loops: Record<number, number> = {};
-  let i = 0, guard = 0;
+  // The step engine has no persisted cursor: on a fresh run no workflow-step runs exist yet (start at
+  // 0); on RESUME (e.g. after an interactive-agent pause) the count of completed step runs tells us
+  // where to continue, so we don't re-run from step 0. Clamp so a loop-back-inflated count can't overrun.
+  let i = resuming ? Math.min(workflowStepRunCount(repo, issue.number), Math.max(0, wf.steps.length - 1)) : 0, guard = 0;
   await commentOnIssue(repo, issue.number, say("developer", `🧭 Running workflow **${wf.name}** — ${wf.steps.length} step(s).`));
   const wfHookIds = (wf.hooks || []).map(Number).filter((n) => Number.isFinite(n));
   await runStepHooks(wfHookIds, "pre", workdir, repo, issue.number); // workflow-level pre hooks

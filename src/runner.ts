@@ -318,7 +318,7 @@ async function processIssue(cfg: Config, repo: string, issue: Issue, opts: { fre
   // A custom workflow runs via the step engine; a single @dev/code pin runs the solo developer; the
   // proven full-build path stays on runPipeline. (Full build = the @build workflow.)
   const runFlow = () =>
-    (wf && wf.id !== "full-build") ? runWorkflowEngine(cfg, repo, issue, wf, workdir, thread)
+    (wf && wf.id !== "full-build") ? runWorkflowEngine(cfg, repo, issue, wf, workdir, thread, resuming)
     : (single && role === "developer") ? runDeveloperSolo(repo, issue, workdir, thread)
     : runPipeline(cfg, repo, issue, role, workdir, thread);
   setActive(repo, issue.number, "issue", role, issue.title);
