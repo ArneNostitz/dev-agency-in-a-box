@@ -37,8 +37,9 @@ export {
   getFallbackChain, setFallbackChain, getAutoSwitchOnLimit,
   setIssueModelOverride, getIssueModelOverride, clearIssueModelOverride,
   setIssueWorkflow, getIssueWorkflow, clearIssueWorkflow,
+  tierModel, fallbackFor, parseModelRef, setIssueProvider, getIssueProvider, setIssueAgentModel, getIssueAgentModels, setIssueUseFallback, getIssueUseFallback,
 } from "./db/providers.js";
-export type { Provider } from "./db/providers.js";
+export type { Provider, Tier, TierSlot } from "./db/providers.js";
 export { upsertAgentDef, getAgentDef, listAgentDefs, deleteAgentDef, chatAgentForText, seedChatAgents } from "./db/agent_def.js";
 export type { AgentDef } from "./db/agent_def.js";
 export { searchMemory } from "./db/memory.js";

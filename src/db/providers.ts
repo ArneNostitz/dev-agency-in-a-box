@@ -10,12 +10,17 @@ import { readFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+export type Tier = "high" | "medium" | "low";
+/** A model tier slot: which model + its graceful-fallback (a "providerId/model" string, "" = none). */
+export interface TierSlot { model: string; fallback: string; }
 export interface Provider {
   id: string;
   name: string;
   baseUrl: string;
   apiKey: string;
   models: string[];
+  /** Per-provider High/Medium/Low model slots (each with its own fallback model). */
+  tiers?: { high?: TierSlot; medium?: TierSlot; low?: TierSlot };
   /** Which runner executes roles on this provider. Default claude-sdk. pi/claude/gemini CLIs via cli. */
   runner?: "claude-sdk" | "claude-cli" | "pi-cli" | "custom-cli";
   /** Command template for custom-cli / cli runners: {model} {systemPrompt} {task} {workdir}. */
@@ -168,3 +173,44 @@ export function getIssueWorkflow(repo: string, number: number): string | null {
 export function clearIssueWorkflow(repo: string, number: number): void {
   setSetting(`issue_workflow.${repo}#${number}`, "");
 }
+
+// ---- H/M/L tier resolution + per-issue / per-agent overrides ----
+/** Resolve a tier (high/medium/low) on a provider → its model. Falls back to the provider's first model. */
+export function tierModel(providerId: string, tier: Tier): { providerId: string; model: string } | null {
+  const p = getProviders().find((x) => x.id === providerId);
+  if (!p) return null;
+  const slot = p.tiers?.[tier];
+  const model = slot?.model || p.models[0] || "";
+  return model ? { providerId, model } : null;
+}
+/** Parse a "providerId/model" ModelRef string into parts. */
+export function parseModelRef(ref: string | undefined | null): { providerId: string; model: string } | null {
+  if (!ref) return null; const i = ref.indexOf("/"); if (i <= 0) return null;
+  return { providerId: ref.slice(0, i), model: ref.slice(i + 1) };
+}
+/** The graceful fallback for a {providerId, model} (the model's slot fallback if it is a tiered model). */
+export function fallbackFor(providerId: string, model: string): { providerId: string; model: string } | null {
+  const p = getProviders().find((x) => x.id === providerId);
+  if (!p?.tiers) return null;
+  for (const t of ["high", "medium", "low"] as Tier[]) {
+    if (p.tiers[t]?.model === model && p.tiers[t]?.fallback) return parseModelRef(p.tiers[t]!.fallback);
+  }
+  return null;
+}
+
+// Per-issue: the issue-wide PROVIDER override (the provider whose tiers the agents resolve against).
+export function setIssueProvider(repo: string, number: number, providerId: string): void { setSetting(`issue_provider.${repo}#${number}`, providerId || ""); }
+export function getIssueProvider(repo: string, number: number): string | null { const v = getSetting(`issue_provider.${repo}#${number}`); return v || null; }
+
+// Per-issue PER-AGENT override: { "<roleOrHandle>": "providerId/model" }.
+export function setIssueAgentModel(repo: string, number: number, agent: string, ref: string): void {
+  const cur = getIssueAgentModels(repo, number); if (ref) cur[agent] = ref; else delete cur[agent];
+  setSetting(`issue_agent_models.${repo}#${number}`, JSON.stringify(cur));
+}
+export function getIssueAgentModels(repo: string, number: number): Record<string, string> {
+  try { return JSON.parse(getSetting(`issue_agent_models.${repo}#${number}`) ?? "{}") as Record<string, string>; } catch { return {}; }
+}
+
+// Per-issue "use fallback" toggle (step best→worse on failure). Default ON.
+export function setIssueUseFallback(repo: string, number: number, on: boolean): void { setSetting(`issue_use_fallback.${repo}#${number}`, on ? "1" : "0"); }
+export function getIssueUseFallback(repo: string, number: number): boolean { const v = getSetting(`issue_use_fallback.${repo}#${number}`); return v == null ? true : v === "1"; }
