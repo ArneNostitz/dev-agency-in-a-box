@@ -40,7 +40,8 @@ import { getSecretSetting, setSecretSetting, getUserSecretStatus } from "./store
 import { masterKeyConfigured } from "./crypto.js";
 import { ghBotToken, ghUserToken } from "./creds.js";
 import { testClaudeAuth } from "./agents/roleAgent.js";
-import { ALL_ROLES } from "./agents/roles.js";
+import { ALL_ROLES, roleForText, loadHandleRoleMap } from "./agents/roles.js";
+import { resolveWorkflow } from "./workflow.js";
 import { hasActiveRun, requestHold, queueSteer, peekSteer, isHoldRequested } from "./abort.js";
 import { renderLogin, renderInvite, renderSetup, renderForgot, renderReset } from "./authpages.js";
 import { authenticate, createSession, revokeSession, getInvite, acceptInvite, createInvite, createUser, listUsers, listInvites, setUserSecret, listUserSecretKeys, countUsers, setUserPassword, getUserByName, getUserByNameOrEmail, createPasswordReset, consumePasswordReset, type User } from "./store.js";
@@ -396,6 +397,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           const _recentAct = recentActivity(300);
           const lastRoleMap: Record<string, string> = {};
           for (const a of _recentAct) { if (a && a.role) lastRoleMap[`${a.repo}#${a.number}`] = a.role; }
+          const handleRoleMap = loadHandleRoleMap(); // load once, not per-issue (reads a file)
           const enriched = issues.map((i) => {
             const byParent = epicCache[i.repo] ?? {};
             const dbKids = byParent[i.number];
@@ -432,12 +434,22 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               providerOverride: getIssueProvider(i.repo, i.number),
               agentModels: getIssueAgentModels(i.repo, i.number),
               useFallback: getIssueUseFallback(i.repo, i.number),
-              ...(((): { wfSteps?: Array<{ agent: string; name: string; role: string }>; wfStep?: number } => {
+              ...(((): { wfSteps?: Array<{ agent: string; name: string; role: string }>; wfStep?: number; soloRole?: string } => {
                 // The issue's resolved workflow steps → ONE timeline dot per real step (8 for HolyMoly),
                 // each with its agent (custom name/avatar). Falls back to the generic 4 when none.
                 const wfId = getIssueWorkflow(i.repo, i.number);
                 const wf = wfId ? getWorkflow(wfId) : null;
-                if (!wf || !wf.steps?.length) return {};
+                if (!wf || !wf.steps?.length) {
+                  // No workflow → if this issue resolved to a SOLO single-role pin (e.g. @dev), show that
+                  // one step instead of the generic Plan→Dev→Test→Review (which wrongly reads "full build").
+                  const solo = (getSetting(`issue_solo.${i.repo}#${i.number}`) || "").trim();
+                  if (solo) {
+                    const name = solo.charAt(0).toUpperCase() + solo.slice(1);
+                    // wfStep stays 0 (step is current while running); the board sets it done from issue state.
+                    return { wfSteps: [{ agent: `@${solo}`, name, role: solo }], wfStep: 0, soloRole: solo };
+                  }
+                  return {};
+                }
                 const defs = listAgentDefs();
                 const ROLE_OF: Record<string, string> = { "@dev": "developer", "@plan": "planner", "@arch": "architect", "@review": "reviewer", "@test": "tester", "@split": "decomposer" };
                 const steps = wf.steps.map((st) => {
@@ -542,7 +554,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               issues: enriched,
               runs: recentRuns(40),
               activity: recentActivity(150), // SSE streams live deltas; the poll only needs a recent backlog
-              spendToday: spendSince(midnight.toISOString()),
+              spendToday: { ...spendSince(midnight.toISOString()), tokens: tokensSince(midnight.toISOString()).tokens },
               session: {
                 tokens: gaugeTokens,
                 costUsd: sess.costUsd,
@@ -702,7 +714,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
             // GROUND TRUTH: a real branch→main merge test on the fresh remote, NOT GitHub's `mergeable`
             // flag (it lags badly after a push — both false "conflict" and false "clean"). The action
             // bar's mergeable is overridden from this so Fix/Merge reflect reality.
-            const probe = await mergeProbe(repo, branch, "main").catch(() => ({ ok: false, files: [] as string[] }));
+            const probe = await mergeProbe(repo, branch).catch(() => ({ ok: false, files: [] as string[] }));
             if (probe.ok && merge) merge.mergeable = probe.files.length ? "conflict" : "clean";
             if (probe.ok && probe.files.length) {
               const sha = await branchHeadSha(repo, branch).catch(() => "");
@@ -1641,6 +1653,13 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
             if (p.model && typeof p.model === "object" && p.model.providerId && p.model.model) {
               setIssueModelOverride(repo, created.number, p.model.providerId, p.model.model);
             }
+            // Persist the dropdown selection STRUCTURALLY so it's authoritative on instant-start,
+            // planned-start, AND resume — not re-derived from body text (which a later comment can
+            // shadow, silently falling back to the default full build). If the chosen handle is a
+            // workflow trigger, pin that workflow; a single agent/role keeps resolving from the
+            // prepended handle (and processIssue persists its role on first run).
+            const selWf = resolveWorkflow(handle);
+            if (selWf) setIssueWorkflow(repo, created.number, selWf.id);
             if (p.start) {
               recordIssueStatus(repo, created.number, withStatus("working"), { title: p.title.trim() });
               // Dashboard-first INSTANT start: dispatch from the title/body we already have — no GitHub

@@ -4,7 +4,7 @@
 // WORKFLOW TIMELINE that reveals on hover. Sort / group / time-filter + a hover action menu are kept.
 // Reads the same /data payload as the board; exports the same surface app.js already imports.
 import { html, useState, useMemo, useRef, useEffect } from "/web/vendor/standalone.mjs";
-import { Avatar, Icon, Spinner, ago, classify, isDone, statusChip, filterByTime, ghUrl } from "./core.js";
+import { Avatar, Icon, Spinner, ago, classify, isDone, statusChip, filterByTime, ghUrl, tokHeat, usageTitle, fmtTok } from "./core.js";
 import { nestedChildKeys } from "./board.js";
 import { Breadcrumb } from "./ui.js";
 
@@ -79,19 +79,13 @@ function StatusChip({ i }) {
   return html`<span class=${"da-status " + sf.chip + (sf.live ? " da-status--live" : "")}><span class="da-status__dot"></span>${sf.label}</span>`;
 }
 
-// Cost heat bar: live spend vs the estimate. Green under budget, amber past 80%, red over.
+// Token heat bar: live tokens burned (provider-neutral; no $).
 function HeatBar({ i }) {
-  const real = (i.usage && i.usage.costUsd) || 0;
-  const est = (i.estCost && i.estCost.usd) || 0;
-  if (!real && !est) return null;
-  const max = est || Math.max(real, 1);
-  const ratio = max ? real / max : 0;
-  const pct = Math.max(4, Math.min(100, Math.round(ratio * 100)));
-  const color = ratio >= 1 ? "var(--red)" : ratio >= 0.8 ? "var(--amber)" : "var(--green)";
-  const lbl = real ? "$" + real.toFixed(2) : "~$" + est.toFixed(2);
-  return html`<span class="heat tip" data-tip=${"$" + real.toFixed(2) + (est ? " of ~$" + est.toFixed(2) + " est" : "")}>
-    <span class="heat__track"><span class="heat__fill" style=${"width:" + pct + "%;background:" + color}></span></span>
-    <span class="heat__lbl" style=${"color:" + (ratio >= 1 ? "var(--red)" : "var(--ink-2)")}>${lbl}</span>
+  const h = tokHeat(i);
+  if (!h.tokens) return null;
+  return html`<span class="heat tip" data-tip=${usageTitle(i.usage)}>
+    <span class="heat__track"><span class="heat__fill" style=${"width:" + h.pct + "%;background:" + h.color}></span></span>
+    <span class="heat__lbl" style=${"color:" + (h.over ? "var(--red)" : "var(--ink-2)")}>${fmtTok(h.tokens)}</span>
   </span>`;
 }
 

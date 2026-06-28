@@ -1,7 +1,7 @@
 // Dev Agency dashboard — detail module (split from app.js; Preact + htm, no build step).
 import { html, useState, useEffect, useRef } from "/web/vendor/standalone.mjs";
 import { Breadcrumb } from "./ui.js";
-import { Avatar, Icon, Modal, ProviderLogo, Select, Sheet, Spinner, agentOptions, agentOnlyOptions, workflowOptions, ago, statusChip, api, commentBadge, defaultModelLogo, fmtTok, getJSON, getSetupProgress, ghUrl, isDone, md, MarkdownArea, readAttach, roleFromComment, shortModel, stripBadge, toast, usageTitle } from "./core.js";
+import { Avatar, Icon, Modal, ProviderLogo, Select, Sheet, Spinner, agentOptions, agentOnlyOptions, workflowOptions, ago, statusChip, api, commentBadge, defaultModelLabel, fmtTok, getJSON, getSetupProgress, ghUrl, isDone, md, MarkdownArea, readAttach, roleFromComment, shortModel, stripBadge, toast, tokHeat, usageTitle } from "./core.js";
 
 
 // ---------- Detail ----------
@@ -42,15 +42,23 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
   const defWfId = (data && data.defaultWorkflowId) || "full-build";
   const defWf = wfOpts.find((w) => w.value === defWfId);
   const wfSelOpts = [{ value: "", label: "Default" + (defWf ? " · " + defWf.label : ""), icon: "sparkles" }].concat(wfOpts.map((w) => ({ value: w.value, label: w.label, avatar: w.avatar, hint: "workflow", hintCls: "b-wf" })));
-  // The workflow name to SHOW while the agency runs (read-only): the pinned one, else the default.
-  const activeWfName = (issueWf && (wfOpts.find((w) => w.value === issueWf) || {}).label) || ("Default" + (defWf ? " · " + defWf.label : ""));
+  // The workflow name to SHOW while the agency runs (read-only): the pinned one, else — for a solo
+  // single-role pin (e.g. @dev) — that one role, else the default workflow. (Solo runs were wrongly
+  // labelled "Full build" because they have no workflow object and fell through to the default.)
+  const soloRole = issue.soloRole;
+  const activeWfName = (issueWf && (wfOpts.find((w) => w.value === issueWf) || {}).label)
+    || (soloRole ? (soloRole.charAt(0).toUpperCase() + soloRole.slice(1) + " only") : ("Default" + (defWf ? " · " + defWf.label : "")));
   const pinWorkflow = (id) => { setIssueWf(id); issue.workflowId = id || null; api("/issue-workflow", { repo, number, workflowId: id || "" }).catch((err) => toast("Couldn't set workflow: " + ((err && err.message) || ""), "error")); };
   // Run a workflow now: pin it, then start (planned) or resume (existing branch).
   const runWorkflow = (id) => { pinWorkflow(id || ""); const planned = issue.state === "planned" || issue.state === "notPlanned" || !issue.state; (planned ? act.start(repo, number) : act.resume(repo, number)); setRunWfOpen(false); };
   const [runWfOpen, setRunWfOpen] = useState(false);
-  const defModelLogo = defaultModelLogo(data);
-  const modelSelOpts = [{ value: "", label: "Default model", logo: defModelLogo }].concat(modelOpts.map((o) => ({ value: o.value, label: o.short, logo: o.provider, hint: o.provider })));
-  const modelTrigger = (cur) => html`<span class="tip" data-tip=${cur ? cur.label : "Default model"} style="display:inline-flex"><${ProviderLogo} name=${cur && cur.logo ? cur.logo : defModelLogo} size=${16}/></span>`;
+  const defModelLabel = defaultModelLabel(data);
+  // The "Default" option gets a neutral sparkles glyph (not a provider logo) and names what default
+  // resolves to — so it never looks like a specific provider is pinned.
+  const modelSelOpts = [{ value: "", label: "Default model", hint: defModelLabel, icon: "sparkles" }].concat(modelOpts.map((o) => ({ value: o.value, label: o.short, logo: o.provider, hint: o.provider })));
+  const modelTrigger = (cur) => (cur && cur.logo)
+    ? html`<span class="tip" data-tip=${cur.label} style="display:inline-flex"><${ProviderLogo} name=${cur.logo} size=${16}/></span>`
+    : html`<span class="tip" data-tip=${"Default model · " + defModelLabel} style="display:inline-flex"><${Icon} name="sparkles" size=${16}/></span>`;
   const agentSelOpts = [{ value: "", label: "Just comment", icon: "messages" }].concat(agentOnlyOptions(data && data.agentDefs));
   const [pendingComments, setPendingComments] = useState([]); // optimistic skeleton comments
   const [chatAtBottom, setChatAtBottom] = useState(true);
@@ -211,10 +219,13 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
   function pickFiles(e) { const fs = e.target.files || []; for (let i = 0; i < fs.length; i++) readAttach(fs[i], (a) => setAtts((x) => x.concat(a))); e.target.value = ""; }
   function onPaste(e) {
     const items = (e.clipboardData || {}).items || [];
-    for (let i = 0; i < items.length; i++) {
-      if (items[i].kind !== "file") continue;
-      const file = items[i].getAsFile();
-      if (!file) continue;
+    const files = [];
+    for (let i = 0; i < items.length; i++) if (items[i].kind === "file") { const f = items[i].getAsFile(); if (f) files.push(f); }
+    if (!files.length) return; // plain text paste — let the browser handle it
+    // We handle the file(s) ourselves; stop the browser ALSO pasting the clipboard's text/plain
+    // (e.g. Clop drops the local file PATH), which raced our token and corrupted the caret.
+    e.preventDefault();
+    for (const file of files) {
       if (/^image\//.test(file.type)) {
         // Inline image: insert a reference token at the caret so the image lands in context
         const imgNum = atts.filter((a) => a.img).length + 1;
@@ -402,15 +413,11 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
           <${Breadcrumb} repo=${repo} number=${number} parent=${issue.epic && issue.epic.parent}/>
           ${(() => { const sc = statusChip(issue); return html`<span class=${"da-status " + sc.cls}><span class="da-status__dot"></span>${sc.label}</span>`; })()}
           ${(() => {
-            const real = (issue.usage && issue.usage.costUsd) || 0;
-            const est = (issue.estCost && issue.estCost.usd) || 0;
-            if (!real && !est) return null;
-            const max = est || Math.max(real, 1), ratio = max ? real / max : 0;
-            const pct = Math.max(4, Math.min(100, Math.round(ratio * 100)));
-            const color = ratio >= 1 ? "var(--red)" : ratio >= 0.8 ? "var(--amber)" : "var(--green)";
-            return html`<span class="heat tip" data-tip=${usageTitle(issue.usage) + (est ? " · est ~$" + est.toFixed(2) : "")}>
-              <span class="heat__track"><span class="heat__fill" style=${"width:" + pct + "%;background:" + color}></span></span>
-              <span class="heat__lbl" style=${"color:" + (ratio >= 1 ? "var(--red)" : "var(--ink-2)")}>${real ? "$" + real.toFixed(2) : "~$" + est.toFixed(2)}</span>
+            const h = tokHeat(issue);
+            if (!h.tokens) return null;
+            return html`<span class="heat tip" data-tip=${usageTitle(issue.usage)}>
+              <span class="heat__track"><span class="heat__fill" style=${"width:" + h.pct + "%;background:" + h.color}></span></span>
+              <span class="heat__lbl" style=${"color:" + (h.over ? "var(--red)" : "var(--ink-2)")}>${fmtTok(h.tokens)}</span>
             </span>`;
           })()}
           <a href=${ghUrl(repo, number)} target="_blank" rel="noopener" onClick=${(e) => e.stopPropagation()} class="dh__gh" style="display:inline-flex;align-items:center;gap:3px">GitHub<${Icon} name="link" size=${12}/></a>
@@ -549,10 +556,13 @@ export function Composer({ repos, repo, setRepo, onClose, onCreate, data }) {
   function pick(e) { const fs = e.target.files || []; for (let i = 0; i < fs.length; i++) readAttach(fs[i], (a) => setAtts((x) => x.concat(a))); e.target.value = ""; }
   function onPaste(e) {
     const items = (e.clipboardData || {}).items || [];
-    for (let i = 0; i < items.length; i++) {
-      if (items[i].kind !== "file") continue;
-      const file = items[i].getAsFile();
-      if (!file) continue;
+    const files = [];
+    for (let i = 0; i < items.length; i++) if (items[i].kind === "file") { const f = items[i].getAsFile(); if (f) files.push(f); }
+    if (!files.length) return; // plain text paste — let the browser handle it
+    // Handle the file(s) ourselves; stop the browser ALSO pasting the clipboard's text/plain (the
+    // local file PATH from tools like Clop), which raced our token and corrupted the caret.
+    e.preventDefault();
+    for (const file of files) {
       if (/^image\//.test(file.type)) {
         const imgNum = atts.filter((a) => a.img).length + 1;
         const refId = "image " + imgNum;
@@ -578,8 +588,10 @@ export function Composer({ repos, repo, setRepo, onClose, onCreate, data }) {
       <${Select} value=${repo || ""} options=${repos.map((r) => ({ value: r, label: r.split("/").pop() }))} onChange=${setRepo}/>
       <${Select} value=${role} options=${agentOptions(data && data.agentDefs, data && data.workflows)} onChange=${setRole}/>
       ${modelOpts.length ? html`<${Select} value=${model} btnClass="iconbtn-sm" onChange=${setModel}
-        options=${[{ value: "", label: "Default model", logo: defaultModelLogo(data) }].concat(modelOpts.map((o) => ({ value: o.providerId + "/" + o.model, label: o.short, logo: o.provider })))}
-        trigger=${(cur) => html`<span class="tip" data-tip=${cur ? cur.label : "Default model"} style="display:inline-flex"><${ProviderLogo} name=${cur && cur.logo ? cur.logo : defaultModelLogo(data)} size=${16}/></span>`}/>` : null}
+        options=${[{ value: "", label: "Default model", hint: defaultModelLabel(data), icon: "sparkles" }].concat(modelOpts.map((o) => ({ value: o.providerId + "/" + o.model, label: o.short, logo: o.provider })))}
+        trigger=${(cur) => (cur && cur.logo)
+          ? html`<span class="tip" data-tip=${cur.label} style="display:inline-flex"><${ProviderLogo} name=${cur.logo} size=${16}/></span>`
+          : html`<span class="tip" data-tip=${"Default model · " + defaultModelLabel(data)} style="display:inline-flex"><${Icon} name="sparkles" size=${16}/></span>`}/>` : null}
     </div>
     <input value=${title} onInput=${(e) => setTitle(e.target.value)} placeholder="What should it do?" style="margin-bottom:10px"/>
     <div class="composer">

@@ -1,6 +1,6 @@
 // Dev Agency dashboard — topbar module (split from app.js; Preact + htm, no build step).
 import { html, useState, useEffect } from "/web/vendor/standalone.mjs";
-import { Icon, Spinner, ago, api, getJSON, hm, toast } from "./core.js";
+import { Icon, Spinner, ago, api, fmtTok, getJSON, hm, toast } from "./core.js";
 import { Settings } from "./settings.js";
 import { Usage } from "./usage.js";
 
@@ -163,7 +163,7 @@ export function StatusLine({ working, session, spend, analyzer, reload, sort, se
 
   return html`<div class="statusline">
     <span>${working ? working + " working now" : "Idle"}</span>
-    ${spend && spend.costUsd > 0 ? html`<span>· $${spend.costUsd.toFixed(2)} today</span>` : null}
+    ${spend && spend.tokens > 0 ? html`<span>· ${fmtTok(spend.tokens)} tok today</span>` : null}
     ${syncing ? html`<span>· <${Spinner} size=${13}/> syncing…</span>` : offlineQ && offlineQ.length > 0 ? html`<span title=${"" + offlineQ.length + " action(s) queued while offline"}>· 🔌 ${offlineQ.length} queued offline</span>` : null}
     <span class="statpop">
       ${s.budget > 0

@@ -1,6 +1,6 @@
 // Dev Agency dashboard — board module (split from app.js; Preact + htm, no build step).
 import { html, useState, useEffect, useMemo } from "/web/vendor/standalone.mjs";
-import { Avatar, COLS, Icon, ProviderLogo, Select, Spinner, ago, api, boardSortCmp, classify, defaultModelLogo, filterByTime, fmtTok, getSetupProgress, ghUrl, isDone, shortModel, statusChip, toast, usageTitle } from "./core.js";
+import { Avatar, COLS, Icon, ProviderLogo, Select, Spinner, ago, api, boardSortCmp, classify, defaultModelLabel, filterByTime, fmtTok, getSetupProgress, ghUrl, isDone, shortModel, statusChip, toast, tokHeat, usageTitle } from "./core.js";
 import { Breadcrumb } from "./ui.js";
 
 // ---------- sort / group / time options ----------
@@ -209,16 +209,13 @@ function BFlow({ i, avatarsOn }) {
     })}
   </div>`;
 }
-// Cost heat bar: live spend vs estimate (green<80%, amber<100%, red over).
+// Token heat bar: live tokens burned (provider-neutral; no $).
 function BHeat({ i }) {
-  const real = (i.usage && i.usage.costUsd) || 0, est = (i.estCost && i.estCost.usd) || 0;
-  if (!real && !est) return null;
-  const max = est || Math.max(real, 1), ratio = max ? real / max : 0;
-  const pct = Math.max(4, Math.min(100, Math.round(ratio * 100)));
-  const color = ratio >= 1 ? "var(--red)" : ratio >= 0.8 ? "var(--amber)" : "var(--green)";
-  return html`<span class="heat tip" data-tip=${"$" + real.toFixed(2) + (est ? " of ~$" + est.toFixed(2) + " est" : "")}>
-    <span class="heat__track"><span class="heat__fill" style=${"width:" + pct + "%;background:" + color}></span></span>
-    <span class="heat__lbl" style=${"color:" + (ratio >= 1 ? "var(--red)" : "var(--ink-2)")}>${real ? "$" + real.toFixed(2) : "~$" + est.toFixed(2)}</span>
+  const h = tokHeat(i);
+  if (!h.tokens) return null;
+  return html`<span class="heat tip" data-tip=${usageTitle(i.usage)}>
+    <span class="heat__track"><span class="heat__fill" style=${"width:" + h.pct + "%;background:" + h.color}></span></span>
+    <span class="heat__lbl" style=${"color:" + (h.over ? "var(--red)" : "var(--ink-2)")}>${fmtTok(h.tokens)}</span>
   </span>`;
 }
 
@@ -298,7 +295,7 @@ function Card({ i, subs, multi, onOpen, onOpenChild, act, data, stream = EMPTY_S
       const notPlanned = quick && i.state === "planned";
       const actions = html`<div class="bcard__actions" onClick=${(e) => e.stopPropagation()}>
         ${notPlanned ? html`<button class="iconbtn-sm tip" data-tip="Close as not planned" disabled=${act.isBusy("close-not-planned", i.repo, i.number)} onClick=${(e) => { e.stopPropagation(); act.closeNotPlanned(i.repo, i.number); }}>${act.isBusy("close-not-planned", i.repo, i.number) ? html`<${Spinner} size=${13}/>` : html`<${Icon} name="x" size=${14}/>`}</button>` : null}
-        ${modelOpts.length && !isStop ? html`<${ModelPicker} opts=${modelOpts} value=${modelSel} onPick=${onPickModel} defaultLogo=${defaultModelLogo(data)}/>` : null}
+        ${modelOpts.length && !isStop ? html`<${ModelPicker} opts=${modelOpts} value=${modelSel} onPick=${onPickModel} defaultLabel=${defaultModelLabel(data)}/>` : null}
         ${isStop
           ? html`<button class=${"cardbtn cta stop" + (qBusy ? " busy" : "")} disabled=${qBusy} onClick=${runQuick}>${qBusy ? html`<${Spinner} size=${13}/>` : html`<${Icon} name="stop" size=${13}/>`} ${qBusy ? "working…" : quick.label}</button>`
           : quick
@@ -309,7 +306,7 @@ function Card({ i, subs, multi, onOpen, onOpenChild, act, data, stream = EMPTY_S
         html`<div class="bcard__f card-f">
           <div class="card-f-l">
             ${engaged && i.role && avatarsOn ? html`<span class="tip" data-tip=${i.role + " agent"} style="display:inline-flex"><span class="barehead" style="width:24px;height:24px"><${Avatar} role=${i.role} size=${24} crop="head"/></span></span>` : null}
-            ${(i.usage && i.usage.costUsd) || (i.estCost && i.estCost.usd) ? html`<${BHeat} i=${i}/>` : html`<span class="card-time">${ago(i.updated_at)}</span>`}
+            ${(i.usage && i.usage.tokens) ? html`<${BHeat} i=${i}/>` : html`<span class="card-time">${ago(i.updated_at)}</span>`}
           </div>
         </div>`,
         actions
@@ -335,11 +332,13 @@ function statusTip(i, st) {
 const DOT_COLOR = { "s-working": "var(--accent)", "s-ready": "var(--green)", "s-changes": "var(--red)", "s-attn": "var(--amber)", "s-auto": "var(--green)", "s-conflict": "var(--amber)", "s-done": "var(--ink-3)", "s-planned": "var(--ink-3)", "s-epic": "var(--purple)" };
 
 // The per-card LLM picker: an icon button (provider logo) + custom Select menu (fixed → unclipped).
-function ModelPicker({ opts, value, onPick, defaultLogo }) {
+function ModelPicker({ opts, value, onPick, defaultLabel }) {
   const cur = opts.find((o) => o.value === value);
-  const options = [{ value: "", label: "Default model", logo: defaultLogo || "Claude" }].concat(opts.map((o) => ({ value: o.value, label: o.short, logo: o.provider })));
+  const options = [{ value: "", label: "Default model", hint: defaultLabel, icon: "sparkles" }].concat(opts.map((o) => ({ value: o.value, label: o.short, logo: o.provider })));
   return html`<${Select} value=${value} options=${options} onChange=${onPick} btnClass="iconbtn-sm"
-    trigger=${() => html`<span class="tip" data-tip=${cur ? cur.label : "Default model"} style="display:inline-flex"><${ProviderLogo} name=${cur ? cur.provider : (defaultLogo || "Claude")} size=${16}/></span>`}/>`;
+    trigger=${() => cur
+      ? html`<span class="tip" data-tip=${cur.label} style="display:inline-flex"><${ProviderLogo} name=${cur.provider} size=${16}/></span>`
+      : html`<span class="tip" data-tip=${"Default model · " + (defaultLabel || "")} style="display:inline-flex"><${Icon} name="sparkles" size=${16}/></span>`}/>`;
 }
 
 // Collapsible sub-issue list shown on an epic parent's card. Each row carries the child's live

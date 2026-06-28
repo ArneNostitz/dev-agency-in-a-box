@@ -89,6 +89,16 @@ export function defaultModelLogo(data) {
   }
   return "Claude";
 }
+// Human label for what the DEFAULT model actually resolves to — so the "Default" picker can SAY what
+// it is (provider · model) instead of masquerading as a specific provider logo.
+export function defaultModelLabel(data) {
+  const gm = data && data.globalModel;
+  if (gm && gm.model) {
+    const p = ((data && data.providers) || []).find((x) => x.id === gm.providerId);
+    return (p && p.name ? p.name + " · " : "") + shortModel(gm.model);
+  }
+  return "Claude subscription";
+}
 export function providerLogoSrc(name) {
   const n = String(name || "");
   for (const [re, file] of PROVIDER_LOGOS) if (re.test(n)) return "/web/logos/" + file + ".svg";
@@ -148,8 +158,9 @@ export function fmtTok(n) { n = n || 0; if (n >= 1e6) return (n / 1e6).toFixed(2
 export function ghUrl(repo, n) { return "https://github.com/" + repo + "/issues/" + n; }
 function escHtml(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
 function mdInline(s) {
+  // URLs: accept absolute http(s) AND root-relative paths (e.g. /attach/<id> for local-first
+  // attachments) — otherwise pasted images render as raw "[image 1](/attach/…)" text in comments.
   return s
-    // Allow http(s) AND root-relative URLs (local-first attachments are served from /attach/<id>).
     .replace(/!\[([^\]]*)\]\(((?:https?:|\/)[^)\s]+)\)/g, '<img alt="$1" src="$2">')
     .replace(/`([^`]+)`/g, "<code>$1</code>")
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
@@ -465,7 +476,19 @@ export function filterByTime(arr, v) {
 
 export function usageTitle(u) {
   if (!u || !u.tokens) return "No token usage recorded yet";
-  return `${fmtTok(u.tokens)} tokens · $${Number(u.costUsd || 0).toFixed(2)}${u.model ? " · " + shortModel(u.model) : ""} · ${u.runs || 0} runs`;
+  // Tokens are the universal, provider-neutral unit. We deliberately don't show $ — cost varies wildly
+  // by provider/model and is $0 on subscription auth, so a dollar figure here was misleading.
+  return `${fmtTok(u.tokens)} tokens${u.model ? " · " + shortModel(u.model) : ""} · ${u.runs || 0} runs`;
+}
+// Heat bar driven by TOKENS (not cost). Fills toward a heavy-issue reference; amber past ~60%, red
+// past it — a quick "how much has this burned" glance without any provider-specific dollar figure.
+export const TOK_HEAT_REF = 500000;
+export function tokHeat(i) {
+  const tokens = (i && i.usage && i.usage.tokens) || 0;
+  const ratio = tokens / TOK_HEAT_REF;
+  const pct = tokens ? Math.max(4, Math.min(100, Math.round(ratio * 100))) : 0;
+  const color = ratio >= 1 ? "var(--red)" : ratio >= 0.6 ? "var(--amber)" : "var(--green)";
+  return { tokens, pct, color, over: ratio >= 1 };
 }
 
 // ---------- Sheet wrapper ----------
@@ -550,10 +573,12 @@ export function Select({ value, options, onChange, trigger, btnClass, menuAlign,
       if ((menuRef.current && menuRef.current.contains(e.target)) || (btnRef.current && btnRef.current.contains(e.target))) return;
       setOpen(false);
     };
-    // Close on scroll of the page/container BEHIND the menu — but NOT when scrolling inside the
-    // menu's own list (that was closing it the moment you tried to scroll the options).
-    const onScroll = (e) => { if (menuRef.current && menuRef.current.contains(e.target)) return; setOpen(false); };
-    const onResize = () => setOpen(false);
+    // On scroll/resize, RE-ANCHOR the menu to its trigger instead of closing it. The live-stream pane
+    // auto-scrolls on every delta (a programmatic scroll caught by this capture listener), which used
+    // to snap every open dropdown shut every few seconds. Repositioning keeps it open and aligned;
+    // outside-click (onDown) is still the way it closes. Scrolling inside the menu's own list is ignored.
+    const onScroll = (e) => { if (menuRef.current && menuRef.current.contains(e.target)) return; place(); };
+    const onResize = () => place();
     document.addEventListener("mousedown", onDown, true);
     document.addEventListener("touchstart", onDown, true);
     window.addEventListener("scroll", onScroll, true);

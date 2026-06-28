@@ -57,6 +57,15 @@ function App() {
   const openIssueRef = useRef(null); // last-known open issue, so polls don't flicker the detail closed
   const liveRef = useRef([]); // SSE-appended activity since last poll
   const [, forceTick] = useState(0);
+  // A streaming run emits many deltas per second. Re-rendering the whole tree on each one was the
+  // churn behind sluggishness + collapsing menus. We still append every delta to liveRef instantly
+  // (no data lost), but COALESCE the re-render to at most ~4/sec via a trailing timer.
+  const tickPendingRef = useRef(false);
+  const scheduleTick = () => {
+    if (tickPendingRef.current) return;
+    tickPendingRef.current = true;
+    setTimeout(() => { tickPendingRef.current = false; forceTick((x) => x + 1); }, 250);
+  };
   const isOnline = useOnline();
   const [offlineQ, setOfflineQ] = useState(oqLoad);
   const [syncing, setSyncing] = useState(false);
@@ -99,7 +108,7 @@ function App() {
       // Surface run failures the user would otherwise only see on GitHub: an agent error is pushed
       // as a "done" line starting with ❌ (e.g. a misconfigured model or a real rate-limit).
       (Array.isArray(a) ? a : [a]).forEach((x) => { if (x && (x.kind === "error" || (x.kind === "done" && typeof x.text === "string" && x.text.trim().startsWith("❌")))) toast(String(x.text || "Run failed").replace(/^❌\s*/, ""), "error"); });
-      forceTick((x) => x + 1); } catch (e) {} }; } catch (e) {}
+      scheduleTick(); } catch (e) {} }; } catch (e) {}
     return () => { try { es && es.close(); } catch (e) {} };
   }, []);
 

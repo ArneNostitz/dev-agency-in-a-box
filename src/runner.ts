@@ -37,6 +37,7 @@ import {
   prMergeStatus,
   fetchCheckout,
   mergeBaseInto,
+  repoBaseBranch,
   mergePrForBranch,
   prMerged,
   closeIssue,
@@ -278,6 +279,10 @@ async function processIssue(cfg: Config, repo: string, issue: Issue, opts: { fre
   // developer + PR; @plan/@arch/@review/@test = a single specialist. The multi-step build is the
   // Full build workflow (@build). A bare issue with no recognised handle falls back to Full build.
   const single = !resuming && !wf && !pinnedWf && handleRole !== null;
+  // Persist whether this is a SOLO single-role pin (e.g. @dev → just the developer) vs a multi-step
+  // workflow, so the dashboard shows the ONE real step instead of defaulting to the full build. Only
+  // write on a fresh run (resume forces single=false but the issue is still solo) so it's not wiped.
+  if (!resuming) setSetting(`issue_solo.${repo}#${issue.number}`, single ? role : "");
   console.log(`[agency] ${repo} #${issue.number}: ${issue.title} -> role:${role}${resuming ? " (resume)" : ""}`);
   pushActivity(repo, issue.number, role, "start", "▶ starting…"); // instant feedback before the GitHub prep + clone
 
@@ -425,14 +430,15 @@ async function processHealOne(
   // trusted to run the right git commands) and hand the agent only the conflicted files to resolve.
   let instruction: string;
   if (health.status === "conflict") {
+    const base = await repoBaseBranch(repo);
     await fetchCheckout(workdir, pr.branch);
-    const m = await mergeBaseInto(workdir, "main");
+    const m = await mergeBaseInto(workdir, base);
     if (m.status === "clean") {
-      instruction = `[system] The latest main has ALREADY been merged into this branch cleanly (staged in the working tree). Do NOT run git merge/rebase again. Run the project's checks, fix anything the merge broke, commit, and push.`;
+      instruction = `[system] The latest ${base} has ALREADY been merged into this branch cleanly (staged in the working tree). Do NOT run git merge/rebase again. Run the project's checks, fix anything the merge broke, commit, and push.`;
     } else if (m.status === "conflicts") {
-      instruction = `[system] A merge of origin/main is IN PROGRESS with conflicts in: ${m.files.map((f) => "`" + f + "`").join(", ")}. Resolve each (remove all conflict markers), \`git add\` them, run the project's checks, then commit and push. Do NOT run git merge/rebase again or \`git merge --abort\`.`;
+      instruction = `[system] A merge of origin/${base} is IN PROGRESS with conflicts in: ${m.files.map((f) => "`" + f + "`").join(", ")}. Resolve each (remove all conflict markers), \`git add\` them, run the project's checks, then commit and push. Do NOT run git merge/rebase again or \`git merge --abort\`.`;
     } else {
-      instruction = `[system] This PR has merge conflicts and the auto-merge failed. Run \`git fetch origin main && git merge origin/main\`, resolve ALL conflicts, run the project's checks, commit, and push.`;
+      instruction = `[system] This PR has merge conflicts and the auto-merge failed. Run \`git fetch origin ${base} && git merge origin/${base}\`, resolve ALL conflicts, run the project's checks, commit, and push.`;
     }
   } else {
     instruction = `[system] The PR's CI checks are failing. Run the project's checks locally, find and fix the failures (and anything blocking the tests), commit, and push.`;
@@ -569,6 +575,11 @@ async function processResume(cfg: Config, repo: string, issue: Issue): Promise<v
   await rm(workdir, { recursive: true, force: true });
   await mkdir(join(workdir, ".."), { recursive: true });
   await cloneRepo(repo, workdir);
+  // Resume must continue the EXISTING work, not start over on a fresh `main`. cloneRepo only fetches
+  // the default branch (shallow), so check out the issue's branch deterministically here — mirroring
+  // processFix — instead of relying on the agent prompt to `git fetch` it (best-effort, often missed →
+  // the agent rebuilt from scratch). If the branch doesn't exist yet, fall through on main.
+  await fetchCheckout(workdir, `agency/issue-${issue.number}`).catch(() => {});
   await indexRepo(workdir, repo, (s) => pushActivity(repo, issue.number, "developer", "tool", s));
   setActive(repo, issue.number, "issue", "developer", issue.title);
   try {
@@ -1079,7 +1090,11 @@ async function sweepStuck(): Promise<void> {
     // tighter on drifted data: an issue parked as needs-attention / awaiting-answer is
     // NOT swept as stuck. See src/state.ts (#66).
     const st = parseLegacyStatus(i.state);
-    if (st.state !== "working" || st.blocked != null) continue;
+    // The blocked REASON lives in its own column (i.blocked), not in i.state (which is the bare
+    // "working" enum). Reading it back from i.state alone always saw blocked==null, so an already-
+    // parked issue was re-parked + re-logged on EVERY 60s poll — an endless "Run interrupted —
+    // parked at needs-attention" spam loop (no LLM, but real feed/label churn). Honour the column.
+    if (st.state !== "working" || st.blocked != null || i.blocked != null) continue;
     const running = getActive().some((a) => a.repo === i.repo && a.number === i.number);
     const idleMs = i.updated_at ? Date.now() - new Date(i.updated_at).getTime() : Infinity;
     if (running || idleMs <= ORPHAN_GRACE_MS) continue;

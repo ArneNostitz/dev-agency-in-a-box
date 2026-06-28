@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sBool } from "./settings.js";
 import { ghBotToken, ghUserToken } from "./creds.js";
-import { recordOutgoingComment, setCommentGhId, recordIncident } from "./store.js";
+import { recordOutgoingComment, setCommentGhId, recordIncident, getSetting } from "./store.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -1067,8 +1067,14 @@ export interface BaseMergeResult {
  * On conflicts the working tree is LEFT in the conflicted state for the caller's agent to resolve;
  * `ensureBranchPushed` then completes the merge commit and pushes.
  */
-export async function mergeBaseInto(workdir: string, base = "main"): Promise<BaseMergeResult> {
+export async function mergeBaseInto(workdir: string, base?: string): Promise<BaseMergeResult> {
   try {
+    // Default to the clone's REAL default branch (origin/HEAD), not a hardcoded "main" — repos whose
+    // default differs would otherwise fetch/merge a non-existent origin/main and error.
+    if (!base) {
+      const head = (await runGit(workdir, ["rev-parse", "--abbrev-ref", "origin/HEAD"]).catch(() => "origin/main")).trim();
+      base = head.replace(/^origin\//, "") || "main";
+    }
     // Deepen history so a merge base exists.
     await runGitCode(workdir, ["fetch", "--unshallow", "origin"]); // no-op once the clone is complete
     // CRITICAL: force-update the remote-tracking ref. A plain `git fetch origin main` only updates
@@ -1122,7 +1128,7 @@ const conflictProbeDirs = new Map<string, string>();
  * cache a warm clone per repo. Returns [] if it can't be determined (network/history issues) — the
  * UI still shows the conflict box, just without per-file detail.
  */
-export async function conflictFiles(repo: string, branch: string, base = "main"): Promise<string[]> {
+export async function conflictFiles(repo: string, branch: string, base?: string): Promise<string[]> {
   return (await mergeProbe(repo, branch, base)).files;
 }
 
@@ -1132,8 +1138,9 @@ export async function conflictFiles(repo: string, branch: string, base = "main")
  * Used both to list conflicting files AND to verify a conflict is genuinely resolved on the REMOTE
  * (the local workdir or GitHub's cached `mergeable` flag both lie right after a push).
  */
-export async function mergeProbe(repo: string, branch: string, base = "main"): Promise<{ ok: boolean; files: string[] }> {
+export async function mergeProbe(repo: string, branch: string, base?: string): Promise<{ ok: boolean; files: string[] }> {
   try {
+    const baseB = base || await repoBaseBranch(repo);
     let dir = conflictProbeDirs.get(repo);
     if (!dir || !existsSync(join(dir, ".git"))) {
       dir = join(tmpdir(), "agency-conflict-" + repo.replace(/[^a-z0-9]+/gi, "_"));
@@ -1146,11 +1153,11 @@ export async function mergeProbe(repo: string, branch: string, base = "main"): P
     await runGitCode(dir, ["merge", "--abort"]); // clear any aborted probe state
     await runGitCode(dir, ["fetch", "--unshallow", "origin"]);
     // Force-update BOTH tracking refs (plain fetch only moves FETCH_HEAD → stale checkout/merge → []).
-    const f = await runGitCode(dir, ["fetch", "-f", "origin", `${base}:refs/remotes/origin/${base}`, `${branch}:refs/remotes/origin/${branch}`]);
+    const f = await runGitCode(dir, ["fetch", "-f", "origin", `${baseB}:refs/remotes/origin/${baseB}`, `${branch}:refs/remotes/origin/${branch}`]);
     if (f.code !== 0) return { ok: false, files: [] };
     const co = await runGitCode(dir, ["checkout", "-f", "-B", "_conflict_probe", `origin/${branch}`]);
     if (co.code !== 0) return { ok: false, files: [] };
-    const m = await runGitCode(dir, ["merge", "--no-commit", "--no-ff", `origin/${base}`]);
+    const m = await runGitCode(dir, ["merge", "--no-commit", "--no-ff", `origin/${baseB}`]);
     let files: string[] = [];
     if (m.code !== 0) {
       const un = await runGitCode(dir, ["diff", "--name-only", "--diff-filter=U"]);
@@ -1189,7 +1196,11 @@ export async function ensureBranchPushed(workdir: string, branch: string): Promi
       await runGit(workdir, ["commit", "-m", "agency: finalize work"]).catch(() => {});
     }
     await runGit(workdir, ["push", "-u", "origin", branch]).catch(() => {});
-    const ahead = await runGit(workdir, ["rev-list", "--count", `origin/main..${branch}`]).catch(() => "0");
+    // Count commits ahead of the repo's REAL default branch (origin/HEAD), not a hardcoded
+    // origin/main — repos whose default isn't "main" have no origin/main, which made this return 0
+    // and wrongly report "no commits" → needs-attention even when the work was pushed.
+    const baseRef = (await runGit(workdir, ["rev-parse", "--abbrev-ref", "origin/HEAD"]).catch(() => "origin/main")).trim() || "origin/main";
+    const ahead = await runGit(workdir, ["rev-list", "--count", `${baseRef}..${branch}`]).catch(() => "0");
     return Number(ahead) > 0;
   } catch {
     return false;
@@ -1206,12 +1217,32 @@ export async function fetchCheckout(workdir: string, branch: string): Promise<vo
   if (!ok) await runGit(workdir, ["checkout", branch]).catch(() => {}); // brand-new local branch
 }
 
+// A repo's base/default branch. Not every repo uses "main" — so resolve it per repo instead of
+// hardcoding: explicit override setting (repo_base.<repo>) wins; else the repo's real GitHub default
+// branch (detected once, cached); else "main". This is the single source of truth for PR base,
+// conflict probes, and the merge-base the agent rebases onto.
+const repoBaseCache = new Map<string, string>();
+export async function repoBaseBranch(repo: string): Promise<string> {
+  const override = (getSetting(`repo_base.${repo}`) || "").trim();
+  if (override) return override;
+  const cached = repoBaseCache.get(repo);
+  if (cached) return cached;
+  let base = "main";
+  try {
+    const out = await gh(["repo", "view", repo, "--json", "defaultBranchRef", "-q", ".defaultBranchRef.name"]);
+    if (out.trim()) base = out.trim();
+  } catch { /* offline / no gh — fall back to main */ }
+  repoBaseCache.set(repo, base);
+  return base;
+}
+
 /** Open a draft PR for the branch if none exists; returns the PR (or null). */
 export async function ensureDraftPr(repo: string, issue: number, branch: string, title: string): Promise<PullRequest | null> {
   const existing = await findPrForBranch(repo, branch);
   if (existing) return existing;
+  const base = await repoBaseBranch(repo);
   await gh([
-    "pr", "create", "--repo", repo, "--draft", "--base", "main", "--head", branch,
+    "pr", "create", "--repo", repo, "--draft", "--base", base, "--head", branch,
     "--title", title || `Work for #${issue}`, "--body", `Closes #${issue}`,
   ]).catch(() => {});
   return findPrForBranch(repo, branch);

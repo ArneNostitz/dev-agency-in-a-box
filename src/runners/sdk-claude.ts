@@ -96,8 +96,15 @@ export class ClaudeSdkRunner implements AgentRunner {
         }
       }
     } catch (err) {
+      const msg = (err as Error).message ?? String(err);
+      // Hitting the turn backstop is NOT a failure — degrade gracefully like the token cap below:
+      // keep the partial text + a `stopped` reason so the run finishes (and can be resumed) instead
+      // of surfacing a red "Reached maximum number of turns" ERROR. The real guard is the token cap.
+      if (/maximum number of turns/i.test(msg)) {
+        return { text, turns, costUsd, tokens, stopped: stopped || `turn cap (${turns} turns)`, sessionId: sessionId || undefined };
+      }
       const detail = stderrBuf.trim().split("\n").slice(-3).join(" ").slice(-400);
-      throw new Error(`${(err as Error).message ?? String(err)}${detail ? ` | ${detail}` : ""}`);
+      throw new Error(`${msg}${detail ? ` | ${detail}` : ""}`);
     }
 
     return { text, turns, costUsd, tokens, stopped, sessionId: sessionId || undefined };

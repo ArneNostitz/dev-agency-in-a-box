@@ -338,6 +338,20 @@ test("mdOverlay renders one div per line with list/header markers preserved", as
   assert.match(multi, /<div class="mde">/, "blank line renders as a spacer div");
 });
 
+test("md renders root-relative /attach image & link URLs (not just http) — pasted images show inline", async () => {
+  const vendorUrl = pathToFileURL(join(HERE, "..", "web", "vendor", "standalone.mjs")).href;
+  const tmpDir = mkdtempSync(join(tmpdir(), "dacore-md3-"));
+  const src = readFileSync(join(HERE, "..", "web", "core.js"), "utf8").split("/web/vendor/standalone.mjs").join(vendorUrl);
+  writeFileSync(join(tmpDir, "core.js"), src);
+  const { md } = await import(pathToFileURL(join(tmpDir, "core.js")).href);
+
+  // The bug: a pasted-image ref like ![image 1](/attach/<id>) stayed as literal text in comments
+  // because the renderer only matched http(s) URLs. Root-relative /attach must render as <img>/<a>.
+  assert.match(md("![image 1](/attach/abc123)"), /<img alt="image 1" src="\/attach\/abc123">/, "root-relative image → <img>");
+  assert.match(md("[file](/attach/def456)"), /<a href="\/attach\/def456"[^>]*>file<\/a>/, "root-relative link → <a>");
+  assert.match(md("![x](https://example.com/y.png)"), /<img alt="x" src="https:\/\/example.com\/y.png">/, "absolute http(s) still works");
+});
+
 test("continueMarkdownList continues `- ` and `1. ` at line end, exits on empty item", async () => {
   const vendorUrl = pathToFileURL(join(HERE, "..", "web", "vendor", "standalone.mjs")).href;
   const tmpDir = mkdtempSync(join(tmpdir(), "dacore-md2-"));

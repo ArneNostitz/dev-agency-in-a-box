@@ -57,7 +57,14 @@ export interface RoleDef {
   modelEnv: string;
   /** Tools this role may use. */
   tools: string[];
-  /** Hard cap on agent turns for this role (each turn re-sends the whole context — controls cost). */
+  /**
+   * Backstop on agent turns (= assistant LLM round-trips, NOT tool calls — one turn can fire many
+   * tools). This is ONLY a catch for a pathological infinite loop; it must NOT cap a valid run.
+   * The real cost/runaway guard is the per-run TOKEN kill-switch (budget.maxTokensPerRun): each turn
+   * re-sends the growing context, so a thrashing agent blows the token cap and stops GRACEFULLY long
+   * before a sane turn count — whereas hitting maxTurns surfaces as a hard "max turns" ERROR. So keep
+   * these generous (mirrors Claude Code native, which runs to completion with no tight turn cap).
+   */
   maxTurns: number;
 }
 
@@ -73,8 +80,7 @@ export const ROLES: Record<RoleName, RoleDef> = {
     defaultModel: MODELS.sonnet, // opus opt-in via PLANNER_MODEL for hard issues
     modelEnv: "PLANNER_MODEL",
     tools: READ_TOOLS,
-    // Opus is expensive and context compounds per turn — a plan should not take 100+ turns.
-    maxTurns: 45,
+    maxTurns: 80,
   },
   decomposer: {
     name: "decomposer",
@@ -84,7 +90,7 @@ export const ROLES: Record<RoleName, RoleDef> = {
     defaultModel: MODELS.sonnet, // splitting is parse-checked; sonnet is enough (DECOMPOSER_MODEL to override)
     modelEnv: "DECOMPOSER_MODEL",
     tools: READ_TOOLS,
-    maxTurns: 30,
+    maxTurns: 50,
   },
   architect: {
     name: "architect",
@@ -93,7 +99,7 @@ export const ROLES: Record<RoleName, RoleDef> = {
     defaultModel: MODELS.sonnet,
     modelEnv: "ARCHITECT_MODEL",
     tools: READ_TOOLS,
-    maxTurns: 30,
+    maxTurns: 60,
   },
   developer: {
     name: "developer",
@@ -111,10 +117,10 @@ export const ROLES: Record<RoleName, RoleDef> = {
     defaultModel: MODELS.sonnet,
     modelEnv: "DEVELOPER_MODEL",
     tools: ["Read", "Write", "Edit", "Bash", "Glob", "Grep"],
-    // Each turn re-sends the whole (growing) context, so a high cap is the single biggest cost
-    // multiplier. 120 let a stuck run grind into millions of tokens; 50 is plenty for a focused
-    // change and forces the agent to commit progress rather than thrash.
-    maxTurns: 35,
+    // A real change (read → edit several files → run tests → fix → commit) legitimately spans many
+    // turns; 35 was choking valid work with a hard "max turns" error. Generous backstop; the token
+    // kill-switch is what actually stops a thrashing developer (and stops it gracefully).
+    maxTurns: 120,
   },
   reviewer: {
     name: "reviewer",
@@ -123,7 +129,7 @@ export const ROLES: Record<RoleName, RoleDef> = {
     defaultModel: MODELS.sonnet,
     modelEnv: "REVIEWER_MODEL",
     tools: [...READ_TOOLS, "Bash"],
-    maxTurns: 20,
+    maxTurns: 50,
   },
   tester: {
     name: "tester",
@@ -132,7 +138,7 @@ export const ROLES: Record<RoleName, RoleDef> = {
     defaultModel: MODELS.haiku,
     modelEnv: "TESTER_MODEL",
     tools: [...READ_TOOLS, "Bash"],
-    maxTurns: 30,
+    maxTurns: 60,
   },
   librarian: {
     name: "librarian",
@@ -142,7 +148,7 @@ export const ROLES: Record<RoleName, RoleDef> = {
     defaultModel: MODELS.haiku,
     modelEnv: "LIBRARIAN_MODEL",
     tools: READ_TOOLS,
-    maxTurns: 12,
+    maxTurns: 30,
   },
   auditor: {
     name: "auditor",
@@ -153,7 +159,7 @@ export const ROLES: Record<RoleName, RoleDef> = {
     modelEnv: "AUDITOR_MODEL",
     // Needs Bash to run graphify + git, and read tools to inspect the code it flags.
     tools: ["Read", "Glob", "Grep", "Bash"],
-    maxTurns: 40,
+    maxTurns: 80,
   },
 };
 

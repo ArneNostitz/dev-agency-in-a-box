@@ -23,6 +23,7 @@ import {
   upsertTrackerComment,
   mergeBaseInto,
   mergeProbe,
+  repoBaseBranch,
   localHeadSha,
   workdirDirty,
   AWAITING_LABEL,
@@ -224,7 +225,7 @@ async function finalizeWithPr(repo: string, issue: Issue, workdir: string, branc
     recordPr(repo, issue.number, pr.number, pr.url);
     // Reconcile the conflict box against reality — a normal finalize (not just the conflict-only Fix
     // path) can make a branch mergeable, and a stale "resolve first" must not stick on the card/PR bar.
-    const cf = await mergeProbe(repo, branch, "main");
+    const cf = await mergeProbe(repo, branch);
     if (cf.ok) { if (cf.files.length) recordConflict(repo, issue.number, "", cf.files); else clearConflict(repo, issue.number); }
     const head = changesRequested
       ? `**⚠️ PR opened, but the reviewer still wants changes.** ${pr.url}\n\nPress **Fix** on the card to address them, or **Merge anyway** to ship as-is.`
@@ -777,24 +778,25 @@ export async function runReviewFix(repo: string, issue: Issue, workdir: string, 
   // and if it still won't merge afterwards we STOP at needs-attention instead of looping.
   // ---------------------------------------------------------------------------------------------
   if (opts?.conflict) {
-    const m = await mergeBaseInto(workdir, "main");
+    const base = await repoBaseBranch(repo);
+    const m = await mergeBaseInto(workdir, base);
 
     if (m.status === "error") {
-      await conflictUnresolved(repo, issue, branch, "I couldn't auto-merge `main` into this branch (history/fetch problem).", m.files);
+      await conflictUnresolved(repo, issue, branch, `I couldn't auto-merge \`${base}\` into this branch (history/fetch problem).`, m.files);
       return; // do not loop
     }
 
     if (m.status === "conflicts") {
-      await commentOnIssue(repo, issue.number, say("developer", `**Resolving merge conflicts with main** in ${m.files.length} file(s): ${m.files.map((f) => "`" + f + "`").join(", ")}.`));
+      await commentOnIssue(repo, issue.number, say("developer", `**Resolving merge conflicts with ${base}** in ${m.files.length} file(s): ${m.files.map((f) => "`" + f + "`").join(", ")}.`));
       const dev = await runRole("developer", {
         workdir,
         repo,
         issueNumber: issue.number,
         task:
-          `A merge of \`origin/main\` is IN PROGRESS in this checkout, with conflicts in:\n` +
+          `A merge of \`origin/${base}\` is IN PROGRESS in this checkout, with conflicts in:\n` +
           m.files.map((f) => `- \`${f}\``).join("\n") +
           `\n\nResolve EVERY conflict by editing those files. CRITICAL — this is a FEATURE-AWARE merge: you must ` +
-          `INTEGRATE BOTH SIDES so NO work is lost. \`main\` (the incoming side) may contain features added by ` +
+          `INTEGRATE BOTH SIDES so NO work is lost. \`${base}\` (the incoming side) may contain features added by ` +
           `OTHER issues since this branch started; your branch (the current side) contains THIS issue's feature. ` +
           `Keep BOTH — combine the changes so every feature from each side survives. Never resolve by deleting one ` +
           `side's code to make the markers go away. Remove all \`<<<<<<<\`/\`=======\`/\`>>>>>>>\` markers, then \`git add\` each resolved file. ` +
@@ -805,7 +807,7 @@ export async function runReviewFix(repo: string, issue: Issue, workdir: string, 
       });
       recordRun(repo, issue.number, "developer", dev.model, dev.turns, "resolve-conflict", dev.costUsd);
     } else {
-      await commentOnIssue(repo, issue.number, say("developer", `**Merged the latest main in cleanly** — no conflicts.`));
+      await commentOnIssue(repo, issue.number, say("developer", `**Merged the latest ${base} in cleanly** — no conflicts.`));
     }
 
     // Commit the merge (if not already) and push it. This is the step the loop was missing.
@@ -813,7 +815,7 @@ export async function runReviewFix(repo: string, issue: Issue, workdir: string, 
     // Verify against the FRESH REMOTE state — the SAME branch→main merge GitHub runs. The local
     // workdir and GitHub's cached `mergeable` flag both lie right after a push; only a real probe of
     // the pushed origin/branch vs origin/main tells the truth.
-    const probe = await mergeProbe(repo, branch, "main");
+    const probe = await mergeProbe(repo, branch);
     if (!probe.ok || probe.files.length) {
       await conflictUnresolved(
         repo, issue, branch,

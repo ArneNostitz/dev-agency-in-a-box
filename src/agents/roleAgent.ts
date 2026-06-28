@@ -53,7 +53,13 @@ function resolveAssignment(role: RoleName, repo: string, issueNumber: number, ex
   const ak = (agentKey || role).toLowerCase();
   const perAgent = parseModelRef(agentModels[ak] || agentModels["@" + ak] || agentModels[role]);
   if (perAgent) return perAgent;
-  // 2) The step's explicit selection: a TIER keyword resolves against the issue's provider; or a
+  // 2) The per-issue one-shot model override (chatbox / new-issue model picker). This is the user's
+  //    DELIBERATE pick for this run, so it must beat every default below — including the issue-wide
+  //    provider's medium tier (the bug: picking "sonnet" was silently overruled by the provider
+  //    default → ran opus). Cleared after the run, so it only affects the run it was chosen for.
+  const issueOverride = getIssueModelOverride(repo, issueNumber);
+  if (issueOverride?.providerId && issueOverride.model) return { providerId: issueOverride.providerId, model: issueOverride.model };
+  // 3) The step's explicit selection: a TIER keyword resolves against the issue's provider; or a
   //    concrete "providerId/model" ref; otherwise fall through.
   const issueProvider = getIssueProvider(repo, issueNumber);
   if (explicitModel && TIERS.has(explicitModel.toLowerCase())) {
@@ -62,10 +68,10 @@ function resolveAssignment(role: RoleName, repo: string, issueNumber: number, ex
   }
   const fromStr = parseModelStr(explicitModel);
   if (fromStr) return fromStr;
-  // 3) The issue-wide provider (no explicit tier on the step) → its medium tier as a sane default.
+  // 4) The issue-wide provider (no explicit tier on the step) → its medium tier as a sane default.
   if (issueProvider) { const tm = tierModel(issueProvider, "medium"); if (tm) return tm; }
-  // 4) Existing hierarchy: per-issue model → per-role → global → session fallback.
-  const a = getIssueModelOverride(repo, issueNumber) ?? getRoleModels()[role] ?? getGlobalModel();
+  // 5) Existing hierarchy: per-role → global → session fallback.
+  const a = getRoleModels()[role] ?? getGlobalModel();
   if (a?.providerId && a.model) return { providerId: a.providerId, model: a.model };
   const fb = getSessionFallback();
   return fb?.providerId && fb.model ? { providerId: fb.providerId, model: fb.model } : null;
@@ -491,7 +497,7 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
     issueNumber,
     role,
     "done",
-    `finished (${turns} turns${tok}${costUsd ? `, $${costUsd.toFixed(2)}` : ""}${stopped ? ` — ⚠ stopped: ${stopped}` : ""})`,
+    `finished (${turns} turns${tok}${stopped ? ` — ⚠ stopped: ${stopped}` : ""})`,
   );
   if (stopped) console.warn(`[agency] role:${role} ${repo}#${issueNumber} stopped — ${stopped}`);
   return { text, turns, model, costUsd };
