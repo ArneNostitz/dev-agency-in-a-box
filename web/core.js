@@ -640,8 +640,35 @@ const PIN_ROLE = { "@plan": "planner", "@split": "decomposer", "@arch": "archite
 // 🎲 Dealer's choice — hand the issue to the dispatcher, which picks the agent/workflow on start.
 // Sentinel handle "@auto"; the backend rolls the route once (see src/agents/dealer.ts).
 export const DEALER_OPTION = { value: "@auto", label: "Dealer’s choice", hint: "auto-route", hintCls: "b-wf", icon: "shuffle" };
+export const cap = (s) => { const t = String(s || ""); return t ? t.charAt(0).toUpperCase() + t.slice(1) : t; };
 function customAgentOptions(agentDefs) {
-  return (agentDefs || []).map((d) => ({ value: d.handle || ("@" + d.name), label: d.name, avatar: d.name, avatarSrc: d.avatar || "", hint: "single", hintCls: "b-role" }));
+  return (agentDefs || []).map((d) => ({ value: d.handle || ("@" + d.name), label: cap(d.name), avatar: d.name, avatarSrc: d.avatar || "", hint: "single", hintCls: "b-role" }));
+}
+// Resolve an agent's configured model (agentDef.model / a workflow step's model) to a concrete
+// { ref:"providerId/model", short, provider } — or null when it's blank (true default). The stored
+// value is "" (default) | a bare tier word high|medium|low (resolved against the global provider's
+// tier slots) | a concrete "providerId/model" ref | a free model name (paired with the global provider).
+const TIER_WORDS = ["high", "medium", "low"];
+export function resolveAgentModel(modelRef, data) {
+  const providers = (data && data.providers) || [];
+  const g = data && data.globalModel;
+  const raw = (modelRef ? String(modelRef) : "").trim();
+  if (!raw) return null;
+  const lc = raw.toLowerCase();
+  if (TIER_WORDS.indexOf(lc) >= 0) {
+    const pid = g && g.providerId; if (!pid) return null;
+    const p = providers.find((x) => x.id === pid);
+    const slot = p && p.tiers && p.tiers[lc];
+    const model = (slot && slot.model) || (p && p.models && p.models[0]) || "";
+    return model ? { ref: pid + "/" + model, short: shortModel(model), provider: p && p.name } : null;
+  }
+  if (raw.indexOf("/") >= 0) {
+    const i = raw.indexOf("/"); const pid = raw.slice(0, i), model = raw.slice(i + 1);
+    const p = providers.find((x) => x.id === pid);
+    return { ref: raw, short: shortModel(model), provider: p && p.name };
+  }
+  const p = g && providers.find((x) => x.id === g.providerId);
+  return { ref: (g ? g.providerId + "/" : "") + raw, short: shortModel(raw), provider: p && p.name };
 }
 // Static role pins MINUS any whose role/handle is already an editable agentDef (avoids the
 // Plan↔planner, Architect↔architect, Review↔reviewer, Test↔tester duplicates).

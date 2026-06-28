@@ -1,7 +1,7 @@
 // Dev Agency dashboard — detail module (split from app.js; Preact + htm, no build step).
 import { html, useState, useEffect, useRef } from "/web/vendor/standalone.mjs";
 import { Breadcrumb } from "./ui.js";
-import { Avatar, Icon, Modal, ProviderLogo, Select, Sheet, Spinner, agentOptions, agentOnlyOptions, workflowOptions, ago, statusChip, api, commentBadge, defaultModelLabel, fmtTok, getJSON, getSetupProgress, ghUrl, isDone, md, MarkdownArea, readAttach, roleFromComment, shortModel, stripBadge, toast, tokHeat, usageTitle } from "./core.js";
+import { Avatar, Icon, Modal, ProviderLogo, Select, Sheet, Spinner, agentOptions, agentOnlyOptions, workflowOptions, ago, cap, statusChip, api, commentBadge, defaultModelLabel, fmtTok, getJSON, getSetupProgress, ghUrl, isDone, md, MarkdownArea, readAttach, resolveAgentModel, roleFromComment, shortModel, stripBadge, toast, tokHeat, usageTitle } from "./core.js";
 
 
 // ---------- Detail ----------
@@ -532,22 +532,27 @@ function RunApp({ repo, number, appInfo, issue, done }) {
 // the server's resolveAssignment (built-in handle → role name; custom agent → handle without @), all
 // lowercased. Deduped so a role used in two steps shows one picker (the store is per-agent, not per-step).
 const STEP_ROLE_KEY = { "@dev": "developer", "@plan": "planner", "@arch": "architect", "@review": "reviewer", "@test": "tester", "@split": "decomposer" };
-const shortRef = (ref) => { if (!ref) return ""; const r = String(ref); const i = r.indexOf("/"); return i >= 0 ? r.slice(i + 1) : r; };
 function stepModelTargets(wf, agentDefs, data) {
-  const seen = new Set(); const out = [];
+  const defs = agentDefs || [];
   const rm = (data && data.roleModels) || {};
-  const g = data && data.globalModel;
+  const seen = new Set(); const out = [];
   for (const s of (wf && wf.steps || [])) {
     const handle = (s.agent || "").toLowerCase();
     if (!handle) continue;
     const builtin = STEP_ROLE_KEY[handle];
-    const def = builtin ? null : (agentDefs || []).find((d) => (d.handle || ("@" + d.name)).toLowerCase() === handle || d.name.toLowerCase() === handle.replace(/^@/, ""));
+    // The editable agentDef driving this step: match by handle, else (for a built-in handle) by the
+    // role NAME — so @test finds the "tester" agent and uses ITS configured model, not the app default.
+    const def = defs.find((d) => (d.handle || ("@" + d.name)).toLowerCase() === handle || d.name.toLowerCase() === handle.replace(/^@/, ""))
+      || (builtin ? defs.find((d) => d.name.toLowerCase() === builtin) : null);
+    // Storage key the server resolves by (built-in role name, or a custom agent's handle w/o @).
     const key = (builtin || (def ? (def.handle || ("@" + def.name)).replace(/^@/, "") : handle.replace(/^@/, ""))).toLowerCase();
     if (seen.has(key)) continue; seen.add(key);
-    // The model this step ALREADY resolves to absent a per-issue override — mirrors the server's
-    // resolveAssignment priority, best-effort: step.model → agent's model → role model → global.
-    const dflt = shortRef(s.model) || shortRef(def && def.model) || (rm[key] && rm[key].model) || (g && g.model) || "";
-    out.push({ key, label: def ? def.name : (s.agent || handle), dflt });
+    const name = def ? def.name : (builtin || handle.replace(/^@/, ""));
+    // The model this step resolves to absent a per-issue override — step.model → agent's model →
+    // per-role model (Settings → Models) → global. Tier words resolve to concrete models for display.
+    const roleM = rm[key] && rm[key].model ? { ref: rm[key].providerId + "/" + rm[key].model, short: shortModel(rm[key].model), provider: ((data.providers || []).find((p) => p.id === rm[key].providerId) || {}).name } : null;
+    const m = resolveAgentModel(s.model, data) || resolveAgentModel(def && def.model, data) || roleM || null;
+    out.push({ key, label: cap(name), dfltRef: m ? m.ref : "", dflt: m ? m.short : "", dfltProvider: m ? m.provider : "" });
   }
   return out;
 }
@@ -638,14 +643,17 @@ export function Composer({ repos, repo, setRepo, onClose, onCreate, data }) {
       ${wfSteps.map((s) => {
         const curVal = stepModels[s.key] || "";
         const curOpt = curVal ? modelOpts.find((o) => o.providerId + "/" + o.model === curVal) : null;
+        // Override picked → show that; else the agent's own configured model; else true default.
+        const effProvider = curOpt ? curOpt.provider : s.dfltProvider;
+        const effShort = curOpt ? curOpt.short : (s.dflt || "Default");
+        const options = [{ value: "", label: "Default" + (s.dflt ? " · " + s.dflt : ""), hint: s.dfltProvider || defaultModelLabel(data), icon: "sparkles" }].concat(modelOpts.map((o) => ({ value: o.providerId + "/" + o.model, label: o.short, logo: o.provider })));
         return html`<div key=${s.key} style="display:flex;flex-direction:column;align-items:center;gap:4px;width:88px;text-align:center">
-          <${Select} value=${curVal} menuAlign="left" btnClass="iconbtn" onChange=${(v) => setStepModels((m) => Object.assign({}, m, { [s.key]: v }))}
-            options=${[{ value: "", label: "Default" + (s.dflt ? " · " + s.dflt : ""), hint: s.dflt || defaultModelLabel(data), icon: "sparkles" }].concat(modelOpts.map((o) => ({ value: o.providerId + "/" + o.model, label: o.short, short: o.short, logo: o.provider })))}
-            trigger=${(cur) => (cur && cur.logo)
-              ? html`<span class="tip" data-tip=${cur.label} style="display:inline-flex"><${ProviderLogo} name=${cur.logo} size=${18}/></span>`
-              : html`<span class="tip" data-tip=${"Default — this agent’s configured model" + (s.dflt ? " · " + s.dflt : "")} style="display:inline-flex"><${Icon} name="sparkles" size=${18}/></span>`}/>
+          <${Select} value=${curVal} menuAlign="left" btnClass="iconbtn-sm" onChange=${(v) => setStepModels((m) => Object.assign({}, m, { [s.key]: v }))} options=${options}
+            trigger=${() => effProvider
+              ? html`<span class="tip" data-tip=${effShort} style="display:inline-flex"><${ProviderLogo} name=${effProvider} size=${16}/></span>`
+              : html`<span class="tip" data-tip=${"Default · " + (s.dflt || defaultModelLabel(data))} style="display:inline-flex"><${Icon} name="sparkles" size=${16}/></span>`}/>
           <span style="font-size:12px;font-weight:600;line-height:1.2">${s.label}</span>
-          <span style="font-size:11px;color:var(--ink-3);line-height:1.2;word-break:break-word">${curOpt ? curOpt.short : (s.dflt || "Default")}</span>
+          <span style="font-size:11px;color:var(--ink-3);line-height:1.2;word-break:break-word">${effShort}</span>
         </div>`;
       })}
       </div>
