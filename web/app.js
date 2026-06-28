@@ -129,7 +129,7 @@ function App() {
       for (const item of q) {
         try {
           if (item.type === "issue") {
-            const d = await api("/new-issue", { repo: item.repo, role: item.role, title: item.title, body: item.body || "", start: !!item.start, ...(item.model ? { model: item.model } : {}) });
+            const d = await api("/new-issue", { repo: item.repo, role: item.role, title: item.title, body: item.body || "", start: !!item.start, ...(item.model ? { model: item.model } : {}), ...(item.agentModels ? { agentModels: item.agentModels } : {}) });
             if (d && d.number && item.tmpNum) setPending((ps) => ps.map((p) => p.number === item.tmpNum ? Object.assign({}, p, { number: d.number, _offline: false }) : p));
           } else if (item.type === "comment") {
             await api("/comment", { repo: item.repo, number: item.number, body: item.body, ...(item.model ? { model: item.model } : {}) });
@@ -207,14 +207,14 @@ function App() {
   function dismissToast(id) { setToasts((ts) => ts.filter((t) => t.id !== id)); }
 
   function openComposer(repo) { setComposerRepo(repo || repoFilter || (repos[0] || null)); setSheet("composer"); }
-  function createIssue(repo, role, title, body, start, atts, model) {
+  function createIssue(repo, role, title, body, start, atts, model, agentModels) {
     const tmpNum = -Date.now();
     const tmp = { repo, number: tmpNum, title, role, state: start ? "working" : "planned", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), _tmp: true, _offline: !isOnline };
     setPending((ps) => ps.concat(tmp)); setSheet(null);
     if (!isOnline) {
       // Offline: queue the issue (attachments are skipped — network required for uploads)
       toast("Queued offline — will create when back online");
-      oqPush({ type: "issue", repo, role, title, body: body || "", start: !!start, model: model || null, tmpNum, tmpRepo: repo });
+      oqPush({ type: "issue", repo, role, title, body: body || "", start: !!start, model: model || null, agentModels: agentModels || null, tmpNum, tmpRepo: repo });
       return;
     }
     toast(start ? "Creating & starting…" : "Added to Planned");
@@ -234,7 +234,7 @@ function App() {
           else if (r.md) appended.push(r.md);
         }
         if (appended.length) full = [full].concat(appended).filter(Boolean).join("\n\n");
-        return api("/new-issue", { repo, role, title, body: full, start: !!start, ...(model ? { model } : {}) });
+        return api("/new-issue", { repo, role, title, body: full, start: !!start, ...(model ? { model } : {}), ...(agentModels ? { agentModels } : {}) });
       })
       .then((d) => {
         if (start && d && d.number) setOpenKey(repo + "#" + d.number);
@@ -244,7 +244,7 @@ function App() {
       .catch((e) => {
         if (e instanceof TypeError) {
           // Network error mid-flight — queue and mark offline
-          oqPush({ type: "issue", repo, role, title, body: body || "", start: !!start, model: model || null, tmpNum, tmpRepo: repo });
+          oqPush({ type: "issue", repo, role, title, body: body || "", start: !!start, model: model || null, agentModels: agentModels || null, tmpNum, tmpRepo: repo });
           setPending((ps) => ps.map((p) => p === tmp ? Object.assign({}, p, { _offline: true }) : p));
           toast("Network error — issue queued offline");
         } else {

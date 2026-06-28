@@ -51,6 +51,7 @@ const ICONS = {
   lock: '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
   send: '<path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"/><path d="m21.854 2.147-10.94 10.939"/>',
   sparkles: '<path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/>',
+  shuffle: '<path d="m18 14 4 4-4 4"/><path d="m18 2 4 4-4 4"/><path d="M2 18h1.973a4 4 0 0 0 3.3-1.7l5.454-8.6a4 4 0 0 1 3.3-1.7H22"/><path d="M2 6h1.972a4 4 0 0 1 3.6 2.2"/><path d="M22 18h-6.041a4 4 0 0 1-3.3-1.8l-.359-.45"/>',
   chevron: '<path d="m9 18 6-6-6-6"/>',
   hash: '<line x1="4" x2="20" y1="9" y2="9"/><line x1="4" x2="20" y1="15" y2="15"/><line x1="10" x2="8" y1="3" y2="21"/><line x1="16" x2="14" y1="3" y2="21"/>',
   archive: '<rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/>',
@@ -631,11 +632,14 @@ const ROLE_PINS = [
   { value: "@test", label: "Test", avatar: "tester", hint: "role", hintCls: "b-role" },
 ];
 const WF_AVATAR = { "full-build": "developer", "quick-fix": "developer", "plan-only": "planner", "review-only": "reviewer" };
+// 🎲 Dealer's choice — hand the issue to the dispatcher, which picks the agent/workflow on start.
+// Sentinel handle "@auto"; the backend rolls the route once (see src/agents/dealer.ts).
+export const DEALER_OPTION = { value: "@auto", label: "Dealer’s choice", hint: "auto-route", hintCls: "b-wf", icon: "shuffle" };
 export function agentOptions(agentDefs, workflows) {
   const wf = (workflows || []).filter((w) => w.trigger).map((w) => ({ value: w.trigger, label: w.name, avatar: WF_AVATAR[w.id] || "developer", hint: "workflow", hintCls: "b-wf" }));
   const defs = agentDefs || [];
   const agents = defs.map((d) => ({ value: d.handle || ("@" + d.name), label: d.name, avatar: d.name, avatarSrc: d.avatar || "", hint: d.mode === "chat" ? "chat" : "code", hintCls: d.mode === "chat" ? "b-chat" : "b-code" }));
-  return wf.concat(ROLE_PINS).concat(agents);
+  return [DEALER_OPTION].concat(wf).concat(ROLE_PINS).concat(agents);
 }
 // AGENTS ONLY — role pins + defined agents, no workflows. Used by the reply composer (chat = talk to
 // a teammate; starting a workflow is a separate explicit action in the detail toolbar).

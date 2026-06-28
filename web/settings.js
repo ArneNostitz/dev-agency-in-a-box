@@ -1,6 +1,6 @@
 // Dev Agency dashboard — settings module (split from app.js; Preact + htm, no build step).
 import { html, useState, useEffect, useRef } from "/web/vendor/standalone.mjs";
-import { Icon, Modal, ProviderLogo, Select, Sheet, Spinner, api, getJSON, md, toast } from "./core.js";
+import { Icon, Modal, ProviderLogo, Select, Sheet, Spinner, agentOptions, api, getJSON, md, toast } from "./core.js";
 import { OB_PROVIDERS } from "./onboarding.js";
 
 
@@ -13,7 +13,8 @@ export function Settings({ data, onClose, reload, openGithubTokens, openModels, 
   const [selfImprove, setSelfImprove] = useState((data.ops || {}).self_improve != null ? !!(data.ops || {}).self_improve : true);
   const [runner, setRunner] = useState(cfg.agentRunner || "claude-sdk");
   const [cliCmd, setCliCmd] = useState(cfg.agentCliCommand || "");
-  function save() { api("/settings", { maxTokensPerRun: Number(maxTok) || 0, avatars: avatarsOn ? "on" : "off", agentRunner: runner, agentCliCommand: cliCmd, ...(admin ? { ops: { self_improve: selfImprove } } : {}) }).then(() => { toast("Saved"); onClose(); reload(); }); }
+  const [newDefault, setNewDefault] = useState(cfg.newIssueDefault || "@dev");
+  function save() { api("/settings", { maxTokensPerRun: Number(maxTok) || 0, avatars: avatarsOn ? "on" : "off", agentRunner: runner, agentCliCommand: cliCmd, newIssueDefault: newDefault, ...(admin ? { ops: { self_improve: selfImprove } } : {}) }).then(() => { toast("Saved"); onClose(); reload(); }); }
   function changePw() { const np = window.prompt("New password (8+ characters)"); if (np == null) return; if (np.length < 8) { toast("8+ characters"); return; } api("/set-password", { value: np }).then(() => toast("Password changed")).catch((e) => toast((e && e.message) || "Couldn’t change", "error")); }
   return html`<${Sheet} title="Settings" onClose=${onClose} footer=${html`<button class="btn" onClick=${onClose}>Cancel</button><button class="btn primary" onClick=${save}>Save</button>`}>
 
@@ -44,7 +45,10 @@ export function Settings({ data, onClose, reload, openGithubTokens, openModels, 
     <div class="setgrp">
       <div class="sec">Run defaults</div>
       <div class="muted" style="font-size:12px;margin-bottom:6px">Pipeline steps & revise rounds are now set per workflow in the builder. GitNexus indexing is always on.</div>
-      <label>Max tokens per run (0 = off)</label><input type="number" min="0" step="50000" value=${maxTok} onInput=${(e) => setMaxTok(e.target.value)}/>
+      <label>New-issue default</label>
+      <div class="muted" style="font-size:12px;margin-bottom:4px">What a new issue is assigned to when you open the composer.</div>
+      <${Select} value=${newDefault} options=${agentOptions(data && data.agentDefs, data && data.workflows)} onChange=${setNewDefault}/>
+      <label style="margin-top:8px">Max tokens per run (0 = off)</label><input type="number" min="0" step="50000" value=${maxTok} onInput=${(e) => setMaxTok(e.target.value)}/>
       <${RunnerPicker} runner=${runner} setRunner=${setRunner} cliCmd=${cliCmd} setCliCmd=${setCliCmd} admin=${admin}/>
     </div>
 

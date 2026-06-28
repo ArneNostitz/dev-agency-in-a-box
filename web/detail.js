@@ -528,6 +528,24 @@ function RunApp({ repo, number, appInfo, issue, done }) {
       : kind === "web" ? html`<button class="tbtn tip" data-tip="Run a web preview" onClick=${() => api("/app-run", { repo, number }).then((r) => toast(r && r.error ? r.error : "Starting preview…")).catch(() => toast("Couldn’t start", "error"))}><${Icon} name="play"/><span class="tlabel">Run preview</span></button>` : null}`;
 }
 
+// Map a workflow's steps to per-step model targets — the storage KEY each step routes by must match
+// the server's resolveAssignment (built-in handle → role name; custom agent → handle without @), all
+// lowercased. Deduped so a role used in two steps shows one picker (the store is per-agent, not per-step).
+const STEP_ROLE_KEY = { "@dev": "developer", "@plan": "planner", "@arch": "architect", "@review": "reviewer", "@test": "tester", "@split": "decomposer" };
+function stepModelTargets(wf, agentDefs) {
+  const seen = new Set(); const out = [];
+  for (const s of (wf && wf.steps || [])) {
+    const handle = (s.agent || "").toLowerCase();
+    if (!handle) continue;
+    const builtin = STEP_ROLE_KEY[handle];
+    const def = builtin ? null : (agentDefs || []).find((d) => (d.handle || ("@" + d.name)).toLowerCase() === handle || d.name.toLowerCase() === handle.replace(/^@/, ""));
+    const key = (builtin || (def ? (def.handle || ("@" + def.name)).replace(/^@/, "") : handle.replace(/^@/, ""))).toLowerCase();
+    if (seen.has(key)) continue; seen.add(key);
+    out.push({ key, label: def ? def.name : (s.agent || handle) });
+  }
+  return out;
+}
+
 // ---------- Composer ----------
 export function Composer({ repos, repo, setRepo, onClose, onCreate, data }) {
   const [title, setTitle] = useState("");
@@ -535,13 +553,18 @@ export function Composer({ repos, repo, setRepo, onClose, onCreate, data }) {
   const ndraftKey = "draft:newissue:" + (repo || "_");
   useEffect(() => { try { const d = JSON.parse(localStorage.getItem(ndraftKey) || "{}"); if (d.title) setTitle(d.title); if (d.body) setBody(d.body); } catch (e) {} }, [ndraftKey]);
   useEffect(() => { try { if (title || body) localStorage.setItem(ndraftKey, JSON.stringify({ title, body })); else localStorage.removeItem(ndraftKey); } catch (e) {} }, [title, body, ndraftKey]);
-  const [role, setRole] = useState("@dev");
+  const [role, setRole] = useState((data && data.config && data.config.newIssueDefault) || "@dev");
   const [atts, setAtts] = useState([]);
   const providers = data?.providers || [];
   const modelOpts = providers.flatMap((p) => (p.models || []).map((m) => ({ providerId: p.id, model: m, label: p.name + " · " + m, short: m, provider: p.name })));
   const [model, setModel] = useState(
     data?.globalModel ? data.globalModel.providerId + "/" + data.globalModel.model : ""
   );
+  // Per-step model overrides when a WORKFLOW is selected — keyed by the step's resolution key
+  // (built-in role name, or a custom agent's handle without @), matching resolveAssignment on the server.
+  const selWf = (role || "").startsWith("@") ? (data && data.workflows || []).find((w) => w.trigger === role) : null;
+  const wfSteps = selWf ? stepModelTargets(selWf, data && data.agentDefs) : [];
+  const [stepModels, setStepModels] = useState({});
   const taRef = useRef(null);
   function submit(start) {
     if (!repo || !title.trim()) { toast("Repo + title needed"); return; }
@@ -550,7 +573,10 @@ export function Composer({ repos, repo, setRepo, onClose, onCreate, data }) {
       const [providerId, mName] = model.split("/");
       modelOverride = { providerId, model: mName };
     }
-    onCreate(repo, role, title.trim(), body.trim(), start, atts.map((a) => ({ dataUrl: a.d, name: a.name, refId: a.refId })), modelOverride);
+    // Collect the per-step picks for THIS workflow only (dedup by key); empty → no override.
+    const agentModels = {};
+    for (const s of wfSteps) { const v = stepModels[s.key]; if (v) agentModels[s.key] = v; }
+    onCreate(repo, role, title.trim(), body.trim(), start, atts.map((a) => ({ dataUrl: a.d, name: a.name, refId: a.refId })), modelOverride, Object.keys(agentModels).length ? agentModels : null);
     try { localStorage.removeItem(ndraftKey); } catch (e) {}
   }
   function pick(e) { const fs = e.target.files || []; for (let i = 0; i < fs.length; i++) readAttach(fs[i], (a) => setAtts((x) => x.concat(a))); e.target.value = ""; }
@@ -593,6 +619,17 @@ export function Composer({ repos, repo, setRepo, onClose, onCreate, data }) {
           ? html`<span class="tip" data-tip=${cur.label} style="display:inline-flex"><${ProviderLogo} name=${cur.logo} size=${16}/></span>`
           : html`<span class="tip" data-tip=${"Default model · " + defaultModelLabel(data)} style="display:inline-flex"><${Icon} name="sparkles" size=${16}/></span>`}/>` : null}
     </div>
+    ${wfSteps.length && modelOpts.length ? html`<div class="setgrp" style="margin-bottom:10px">
+      <div class="muted" style="font-size:12px;margin-bottom:6px">Per-step model for this workflow (optional — blank uses the default)</div>
+      ${wfSteps.map((s) => html`<div key=${s.key} style="display:flex;align-items:center;gap:8px;margin-bottom:5px">
+        <span style="min-width:96px;font-size:13px">${s.label}</span>
+        <${Select} value=${stepModels[s.key] || ""} btnClass="iconbtn-sm" onChange=${(v) => setStepModels((m) => Object.assign({}, m, { [s.key]: v }))}
+          options=${[{ value: "", label: "Default model", hint: defaultModelLabel(data), icon: "sparkles" }].concat(modelOpts.map((o) => ({ value: o.providerId + "/" + o.model, label: o.short, logo: o.provider })))}
+          trigger=${(cur) => (cur && cur.logo)
+            ? html`<span class="tip" data-tip=${cur.label} style="display:inline-flex"><${ProviderLogo} name=${cur.logo} size=${16}/> <span style="font-size:12px">${cur.label}</span></span>`
+            : html`<span class="tip" data-tip="Default model" style="display:inline-flex;align-items:center;gap:4px"><${Icon} name="sparkles" size=${14}/> <span style="font-size:12px;color:var(--muted)">Default</span></span>`}/>
+      </div>`)}
+    </div>` : null}
     <input value=${title} onInput=${(e) => setTitle(e.target.value)} placeholder="What should it do?" style="margin-bottom:10px"/>
     <div class="composer">
       ${atts.length ? html`<div class="composer-atts">${atts.map((a, idx) => html`<span class="att" key=${idx}>${a.img ? html`<img src=${a.d}/>` : html`<span><${Icon} name="paperclip" size=${12}/> ${a.name}</span>`}<button class="iconbtn" style="width:18px;height:18px;border:none" onClick=${() => setAtts((x) => x.filter((_, j) => j !== idx))}>×</button></span>`)}</div>` : null}

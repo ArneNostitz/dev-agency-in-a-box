@@ -532,6 +532,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
                 agentRunner: (getSetting("agent_runner") ?? process.env.AGENT_RUNNER?.trim() ?? "claude-sdk"),
                 agentCliCommand: (getSetting("agent_cli_command") ?? process.env.AGENT_CLI_COMMAND?.trim() ?? ""),
                 tracker: (getSetting("tracker") ?? process.env.TRACKER?.trim() ?? "local"),
+                newIssueDefault: (getSetting("new_issue_default") || "@dev"),
               },
           };
           res.writeHead(200, { "content-type": "application/json" });
@@ -962,7 +963,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
       const actor = userFromReq(req);
       if (!actor) return void res.writeHead(401, { "content-type": "application/json" }).end('{"error":"auth required"}');
       void readBody(req).then(async (body) => {
-        let p: { repo?: string; number?: number; commentId?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; pctNow?: number; tracker?: string; agentDef?: Partial<AgentDef> & { name: string }; agentName?: string; workflow?: { id: string; name: string; trigger?: string; steps?: unknown[]; gates?: unknown[]; hooks?: unknown[] }; workflowId?: string; skill?: Partial<Skill> & { name: string }; skillName?: string; hook?: { id?: number; target: string; phase: "pre" | "post"; command: string; enabled?: boolean }; hookId?: number; dataUrl?: string; name?: string; providers?: Provider[]; roleModels?: Record<string, { providerId: string; model: string }>; globalModel?: { providerId: string; model: string } | null; fallbackChain?: Array<{ providerId: string; model: string }>; autoSwitchOnLimit?: boolean; model?: { providerId: string; model: string } | null; kind?: string; value?: string; skipArchitect?: string; gitnexus?: string; maxTokensPerRun?: number; maxReviseRounds?: number; auditThreshold?: number; start?: boolean; email?: string; key?: string; ops?: Record<string, string | number | boolean>; agentRunner?: string; agentCliCommand?: string; webhookSecret?: string; analyzerUrl?: string; avatars?: string; source?: string } = {};
+        let p: { repo?: string; number?: number; commentId?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; pctNow?: number; tracker?: string; agentDef?: Partial<AgentDef> & { name: string }; agentName?: string; workflow?: { id: string; name: string; trigger?: string; steps?: unknown[]; gates?: unknown[]; hooks?: unknown[] }; workflowId?: string; skill?: Partial<Skill> & { name: string }; skillName?: string; hook?: { id?: number; target: string; phase: "pre" | "post"; command: string; enabled?: boolean }; hookId?: number; dataUrl?: string; name?: string; providers?: Provider[]; roleModels?: Record<string, { providerId: string; model: string }>; globalModel?: { providerId: string; model: string } | null; fallbackChain?: Array<{ providerId: string; model: string }>; autoSwitchOnLimit?: boolean; model?: { providerId: string; model: string } | null; agentModels?: Record<string, string>; newIssueDefault?: string; kind?: string; value?: string; skipArchitect?: string; gitnexus?: string; maxTokensPerRun?: number; maxReviseRounds?: number; auditThreshold?: number; start?: boolean; email?: string; key?: string; ops?: Record<string, string | number | boolean>; agentRunner?: string; agentCliCommand?: string; webhookSecret?: string; analyzerUrl?: string; avatars?: string; source?: string } = {};
         try {
           p = JSON.parse(body.toString("utf8"));
         } catch {
@@ -1129,6 +1130,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           // Pipeline knobs moved out of env — apply live, no redeploy.
           if (p.tracker === "local" || p.tracker === "github") setSetting("tracker", p.tracker); // DB-authoritative vs GitHub-authoritative tracking (Phase 4)
           if (p.skipArchitect === "on" || p.skipArchitect === "off") setSetting("skip_architect", p.skipArchitect);
+          if (typeof p.newIssueDefault === "string" && p.newIssueDefault.trim()) setSetting("new_issue_default", p.newIssueDefault.trim());
           if (p.gitnexus === "on" || p.gitnexus === "off") setSetting("gitnexus", p.gitnexus);
           if (p.maxTokensPerRun !== undefined && p.maxTokensPerRun >= 0) setSetting("max_tokens_per_run", String(Math.round(p.maxTokensPerRun)));
           if (p.maxReviseRounds !== undefined && p.maxReviseRounds >= 0) setSetting("max_revise_rounds", String(Math.round(p.maxReviseRounds)));
@@ -1646,19 +1648,31 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           const userTok = ghUserToken();
           if (!userTok) return res.writeHead(409).end(JSON.stringify({ error: "Add your GitHub token in Settings → credentials to create issues under your name." }));
           const handle = (p.role ?? "@dev").trim();
-          const issueBody = `${handle} ${p.body ?? ""}`.trim();
+          // 🎲 Dealer's choice: no concrete handle prepended — the dispatcher rolls the route on start
+          // (see runner). A real handle is prepended so text resolution + the GitHub mirror agree.
+          const dealer = handle.toLowerCase() === "@auto";
+          const issueBody = (dealer ? (p.body ?? "") : `${handle} ${p.body ?? ""}`).trim();
           try {
             const created = await createIssue(repo, p.title.trim(), issueBody, userTok);
             if (!created.number) throw new Error("couldn't read the new issue number");
             if (p.model && typeof p.model === "object" && p.model.providerId && p.model.model) {
               setIssueModelOverride(repo, created.number, p.model.providerId, p.model.model);
             }
+            // Per-step model overrides chosen in the composer (workflow runs): persist each so the
+            // pipeline routes that step's agent to the selected model (resolveAssignment, priority 1).
+            if (p.agentModels && typeof p.agentModels === "object") {
+              for (const [agent, ref] of Object.entries(p.agentModels as Record<string, string>)) {
+                if (agent && typeof ref === "string") setIssueAgentModel(repo, created.number, agent, ref);
+              }
+            }
             // Persist the dropdown selection STRUCTURALLY so it's authoritative on instant-start,
             // planned-start, AND resume — not re-derived from body text (which a later comment can
             // shadow, silently falling back to the default full build). If the chosen handle is a
             // workflow trigger, pin that workflow; a single agent/role keeps resolving from the
-            // prepended handle (and processIssue persists its role on first run).
-            const selWf = resolveWorkflow(handle);
+            // prepended handle (and processIssue persists its role on first run). Dealer's choice
+            // pins nothing — it flags the issue so the dispatcher picks the route on start.
+            if (dealer) setSetting(`issue_dealer.${repo}#${created.number}`, "1");
+            const selWf = dealer ? null : resolveWorkflow(handle);
             if (selWf) setIssueWorkflow(repo, created.number, selWf.id);
             if (p.start) {
               recordIssueStatus(repo, created.number, withStatus("working"), { title: p.title.trim() });
