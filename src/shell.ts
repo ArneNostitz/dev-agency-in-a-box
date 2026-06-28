@@ -410,8 +410,8 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .board{padding:16px;overflow-y:auto;flex:1;container-type:inline-size;container-name:listpane}
 .board-cols{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;align-items:start}
 /* group-by-repo: ONE full-width band (row) per repo, stacked vertically; the 4 status columns live
-   inside each band (.band-cols). */
-.board-bands{display:flex;flex-direction:column;gap:20px}
+   inside each band (.band-cols). Mirrors the .board container's own page padding/centering. */
+.board-bands{display:flex;flex-direction:column;gap:20px;padding:16px;overflow-y:auto;flex:1}
 .bcol__h,.colhead,.band-head{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-2);padding:4px 6px 10px}
 .bcol__h .n,.colhead .n,.band-head .n{color:var(--ink-3);margin-left:auto;font-weight:500}
 .bcol__cards,.cards,.band-cards{display:flex;flex-direction:column;gap:8px}
@@ -825,6 +825,7 @@ textarea{resize:vertical;min-height:64px}
   .tabbar{display:none}
   .board{max-width:1500px;margin:0 auto;display:grid;grid-template-columns:repeat(4,1fr);gap:12px;align-items:start;padding:14px}
   .board.group-repo{grid-template-columns:repeat(auto-fill,minmax(260px,1fr))}
+  .board-bands{max-width:1500px;margin:0 auto;padding:14px;width:100%}
   .band-cols{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
   .col{margin:0}
   .cards{max-height:calc(100dvh - 200px);overflow-y:auto;padding-right:2px}
