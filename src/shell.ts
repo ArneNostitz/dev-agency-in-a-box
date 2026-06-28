@@ -408,7 +408,10 @@ input,select,textarea{font-family:inherit;font-size:14px}
 
 /* ── Board ─────────────────────────────────────────────────────── */
 .board{padding:16px;overflow-y:auto;flex:1;container-type:inline-size;container-name:listpane}
-.board-cols,.board-bands{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;align-items:start}
+.board-cols{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;align-items:start}
+/* group-by-repo: ONE full-width band (row) per repo, stacked vertically; the 4 status columns live
+   inside each band (.band-cols). */
+.board-bands{display:flex;flex-direction:column;gap:20px}
 .bcol__h,.colhead,.band-head{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-2);padding:4px 6px 10px}
 .bcol__h .n,.colhead .n,.band-head .n{color:var(--ink-3);margin-left:auto;font-weight:500}
 .bcol__cards,.cards,.band-cards{display:flex;flex-direction:column;gap:8px}
@@ -430,7 +433,7 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .wfchip{display:inline-flex;align-items:center;gap:3px;font-size:10px;color:var(--purple);background:var(--purple-weak);border-radius:var(--radius-pill);padding:1px 7px;white-space:nowrap}
 .bcard__actions{position:absolute;right:10px;bottom:10px;display:flex;align-items:center;gap:6px;opacity:0;transform:translateY(2px);pointer-events:none;background:var(--surface);box-shadow:-12px 0 12px 4px var(--surface);transition:opacity var(--dur-fast) var(--ease),transform var(--dur-fast) var(--ease)}
 .bcard:hover .bcard__actions{opacity:1;transform:none;pointer-events:auto}
-@media(max-width:880px){.board-cols,.board-bands{grid-template-columns:1fr 1fr}}
+@media(max-width:880px){.board-cols{grid-template-columns:1fr 1fr}}
 
 /* ── Tab bar (mobile board) ───────────────────────────────────── */
 .tabbar{flex:none;display:flex;border-top:1px solid var(--line);background:var(--surface);padding-bottom:var(--safe-b)}
@@ -833,7 +836,7 @@ textarea{resize:vertical;min-height:64px}
   .dpanes{flex-direction:column;overflow-y:auto;-webkit-overflow-scrolling:touch;min-height:0}
   .dpane{padding:12px 14px;overflow:visible;flex:0 0 auto}
   .dpane.side{flex:1;max-width:none;border-left:none;border-top:1px solid var(--line)}
-  .board-cols,.board-bands,.board.group-repo{grid-template-columns:1fr 1fr}
+  .board-cols,.board.group-repo{grid-template-columns:1fr 1fr}
 }
 .norepo{padding:48px 20px;display:flex;flex-direction:column;align-items:center;text-align:center}
 .searchrow{display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:10px;padding:0 8px;margin:6px 0}
@@ -1206,8 +1209,11 @@ textarea{resize:vertical;min-height:64px}
 .subttl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
 .substate{font-size:10.5px;color:var(--ink-3)}
 
-/* board column band variant */
+/* board column band variant — one full-width row per repo */
 .band{display:flex;flex-direction:column;gap:8px}
+.band-head b{font-size:13px;text-transform:none;letter-spacing:normal;color:var(--ink-1)}
+/* cap each band's status column so stacked repos stay compact rows (scroll within the column) */
+.band-cards{max-height:360px;overflow-y:auto;padding-right:2px}
 
 /* setup progress bar */
 .setupbar{display:flex;flex-direction:column;gap:4px;margin:8px 0}
