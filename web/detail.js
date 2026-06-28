@@ -633,15 +633,22 @@ export function Composer({ repos, repo, setRepo, onClose, onCreate, data }) {
           : html`<span class="tip" data-tip=${"Default model · " + defaultModelLabel(data)} style="display:inline-flex"><${Icon} name="sparkles" size=${16}/></span>`}/>` : null}
     </div>
     ${individual && wfSteps.length && modelOpts.length ? html`<div class="setgrp" style="margin-bottom:10px">
-      <div class="muted" style="font-size:12px;margin-bottom:6px">Model per step — blank keeps each agent’s configured model.</div>
-      ${wfSteps.map((s) => html`<div key=${s.key} style="display:flex;align-items:center;gap:8px;margin-bottom:5px">
-        <span style="min-width:96px;font-size:13px">${s.label}</span>
-        <${Select} value=${stepModels[s.key] || ""} menuAlign="left" btnClass="iconbtn" onChange=${(v) => setStepModels((m) => Object.assign({}, m, { [s.key]: v }))}
-          options=${[{ value: "", label: "Default" + (s.dflt ? " · " + s.dflt : ""), hint: s.dflt || defaultModelLabel(data), icon: "sparkles" }].concat(modelOpts.map((o) => ({ value: o.providerId + "/" + o.model, label: o.short, short: o.short, logo: o.provider })))}
-          trigger=${(cur) => (cur && cur.logo)
-            ? html`<span class="tip" data-tip=${cur.label} style="display:inline-flex;align-items:center;gap:5px"><${ProviderLogo} name=${cur.logo} size=${15}/> <span style="font-size:12.5px">${cur.short || cur.label}</span></span>`
-            : html`<span class="tip" data-tip=${"Uses this agent’s configured model" + (s.dflt ? " · " + s.dflt : "")} style="display:inline-flex;align-items:center;gap:5px"><${Icon} name="sparkles" size=${14}/> <span style="font-size:12.5px;color:var(--ink-3)">${s.dflt || "Default"}</span></span>`}/>
-      </div>`)}
+      <div class="muted" style="font-size:12px;margin-bottom:10px">Model per step — the dot opens the picker; blank keeps each agent’s configured model.</div>
+      <div style="display:flex;flex-wrap:wrap;gap:16px;justify-content:flex-start">
+      ${wfSteps.map((s) => {
+        const curVal = stepModels[s.key] || "";
+        const curOpt = curVal ? modelOpts.find((o) => o.providerId + "/" + o.model === curVal) : null;
+        return html`<div key=${s.key} style="display:flex;flex-direction:column;align-items:center;gap:4px;width:88px;text-align:center">
+          <${Select} value=${curVal} menuAlign="left" btnClass="iconbtn" onChange=${(v) => setStepModels((m) => Object.assign({}, m, { [s.key]: v }))}
+            options=${[{ value: "", label: "Default" + (s.dflt ? " · " + s.dflt : ""), hint: s.dflt || defaultModelLabel(data), icon: "sparkles" }].concat(modelOpts.map((o) => ({ value: o.providerId + "/" + o.model, label: o.short, short: o.short, logo: o.provider })))}
+            trigger=${(cur) => (cur && cur.logo)
+              ? html`<span class="tip" data-tip=${cur.label} style="display:inline-flex"><${ProviderLogo} name=${cur.logo} size=${18}/></span>`
+              : html`<span class="tip" data-tip=${"Default — this agent’s configured model" + (s.dflt ? " · " + s.dflt : "")} style="display:inline-flex"><${Icon} name="sparkles" size=${18}/></span>`}/>
+          <span style="font-size:12px;font-weight:600;line-height:1.2">${s.label}</span>
+          <span style="font-size:11px;color:var(--ink-3);line-height:1.2;word-break:break-word">${curOpt ? curOpt.short : (s.dflt || "Default")}</span>
+        </div>`;
+      })}
+      </div>
     </div>` : null}
     <input value=${title} onInput=${(e) => setTitle(e.target.value)} placeholder="What should it do?" style="margin-bottom:10px"/>
     <div class="composer">
