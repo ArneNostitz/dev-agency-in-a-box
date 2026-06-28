@@ -132,9 +132,11 @@ export function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, onOpe
         repoItems.forEach((i) => byCol[classify(i)].push(i));
         const short = r.split("/").pop();
         return html`<div class="band" key=${r}>
-          <div class="band-head"><${Icon} name="pr" size=${15}/> <b>${short}</b> <span class="n">${repoItems.length || ""}</span>
-            <span style="flex:1"></span>
-            <button class="colbtn primary" onClick=${() => onAddIssue(r)}><${Icon} name="plus" size=${14}/> Add Issue</button>
+          <div class="band-head"><${Icon} name="pr" size=${15}/> <b>${short}</b>
+            <span class="band-head__r">
+              <span class="n">${repoItems.length || ""}</span>
+              <button class="colbtn primary" onClick=${() => onAddIssue(r)}><${Icon} name="plus" size=${14}/> New</button>
+            </span>
           </div>
           <div class="band-cols">
             ${bandCols.map((c) => html`<div class="col" key=${c.k}>

@@ -410,8 +410,9 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .board{padding:16px;overflow-y:auto;flex:1;container-type:inline-size;container-name:listpane}
 .board-cols{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;align-items:start}
 /* group-by-repo: ONE full-width band (row) per repo, stacked vertically; the 4 status columns live
-   inside each band (.band-cols). Mirrors the .board container's own page padding/centering. */
-.board-bands{display:flex;flex-direction:column;gap:20px;padding:16px;overflow-y:auto;flex:1}
+   inside each band (.band-cols). Mirrors the .board container's own page padding/centering. No inner
+   scroll — the whole view flows so the page (.pane) scrolls to reach lower repos. */
+.board-bands{display:flex;flex-direction:column;gap:20px;padding:16px}
 .bcol__h,.colhead,.band-head{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-2);padding:4px 6px 10px}
 .bcol__h .n,.colhead .n,.band-head .n{color:var(--ink-3);margin-left:auto;font-weight:500}
 .bcol__cards,.cards,.band-cards{display:flex;flex-direction:column;gap:8px}
@@ -1213,8 +1214,11 @@ textarea{resize:vertical;min-height:64px}
 /* board column band variant — one full-width row per repo */
 .band{display:flex;flex-direction:column;gap:8px}
 .band-head b{font-size:13px;text-transform:none;letter-spacing:normal;color:var(--ink-1)}
-/* cap each band's status column so stacked repos stay compact rows (scroll within the column) */
-.band-cards{max-height:360px;overflow-y:auto;padding-right:2px}
+/* bands flow at natural height (no per-column scroll) so the page scrolls through repos */
+.band-cards{max-height:none;overflow:visible}
+/* repo count + New button grouped on the right of the band header */
+.band-head__r{margin-left:auto;display:flex;align-items:center;gap:10px}
+.band-head__r .n{margin-left:0}
 
 /* setup progress bar */
 .setupbar{display:flex;flex-direction:column;gap:4px;margin:8px 0}
