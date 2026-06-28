@@ -366,6 +366,26 @@ test("continueMarkdownList continues `- ` and `1. ` at line end, exits on empty 
   assert.equal(el.selectionStart, "1. first\n2. ".length, "caret after new ordered prefix");
 });
 
+// Unit test for md (web/core.js): local-first attachments are served from root-relative
+// /attach/<id> URLs, so the inline image/link renderer must accept them (not only http(s)),
+// otherwise pasted images stay as raw `![…](/attach/…)` text in comments (issue #87).
+test("md renders root-relative /attach image and link URLs", async () => {
+  const vendorUrl = pathToFileURL(join(HERE, "..", "web", "vendor", "standalone.mjs")).href;
+  const tmpDir = mkdtempSync(join(tmpdir(), "dacore-mdimg-"));
+  const src = readFileSync(join(HERE, "..", "web", "core.js"), "utf8").split("/web/vendor/standalone.mjs").join(vendorUrl);
+  writeFileSync(join(tmpDir, "core.js"), src);
+  const { md } = await import(pathToFileURL(join(tmpDir, "core.js")).href);
+
+  const img = md("![image 1](/attach/5674948b82ae40d0b30e)");
+  assert.match(img, /<img alt="image 1" src="\/attach\/5674948b82ae40d0b30e">/, "relative /attach image renders as <img>");
+
+  const file = md("[📎 notes.pdf](/attach/abc123)");
+  assert.match(file, /<a href="\/attach\/abc123"[^>]*>📎 notes.pdf<\/a>/, "relative /attach link renders as <a>");
+
+  // http(s) URLs still work.
+  assert.match(md("![x](https://e.com/a.png)"), /<img alt="x" src="https:\/\/e.com\/a.png">/, "absolute image still renders");
+});
+
 // Unit tests for getSetupProgress (web/core.js): derives the real clone/setup % from the live
 // activity stream. The backend streams `📥 cloning <repo>… NN%` (real git progress) and `🧭 …`
 // indexing lines; any later agent tool/text/start event ends the setup phase.
