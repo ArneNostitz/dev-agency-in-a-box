@@ -634,19 +634,33 @@ const ROLE_PINS = [
   { value: "@test", label: "Test", avatar: "tester", hint: "single", hintCls: "b-role" },
 ];
 const WF_AVATAR = { "full-build": "developer", "quick-fix": "developer", "plan-only": "planner", "review-only": "reviewer" };
+// Which canonical role each static pin stands for — so a pin is hidden when an editable agentDef
+// already covers that role (the def is richer: persona, model, avatar). @split has no default def.
+const PIN_ROLE = { "@plan": "planner", "@split": "decomposer", "@arch": "architect", "@review": "reviewer", "@test": "tester" };
 // 🎲 Dealer's choice — hand the issue to the dispatcher, which picks the agent/workflow on start.
 // Sentinel handle "@auto"; the backend rolls the route once (see src/agents/dealer.ts).
 export const DEALER_OPTION = { value: "@auto", label: "Dealer’s choice", hint: "auto-route", hintCls: "b-wf", icon: "shuffle" };
 function customAgentOptions(agentDefs) {
   return (agentDefs || []).map((d) => ({ value: d.handle || ("@" + d.name), label: d.name, avatar: d.name, avatarSrc: d.avatar || "", hint: "single", hintCls: "b-role" }));
 }
+// Static role pins MINUS any whose role/handle is already an editable agentDef (avoids the
+// Plan↔planner, Architect↔architect, Review↔reviewer, Test↔tester duplicates).
+function rolePins(agentDefs) {
+  const defs = agentDefs || [];
+  const names = new Set(defs.map((d) => (d.name || "").toLowerCase()));
+  const handles = new Set(defs.map((d) => (d.handle || ("@" + d.name)).toLowerCase()));
+  return ROLE_PINS.filter((p) => {
+    const role = PIN_ROLE[p.value];
+    return !(role && names.has(role)) && !handles.has(p.value.toLowerCase());
+  });
+}
 export function agentOptions(agentDefs, workflows) {
   const wf = (workflows || []).filter((w) => w.trigger).map((w) => ({ value: w.trigger, label: w.name, avatar: WF_AVATAR[w.id] || "developer", hint: "workflow", hintCls: "b-wf" }));
-  return [DEALER_OPTION].concat(wf).concat(ROLE_PINS).concat(customAgentOptions(agentDefs));
+  return [DEALER_OPTION].concat(wf).concat(rolePins(agentDefs)).concat(customAgentOptions(agentDefs));
 }
 // AGENTS ONLY — role pins + defined agents, no workflows. Used by the reply composer.
 export function agentOnlyOptions(agentDefs) {
-  return ROLE_PINS.concat(customAgentOptions(agentDefs));
+  return rolePins(agentDefs).concat(customAgentOptions(agentDefs));
 }
 // Just the workflows, for the per-issue workflow picker + the toolbar "Run workflow" menu.
 export function workflowOptions(workflows) {
