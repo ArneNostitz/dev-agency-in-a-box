@@ -797,7 +797,7 @@ textarea{resize:vertical;min-height:64px}
 .mdarea-preview code{background:var(--surface-2);padding:1px 5px;border-radius:5px;font-size:.9em;font-family:ui-monospace,Menlo,monospace}
 .mdarea-preview strong{font-weight:700}
 .mdarea-preview img{max-width:100%;border-radius:8px}
-.mdarea textarea{position:relative;z-index:1;background:transparent;color:transparent!important;caret-color:var(--ink)}
+.mdarea textarea{position:relative;z-index:1;background:transparent;color:transparent!important;caret-color:var(--ink);padding:0;border:0;font-size:14.5px;line-height:1.5;letter-spacing:normal}
 .mdarea textarea::selection{background:var(--accent-weak)}
 .mdarea textarea::placeholder{color:var(--ink-3)}
 .autorow{display:flex;gap:8px;align-items:center;flex-wrap:wrap}

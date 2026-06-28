@@ -532,8 +532,11 @@ function RunApp({ repo, number, appInfo, issue, done }) {
 // the server's resolveAssignment (built-in handle → role name; custom agent → handle without @), all
 // lowercased. Deduped so a role used in two steps shows one picker (the store is per-agent, not per-step).
 const STEP_ROLE_KEY = { "@dev": "developer", "@plan": "planner", "@arch": "architect", "@review": "reviewer", "@test": "tester", "@split": "decomposer" };
-function stepModelTargets(wf, agentDefs) {
+const shortRef = (ref) => { if (!ref) return ""; const r = String(ref); const i = r.indexOf("/"); return i >= 0 ? r.slice(i + 1) : r; };
+function stepModelTargets(wf, agentDefs, data) {
   const seen = new Set(); const out = [];
+  const rm = (data && data.roleModels) || {};
+  const g = data && data.globalModel;
   for (const s of (wf && wf.steps || [])) {
     const handle = (s.agent || "").toLowerCase();
     if (!handle) continue;
@@ -541,7 +544,10 @@ function stepModelTargets(wf, agentDefs) {
     const def = builtin ? null : (agentDefs || []).find((d) => (d.handle || ("@" + d.name)).toLowerCase() === handle || d.name.toLowerCase() === handle.replace(/^@/, ""));
     const key = (builtin || (def ? (def.handle || ("@" + def.name)).replace(/^@/, "") : handle.replace(/^@/, ""))).toLowerCase();
     if (seen.has(key)) continue; seen.add(key);
-    out.push({ key, label: def ? def.name : (s.agent || handle) });
+    // The model this step ALREADY resolves to absent a per-issue override — mirrors the server's
+    // resolveAssignment priority, best-effort: step.model → agent's model → role model → global.
+    const dflt = shortRef(s.model) || shortRef(def && def.model) || (rm[key] && rm[key].model) || (g && g.model) || "";
+    out.push({ key, label: def ? def.name : (s.agent || handle), dflt });
   }
   return out;
 }
@@ -557,25 +563,28 @@ export function Composer({ repos, repo, setRepo, onClose, onCreate, data }) {
   const [atts, setAtts] = useState([]);
   const providers = data?.providers || [];
   const modelOpts = providers.flatMap((p) => (p.models || []).map((m) => ({ providerId: p.id, model: m, label: p.name + " · " + m, short: m, provider: p.name })));
-  const [model, setModel] = useState(
-    data?.globalModel ? data.globalModel.providerId + "/" + data.globalModel.model : ""
-  );
+  // Issue model: "" = default (resolves per agent's own setting), "@individual" = per-agent pickers,
+  // else a concrete providerId/model that overrides the WHOLE issue. Default is "" so the picker reads
+  // "Default" (not a pinned provider) — each step then uses its own configured model.
+  const [model, setModel] = useState("");
   // Per-step model overrides when a WORKFLOW is selected — keyed by the step's resolution key
   // (built-in role name, or a custom agent's handle without @), matching resolveAssignment on the server.
   const selWf = (role || "").startsWith("@") ? (data && data.workflows || []).find((w) => w.trigger === role) : null;
-  const wfSteps = selWf ? stepModelTargets(selWf, data && data.agentDefs) : [];
+  const wfSteps = selWf ? stepModelTargets(selWf, data && data.agentDefs, data) : [];
+  const individual = model === "@individual";
   const [stepModels, setStepModels] = useState({});
   const taRef = useRef(null);
   function submit(start) {
     if (!repo || !title.trim()) { toast("Repo + title needed"); return; }
+    // A concrete whole-issue model wins; "Default"/"Individual" leave it unset (per-agent settings apply).
     let modelOverride = null;
-    if (model) {
+    if (model && !individual) {
       const [providerId, mName] = model.split("/");
       modelOverride = { providerId, model: mName };
     }
-    // Collect the per-step picks for THIS workflow only (dedup by key); empty → no override.
+    // Per-agent picks only when "Individual" is chosen; collect for THIS workflow's steps (dedup by key).
     const agentModels = {};
-    for (const s of wfSteps) { const v = stepModels[s.key]; if (v) agentModels[s.key] = v; }
+    if (individual) for (const s of wfSteps) { const v = stepModels[s.key]; if (v) agentModels[s.key] = v; }
     onCreate(repo, role, title.trim(), body.trim(), start, atts.map((a) => ({ dataUrl: a.d, name: a.name, refId: a.refId })), modelOverride, Object.keys(agentModels).length ? agentModels : null);
     try { localStorage.removeItem(ndraftKey); } catch (e) {}
   }
@@ -614,20 +623,24 @@ export function Composer({ repos, repo, setRepo, onClose, onCreate, data }) {
       <${Select} value=${repo || ""} options=${repos.map((r) => ({ value: r, label: r.split("/").pop() }))} onChange=${setRepo}/>
       <${Select} value=${role} options=${agentOptions(data && data.agentDefs, data && data.workflows)} onChange=${setRole}/>
       ${modelOpts.length ? html`<${Select} value=${model} btnClass="iconbtn-sm" onChange=${setModel}
-        options=${[{ value: "", label: "Default model", hint: defaultModelLabel(data), icon: "sparkles" }].concat(modelOpts.map((o) => ({ value: o.providerId + "/" + o.model, label: o.short, logo: o.provider })))}
+        options=${[{ value: "", label: "Default model", hint: defaultModelLabel(data), icon: "sparkles" }]
+          .concat(selWf ? [{ value: "@individual", label: "Individual per agent", hint: "set each step", icon: "users" }] : [])
+          .concat(modelOpts.map((o) => ({ value: o.providerId + "/" + o.model, label: o.short, logo: o.provider })))}
         trigger=${(cur) => (cur && cur.logo)
           ? html`<span class="tip" data-tip=${cur.label} style="display:inline-flex"><${ProviderLogo} name=${cur.logo} size=${16}/></span>`
+          : (cur && cur.icon === "users")
+          ? html`<span class="tip" data-tip="Individual model per agent" style="display:inline-flex"><${Icon} name="users" size=${16}/></span>`
           : html`<span class="tip" data-tip=${"Default model · " + defaultModelLabel(data)} style="display:inline-flex"><${Icon} name="sparkles" size=${16}/></span>`}/>` : null}
     </div>
-    ${wfSteps.length && modelOpts.length ? html`<div class="setgrp" style="margin-bottom:10px">
-      <div class="muted" style="font-size:12px;margin-bottom:6px">Per-step model for this workflow (optional — blank uses the default)</div>
+    ${individual && wfSteps.length && modelOpts.length ? html`<div class="setgrp" style="margin-bottom:10px">
+      <div class="muted" style="font-size:12px;margin-bottom:6px">Model per step — blank keeps each agent’s configured model.</div>
       ${wfSteps.map((s) => html`<div key=${s.key} style="display:flex;align-items:center;gap:8px;margin-bottom:5px">
         <span style="min-width:96px;font-size:13px">${s.label}</span>
-        <${Select} value=${stepModels[s.key] || ""} btnClass="iconbtn-sm" onChange=${(v) => setStepModels((m) => Object.assign({}, m, { [s.key]: v }))}
-          options=${[{ value: "", label: "Default model", hint: defaultModelLabel(data), icon: "sparkles" }].concat(modelOpts.map((o) => ({ value: o.providerId + "/" + o.model, label: o.short, logo: o.provider })))}
+        <${Select} value=${stepModels[s.key] || ""} menuAlign="left" btnClass="iconbtn" onChange=${(v) => setStepModels((m) => Object.assign({}, m, { [s.key]: v }))}
+          options=${[{ value: "", label: "Default" + (s.dflt ? " · " + s.dflt : ""), hint: s.dflt || defaultModelLabel(data), icon: "sparkles" }].concat(modelOpts.map((o) => ({ value: o.providerId + "/" + o.model, label: o.short, short: o.short, logo: o.provider })))}
           trigger=${(cur) => (cur && cur.logo)
-            ? html`<span class="tip" data-tip=${cur.label} style="display:inline-flex"><${ProviderLogo} name=${cur.logo} size=${16}/> <span style="font-size:12px">${cur.label}</span></span>`
-            : html`<span class="tip" data-tip="Default model" style="display:inline-flex;align-items:center;gap:4px"><${Icon} name="sparkles" size=${14}/> <span style="font-size:12px;color:var(--muted)">Default</span></span>`}/>
+            ? html`<span class="tip" data-tip=${cur.label} style="display:inline-flex;align-items:center;gap:5px"><${ProviderLogo} name=${cur.logo} size=${15}/> <span style="font-size:12.5px">${cur.short || cur.label}</span></span>`
+            : html`<span class="tip" data-tip=${"Uses this agent’s configured model" + (s.dflt ? " · " + s.dflt : "")} style="display:inline-flex;align-items:center;gap:5px"><${Icon} name="sparkles" size=${14}/> <span style="font-size:12.5px;color:var(--ink-3)">${s.dflt || "Default"}</span></span>`}/>
       </div>`)}
     </div>` : null}
     <input value=${title} onInput=${(e) => setTitle(e.target.value)} placeholder="What should it do?" style="margin-bottom:10px"/>

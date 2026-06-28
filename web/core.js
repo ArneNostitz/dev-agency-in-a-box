@@ -623,30 +623,30 @@ export function Modal({ title, onClose, footer, children, size }) {
 
 // Build the agent picker options: built-in workflow/role pins + chat agents + custom agents,
 // each with a persona avatar and a category badge so chat-only vs workflow vs single-role is clear.
-// Single-role pins (a workflow is the multi-step path; these run one specialist).
+// Single-agent pins (a workflow is the multi-step path; these run ONE specialist). All single
+// agents — built-in roles AND custom agents — carry the same "single" badge; the old chat/code
+// distinction was dropped (it confused more than it helped).
 const ROLE_PINS = [
-  { value: "@plan", label: "Plan", avatar: "planner", hint: "role", hintCls: "b-role" },
-  { value: "@split", label: "Split", avatar: "auditor", hint: "role", hintCls: "b-role" },
-  { value: "@arch", label: "Architect", avatar: "architect", hint: "role", hintCls: "b-role" },
-  { value: "@review", label: "Review", avatar: "reviewer", hint: "role", hintCls: "b-role" },
-  { value: "@test", label: "Test", avatar: "tester", hint: "role", hintCls: "b-role" },
+  { value: "@plan", label: "Plan", avatar: "planner", hint: "single", hintCls: "b-role" },
+  { value: "@split", label: "Split", avatar: "auditor", hint: "single", hintCls: "b-role" },
+  { value: "@arch", label: "Architect", avatar: "architect", hint: "single", hintCls: "b-role" },
+  { value: "@review", label: "Review", avatar: "reviewer", hint: "single", hintCls: "b-role" },
+  { value: "@test", label: "Test", avatar: "tester", hint: "single", hintCls: "b-role" },
 ];
 const WF_AVATAR = { "full-build": "developer", "quick-fix": "developer", "plan-only": "planner", "review-only": "reviewer" };
 // 🎲 Dealer's choice — hand the issue to the dispatcher, which picks the agent/workflow on start.
 // Sentinel handle "@auto"; the backend rolls the route once (see src/agents/dealer.ts).
 export const DEALER_OPTION = { value: "@auto", label: "Dealer’s choice", hint: "auto-route", hintCls: "b-wf", icon: "shuffle" };
+function customAgentOptions(agentDefs) {
+  return (agentDefs || []).map((d) => ({ value: d.handle || ("@" + d.name), label: d.name, avatar: d.name, avatarSrc: d.avatar || "", hint: "single", hintCls: "b-role" }));
+}
 export function agentOptions(agentDefs, workflows) {
   const wf = (workflows || []).filter((w) => w.trigger).map((w) => ({ value: w.trigger, label: w.name, avatar: WF_AVATAR[w.id] || "developer", hint: "workflow", hintCls: "b-wf" }));
-  const defs = agentDefs || [];
-  const agents = defs.map((d) => ({ value: d.handle || ("@" + d.name), label: d.name, avatar: d.name, avatarSrc: d.avatar || "", hint: d.mode === "chat" ? "chat" : "code", hintCls: d.mode === "chat" ? "b-chat" : "b-code" }));
-  return [DEALER_OPTION].concat(wf).concat(ROLE_PINS).concat(agents);
+  return [DEALER_OPTION].concat(wf).concat(ROLE_PINS).concat(customAgentOptions(agentDefs));
 }
-// AGENTS ONLY — role pins + defined agents, no workflows. Used by the reply composer (chat = talk to
-// a teammate; starting a workflow is a separate explicit action in the detail toolbar).
+// AGENTS ONLY — role pins + defined agents, no workflows. Used by the reply composer.
 export function agentOnlyOptions(agentDefs) {
-  const defs = agentDefs || [];
-  const agents = defs.map((d) => ({ value: d.handle || ("@" + d.name), label: d.name, avatar: d.name, avatarSrc: d.avatar || "", hint: d.mode === "chat" ? "chat" : "code", hintCls: d.mode === "chat" ? "b-chat" : "b-code" }));
-  return ROLE_PINS.concat(agents);
+  return ROLE_PINS.concat(customAgentOptions(agentDefs));
 }
 // Just the workflows, for the per-issue workflow picker + the toolbar "Run workflow" menu.
 export function workflowOptions(workflows) {
