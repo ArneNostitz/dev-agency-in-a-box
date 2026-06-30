@@ -7,8 +7,13 @@
 import { listUsers, getUserSecret } from "./store.js";
 import { sStr } from "./settings.js";
 
-/** Public OAuth App client id for the device flow. Empty = set it once in Settings → GitHub. */
-export const DEFAULT_GITHUB_OAUTH_CLIENT_ID = "Ov23liNogL9IoN7aB25e";
+/**
+ * No client id is shipped: each deployment registers its OWN GitHub OAuth App and sets the id in
+ * Settings → GitHub (or via GITHUB_OAUTH_CLIENT_ID). This is what makes the GitHub "Authorize"
+ * screen show the operator's OWN app/owner name instead of someone else's — and keeps every
+ * instance on its own OAuth App, rate limits and control.
+ */
+export const DEFAULT_GITHUB_OAUTH_CLIENT_ID = "";
 
 function agencyAdminId(): number | null {
   try {

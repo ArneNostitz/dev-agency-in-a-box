@@ -205,10 +205,19 @@ export function GitHubConnect({ github, reload }) {
   </div>`;
   return html`<div>
     <div class="sec">GitHub</div>
-    <div class="muted" style="font-size:12px;margin-bottom:8px">Connect once — replaces the bot + owner tokens. You just click Authorize on GitHub.</div>
-    ${needClientId ? html`<label>OAuth App client ID</label>
-      <input placeholder="Iv1.… (your GitHub OAuth App)" value=${clientId} onInput=${(e) => setClientId(e.target.value)}/>
-      <a class="oblink" href="https://github.com/settings/applications/new" target="_blank" rel="noopener">Register an OAuth App — enable “Device Flow” <${Icon} name="link" size=${14}/></a>` : null}
+    <div class="muted" style="font-size:12px;margin-bottom:8px">Connect once — replaces the bot + owner tokens. This instance uses <b>your own</b> GitHub OAuth App, so the GitHub screen shows <b>your</b> app name, not anyone else’s.</div>
+    ${needClientId ? html`<div class="cmdbox" style="flex-direction:column;align-items:flex-start;gap:6px;margin-bottom:10px">
+      <div style="font-weight:600">First time? Create your GitHub OAuth App (≈1 min)</div>
+      <div class="muted" style="font-size:11.5px">The <b>Application name</b> you pick is what users see on the Authorize screen — name it whatever you want (e.g. “Dev in a Box”).</div>
+      <ol style="margin:4px 0 0;padding-left:18px;font-size:12px;line-height:1.6">
+        <li><a class="oblink" href="https://github.com/settings/applications/new" target="_blank" rel="noopener">Open the GitHub form <${Icon} name="link" size=${13}/></a> (register under an <b>org</b> to show a brand instead of your username)</li>
+        <li>Homepage URL: this dashboard’s URL. Callback URL: same (unused by device flow, but required)</li>
+        <li>Create it, then on the app page tick <b>“Enable Device Flow”</b> and Save</li>
+        <li>Copy the <b>Client ID</b> and paste it below</li>
+      </ol>
+    </div>
+    <label>OAuth App client ID</label>
+      <input placeholder="Iv1.… or Ov23… (your own GitHub OAuth App)" value=${clientId} onInput=${(e) => setClientId(e.target.value)}/>` : null}
     ${flow ? html`<div class="cmdbox" style="flex-direction:column;align-items:flex-start;gap:6px">
       <div>1 · Open <a href=${flow.verification_uri} target="_blank" rel="noopener">${flow.verification_uri}</a></div>
       <div>2 · Enter code <code style="font-size:16px;letter-spacing:2px">${flow.user_code}</code></div>
