@@ -249,10 +249,32 @@ async function processIssue(cfg: Config, repo: string, issue: Issue, opts: { fre
     await addLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
     for (const l of AWAITING_LABELS) await removeLabel(repo, issue.number, l).catch(() => {});
     recordIssueStatus(repo, issue.number, withStatus("working"), { title: issue.title, role: chatDef.name });
+    const chatThread = await commentThread(repo, issue.number);
+    const runChat = () => runChatAgent(chatDef, repo, issue.number, chatThread);
     try {
-      await runChatAgent(chatDef, repo, issue.number, await commentThread(repo, issue.number));
+      await runChat();
     } catch (err) {
-      await commentOnIssue(repo, issue.number, `❌ ${chatDef.name} failed: ${(err as Error).message.slice(0, 200)}`).catch(() => {});
+      // Same rate-limit handling as the coding pipeline: auto-switch to the fallback model (when
+      // enabled) and retry once; otherwise park for auto-resume. Chat previously ignored this, so a
+      // usage-limited chat agent just posted "failed" instead of falling back like the other roles.
+      const msg = (err as Error).message ?? String(err);
+      const rl = await maybeParkRateLimited(repo, issue.number, msg);
+      if (rl === "switch") {
+        try {
+          await runChat();
+        } catch (err2) {
+          const msg2 = (err2 as Error).message ?? String(err2);
+          if (!(await maybeParkRateLimited(repo, issue.number, msg2))) {
+            await commentOnIssue(repo, issue.number, `❌ ${chatDef.name} failed: ${msg2.slice(0, 200)}`).catch(() => {});
+          }
+        }
+      } else if (!rl) {
+        await commentOnIssue(repo, issue.number, `❌ ${chatDef.name} failed: ${msg.slice(0, 200)}`).catch(() => {});
+      }
+      // rl === true → parked for auto-resume; no failure comment.
+    } finally {
+      clearIssueModelOverride(repo, issue.number); // one-shot chatbox override: consume it after the run
+      clearSessionFallback(); // one-shot auto-switch: revert to the user's permanent Settings
     }
     // Interactive: park as awaiting so the next human reply re-engages (resumes the session).
     await removeLabel(repo, issue.number, IN_PROGRESS).catch(() => {});

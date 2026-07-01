@@ -9,18 +9,61 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentDef } from "../store.js";
-import { getGlobalModel, getProviders, setSession, getSession, recordRun, recordRunStep, skillsPrompt } from "../store.js";
+import { getGlobalModel, getProviders, getIssueModelOverride, getSessionFallback, setSession, getSession, recordRun, recordRunStep, skillsPrompt } from "../store.js";
 import { claudeToken, anthropicApiKey, ghBotToken } from "../creds.js";
 import { pushActivity, setActive, clearActive } from "../activity.js";
 import { commentOnIssue } from "../github.js";
 import { registerRun } from "../abort.js";
 import { recallWiring, RECALL_PROMPT } from "./recall.js";
+import { providerAuth } from "./provider-auth.js";
 import { MODELS, canonicalModel } from "./roles.js";
 
-/** Resolve model + subprocess env for a chat agent (global provider route, else Claude default). */
-export function resolveChatExec(modelOverride: string): { model: string; env: Record<string, string> } {
+/** Stamp the Claude subscription token (or Anthropic API key) + clear any third-party endpoint env. */
+function applyClaudeCreds(env: Record<string, string>): void {
+  const ct = claudeToken();
+  if (ct) { env.CLAUDE_CODE_OAUTH_TOKEN = ct; delete env.ANTHROPIC_API_KEY; delete env.ANTHROPIC_AUTH_TOKEN; delete env.ANTHROPIC_BASE_URL; }
+  else { const ak = anthropicApiKey(); if (ak) env.ANTHROPIC_API_KEY = ak; delete env.CLAUDE_CODE_OAUTH_TOKEN; delete env.ANTHROPIC_AUTH_TOKEN; delete env.ANTHROPIC_BASE_URL; }
+}
+/** Forward the agency bot token so the chat agent can talk to GitHub if its tools need to. */
+function applyBotToken(env: Record<string, string>): void {
+  const bot = ghBotToken();
+  if (bot) { env.GH_TOKEN = bot; env.GITHUB_TOKEN = bot; }
+}
+
+/**
+ * Resolve model + subprocess env for a chat agent.
+ *
+ * `pick` — a resolved {providerId, model} — is the model the run should actually use: the per-issue
+ * chatbox override, the session auto-switch fallback, or the global Settings model. When present it
+ * routes this run at THAT provider (its own key+endpoint for a third-party one, or the Claude
+ * subscription for a Claude-native pick), so chat respects Settings instead of always falling back to
+ * the subscription default. The env building mirrors roleAgent.ts#resolveRoute. Without a pick — the
+ * orchestrator/dealer/analyzer global callers, or nothing configured — it keeps the original
+ * global-provider-or-Claude-default behaviour.
+ */
+export function resolveChatExec(
+  modelOverride: string,
+  pick?: { providerId: string; model: string } | null,
+): { model: string; env: Record<string, string> } {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) if (typeof v === "string") env[k] = v;
+
+  // A deliberate model pick routes at that specific provider — honoring the model chosen in the chat
+  // or Settings rather than the global default.
+  if (pick?.providerId && pick.model) {
+    const p = getProviders().find((x) => x.id === pick.providerId) || null;
+    if (providerAuth(p, Boolean(claudeToken() || anthropicApiKey())) === "apiKey" && p) {
+      delete env.CLAUDE_CODE_OAUTH_TOKEN;
+      env.ANTHROPIC_BASE_URL = p.baseUrl;
+      env.ANTHROPIC_AUTH_TOKEN = p.apiKey;
+      env.ANTHROPIC_API_KEY = p.apiKey;
+    } else {
+      applyClaudeCreds(env); // Claude-native pick (or unmatched) → subscription on the default endpoint.
+    }
+    applyBotToken(env);
+    return { model: canonicalModel(pick.model), env };
+  }
+
   const g = getGlobalModel();
   const provider = g?.providerId ? getProviders().find((p) => p.id === g.providerId) : null;
   if (provider?.baseUrl && provider.apiKey && !modelOverride) {
@@ -31,12 +74,8 @@ export function resolveChatExec(modelOverride: string): { model: string; env: Re
     return { model: canonicalModel(modelOverride || g!.model), env };
   }
   // Default: Claude subscription / API key.
-  const ct = claudeToken();
-  const ak = ct ? "" : anthropicApiKey();
-  if (ct) { env.CLAUDE_CODE_OAUTH_TOKEN = ct; delete env.ANTHROPIC_API_KEY; delete env.ANTHROPIC_AUTH_TOKEN; delete env.ANTHROPIC_BASE_URL; }
-  else if (ak) { env.ANTHROPIC_API_KEY = ak; delete env.CLAUDE_CODE_OAUTH_TOKEN; delete env.ANTHROPIC_AUTH_TOKEN; delete env.ANTHROPIC_BASE_URL; }
-  const bot = ghBotToken();
-  if (bot) { env.GH_TOKEN = bot; env.GITHUB_TOKEN = bot; }
+  applyClaudeCreds(env);
+  applyBotToken(env);
   return { model: canonicalModel(modelOverride || MODELS.sonnet), env };
 }
 
@@ -45,7 +84,11 @@ export function resolveChatExec(modelOverride: string): { model: string; env: Re
  * (so multi-turn interactivity flows through the normal comment → re-engage loop).
  */
 export async function runChatAgent(def: AgentDef, repo: string, number: number, thread: string): Promise<void> {
-  const { model, env } = resolveChatExec(def.model);
+  // Respect Settings + the chatbox pick (mirrors the role routing): the per-issue override chosen in
+  // the chat → the session auto-switch fallback (rate-limit offload) → the global Settings model → the
+  // agent's configured default. Without this chat ignored Settings and always ran on the subscription.
+  const pick = getIssueModelOverride(repo, number) ?? getSessionFallback() ?? getGlobalModel();
+  const { model, env } = resolveChatExec(def.model, pick);
   const cfgDir = mkdtempSync(join(tmpdir(), "chat-cfg-"));
   const workdir = mkdtempSync(join(tmpdir(), "chat-wd-"));
   env.CLAUDE_CONFIG_DIR = cfgDir;
