@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { mentionsHandle, AGENCY_MARKER, buildNativeSubIssueData } from "../dist/github.js";
+import { AGENCY_MARKER, buildNativeSubIssueData } from "../dist/github.js";
 import { roleForText, loadHandleRoleMap, modelFor, ROLES, MODELS } from "../dist/agents/roles.js";
 import { parsePlannerDecision, isApproval, parseSubIssues } from "../dist/pipeline.js";
 import { parseControlCommand } from "../dist/commands.js";
@@ -13,6 +13,8 @@ import { parseLessons } from "../dist/reflect.js";
 import { decideThreadAction } from "../dist/route.js";
 import { isNoOpComment } from "../dist/github.js";
 import { renderEpicTracker, childStatus } from "../dist/epics.js";
+import { recordIssueStatus } from "../dist/store.js";
+import { withStatus, setBlocked } from "../dist/state.js";
 import { parseRateLimit, nextWindowReset, parseResetClock } from "../dist/ratelimit.js";
 import { pickWebDevScript, isTauriPackage, parseDevPort, parseTunnelUrl, buildLocalCommand } from "../dist/apprun.js";
 import { registerRun, stopRuns, hasActiveRun } from "../dist/abort.js";
@@ -55,15 +57,6 @@ test("abort registry: a run releasing leaves others intact", () => {
   assert.equal(hasActiveRun(repo, n), true, "b still active");
   assert.equal(stopRuns(repo, n), 1, "only b remains to abort");
   assert.equal(b.controller.signal.aborted, true);
-});
-
-test("mentionsHandle matches whole handles only", () => {
-  const H = ["@dev", "@agency"];
-  assert.equal(mentionsHandle("@dev please fix", H), true);
-  assert.equal(mentionsHandle("ping @agency now", H), true);
-  assert.equal(mentionsHandle("contact foo@developer about it", H), false); // not @dev
-  assert.equal(mentionsHandle("no mention here", H), false);
-  assert.equal(mentionsHandle("DEV without at-sign", H), false);
 });
 
 test("roleForText picks the first mentioned handle's role", () => {
@@ -193,11 +186,10 @@ test("decideThreadAction: once owned, a new comment re-engages (no re-tag)", () 
   const base = {
     ignored: false, inProgress: false, closed: false, ready: false, needsAttention: false,
     awaiting: false, owned: false, newHumanComment: false, approvedReaction: false,
-    hasOpenPr: false, triggerMatch: false,
+    hasOpenPr: false,
   };
-  // fresh untouched issue: needs the trigger
-  assert.equal(decideThreadAction({ ...base, triggerMatch: true }), "fresh");
-  assert.equal(decideThreadAction({ ...base, triggerMatch: false }), "skip");
+  // fresh, never-triaged issue: nothing auto-starts it (it sits in Inbox instead — #103)
+  assert.equal(decideThreadAction({ ...base }), "skip");
   // owned + new comment, no PR, open -> re-run pipeline (no tag needed)
   assert.equal(decideThreadAction({ ...base, owned: true, newHumanComment: true }), "fresh");
   // owned + new comment on a CLOSED/merged thread -> follow-up build
@@ -235,12 +227,16 @@ test("epic tracker renders a progress checklist", () => {
   assert.ok(t.includes("- [ ] #13"));
 });
 
-test("childStatus maps labels/closed to a human status", () => {
-  assert.equal(childStatus({ closed: true, labels: [] }), "done");
-  assert.equal(childStatus({ closed: false, labels: ["agency:ready"] }), "in review");
-  assert.equal(childStatus({ closed: false, labels: ["agency:in-progress"] }), "working");
-  assert.equal(childStatus({ closed: false, labels: ["agency:needs-attention"] }), "blocked");
-  assert.equal(childStatus({ closed: false, labels: [] }), "open");
+test("childStatus maps DB status/closed to a human status", () => {
+  const repo = "o/childstatus";
+  assert.equal(childStatus(repo, { number: 1, closed: true }), "done");
+  recordIssueStatus(repo, 2, withStatus("review"));
+  assert.equal(childStatus(repo, { number: 2, closed: false }), "in review");
+  recordIssueStatus(repo, 3, withStatus("working"));
+  assert.equal(childStatus(repo, { number: 3, closed: false }), "working");
+  recordIssueStatus(repo, 4, setBlocked(withStatus("working"), "needsAttention"));
+  assert.equal(childStatus(repo, { number: 4, closed: false }), "blocked");
+  assert.equal(childStatus(repo, { number: 999, closed: false }), "open");
 });
 
 test("parseRateLimit detects usage walls and reads a reset time", () => {

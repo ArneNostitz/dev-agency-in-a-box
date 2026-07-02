@@ -12,8 +12,6 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig, type Config } from "./config.js";
 import {
-  addLabel,
-  removeLabel,
   commentOnIssue,
   cloneRepo,
   commentThread,
@@ -30,7 +28,6 @@ import {
   findPrForBranch,
   ensureDraftPr,
   createIssue,
-  listQueuedIssues,
   approveLastProposal,
   commentOnPr,
   prHealth,
@@ -41,11 +38,7 @@ import {
   mergePrForBranch,
   prMerged,
   closeIssue,
-  mentionsHandle,
   canTrigger,
-  issueAuthorAssoc,
-  AWAITING_LABELS,
-  AWAITING_LABEL,
   type Issue,
 } from "./github.js";
 import { seedAdmin, resetAdminPassword } from "./auth.js";
@@ -56,7 +49,7 @@ import { reconcileEpics } from "./epics.js";
 import { indexRepo } from "./gitnexus.js";
 import { pushActivity } from "./activity.js";
 import { loadHandleRoleMap, roleForText, ALL_ROLES, type RoleName } from "./agents/roles.js";
-import { resolveWorkflow, workflowLeadRole, workflowTriggers } from "./workflow.js";
+import { resolveWorkflow, workflowLeadRole } from "./workflow.js";
 import { getWorkflow, getDefaultWorkflowId } from "./db/workflows.js";
 import { getIssueWorkflow, setIssueWorkflow } from "./db/providers.js";
 import { pickDealerDispatch } from "./agents/dealer.js";
@@ -114,7 +107,7 @@ import { pruneEphemeral } from "./db/connection.js";
 import { dispatch, drain, stop as stopPool, poolStatus, inFlightKeys } from "./pool.js";
 import { loadBudget, overBudget, effectiveLimits } from "./budget.js";
 import { maybeSelfImprove } from "./reflect.js";
-import { parseLegacyStatus } from "./state.js";
+import { parseLegacyStatus, withStatus, setBlocked, isWaitingOnHuman } from "./state.js";
 import {
   handleControlCommands,
   handleMergeCommands,
@@ -123,14 +116,6 @@ import {
   recoverOrphans,
 } from "./commands.js";
 
-import {
-  LABEL_IN_PROGRESS as IN_PROGRESS,
-  LABEL_READY as READY,
-  LABEL_NEEDS_ATTENTION as NEEDS_ATTENTION,
-  LABEL_RATE_LIMITED as RATE_LIMITED,
-  withStatus,
-  setBlocked,
-} from "./state.js";
 const MAX_AUTOFIX = 2;
 
 // ---- usage-limit handling (pure script — works with zero tokens) ----
@@ -202,8 +187,6 @@ async function maybeParkRateLimited(repo: string, number: number, msg: string, i
   } else {
     setRateLimited(repo, number, new Date(resetAt).toISOString());
     recordIssueStatus(repo, number, setBlocked(withStatus("working"), "rateLimited"));
-    await removeLabel(repo, number, IN_PROGRESS).catch(() => {});
-    await addLabel(repo, number, RATE_LIMITED).catch(() => {});
     await commentOnIssue(repo, number, `⏳ Hit the Claude usage limit. I'll **auto-resume** this after the window resets (~${when}) — no action needed.`).catch(() => {});
   }
   console.log(`[agency] rate-limited ${repo} #${number}; auto-resume after ${new Date(resetAt).toISOString()}`);
@@ -246,8 +229,6 @@ async function processIssue(cfg: Config, repo: string, issue: Issue, opts: { fre
   const chatDef = chatAgentForText(`${issue.title}\n${issue.body}`);
   if (chatDef) {
     void cfg;
-    await addLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
-    for (const l of AWAITING_LABELS) await removeLabel(repo, issue.number, l).catch(() => {});
     recordIssueStatus(repo, issue.number, withStatus("working"), { title: issue.title, role: chatDef.name });
     const chatThread = await commentThread(repo, issue.number);
     const runChat = () => runChatAgent(chatDef, repo, issue.number, chatThread);
@@ -277,13 +258,11 @@ async function processIssue(cfg: Config, repo: string, issue: Issue, opts: { fre
       clearSessionFallback(); // one-shot auto-switch: revert to the user's permanent Settings
     }
     // Interactive: park as awaiting so the next human reply re-engages (resumes the session).
-    await removeLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
-    await addLabel(repo, issue.number, AWAITING_LABEL).catch(() => {});
     recordIssueStatus(repo, issue.number, setBlocked(withStatus("working"), "awaitingAnswer"));
     return;
   }
 
-  const resuming = issue.labels.some((l) => AWAITING_LABELS.includes(l));
+  const resuming = isWaitingOnHuman(getIssueStatus(repo, issue.number));
   // 🎲 Dealer's choice: the issue was created with no concrete agent/workflow — let a small LLM pick
   // the route ONCE on first start. A workflow pick is pinned (becomes pinnedWf below); a role pick is
   // prepended to the text roleForText reads. Either way the deterministic resolution below decides the
@@ -326,13 +305,11 @@ async function processIssue(cfg: Config, repo: string, issue: Issue, opts: { fre
   pushActivity(repo, issue.number, role, "start", "▶ starting…"); // instant feedback before the GitHub prep + clone
 
   // Budget gate: park runaway issues instead of silently burning more. Per-issue override +
-  // unlimited flag live in the DB now (ADR-0001: labels have no power); the old agency:unlimited
-  // label is no longer read here.
+  // unlimited flag live in the DB (ADR-0001/0003: no GitHub label has power here).
   const limits = effectiveLimits(repo, issue.number);
   if (!limits.unlimited) {
     const reason = overBudget(issueSpend(repo, issue.number), limits);
     if (reason) {
-      await addLabel(repo, issue.number, "agency:needs-attention");
       await commentOnIssue(
         repo,
         issue.number,
@@ -346,9 +323,6 @@ async function processIssue(cfg: Config, repo: string, issue: Issue, opts: { fre
     }
   }
 
-  await addLabel(repo, issue.number, IN_PROGRESS);
-  await removeLabel(repo, issue.number, cfg.queueLabel);
-  for (const l of AWAITING_LABELS) await removeLabel(repo, issue.number, l);
   recordIssueStatus(repo, issue.number, withStatus("working"), { title: issue.title, role });
   void acknowledge(repo, issue.number).catch(() => {}); // 👀 — fire-and-forget, never block the run
   if (!resuming) {
@@ -387,18 +361,12 @@ async function processIssue(cfg: Config, repo: string, issue: Issue, opts: { fre
         const msg2 = (err2 as Error).message ?? String(err2);
         console.error(`[agency] pipeline error after model switch ${repo} #${issue.number}:`, msg2);
         if (await maybeParkRateLimited(repo, issue.number, msg2)) return;
-        await removeLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
-        await addLabel(repo, issue.number, NEEDS_ATTENTION).catch(() => {});
-        await addLabel(repo, issue.number, "🚧 blocked").catch(() => {});
         recordIssueStatus(repo, issue.number, setBlocked(withStatus("working"), "needsAttention"));
         await commentOnIssue(repo, issue.number, `❌ Run failed even after model switch: ${msg2.slice(0, 300)} — fix and re-pin.`).catch(() => {});
       }
       return;
     }
     if (rl) return;
-    await removeLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
-    await addLabel(repo, issue.number, NEEDS_ATTENTION).catch(() => {});
-    await addLabel(repo, issue.number, "🚧 blocked").catch(() => {});
     recordIssueStatus(repo, issue.number, setBlocked(withStatus("working"), "needsAttention"));
     await commentOnIssue(repo, issue.number, `❌ Run failed: ${msg.slice(0, 300)} — fix and re-pin.`).catch(() => {});
   } finally {
@@ -501,10 +469,6 @@ async function processHealOne(
 async function processFollowUp(cfg: Config, repo: string, issue: Issue): Promise<void> {
   console.log(`[agency] ${repo} #${issue.number}: follow-up on a new comment`);
   await reopenIssue(repo, issue.number); // no-op if already open
-  await addLabel(repo, issue.number, IN_PROGRESS);
-  for (const l of [READY, NEEDS_ATTENTION, "🚧 blocked", ...AWAITING_LABELS]) {
-    await removeLabel(repo, issue.number, l);
-  }
   recordIssueStatus(repo, issue.number, withStatus("working"), { title: issue.title, role: "developer" });
   await acknowledge(repo, issue.number);
 
@@ -522,9 +486,6 @@ async function processFollowUp(cfg: Config, repo: string, issue: Issue): Promise
     const msg = (err as Error).message ?? String(err);
     console.error(`[agency] follow-up error ${repo} #${issue.number}:`, msg);
     if (await maybeParkRateLimited(repo, issue.number, msg)) return;
-    await removeLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
-    await addLabel(repo, issue.number, NEEDS_ATTENTION).catch(() => {});
-    await addLabel(repo, issue.number, "🚧 blocked").catch(() => {});
     recordIssueStatus(repo, issue.number, setBlocked(withStatus("working"), "needsAttention"));
     await commentOnIssue(repo, issue.number, `❌ Follow-up failed: ${msg.slice(0, 300)} — comment again to retry.`).catch(() => {});
   } finally {
@@ -534,8 +495,8 @@ async function processFollowUp(cfg: Config, repo: string, issue: Issue): Promise
 
 /**
  * Manual "Resume" from the dashboard: unstick an issue no matter what state it's in (orphaned
- * in-progress, parked needs-attention, blocked, or just quiet) and re-run it. Clears the agency
- * labels + any zombie active entry, then re-dispatches the pipeline.
+ * in-progress, parked needs-attention, blocked, or just quiet) and re-run it. Clears any zombie
+ * active entry, then re-dispatches the pipeline.
  */
 export async function forceResume(cfg: Config, repo: string, number: number, addressComment = false): Promise<void> {
   const issue = await getIssue(repo, number);
@@ -559,7 +520,7 @@ export async function forceResume(cfg: Config, repo: string, number: number, add
   // the Fix when the reviewer asked for changes.
   // An audit tracking issue resumes by RE-RUNNING the auditor (not the dev pipeline). This is how a
   // usage-limit-interrupted audit auto-resumes after the reset (or via the Resume button).
-  if (issue.labels.includes(AUDIT_LABEL)) {
+  if (getSetting(`audit_tracking.${repo}`) === String(number)) {
     console.log(`[agency] resume → re-run audit ${repo} #${number}`);
     return runAuditOn(cfg, repo, number);
   }
@@ -570,34 +531,28 @@ export async function forceResume(cfg: Config, repo: string, number: number, add
   if (existingPr) {
     recordPr(repo, number, existingPr.number, existingPr.url);
     const review = getReview(repo, number);
-    for (const l of [IN_PROGRESS, NEEDS_ATTENTION, "🚧 blocked", ...AWAITING_LABELS]) await removeLabel(repo, number, l).catch(() => {});
     clearActive(repo, number);
     if (review?.verdict === "changes") {
       await commentOnIssue(repo, number, `🔧 PR ${existingPr.url} is already open with requested changes — addressing the review on the existing branch (not rebuilding).`).catch(() => {});
       console.log(`[agency] resume → existing PR ${existingPr.url}, has changes → fix`);
       return forceFix(cfg, repo, number);
     }
-    await addLabel(repo, number, READY).catch(() => {});
     recordIssueStatus(repo, number, withStatus("review"));
     await commentOnIssue(repo, number, `✅ PR ${existingPr.url} is already open${review?.verdict === "approved" ? " and approved" : ""} — nothing to rebuild. Press **Merge** on the dashboard.`).catch(() => {});
-    console.log(`[agency] resume → existing PR ${existingPr.url}; routed to READY (no rerun)`);
+    console.log(`[agency] resume → existing PR ${existingPr.url}; routed to review (no rerun)`);
     return;
   }
   await reopenIssue(repo, number).catch(() => {});
-  for (const l of [IN_PROGRESS, NEEDS_ATTENTION, "🚧 blocked", ...AWAITING_LABELS]) {
-    await removeLabel(repo, number, l).catch(() => {});
-  }
   setThreadCursor(repo, number, 0); // let any prior comment count again
   clearActive(repo, number); // drop a zombie "working" entry if a run died
-  const fresh: Issue = { ...issue, labels: issue.labels.filter((l) => !l.startsWith("agency:")) };
   // If a plan already exists, skip the (Opus) planner and resume the build from the branch —
   // otherwise run the full pipeline (the planner resumes its own session if it was interrupted).
   if (lastPlan(repo, number)) {
     console.log(`[agency] resume (build) ${repo} #${number}`);
-    dispatch(`${repo}#${number}`, () => processResume(cfg, repo, fresh));
+    dispatch(`${repo}#${number}`, () => processResume(cfg, repo, issue));
   } else {
     console.log(`[agency] resume (full) ${repo} #${number}`);
-    dispatch(`${repo}#${number}`, () => processIssue(cfg, repo, fresh));
+    dispatch(`${repo}#${number}`, () => processIssue(cfg, repo, issue));
   }
 }
 
@@ -606,7 +561,6 @@ async function processResume(cfg: Config, repo: string, issue: Issue): Promise<v
   void cfg;
   clearStop(repo, issue.number); // explicit resume clears any prior Stop request
   clearHold(repo, issue.number); // resume also lifts a Hold so the workflow advances
-  await addLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
   recordIssueStatus(repo, issue.number, withStatus("working"), { title: issue.title, role: "developer" });
   await acknowledge(repo, issue.number);
   const thread = await commentThread(repo, issue.number);
@@ -627,8 +581,6 @@ async function processResume(cfg: Config, repo: string, issue: Issue): Promise<v
     const msg = (err as Error).message ?? String(err);
     console.error(`[agency] resume error ${repo} #${issue.number}:`, msg);
     if (await maybeParkRateLimited(repo, issue.number, msg)) return;
-    await removeLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
-    await addLabel(repo, issue.number, NEEDS_ATTENTION).catch(() => {});
     recordIssueStatus(repo, issue.number, setBlocked(withStatus("working"), "needsAttention"));
     await commentOnIssue(repo, issue.number, `❌ Resume failed: ${msg.slice(0, 300)} — press Resume again.`).catch(() => {});
   } finally {
@@ -647,15 +599,12 @@ export async function forceFix(cfg: Config, repo: string, number: number): Promi
   if (agentsArePaused()) {
     setRateLimited(repo, number, new Date(pausedUntil()).toISOString());
     recordIssueStatus(repo, number, setBlocked(withStatus("working"), "rateLimited"));
-    await addLabel(repo, number, RATE_LIMITED).catch(() => {});
     await commentOnIssue(repo, number, `⏳ Rate-limited — I'll run the fix automatically after the usage window resets (~${new Date(pausedUntil()).toLocaleString()}).`).catch(() => {});
     return;
   }
   const branch = `agency/issue-${number}`;
   const ms = await prMergeStatus(repo, branch).catch(() => null);
   const conflict = ms?.mergeable === "conflict";
-  for (const l of [READY, NEEDS_ATTENTION, "🚧 blocked", ...AWAITING_LABELS]) await removeLabel(repo, number, l).catch(() => {});
-  await addLabel(repo, number, IN_PROGRESS).catch(() => {});
   recordIssueStatus(repo, number, withStatus("working"));
   console.log(`[agency] fix ${repo} #${number} (conflict=${conflict})`);
   dispatch(`${repo}#${number}`, () => processFix(cfg, repo, issue, conflict));
@@ -664,7 +613,6 @@ export async function forceFix(cfg: Config, repo: string, number: number): Promi
 /** Worker: run the review-fix pipeline on the PR's existing branch. */
 async function processFix(cfg: Config, repo: string, issue: Issue, conflict: boolean): Promise<void> {
   void cfg;
-  await addLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
   recordIssueStatus(repo, issue.number, withStatus("working"), { title: issue.title, role: "developer" });
   await acknowledge(repo, issue.number).catch(() => {});
   const workdir = workdirFor(repo, `${issue.number}`);
@@ -680,8 +628,6 @@ async function processFix(cfg: Config, repo: string, issue: Issue, conflict: boo
     const msg = (err as Error).message ?? String(err);
     console.error(`[agency] fix error ${repo} #${issue.number}:`, msg);
     if (await maybeParkRateLimited(repo, issue.number, msg)) return;
-    await removeLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
-    await addLabel(repo, issue.number, NEEDS_ATTENTION).catch(() => {});
     recordIssueStatus(repo, issue.number, setBlocked(withStatus("working"), "needsAttention"));
     await commentOnIssue(repo, issue.number, `❌ Fix run failed: ${msg.slice(0, 300)} — press Fix again.`).catch(() => {});
   } finally {
@@ -695,31 +641,25 @@ async function processFix(cfg: Config, repo: string, issue: Issue, conflict: boo
  */
 /** Dashboard-first instant start: dispatch from the title/body we already have — no GitHub read. */
 export async function forceStartWith(cfg: Config, repo: string, number: number, title: string, body: string): Promise<void> {
-  await removeLabel(repo, number, "agency:planned").catch(() => {});
   if (agentsArePaused()) {
     setRateLimited(repo, number, new Date(pausedUntil()).toISOString());
     recordIssueStatus(repo, number, setBlocked(withStatus("working"), "rateLimited"));
-    await addLabel(repo, number, RATE_LIMITED).catch(() => {});
     return;
   }
-  await addLabel(repo, number, IN_PROGRESS).catch(() => {});
   recordIssueStatus(repo, number, withStatus("working"), { title });
   console.log(`[agency] start (dashboard, instant) ${repo} #${number}`);
-  dispatch(`${repo}#${number}`, () => processIssue(cfg, repo, { number, title, body, labels: [] }, { fresh: true }));
+  dispatch(`${repo}#${number}`, () => processIssue(cfg, repo, { number, title, body }, { fresh: true }));
 }
 
 export async function forceStart(cfg: Config, repo: string, number: number): Promise<void> {
   const issue = await getIssue(repo, number);
   if (!issue) return;
-  await removeLabel(repo, number, "agency:planned").catch(() => {});
   if (agentsArePaused()) {
     setRateLimited(repo, number, new Date(pausedUntil()).toISOString());
     recordIssueStatus(repo, number, setBlocked(withStatus("working"), "rateLimited"));
-    await addLabel(repo, number, RATE_LIMITED).catch(() => {});
     await commentOnIssue(repo, number, `⏳ Rate-limited — I'll start this automatically after the usage window resets (~${new Date(pausedUntil()).toLocaleString()}).`).catch(() => {});
     return;
   }
-  await addLabel(repo, number, IN_PROGRESS).catch(() => {});
   recordIssueStatus(repo, number, withStatus("working"), { title: issue.title });
   console.log(`[agency] start (play) ${repo} #${number}`);
   dispatch(`${repo}#${number}`, () => processIssue(cfg, repo, issue));
@@ -734,13 +674,11 @@ export async function forceApprove(cfg: Config, repo: string, number: number): P
   const issue = await getIssue(repo, number);
   if (!issue) return;
   await approveLastProposal(repo, number).catch(() => {});
-  for (const l of AWAITING_LABELS) await removeLabel(repo, number, l).catch(() => {});
   // Approving during the usage-limit window: queue the build for auto-resume after the reset
   // (so you can approve anytime, even rate-limited).
   if (agentsArePaused()) {
     setRateLimited(repo, number, new Date(pausedUntil()).toISOString());
     recordIssueStatus(repo, number, setBlocked(withStatus("working"), "rateLimited"));
-    await addLabel(repo, number, RATE_LIMITED).catch(() => {});
     await commentOnIssue(
       repo,
       number,
@@ -750,7 +688,6 @@ export async function forceApprove(cfg: Config, repo: string, number: number): P
     return;
   }
   // Instant UI: show it as working even if the pool is at capacity (it'll be queued).
-  await addLabel(repo, number, IN_PROGRESS).catch(() => {});
   recordIssueStatus(repo, number, withStatus("working"));
   console.log(`[agency] approve+build ${repo} #${number}`);
   dispatch(`${repo}#${number}`, () => processIssue(cfg, repo, issue));
@@ -778,7 +715,7 @@ export async function forceStop(_cfg: Config, repo: string, number: number): Pro
   const aborted = stopRuns(repo, number); // abort the live SDK subprocess(es)
   clearActive(repo, number);
   if (number === 0) {
-    // The codebase Auditor runs under the sentinel #0 — there's no GitHub issue/labels to touch.
+    // The codebase Auditor runs under the sentinel #0 — there's no GitHub issue to touch.
     pushActivity(repo, 0, "auditor", "done", `⏹ audit stopped${aborted ? ` (${aborted} run aborted)` : ""}.`);
     console.log(`[agency] audit stop ${repo} (${aborted} aborted)`);
     return;
@@ -790,8 +727,6 @@ export async function forceStop(_cfg: Config, repo: string, number: number): Pro
   if (existingPr) {
     recordPr(repo, number, existingPr.number, existingPr.url);
     setAuto("resume", "off", repo, number); // stop auto from re-running it
-    for (const l of [IN_PROGRESS, NEEDS_ATTENTION, RATE_LIMITED, "🚧 blocked", ...AWAITING_LABELS]) await removeLabel(repo, number, l).catch(() => {});
-    await addLabel(repo, number, READY).catch(() => {});
     recordIssueStatus(repo, number, withStatus("review"));
     clearRateLimited(repo, number);
     await commentOnIssue(repo, number, `⏹ Stopped${abortedNote}. PR ${existingPr.url} is open — press **Merge** when you're ready.`).catch(() => {});
@@ -802,10 +737,6 @@ export async function forceStop(_cfg: Config, repo: string, number: number): Pro
   // auto off; nothing re-runs it until the user presses Resume (or Cancel → Planned).
   setAuto("resume", "off", repo, number);
   setAuto("merge", "off", repo, number);
-  for (const l of [IN_PROGRESS, READY, RATE_LIMITED, "🚧 blocked", ...AWAITING_LABELS]) {
-    await removeLabel(repo, number, l).catch(() => {});
-  }
-  await addLabel(repo, number, NEEDS_ATTENTION).catch(() => {});
   recordIssueStatus(repo, number, setBlocked(withStatus("working"), "needsAttention"));
   clearRateLimited(repo, number);
   await commentOnIssue(
@@ -831,8 +762,6 @@ export async function forceCreatePr(_cfg: Config, repo: string, number: number):
   if (!pr) {
     return { ok: false, msg: `No pushed \`${branch}\` branch to open a PR from yet — the agency hasn't produced any commits. Press Resume to build it.` };
   }
-  for (const l of [IN_PROGRESS, NEEDS_ATTENTION, "🚧 blocked", ...AWAITING_LABELS]) await removeLabel(repo, number, l).catch(() => {});
-  await addLabel(repo, number, READY).catch(() => {});
   recordIssueStatus(repo, number, withStatus("review"));
   recordPr(repo, number, pr.number, pr.url);
   await commentOnIssue(repo, number, `📎 Opened PR ${pr.url} from the dashboard (reviewer-approved). Press **Merge** when you're ready.`).catch(() => {});
@@ -849,7 +778,6 @@ const AUDIT_TASK = [
   "return []. Do NOT change code or create issues — output only the JSON array and stop.",
 ].join("\n");
 
-export const AUDIT_LABEL = "agency:audit";
 const AUDIT_ISSUE_BODY =
   "The Dev Agency **Auditor** is reviewing this codebase's health (architecture, duplication, dead " +
   "code, complexity, test coverage) and will open scoped refactor/cleanup issues into Planned.\n\n" +
@@ -862,8 +790,10 @@ const AUDIT_ISSUE_BODY =
  */
 export async function forceAudit(cfg: Config, repo: string): Promise<void> {
   // Reuse an open audit tracking issue (e.g. one a usage-limit interrupted) instead of duplicating.
-  const open = await listQueuedIssues(repo, AUDIT_LABEL).catch(() => [] as Array<{ number: number }>);
-  let number = open[0]?.number;
+  // "Kind" tracking is a DB flag (not a label): at most one open audit-tracking issue per repo.
+  const trackingKey = `audit_tracking.${repo}`;
+  let number = Number(getSetting(trackingKey) || 0) || undefined;
+  if (number && getIssueStatus(repo, number).state === "done") number = undefined; // prior audit finished — start fresh
   if (!number) {
     const created = await createIssue(
       repo,
@@ -875,8 +805,8 @@ export async function forceAudit(cfg: Config, repo: string): Promise<void> {
       console.error(`[agency] audit ${repo}: couldn't open a tracking issue`);
       return;
     }
-    await addLabel(repo, created.number, AUDIT_LABEL).catch(() => {});
     number = created.number;
+    setSetting(trackingKey, String(number));
   }
   await runAuditOn(cfg, repo, number);
 }
@@ -887,8 +817,6 @@ export async function runAuditOn(cfg: Config, repo: string, number: number): Pro
     const workdir = workdirFor(repo, `audit-${number}`);
     await rm(workdir, { recursive: true, force: true }).catch(() => {});
     setActive(repo, number, "issue", "auditor", "Codebase audit");
-    for (const l of [NEEDS_ATTENTION, RATE_LIMITED, ...AWAITING_LABELS]) await removeLabel(repo, number, l).catch(() => {});
-    await addLabel(repo, number, IN_PROGRESS).catch(() => {});
     recordIssueStatus(repo, number, withStatus("working"), { title: "🔎 Codebase audit" });
     try {
       await cloneRepo(repo, workdir);
@@ -904,8 +832,6 @@ export async function runAuditOn(cfg: Config, repo: string, number: number): Pro
           owner,
         ).catch(() => null);
         if (!issue || !issue.number) continue;
-        await addLabel(repo, issue.number, "agency:planned").catch(() => {});
-        await addLabel(repo, issue.number, "agency:audit-finding").catch(() => {}); // NOT agency:audit — these are normal build issues
         recordIssueStatus(repo, issue.number, withStatus("planned"), { title: p.title });
         created.push(`#${issue.number}`);
       }
@@ -915,15 +841,13 @@ export async function runAuditOn(cfg: Config, repo: string, number: number): Pro
       await commentOnIssue(repo, number, summary).catch(() => {});
       await closeIssue(repo, number, "Audit complete.").catch(() => {});
       recordIssueStatus(repo, number, withStatus("done")); // → Done
-      await removeLabel(repo, number, IN_PROGRESS).catch(() => {});
+      setSetting(`audit_tracking.${repo}`, ""); // free the slot for the next audit
       console.log(`[agency] audit ${repo} #${number}: opened ${created.length} issue(s)`);
     } catch (err) {
       const msg = (err as Error).message ?? String(err);
       // Survive a usage limit (auto-resumes after reset) or any error (resumable) — the tracking
       // issue persists either way, so the audit is never silently lost.
       if (!(await maybeParkRateLimited(repo, number, msg))) {
-        await removeLabel(repo, number, IN_PROGRESS).catch(() => {});
-        await addLabel(repo, number, NEEDS_ATTENTION).catch(() => {});
         recordIssueStatus(repo, number, setBlocked(withStatus("working"), "needsAttention"));
         await commentOnIssue(repo, number, `❌ Audit run failed: ${msg.slice(0, 300)} — press **Resume** to retry.`).catch(() => {});
       }
@@ -951,8 +875,7 @@ async function scanRepo(cfg: Config, repo: string): Promise<void> {
   const paused = agentsArePaused();
 
   // Pass 1 — issues (any state). One rule: once the agency has touched a thread, a new comment
-  // re-engages it (open or closed, no re-tag); untouched issues need the configured trigger.
-  const LIVE_LABELS = [IN_PROGRESS, READY, NEEDS_ATTENTION, ...AWAITING_LABELS];
+  // re-engages it (open or closed, no re-tag); a thread the agency has never triaged sits in Inbox.
   const threads = await listRecentThreads(repo, 100);
   const threadMap = new Map(threads.map((t) => [t.number, t]));
   // Structural changes (refactors/renames/moves) go FIRST so they can grab the exclusive barrier
@@ -960,51 +883,37 @@ async function scanRepo(cfg: Config, repo: string): Promise<void> {
   threads.sort((a, b) => (isStructural(b.title, b.body) ? 1 : 0) - (isStructural(a.title, a.body) ? 1 : 0));
   let holdNewWork = false; // a structural change is queued/running — don't start new ordinary runs
   for (const t of threads) {
-    if (t.labels.includes(cfg.ignoreLabel)) continue;
     // Keep the DB's title fresh for every open issue (cheap title-only upsert) so cards never show
     // blank/stale — this is what a manual "reload from GitHub" relies on to repopulate the board.
     if (!t.closed && t.title) recordIssueState(repo, t.number, { title: t.title });
-    if (t.labels.includes("agency:planned")) continue; // parked in Planned — waits for the play button
 
-    // Backstop for threads finished on GitHub directly: a closed thread still carrying a live agency
-    // label is terminal. Record it HONESTLY — "merged" ONLY if the PR was actually merged, else
-    // "closed" (closed-as-not-planned / closed by the epic / manual close ≠ merged). One gh read,
-    // and only once per thread (the labels are stripped, so the next scan skips it).
-    if (t.closed) {
-      const had = t.labels.filter((l) => LIVE_LABELS.includes(l));
-      if (had.length) {
-        const merged = await prMerged(repo, `agency/issue-${t.number}`).catch(() => false);
-        recordIssueStatus(repo, t.number, withStatus("done"), { title: t.title });
-        for (const l of had) await removeLabel(repo, t.number, l).catch(() => {});
-        t.labels = t.labels.filter((l) => !LIVE_LABELS.includes(l));
-      }
+    // DB truth (ADR-0001/0003): the lifecycle state + blocked reason come from getIssueStatus —
+    // GitHub carries no signal of its own (no labels, nothing read back).
+    let status = getIssueStatus(repo, t.number);
+    if (status.state === "planned") continue; // parked in Planned — waits for the play button
+
+    // Backstop for threads finished on GitHub directly: a closed thread the agency had already
+    // triaged (anything past Inbox) is terminal. One gh read, and only once per thread (state
+    // flips to done, so the next scan skips it).
+    if (t.closed && status.state !== "notPlanned" && status.state !== "done") {
+      await prMerged(repo, `agency/issue-${t.number}`).catch(() => false); // best-effort — the change journal records the actual merge
+      recordIssueStatus(repo, t.number, withStatus("done"), { title: t.title });
+      status = { state: "done", blocked: null };
     }
 
-    if (t.labels.includes(IN_PROGRESS)) continue; // being handled (or swept below if stale)
+    if (status.state === "working") continue; // being handled (or swept below if stale)
     if (t.closed && !recentEnough(t.updatedAt)) continue; // ignore stale closed threads
 
-    const ownedByLabel = t.labels.some((l) => l.startsWith("agency:"));
-    // DB truth (ADR-0001): the lifecycle state + blocked reason come from getIssueStatus, not
-    // the GitHub label array. A never-touched issue has no row → notPlanned; adoption happens on
-    // first touch. ownedByLabel stays as an additional "the agency has been here" hint for legacy
-    // rows that carry labels but no DB state yet.
-    const status = getIssueStatus(repo, t.number);
     const awaiting = status.blocked === "awaitingApproval" || status.blocked === "awaitingAnswer";
-    // The dashboard is the control plane. The ONLY thing that auto-starts a fresh run from GitHub is
-    // an @mention by a repo member (owner/member/collaborator) — labels never trigger anymore; they
-    // are an informative mirror. Untagged issues (and mentions from non-members) just surface as
-    // Planned and are started from the dashboard. The author check is one API call, only on a match.
-    let triggerMatch = false;
-    if (!t.closed && mentionsHandle(`${t.title}\n${t.body}`, [...cfg.handles, ...workflowTriggers()])) {
-      triggerMatch = canTrigger(await issueAuthorAssoc(repo, t.number));
-    }
+    // The dashboard is the control plane — nothing auto-starts a fresh GitHub issue anymore. A
+    // never-triaged issue just surfaces in Inbox; a human promotes it to Planned or Working.
 
-    // Only inspect comments when it can matter (owned, has comments, or paused).
-    let owned = ownedByLabel;
+    // Only inspect comments when it can matter (triaged, has comments, or paused).
+    let owned = status.state !== "notPlanned";
     let newHumanComment = false;
     let approvedReaction = false;
     let lastCommentId = 0;
-    if (ownedByLabel || awaiting || t.comments > 0) {
+    if (owned || awaiting || t.comments > 0) {
       const sig = await threadSignals(repo, t.number, t.updatedAt);
       owned = owned || sig.agencyEverCommented;
       lastCommentId = sig.lastCommentId;
@@ -1030,19 +939,18 @@ async function scanRepo(cfg: Config, repo: string): Promise<void> {
       newHumanComment,
       approvedReaction,
       hasOpenPr: Boolean(openPr),
-      triggerMatch,
     });
     if (action === "skip") {
-      // Surface EVERY untouched, still-open issue on the board as "Planned" (a play button starts
-      // them) — tagged or not. GitHub is just an input here; nothing auto-starts.
+      // A never-triaged, still-open GitHub issue lands in Inbox. Nothing auto-starts it — a human
+      // promotes it to Planned or Working from the dashboard.
       if (!owned && !t.closed) {
-        recordIssueStatus(repo, t.number, withStatus("planned"), { title: t.title });
+        recordIssueStatus(repo, t.number, withStatus("notPlanned"), { title: t.title });
       }
       continue;
     }
     if (paused) continue; // usage-limit wall — leave it; it resumes after the reset
 
-    const issue: Issue = { number: t.number, title: t.title, body: t.body, labels: t.labels };
+    const issue: Issue = { number: t.number, title: t.title, body: t.body };
 
     // FILE-LOCK GATE (overwrite protection, repo-wide, any issue↔issue): claim this issue's declared
     // file footprint. If another in-flight run holds an overlapping file, DON'T dispatch now — defer
@@ -1116,16 +1024,13 @@ async function scanRepo(cfg: Config, repo: string): Promise<void> {
 
 /**
  * Sweep stored state for "stuck" issues: anything marked in-progress that no run is actually
- * working on, idle past the grace window, is parked to needs-attention (in the DB *and* on
- * GitHub). This is what stops a card sitting in "Working" forever after an interrupted run —
- * the dashboard reads stored state, so the stored state must reflect reality.
+ * working on, idle past the grace window, is parked to needs-attention in the DB. This is what
+ * stops a card sitting in "Working" forever after an interrupted run — the dashboard reads
+ * stored state, so the stored state must reflect reality.
  */
 async function sweepStuck(): Promise<void> {
   for (const i of recentIssues(100)) {
-    // "stuck" = working with NO blocked reason and no live run. The old exact-string
-    // check ('agency:in-progress') only matched the un-blocked working label, which is
-    // equivalent to IssueState 'working' + blocked == null on consistently-stored rows
-    // (the writers remove the in-progress label when they block). This is strictly
+    // "stuck" = IssueState 'working' + blocked == null on consistently-stored rows. This is
     // tighter on drifted data: an issue parked as needs-attention / awaiting-answer is
     // NOT swept as stuck. See src/state.ts (#66).
     const st = parseLegacyStatus(i.state);
@@ -1138,8 +1043,6 @@ async function sweepStuck(): Promise<void> {
     const idleMs = i.updated_at ? Date.now() - new Date(i.updated_at).getTime() : Infinity;
     if (running || idleMs <= ORPHAN_GRACE_MS) continue;
     recordIssueStatus(i.repo, i.number, setBlocked(withStatus("working"), "needsAttention"));
-    await removeLabel(i.repo, i.number, IN_PROGRESS).catch(() => {});
-    await addLabel(i.repo, i.number, NEEDS_ATTENTION).catch(() => {});
     // DB-only notice (NOT a GitHub comment): GitHub comments here emailed on every scan AND were
     // misread as "new human comment" next scan, which re-dispatched the run → an endless loop.
     pushActivity(i.repo, i.number, "agency", "done", "⏸ Run interrupted — parked at needs-attention. Press Resume to retry.");
@@ -1211,8 +1114,8 @@ async function reconcileRateLimited(cfg: Config): Promise<void> {
     }
     for (const issue of issues) {
       try {
-        if (!issue.labels.includes(NEEDS_ATTENTION)) continue;
-        if (issue.labels.includes(RATE_LIMITED)) continue;
+        const st = getIssueStatus(repo, issue.number);
+        if (st.blocked !== "needsAttention") continue;
         const comments = await listComments(repo, issue.number).catch(() => [] as Array<{ body: string }>);
         // Only trust an agency-authored failure note as the rate-limit signal.
         const hit = comments
@@ -1224,9 +1127,6 @@ async function reconcileRateLimited(cfg: Config): Promise<void> {
         const at = rl.resetAt && rl.resetAt > Date.now() ? rl.resetAt : nextResetMs();
         setRateLimited(repo, issue.number, new Date(at).toISOString());
         recordIssueStatus(repo, issue.number, setBlocked(withStatus("working"), "rateLimited"));
-        await removeLabel(repo, issue.number, NEEDS_ATTENTION).catch(() => {});
-        await removeLabel(repo, issue.number, "🚧 blocked").catch(() => {});
-        await addLabel(repo, issue.number, RATE_LIMITED).catch(() => {});
         // If the reset is still in the future, hold new dispatch too so we don't re-hit the wall.
         if (at > Date.now()) pauseAgents(at);
         moved++;
@@ -1324,7 +1224,7 @@ function startAutoMode(cfg: Config): void {
       // Parked issues (needs-attention, no live PR) with auto-resume on → re-run, bounded.
       try {
         for (const i of await listAllOpenIssues(repo)) {
-          if (!i.labels.includes(NEEDS_ATTENTION) || i.labels.includes(RATE_LIMITED)) continue;
+          if (getIssueStatus(repo, i.number).blocked !== "needsAttention") continue;
           if (!autoEnabled("resume", repo, i.number)) continue;
           if (inFlight(repo, i.number)) continue;
           if (autoAttempts(repo, i.number) >= AUTO_MAX_ATTEMPTS) continue;

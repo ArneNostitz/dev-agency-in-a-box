@@ -172,6 +172,7 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .da-status,.statuschip{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:500;line-height:1.5;border-radius:var(--radius-pill);padding:2px 10px;white-space:nowrap}
 .da-status__dot,.statuschip .dot{width:6px;height:6px;border-radius:50%;background:currentColor;flex:0 0 auto}
 .da-status--live .da-status__dot,.statuschip.live .dot{animation:da-pulse 1.4s infinite}
+.s-inbox{background:var(--surface-2);color:var(--ink-3)}
 .s-planned{background:var(--surface-2);color:var(--ink-2)}
 .s-working{background:var(--accent-weak);color:var(--accent)}
 .s-ready{background:var(--green-weak);color:var(--green)}

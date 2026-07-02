@@ -2,17 +2,15 @@
  * The orchestrator. A developer pin runs the full pipeline:
  *   Planner (Opus, asks questions if needed) -> Developer -> Tester -> Reviewer (1 revise)
  *   -> PR finalized.
- * The Planner can pause the work to ask the human clarifying questions (the issue is then
- * labelled agency:awaiting-answer); when the human replies, the pipeline resumes from the
- * Planner with the answers in hand.
+ * The Planner can pause the work to ask the human clarifying questions (blocked:
+ * awaitingAnswer in the DB); when the human replies, the pipeline resumes from the Planner
+ * with the answers in hand.
  *
  * Specialist pins (@plan / @arch / @review / @test) run just that role.
  */
 import type { Config } from "./config.js";
 import type { Issue } from "./github.js";
 import {
-  addLabel,
-  removeLabel,
   commentOnIssue,
   findPrForBranch,
   ensureBranchPushed,
@@ -26,10 +24,8 @@ import {
   repoBaseBranch,
   localHeadSha,
   workdirDirty,
-  AWAITING_LABEL,
-  APPROVAL_LABEL,
 } from "./github.js";
-import { EPIC_LABEL, renderEpicTracker } from "./epics.js";
+import { renderEpicTracker } from "./epics.js";
 import { runRole } from "./agents/roleAgent.js";
 import { isStopRequested, isHoldRequested } from "./abort.js";
 // True if the user has stopped this issue — every phase checks this before doing ANY work so Stop
@@ -50,14 +46,14 @@ function held(repo: string, number: number, where: string): boolean {
   return false;
 }
 import type { RoleName } from "./agents/roles.js";
-import { recordRun, workflowStepRunCount, recordPlan, lastPlan, recordIssueState, recordIssueStatus, recordIssueFiles, recordPr, setByAgent, addEpicChild, listEpicChildren, getSession, issueActivity, recordReview, getReview, recordConflict, clearConflict, getSetting, skillsPrompt, listHooks, listAgentDefs, changesTouchingFiles, type Workflow } from "./store.js";
+import { recordRun, workflowStepRunCount, recordPlan, lastPlan, recordIssueStatus, getIssueStatus, recordIssueFiles, recordPr, setByAgent, addEpicChild, listEpicChildren, getSession, issueActivity, recordReview, getReview, recordConflict, clearConflict, getSetting, skillsPrompt, listHooks, listAgentDefs, changesTouchingFiles, type Workflow } from "./store.js";
 import { conflictFiles } from "./github.js";
 import { pushActivity, setActive } from "./activity.js";
 import { execSync } from "node:child_process";
 import { runReflection } from "./reflect.js";
 import { runChecks, baselineFailures, parseDiscoveredChecks, rememberChecks } from "./checks.js";
 import { decideNext } from "./orchestrator.js";
-import { LABEL_IN_PROGRESS as IN_PROGRESS, LABEL_READY as READY, LABEL_NEEDS_ATTENTION as NEEDS_ATTENTION, withStatus, setBlocked, parseLegacyStatus } from "./state.js";
+import { withStatus, setBlocked, type BlockedReason } from "./state.js";
 
 /**
  * Run the project's checks the cheap way: deterministic command runner first (zero tokens), and only
@@ -218,9 +214,7 @@ async function finalizeWithPr(repo: string, issue: Issue, workdir: string, branc
   if (held(repo, issue.number, "finalizeWithPr")) return false;
   const hasCommits = await ensureBranchPushed(workdir, branch);
   const pr = hasCommits ? await ensureDraftPr(repo, issue.number, branch, issue.title) : await findPrForBranch(repo, branch);
-  await removeLabel(repo, issue.number, IN_PROGRESS);
   if (pr) {
-    await addLabel(repo, issue.number, READY);
     recordIssueStatus(repo, issue.number, withStatus("review"));
     recordPr(repo, issue.number, pr.number, pr.url);
     // Reconcile the conflict box against reality — a normal finalize (not just the conflict-only Fix
@@ -242,17 +236,16 @@ async function finalizeWithPr(repo: string, issue: Issue, workdir: string, branc
         "```",
       ].join("\n")),
     );
-    console.log(`[agency] ${repo} #${issue.number} -> ${READY}. PR: ${pr.url}`);
+    console.log(`[agency] ${repo} #${issue.number} -> review. PR: ${pr.url}`);
     return true;
   } else {
-    await addLabel(repo, issue.number, NEEDS_ATTENTION);
     recordIssueStatus(repo, issue.number, setBlocked(withStatus("working"), "needsAttention"));
     await commentOnIssue(
       repo,
       issue.number,
       "⚠️ No code changes were produced (nothing to commit). It may need clarification or hit a blocker — comment guidance, then re-pin.",
     );
-    console.log(`[agency] ${repo} #${issue.number} -> ${NEEDS_ATTENTION} (no commits).`);
+    console.log(`[agency] ${repo} #${issue.number} -> needs-attention (no commits).`);
     return false;
   }
 }
@@ -323,15 +316,12 @@ async function splitIntoPlanned(repo: string, issue: Issue, text: string): Promi
     if (!created.number) continue;
     addEpicChild(repo, issue.number, created.number, it.title);
     if (it.files.length) recordIssueFiles(repo, created.number, it.files);
-    await addLabel(repo, created.number, "agency:planned").catch(() => {});
     recordIssueStatus(repo, created.number, withStatus("planned"), { title: it.title });
-    setByAgent(repo, created.number, true); // DB-first marker; the dashboard reads this, not a GitHub label
+    setByAgent(repo, created.number, true); // DB-first marker — the dashboard reads this, not a GitHub label
     recordRun(repo, issue.number, "decomposer", MODELS_NONE, 0, "create-issue");
   }
   await commentOnIssue(repo, issue.number, say("decomposer", `**Split into ${items.length} epic(s)** — created as **Planned** (tagged \`by agent\`). Review each and press ▶ Start to build it; the build then breaks the epic into sub-issues.`));
   await upsertTrackerComment(repo, issue.number, renderEpicTracker(listEpicChildren(repo, issue.number))).catch(() => {});
-  await removeLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
-  await addLabel(repo, issue.number, EPIC_LABEL).catch(() => {});
   recordIssueStatus(repo, issue.number, withStatus("review"));
   return items.length;
 }
@@ -353,23 +343,21 @@ async function maybeDecompose(repo: string, issue: Issue, planText: string): Pro
     issue.number,
     say("planner", `**Created ${subs.length} sub-issue(s)** — tracking them below. This becomes an **epic**: it completes (and becomes reviewable/mergeable) when all sub-issues are done.`),
   );
-  // Post the live checklist and keep the parent as an epic (not "ready" yet).
+  // Post the live checklist and keep the parent as an epic (not "ready" yet). Epic-ness is
+  // isEpic() (the epics table), not a lifecycle state — the parent's real state (working) is
+  // untouched here; reconcileEpics moves it to review once every child is done.
   await upsertTrackerComment(repo, issue.number, renderEpicTracker(listEpicChildren(repo, issue.number)));
-  await removeLabel(repo, issue.number, IN_PROGRESS);
-  await removeLabel(repo, issue.number, APPROVAL_LABEL);
-  await addLabel(repo, issue.number, EPIC_LABEL);
-  recordIssueState(repo, issue.number, { state: EPIC_LABEL });
   console.log(`[agency] ${repo} #${issue.number} -> epic of ${subs.length} sub-issues.`);
   return true;
 }
 
 const MODELS_NONE = "-";
 
-async function pause(repo: string, issue: Issue, label: string): Promise<void> {
-  await removeLabel(repo, issue.number, IN_PROGRESS);
-  await addLabel(repo, issue.number, label);
-  // label → {state, blocked} via the state module (e.g. 'agency:awaiting-answer' → working+awaitingAnswer).
-  recordIssueStatus(repo, issue.number, parseLegacyStatus(label));
+async function pause(repo: string, issue: Issue, reason: BlockedReason): Promise<void> {
+  // awaitingApproval pauses on the proposal (lifecycle stays "planned"); awaitingAnswer pauses
+  // mid-build ("working"). Matches the old label→state mapping (parseLegacyStatus).
+  const base = reason === "awaitingApproval" ? "planned" : "working";
+  recordIssueStatus(repo, issue.number, setBlocked(withStatus(base), reason));
 }
 
 /** Build phase: Developer implements -> Tester -> Reviewer (1 revise) -> PR. */
@@ -497,7 +485,7 @@ async function build(
  * Full pipeline for a developer pin — a conversation, not a one-shot:
  *   1. Planner researches and proactively recommends an approach (or asks if truly blocked).
  *   2. Architect refines it into a concrete technical plan.
- *   3. The proposal is posted and the issue waits for your "ok" (agency:awaiting-approval).
+ *   3. The proposal is posted and the issue waits for your "ok" (blocked: awaitingApproval).
  *   4. You reply "ok" -> build. Anything else -> treated as feedback, re-proposed.
  */
 async function runDeveloperPipeline(
@@ -509,10 +497,9 @@ async function runDeveloperPipeline(
   if (stopped(repo, issue.number, "runDeveloperPipeline")) return;
   if (held(repo, issue.number, "runDeveloperPipeline")) return;
   // Resuming a proposal that the human approved (by 👍 or "ok")?
-  if (issue.labels.includes(APPROVAL_LABEL) && (await approved(repo, issue, thread))) {
+  if (getIssueStatus(repo, issue.number).blocked === "awaitingApproval" && (await approved(repo, issue, thread))) {
     const planText = lastPlan(repo, issue.number);
     if (planText) {
-      await removeLabel(repo, issue.number, APPROVAL_LABEL);
       // If the plan was a decomposition, open the sub-issues instead of building this one.
       if (await maybeDecompose(repo, issue, planText)) return;
       await commentOnIssue(repo, issue.number, say("developer", "**Approved — building it now.**"));
@@ -520,14 +507,12 @@ async function runDeveloperPipeline(
       return;
     }
   }
-  // Otherwise (fresh, answered questions, or feedback on a proposal) -> propose.
-  await removeLabel(repo, issue.number, APPROVAL_LABEL);
 
   // 1. Planner — research + recommend (only asks questions if genuinely blocked).
   const decision = await plan(repo, issue, workdir, thread);
   if (decision.kind === "questions" && decision.body.replace(/\s+/g, " ").trim().length >= 12) {
     await commentOnIssue(repo, issue.number, say("planner", `**A few questions before I plan**\n\n${decision.body}`));
-    await pause(repo, issue, AWAITING_LABEL);
+    await pause(repo, issue, "awaitingAnswer");
     console.log(`[agency] ${repo} #${issue.number} -> awaiting answer.`);
     return;
   }
@@ -573,7 +558,7 @@ async function runDeveloperPipeline(
     issue.number,
     say("planner", `**Larger change — quick sign-off?**\n\n${proposal}\n\n---\n\n👉 **👍** (or reply \`ok\`) to build. For changes, just say what to change.`),
   );
-  await pause(repo, issue, APPROVAL_LABEL);
+  await pause(repo, issue, "awaitingApproval");
   console.log(`[agency] ${repo} #${issue.number} -> awaiting approval.`);
 }
 
@@ -592,36 +577,27 @@ async function runSpecialist(
   if (role === "planner") {
     // Conversational: if you approved the last proposal (👍 or "ok"), decompose it (if it
     // proposed sub-issues) or accept it.
-    if (issue.labels.includes(APPROVAL_LABEL) && (await approved(repo, issue, thread))) {
-      await removeLabel(repo, issue.number, APPROVAL_LABEL);
+    if (getIssueStatus(repo, issue.number).blocked === "awaitingApproval" && (await approved(repo, issue, thread))) {
       const planText = lastPlan(repo, issue.number) ?? "";
       if (await maybeDecompose(repo, issue, planText)) return;
-      await removeLabel(repo, issue.number, IN_PROGRESS);
-      await addLabel(repo, issue.number, READY);
       await commentOnIssue(repo, issue.number, say("planner", "**👍 Plan accepted.** Pin `@dev` to build it."));
       recordIssueStatus(repo, issue.number, withStatus("review"));
       return;
     }
-    await removeLabel(repo, issue.number, APPROVAL_LABEL);
 
     const decision = await plan(repo, issue, workdir, thread);
     if (decision.kind === "questions") {
       await commentOnIssue(repo, issue.number, say("planner", `**A few questions**\n\n${decision.body}`));
-      await removeLabel(repo, issue.number, IN_PROGRESS);
-      await addLabel(repo, issue.number, AWAITING_LABEL);
       recordIssueStatus(repo, issue.number, setBlocked(withStatus("working"), "awaitingAnswer"));
       return;
     }
     // Post the plan and keep the conversation open — reply to refine, or "ok" to accept.
-    await removeLabel(repo, issue.number, AWAITING_LABEL);
     recordPlan(repo, issue.number, decision.body);
     await commentOnIssue(
       repo,
       issue.number,
       say("planner", `**Plan**\n\n${decision.body}\n\n---\n\n👉 **👍** (or reply \`ok\`) to accept. For changes, just reply with the change.`),
     );
-    await removeLabel(repo, issue.number, IN_PROGRESS);
-    await addLabel(repo, issue.number, APPROVAL_LABEL);
     recordIssueStatus(repo, issue.number, setBlocked(withStatus("planned"), "awaitingApproval"));
     return;
   }
@@ -639,10 +615,8 @@ async function runSpecialist(
   const out = await runRole(role, { workdir, repo, issueNumber: issue.number, task: tasks[role] });
   recordRun(repo, issue.number, role, out.model, out.turns, "specialist", out.costUsd);
   await commentOnIssue(repo, issue.number, say(role, out.text));
-  await removeLabel(repo, issue.number, IN_PROGRESS);
-  await addLabel(repo, issue.number, READY);
   recordIssueStatus(repo, issue.number, withStatus("review"));
-  console.log(`[agency] ${repo} #${issue.number} -> ${READY} (${role}).`);
+  console.log(`[agency] ${repo} #${issue.number} -> review (${role}).`);
 }
 
 /**
@@ -860,8 +834,6 @@ export async function runReviewFix(repo: string, issue: Issue, workdir: string, 
   // cost. Stop and ask the human instead of blindly launching the next two agents.
   const changed = (await localHeadSha(workdir)) !== beforeSha || (await workdirDirty(workdir));
   if (!changed) {
-    await removeLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
-    await addLabel(repo, issue.number, NEEDS_ATTENTION).catch(() => {});
     recordIssueStatus(repo, issue.number, setBlocked(withStatus("working"), "needsAttention"));
     await commentOnIssue(repo, issue.number, say("developer", `**No code changes were produced** addressing the review, so I skipped the re-test/re-review to avoid burning tokens. Comment guidance and re-pin, or **Merge anyway**.`));
     return;
@@ -889,8 +861,6 @@ export async function runReviewFix(repo: string, issue: Issue, workdir: string, 
 
 /** Park an unresolved-conflict PR at needs-attention with a clear note (and keep the conflict box). */
 async function conflictUnresolved(repo: string, issue: Issue, branch: string, why: string, files: string[]): Promise<void> {
-  await removeLabel(repo, issue.number, READY).catch(() => {});
-  await addLabel(repo, issue.number, NEEDS_ATTENTION).catch(() => {});
   recordIssueStatus(repo, issue.number, setBlocked(withStatus("working"), "needsAttention"));
   recordConflict(repo, issue.number, "", files); // keep the box visible with whatever files we know
   await commentOnIssue(
@@ -898,7 +868,7 @@ async function conflictUnresolved(repo: string, issue: Issue, branch: string, wh
     issue.number,
     say("developer", `**⚠️ ${why}** Press **Fix merge conflicts** to try again, or resolve it manually on branch \`${branch}\`.`),
   ).catch(() => {});
-  console.log(`[agency] ${repo} #${issue.number} -> ${NEEDS_ATTENTION} (conflict unresolved).`);
+  console.log(`[agency] ${repo} #${issue.number} -> needs-attention (conflict unresolved).`);
 }
 
 export async function runFollowUp(
@@ -1044,7 +1014,7 @@ ${thread}` : ""}${skills}`,
     // workflow. NOTE: the engine restarts at step 0 on resume (see file-level resume caveat), so
     // only the final step skips the pause to avoid stranding the workflow.
     if (wantsPause && i + 1 < wf.steps.length) {
-      await pause(repo, issue, AWAITING_LABEL);
+      await pause(repo, issue, "awaitingAnswer");
       await commentOnIssue(repo, issue.number, stepAuthor ? sayAs(stepAuthor, "⏸ Waiting for your reply — answer above and I'll continue.") : say(role, "⏸ Waiting for your reply — answer above and I'll continue."));
       return;
     }
@@ -1053,8 +1023,6 @@ ${thread}` : ""}${skills}`,
     let route = "continue";
     if (gate && (await evalGate(gate.condition, repo, issue, workdir, branch))) {
       if (gate.condition === "humanApproval") {
-        await removeLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
-        await addLabel(repo, issue.number, APPROVAL_LABEL).catch(() => {});
         recordIssueStatus(repo, issue.number, setBlocked(withStatus("planned"), "awaitingApproval"));
         await commentOnIssue(repo, issue.number, say(role, "⏸ **Approval needed** to continue — press **Approve** on the dashboard."));
         return;
@@ -1070,8 +1038,6 @@ ${thread}` : ""}${skills}`,
     i++;
   }
   await runStepHooks(wfHookIds, "post", workdir, repo, issue.number); // workflow-level post hooks
-  await removeLabel(repo, issue.number, IN_PROGRESS).catch(() => {});
-  await addLabel(repo, issue.number, READY).catch(() => {});
   recordIssueStatus(repo, issue.number, withStatus("review"));
   await commentOnIssue(repo, issue.number, say("developer", `✅ Workflow **${wf.name}** complete — ready for your review.`));
 }

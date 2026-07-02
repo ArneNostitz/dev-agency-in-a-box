@@ -57,120 +57,6 @@ export interface Issue {
   number: number;
   title: string;
   body: string;
-  labels: string[];
-}
-
-/** Returns open issues in `repo` carrying `label`, oldest first. */
-export async function listQueuedIssues(repo: string, label: string): Promise<Issue[]> {
-  const out = await gh([
-    "issue", "list",
-    "--repo", repo,
-    "--label", label,
-    "--state", "open",
-    "--json", "number,title,body,labels",
-    "--limit", "20",
-  ]);
-  const raw = JSON.parse(out) as Array<{
-    number: number;
-    title: string;
-    body: string | null;
-    labels: Array<{ name: string }>;
-  }>;
-  return raw
-    .map((i) => ({
-      number: i.number,
-      title: i.title,
-      body: i.body ?? "",
-      labels: (i.labels || []).map((l) => (typeof l === "string" ? l : l.name)),
-    }))
-    .sort((a, b) => a.number - b.number);
-}
-
-/** Labels that mean "already being handled / handled / parked" — skip these. */
-// Canonical label strings live in src/state.ts (ADR-0001); re-exported here so the
-// historical `import { AWAITING_LABEL, ... } from "./github.js"` call sites are unchanged.
-import { STATE_LABELS, AWAITING_LABELS } from "./state.js";
-export { AWAITING_LABEL, APPROVAL_LABEL, AWAITING_LABELS } from "./state.js";
-
-export interface ActionableOptions {
-  triggerMode: "mention" | "label" | "any";
-  handles: string[];
-  queueLabel: string;
-  ignoreLabel: string;
-}
-
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-/** True if `text` mentions any of `handles` as a whole token (e.g. "@dev" but not "@developer"). */
-export function mentionsHandle(text: string, handles: string[]): boolean {
-  return handles.some((h) => new RegExp(escapeRegex(h) + "(?![a-z0-9_-])", "i").test(text));
-}
-
-/**
- * Open issues the agency should act on, after excluding ones already in an agency
- * state or opted out via ignoreLabel. The trigger decides the rest:
- *   "mention" - the issue title/body mentions one of `handles` (pin to start)
- *   "label"   - the issue carries `queueLabel`
- *   "any"     - every remaining open issue
- */
-export async function listActionableIssues(repo: string, opts: ActionableOptions): Promise<Issue[]> {
-  const out = await gh([
-    "issue", "list",
-    "--repo", repo,
-    "--state", "open",
-    "--json", "number,title,body,labels",
-    "--limit", "50",
-  ]).catch(() => "[]");
-  const raw = JSON.parse(out) as Array<{
-    number: number;
-    title: string;
-    body: string | null;
-    labels: Array<{ name: string }>;
-  }>;
-  const mapped = raw.map((i) => ({
-    number: i.number,
-    title: i.title,
-    body: i.body ?? "",
-    labels: (i.labels || []).map((l) => (typeof l === "string" ? l : l.name)),
-  }));
-
-  const result: Issue[] = [];
-  for (const i of mapped) {
-    if (i.labels.includes(opts.ignoreLabel)) continue;
-
-    // Paused waiting on the human: re-engage once they reply OR 👍 the proposal.
-    if (i.labels.some((l) => AWAITING_LABELS.includes(l))) {
-      if ((await humanRepliedLast(repo, i.number)) || (await approvedByReaction(repo, i.number))) {
-        result.push(i);
-      }
-      continue;
-    }
-    // Already being handled / done / parked.
-    if (i.labels.some((l) => STATE_LABELS.includes(l))) continue;
-
-    if (opts.triggerMode === "label") {
-      if (i.labels.includes(opts.queueLabel)) result.push(i);
-    } else if (opts.triggerMode === "mention") {
-      if (mentionsHandle(`${i.title}\n${i.body}`, opts.handles)) result.push(i);
-    } else {
-      result.push(i); // "any"
-    }
-  }
-  return result.sort((a, b) => a.number - b.number);
-}
-
-export async function addLabel(repo: string, issue: number, label: string): Promise<void> {
-  // Labels are an INFORMATIVE MIRROR only (the DB drives the agency). A failed label write — most
-  // often a GitHub rate limit — must NEVER throw, or it would mark a finished, successful run as
-  // failed. Both the create and the apply are best-effort.
-  await gh(["label", "create", label, "--repo", repo, "--force", "--color", "5319e7"]).catch(() => {});
-  await gh(["issue", "edit", String(issue), "--repo", repo, "--add-label", label]).catch(() => {});
-}
-
-export async function removeLabel(repo: string, issue: number, label: string): Promise<void> {
-  await gh(["issue", "edit", String(issue), "--repo", repo, "--remove-label", label]).catch(() => {});
 }
 
 /** Hidden marker appended to every agency comment so we can tell our messages from a human's. */
@@ -258,8 +144,8 @@ export async function issueAuthorAssoc(repo: string, number: number): Promise<st
 
 /** One API call that tells us everything the router needs about a thread's comments. */
 // Memoize signals per thread keyed by the issue's updatedAt: if GitHub's updatedAt hasn't advanced,
-// the comment list (and labels) are unchanged, so the prior result is exact — and we skip the
-// per-thread `gh` subprocess entirely. This is the dominant per-scan cost on idle repos.
+// the comment list is unchanged, so the prior result is exact — and we skip the per-thread
+// `gh` subprocess entirely. This is the dominant per-scan cost on idle repos.
 // ── Direct GitHub REST (no subprocess) ──────────────────────────────────────────────────────────
 // The `gh` CLI forks a process (startup + keyring + TLS) per call. When a bot token is available we
 // hit the REST API directly with `fetch` instead; on ANY problem (no token / non-200 / network /
@@ -344,7 +230,6 @@ export interface RecentThread {
   number: number;
   title: string;
   body: string;
-  labels: string[];
   closed: boolean;
   comments: number;
   updatedAt: string;
@@ -352,18 +237,18 @@ export interface RecentThread {
 
 /** Issues updated recently, ANY state, with the bits the router needs. */
 export async function listRecentThreads(repo: string, limit = 60): Promise<RecentThread[]> {
-  type Raw = { number: number; title: string; body: string | null; labels: Array<{ name: string } | string>; state: string; comments: number | unknown[]; updatedAt: string };
+  type Raw = { number: number; title: string; body: string | null; state: string; comments: number | unknown[]; updatedAt: string };
   let raw: Raw[] = [];
   // REST returns PRs in the issues list too; filter them out (they carry a pull_request field).
   const viaFetch = await ghFetchPage(`repos/${repo}/issues?state=all&sort=updated&direction=desc&per_page=${limit}`);
   if (viaFetch) {
     raw = (viaFetch as Array<Record<string, unknown>>)
       .filter((i) => !i.pull_request)
-      .map((i) => ({ number: i.number as number, title: (i.title as string) ?? "", body: (i.body as string) ?? "", labels: (i.labels as Array<{ name: string }>) ?? [], state: (i.state as string) ?? "open", comments: (i.comments as number) ?? 0, updatedAt: (i.updated_at as string) ?? "" }));
+      .map((i) => ({ number: i.number as number, title: (i.title as string) ?? "", body: (i.body as string) ?? "", state: (i.state as string) ?? "open", comments: (i.comments as number) ?? 0, updatedAt: (i.updated_at as string) ?? "" }));
   } else {
     const out = await gh([
       "issue", "list", "--repo", repo, "--state", "all",
-      "--json", "number,title,body,labels,state,comments,updatedAt", "--limit", String(limit),
+      "--json", "number,title,body,state,comments,updatedAt", "--limit", String(limit),
     ]).catch(() => "[]");
     try { raw = JSON.parse(out); } catch { /* ignore */ }
   }
@@ -371,7 +256,6 @@ export async function listRecentThreads(repo: string, limit = 60): Promise<Recen
     number: i.number,
     title: i.title,
     body: i.body ?? "",
-    labels: (i.labels || []).map((l) => (typeof l === "string" ? l : l.name)),
     closed: (i.state ?? "").toUpperCase() === "CLOSED",
     // gh returns `comments` as a count (number) on most versions, an array on some.
     comments: Array.isArray(i.comments) ? i.comments.length : Number(i.comments) || 0,
@@ -902,12 +786,12 @@ export async function closeIssue(repo: string, issue: number, comment?: string, 
 /** Fetch a single issue (any state) as an Issue, or null if it can't be read. */
 export async function getIssue(repo: string, number: number): Promise<Issue | null> {
   const out = await gh([
-    "issue", "view", String(number), "--repo", repo, "--json", "number,title,body,labels",
+    "issue", "view", String(number), "--repo", repo, "--json", "number,title,body",
   ]).catch(() => "");
   if (!out) return null;
   try {
-    const i = JSON.parse(out) as { number: number; title: string; body: string | null; labels: Array<{ name: string }> };
-    return { number: i.number, title: i.title, body: i.body ?? "", labels: (i.labels ?? []).map((l) => l.name) };
+    const i = JSON.parse(out) as { number: number; title: string; body: string | null };
+    return { number: i.number, title: i.title, body: i.body ?? "" };
   } catch {
     return null;
   }
@@ -917,13 +801,13 @@ export async function getIssue(repo: string, number: number): Promise<Issue | nu
 export async function listAllOpenIssues(repo: string): Promise<Issue[]> {
   const out = await gh([
     "issue", "list", "--repo", repo, "--state", "open",
-    "--json", "number,title,body,labels", "--limit", "50",
+    "--json", "number,title,body", "--limit", "50",
   ]).catch(() => "[]");
   const raw = JSON.parse(out) as Array<{
-    number: number; title: string; body: string | null; labels: Array<{ name: string }>;
+    number: number; title: string; body: string | null;
   }>;
   return raw.map((i) => ({
-    number: i.number, title: i.title, body: i.body ?? "", labels: (i.labels || []).map((l) => (typeof l === "string" ? l : l.name)),
+    number: i.number, title: i.title, body: i.body ?? "",
   }));
 }
 
@@ -1284,41 +1168,6 @@ export async function prMergeStatus(repo: string, branch: string): Promise<Merge
   const m = (p.mergeable || "").toUpperCase();
   const mergeable = m === "MERGEABLE" ? "clean" : m === "CONFLICTING" ? "conflict" : "unknown";
   return { prNumber: p.number, state: p.state, mergeable };
-}
-
-// ---------------------------------------------------------------------------
-// mapIssueDetail — shapes raw GitHub GraphQL/REST issue data for the board UI.
-// ---------------------------------------------------------------------------
-
-export interface IssueComment {
-  who: "human" | "agency";
-  body: string;
-  createdAt?: string;
-}
-
-export interface IssueDetail {
-  labels: string[];
-  comments: IssueComment[];
-}
-
-/**
- * Normalise a raw issue payload (labels array + comments array) into the
- * typed shape consumed by the board.  Classifies each comment as "human" or
- * "agency" (via AGENCY_MARKER) and strips the marker from agency bodies.
- */
-export function mapIssueDetail(raw: {
-  labels?: Array<{ name: string } | string>;
-  comments?: Array<{ body: string; createdAt?: string }>;
-}): IssueDetail {
-  const labels = (raw.labels ?? []).map((l) => typeof l === "string" ? l : l.name);
-  const comments: IssueComment[] = (raw.comments ?? []).map((c) => {
-    const hasMarker = c.body?.includes(AGENCY_MARKER);
-    const body = hasMarker
-      ? c.body.replace(new RegExp(`\\s*${AGENCY_MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`), "")
-      : (c.body ?? "");
-    return { who: hasMarker ? "agency" : "human", body, createdAt: c.createdAt };
-  });
-  return { labels, comments };
 }
 
 // ---- GitHub-native sub-issue relationships ----

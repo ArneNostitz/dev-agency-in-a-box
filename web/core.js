@@ -297,15 +297,17 @@ export function api(url, body) { return fetch(url, { method: "POST", headers: { 
 export function getJSON(u) { return fetch(u).then((r) => r.json()); }
 
 export function isDone(i) { return i.state === "done"; }
-// The issue's lifecycle lane: planned | working | review | done. Derived from the canonical
-// IssueState enum in `i.state` + the BlockedReason in `i.blocked` (ADR-0001). `agency:epic`
-// is an IssueKind carried in state until the IssueKind module exists — handled as a branch.
+// The issue's lifecycle lane: inbox | planned | working | review | done. Derived from the
+// canonical IssueState enum in `i.state` + the BlockedReason in `i.blocked` (ADR-0001/0003).
+// `agency:epic` is a one-way read-compat fallback for rows written before the epics.ts fix
+// (docs/adr/0003) — nothing writes that value anymore, but old rows may still carry it.
 export function classify(i) {
   const s = i.state || "";
   if (s === "agency:epic") return i.epic && i.epic.done >= i.epic.total ? "review" : "working";
   if (s === "done") return "done";
+  if (s === "notPlanned") return "notPlanned"; // Inbox — never-triaged GitHub issue, nothing auto-starts it
   if (i.active || i.queued || i.running) return "working"; // actually executing right now
-  if (i.pr_number && s !== "planned" && s !== "notPlanned") return "review"; // a PR is up → waiting on you
+  if (i.pr_number && s !== "planned") return "review"; // a PR is up → waiting on you
   // Waiting on the human shows in Review (needs your 👍 / answer / attention).
   if (i.blocked === "awaitingApproval" || i.blocked === "awaitingAnswer" || i.blocked === "needsAttention") return "review";
   if (s === "working") return "working";
@@ -328,9 +330,11 @@ export function statusChip(i) {
   if (i.blocked === "awaitingAnswer") return { cls: "s-attn", label: "reply", icon: "messages" };
   if (s === "working") return { cls: "s-working", label: "working", icon: "loader" };
   if (s === "review") return i.review === "changes" ? { cls: "s-changes", label: "changes", icon: "alert" } : { cls: "s-ready", label: "ready", icon: "pr" };
+  if (s === "notPlanned") return { cls: "s-inbox", label: "inbox", icon: "inbox" };
   return { cls: "s-planned", label: "planned", icon: "planned" };
 }
 export const COLS = [
+  { k: "notPlanned", label: "Inbox", icon: "inbox" },
   { k: "planned", label: "Planned", icon: "planned" },
   { k: "working", label: "Working", icon: "loader" },
   { k: "review", label: "Review", icon: "alert" },

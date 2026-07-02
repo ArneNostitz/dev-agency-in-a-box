@@ -81,6 +81,14 @@ export function availableActions(status: IssueStatus, facts: ActionFacts): Actio
   const parked = status.state === "notPlanned" || status.state === "planned";
   const awaiting = status.blocked === "awaitingApproval";
 
+  // Inbox: a never-triaged GitHub issue. Offer both a straight Start and a Plan (park in
+  // Planned without starting) — the only place both are offered together.
+  if (status.state === "notPlanned") {
+    out.push({ id: "start", variant: "green" });
+    out.push({ id: "toPlanned", variant: "neutral" });
+    return out;
+  }
+
   if (facts.isEpic) {
     out.push({ id: "close", variant: "green", confirm: true }); // complete/close (merges remaining sub-PRs)
     out.push({ id: "resume", variant: "neutral" });

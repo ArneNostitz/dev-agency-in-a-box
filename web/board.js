@@ -297,6 +297,7 @@ function Card({ i, subs, multi, onOpen, onOpenChild, act, data, stream = EMPTY_S
       const notPlanned = quick && i.state === "planned";
       const actions = html`<div class="bcard__actions" onClick=${(e) => e.stopPropagation()}>
         ${notPlanned ? html`<button class="iconbtn-sm tip" data-tip="Close as not planned" disabled=${act.isBusy("close-not-planned", i.repo, i.number)} onClick=${(e) => { e.stopPropagation(); act.closeNotPlanned(i.repo, i.number); }}>${act.isBusy("close-not-planned", i.repo, i.number) ? html`<${Spinner} size=${13}/>` : html`<${Icon} name="x" size=${14}/>`}</button>` : null}
+        ${i.state === "notPlanned" ? html`<button class="iconbtn-sm tip" data-tip="Move to Planned (don't start yet)" disabled=${act.isBusy("plan", i.repo, i.number)} onClick=${(e) => { e.stopPropagation(); act.plan(i.repo, i.number); }}>${act.isBusy("plan", i.repo, i.number) ? html`<${Spinner} size=${13}/>` : html`<${Icon} name="planned" size=${14}/>`}</button>` : null}
         ${modelOpts.length && !isStop ? html`<${ModelPicker} opts=${modelOpts} value=${modelSel} onPick=${onPickModel} defaultLabel=${defaultModelLabel(data)}/>` : null}
         ${isStop
           ? html`<button class=${"cardbtn cta stop" + (qBusy ? " busy" : "")} disabled=${qBusy} onClick=${runQuick}>${qBusy ? html`<${Spinner} size=${13}/>` : html`<${Icon} name="stop" size=${13}/>`} ${qBusy ? "working…" : quick.label}</button>`

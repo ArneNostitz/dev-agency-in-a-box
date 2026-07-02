@@ -1,27 +1,23 @@
 import { getDb, now } from "./connection.js";
 
-export interface LocalIssue { repo: string; number: number; title: string; body: string; labels: string[]; state: string; origin: string; closed: boolean; updated_at: string }
+export interface LocalIssue { repo: string; number: number; title: string; body: string; state: string; origin: string; closed: boolean; updated_at: string }
 export interface LocalComment { id: number; repo: string; number: number; author: string; body: string; source: string; gh_id: number | null; created_at: string }
 
-export interface LocalComment { id: number; repo: string; number: number; author: string; body: string; source: string; gh_id: number | null; created_at: string }
-
-
-export function upsertLocalIssue(i: { repo: string; number: number; title?: string; body?: string; labels?: string[]; state?: string; origin?: string; closed?: boolean }): void {
+export function upsertLocalIssue(i: { repo: string; number: number; title?: string; body?: string; state?: string; origin?: string; closed?: boolean }): void {
   const d = getDb();
   if (!d) return;
   try {
     d.prepare(
-      `INSERT INTO local_issue (repo, number, title, body, labels, state, origin, closed, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO local_issue (repo, number, title, body, state, origin, closed, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(repo, number) DO UPDATE SET
          title = COALESCE(excluded.title, local_issue.title),
          body  = COALESCE(excluded.body,  local_issue.body),
-         labels = COALESCE(excluded.labels, local_issue.labels),
          state = COALESCE(excluded.state, local_issue.state),
          origin = COALESCE(excluded.origin, local_issue.origin),
          closed = excluded.closed,
          updated_at = excluded.updated_at`,
-    ).run(i.repo, i.number, i.title ?? null, i.body ?? null, i.labels ? JSON.stringify(i.labels) : null, i.state ?? null, i.origin ?? null, i.closed ? 1 : 0, now());
+    ).run(i.repo, i.number, i.title ?? null, i.body ?? null, i.state ?? null, i.origin ?? null, i.closed ? 1 : 0, now());
   } catch { /* best effort */ }
 }
 
@@ -30,12 +26,10 @@ export function getLocalIssue(repo: string, number: number): LocalIssue | null {
   if (!d) return null;
   try {
     const r = d.prepare(`SELECT * FROM local_issue WHERE repo = ? AND number = ?`).get(repo, number) as
-      | { repo: string; number: number; title: string | null; body: string | null; labels: string | null; state: string | null; origin: string | null; closed: number; updated_at: string }
+      | { repo: string; number: number; title: string | null; body: string | null; state: string | null; origin: string | null; closed: number; updated_at: string }
       | undefined;
     if (!r) return null;
-    let labels: string[] = [];
-    try { labels = r.labels ? JSON.parse(r.labels) : []; } catch { labels = []; }
-    return { repo: r.repo, number: r.number, title: r.title ?? "", body: r.body ?? "", labels, state: r.state ?? "", origin: r.origin ?? "", closed: !!r.closed, updated_at: r.updated_at };
+    return { repo: r.repo, number: r.number, title: r.title ?? "", body: r.body ?? "", state: r.state ?? "", origin: r.origin ?? "", closed: !!r.closed, updated_at: r.updated_at };
   } catch { return null; }
 }
 
@@ -43,8 +37,8 @@ export function listLocalOpenIssues(repo: string): LocalIssue[] {
   const d = getDb();
   if (!d) return [];
   try {
-    const rows = d.prepare(`SELECT * FROM local_issue WHERE repo = ? AND closed = 0 ORDER BY number`).all(repo) as Array<{ repo: string; number: number; title: string | null; body: string | null; labels: string | null; state: string | null; origin: string | null; closed: number; updated_at: string }>;
-    return rows.map((r) => { let labels: string[] = []; try { labels = r.labels ? JSON.parse(r.labels) : []; } catch { labels = []; } return { repo: r.repo, number: r.number, title: r.title ?? "", body: r.body ?? "", labels, state: r.state ?? "", origin: r.origin ?? "", closed: !!r.closed, updated_at: r.updated_at }; });
+    const rows = d.prepare(`SELECT * FROM local_issue WHERE repo = ? AND closed = 0 ORDER BY number`).all(repo) as Array<{ repo: string; number: number; title: string | null; body: string | null; state: string | null; origin: string | null; closed: number; updated_at: string }>;
+    return rows.map((r) => ({ repo: r.repo, number: r.number, title: r.title ?? "", body: r.body ?? "", state: r.state ?? "", origin: r.origin ?? "", closed: !!r.closed, updated_at: r.updated_at }));
   } catch { return []; }
 }
 

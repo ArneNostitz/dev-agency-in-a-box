@@ -19,8 +19,11 @@ test("a done issue offers nothing", () => {
   assert.deepEqual(availableActions(withStatus("done"), F()), []);
 });
 
-test("parked (notPlanned / planned) offers Start", () => {
-  assert.deepEqual(ids(availableActions(withStatus("notPlanned"), F())), ["start"]);
+test("notPlanned (Inbox) offers Start + To Planned — the only status offering both", () => {
+  assert.deepEqual(ids(availableActions(withStatus("notPlanned"), F())), ["start", "toPlanned"]);
+});
+
+test("planned offers only Start", () => {
   assert.deepEqual(ids(availableActions(withStatus("planned"), F())), ["start"]);
 });
 

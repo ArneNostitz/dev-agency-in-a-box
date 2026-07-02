@@ -24,12 +24,6 @@ function optional(name: string, fallback: string): string {
   return value && value.trim() !== "" ? value.trim() : fallback;
 }
 
-function bool(name: string, fallback: boolean): boolean {
-  const v = process.env[name]?.trim().toLowerCase();
-  if (v === undefined || v === "") return fallback;
-  return v === "1" || v === "true" || v === "yes";
-}
-
 /** Turn "name" or "owner/name" into a full "owner/name". */
 function resolveRepo(raw: string, owner: string): string {
   const r = raw.trim();
@@ -62,40 +56,6 @@ function loadRepos(owner: string): string[] {
   return [...repos];
 }
 
-/**
- * The "@handles" that pin the agency, from config/team.txt (plus optional HANDLES env).
- * Returned lowercased and guaranteed to start with '@'.
- */
-function loadHandles(): string[] {
-  const handles = new Set<string>();
-  const norm = (h: string) => {
-    const t = h.trim().toLowerCase().split(/[:\s]/)[0];
-    if (!t) return "";
-    return t.startsWith("@") ? t : `@${t}`;
-  };
-
-  const file = join(projectRoot, "config", "team.txt");
-  if (existsSync(file)) {
-    for (const line of readFileSync(file, "utf8").split("\n")) {
-      const s = line.split("#")[0].trim();
-      const h = norm(s);
-      if (h && h !== "@") handles.add(h);
-    }
-  }
-  for (const h of sStr("handles", "HANDLES", "").split(",")) {
-    const n = norm(h);
-    if (n && n !== "@") handles.add(n);
-  }
-  if (handles.size === 0) handles.add("@dev");
-  return [...handles];
-}
-
-function parseTrigger(v: string | undefined, requireLabel: boolean): "mention" | "label" | "any" {
-  const m = v?.trim().toLowerCase();
-  if (m === "mention" || m === "label" || m === "any") return m;
-  return requireLabel ? "label" : "mention"; // sensible default: pin-to-start
-}
-
 export interface Config {
   /** Optional. If unset, the Agent SDK uses your Claude Code subscription login. */
   anthropicApiKey?: string;
@@ -103,18 +63,6 @@ export interface Config {
   owner: string;
   /** All repos the agency watches. */
   targetRepos: string[];
-  /**
-   * How an issue starts the agency:
-   *   "mention" - the issue mentions one of `handles` (default, "pin to start")
-   *   "label"   - the issue carries `queueLabel`
-   *   "any"     - every new issue (aggressive)
-   */
-  triggerMode: "mention" | "label" | "any";
-  /** Short "@handles" that pin the agency (mention mode). */
-  handles: string[];
-  queueLabel: string;
-  /** Issues with this label are never touched (your manual opt-out). */
-  ignoreLabel: string;
   model?: string;
   runMode: "once" | "watch" | "webhook";
   pollIntervalSeconds: number;
@@ -157,11 +105,6 @@ export function loadConfig(): Config {
     githubToken: optional("GITHUB_TOKEN", ""),
     owner,
     targetRepos,
-    // Operational settings are DB-first (dashboard-managed) with the env var as a fallback.
-    triggerMode: parseTrigger(sStr("trigger_mode", "TRIGGER_MODE", ""), bool("REQUIRE_LABEL", false)),
-    handles: loadHandles(),
-    queueLabel: sStr("queue_label", "QUEUE_LABEL", "agency:queue"),
-    ignoreLabel: sStr("ignore_label", "IGNORE_LABEL", "agency:ignore"),
     model: process.env.AGENT_MODEL?.trim() || undefined,
     runMode: parseRunMode(process.env.RUN_MODE),
     pollIntervalSeconds: Math.max(10, sNum("poll_interval_seconds", "POLL_INTERVAL_SECONDS", 60)),
@@ -182,16 +125,7 @@ export function loadConfig(): Config {
   if (process.env.ANTHROPIC_BASE_URL?.trim()) {
     console.log(`[agency] model endpoint: ${process.env.ANTHROPIC_BASE_URL.trim()} (custom provider/router)`);
   }
-  const triggerDesc =
-    cfg.triggerMode === "mention"
-      ? `mention ${cfg.handles.join(" / ")}`
-      : cfg.triggerMode === "label"
-        ? `label "${cfg.queueLabel}"`
-        : "any new issue";
-  console.log(
-    `[agency] watching ${cfg.targetRepos.length} repo(s): ${cfg.targetRepos.join(", ")} ` +
-      `(trigger: ${triggerDesc})`,
-  );
+  console.log(`[agency] watching ${cfg.targetRepos.length} repo(s): ${cfg.targetRepos.join(", ")}`);
 
   if (!cfg.owner || !cfg.githubToken) {
     console.warn(

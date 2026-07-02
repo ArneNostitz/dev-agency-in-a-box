@@ -3,8 +3,8 @@
  *
  * Guiding principle: once the agency has *touched* a thread, any new comment from the human
  * re-engages it — open or closed, issue or PR, with no need to re-tag a handle. A thread the
- * agency has never touched still needs the explicit opt-in trigger (mention/label/any), so the
- * agency never jumps on a random issue.
+ * agency has never touched sits in Inbox until a human explicitly promotes it from the
+ * dashboard — nothing auto-starts a fresh GitHub issue.
  *
  * This is a pure function so it can be unit-tested without GitHub.
  */
@@ -15,13 +15,13 @@ export interface ThreadSignals {
   inProgress: boolean;
   /** issue is closed (or its PR was merged). */
   closed: boolean;
-  /** has agency:ready (an open PR was delivered). */
+  /** state is "review" (an open PR was delivered). */
   ready: boolean;
-  /** has agency:needs-attention (parked / blocked). */
+  /** blocked is "needsAttention" (parked / blocked). */
   needsAttention: boolean;
   /** is paused waiting on the human (awaiting-answer / awaiting-approval). */
   awaiting: boolean;
-  /** the agency has touched this thread before (agency label OR an agency comment). */
+  /** the agency has touched this thread before (triaged past Inbox, or an agency comment). */
   owned: boolean;
   /** there is a NEW human comment we have not handled yet (cursor-deduped). */
   newHumanComment: boolean;
@@ -29,8 +29,6 @@ export interface ThreadSignals {
   approvedReaction: boolean;
   /** an OPEN agency PR exists for this issue's branch. */
   hasOpenPr: boolean;
-  /** a fresh (untouched) issue matches the configured trigger (mention/label/any). */
-  triggerMatch: boolean;
 }
 
 export function decideThreadAction(s: ThreadSignals): ThreadAction {
@@ -47,9 +45,6 @@ export function decideThreadAction(s: ThreadSignals): ThreadAction {
   if (s.newHumanComment && s.owned) {
     return s.closed || s.ready || s.needsAttention ? "followup" : "fresh";
   }
-
-  // Never-touched, still-open issue that opts in via the trigger.
-  if (!s.owned && s.triggerMatch && !s.closed) return "fresh";
 
   return "skip";
 }

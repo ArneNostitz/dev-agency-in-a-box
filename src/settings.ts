@@ -35,10 +35,6 @@ export function sBool(key: string, env: string, def: boolean): boolean {
  */
 export const OPS_SETTINGS = [
   { key: "github_owner", env: "GITHUB_OWNER", type: "str", def: "", label: "GitHub owner / org" },
-  { key: "trigger_mode", env: "TRIGGER_MODE", type: "select", options: ["mention", "label", "any"], def: "mention", label: "How issues start the agency" },
-  { key: "handles", env: "HANDLES", type: "str", def: "@dev", label: "Trigger handles (comma-separated)" },
-  { key: "queue_label", env: "QUEUE_LABEL", type: "str", def: "agency:queue", label: "Queue label (label mode)" },
-  { key: "ignore_label", env: "IGNORE_LABEL", type: "str", def: "agency:ignore", label: "Ignore label (never touch)" },
   { key: "concurrency", env: "AGENCY_CONCURRENCY", type: "num", def: 3, label: "Max concurrent runs" },
   { key: "poll_interval_seconds", env: "POLL_INTERVAL_SECONDS", type: "num", def: 60, label: "Poll interval (seconds, watch mode)" },
   { key: "followup_window_days", env: "FOLLOWUP_WINDOW_DAYS", type: "num", def: 21, label: "Re-engage closed threads within (days)" },

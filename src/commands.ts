@@ -11,8 +11,6 @@ import {
   listComments,
   closeIssue,
   commentOnIssue,
-  addLabel,
-  removeLabel,
   repoExists,
   ensureWebhook,
   ensureCollaborator,
@@ -21,7 +19,7 @@ import {
 } from "./github.js";
 import { addWatchedRepo, listWatchedRepos, recordIssueStatus, getIssueStatus } from "./store.js";
 import { pushActivity } from "./activity.js";
-import { withStatus } from "./state.js";
+import { withStatus, setBlocked } from "./state.js";
 
 export type ControlCommand = { type: "add-repo"; repo: string } | { type: "list-repos" };
 
@@ -97,17 +95,16 @@ export async function handleMergeCommands(cfg: Config, repo: string): Promise<vo
       recordIssueStatus(repo, i.number, withStatus("done"));
       console.log(`[agency] merged ${repo} #${i.number}`);
     } else {
-      await removeLabel(repo, i.number, "agency:ready");
-      await addLabel(repo, i.number, "agency:needs-attention");
+      recordIssueStatus(repo, i.number, setBlocked(withStatus("working"), "needsAttention"));
       await commentOnIssue(repo, i.number, `⚠️ Couldn't merge: ${r.msg}`);
     }
   }
 }
 
 /**
- * Re-queue issues stranded in `agency:in-progress` by a restart mid-run. On a fresh process
- * no work is active, so any in-progress issue is orphaned — drop the label so it's picked up
- * again. Makes redeploys safe even while an agent was working.
+ * Re-queue issues stranded "working" by a restart mid-run. On a fresh process no work is
+ * active, so any in-progress issue is orphaned — park it so it's picked up again. Makes
+ * redeploys safe even while an agent was working.
  */
 export async function recoverOrphans(cfg: Config): Promise<void> {
   for (const repo of effectiveRepos(cfg)) {
@@ -120,8 +117,7 @@ export async function recoverOrphans(cfg: Config): Promise<void> {
         if (st.state === "working" && st.blocked == null) {
           // Park it — don't auto-requeue (that loops if restarts keep happening / a run keeps
           // failing). The human re-pins when ready.
-          await removeLabel(repo, i.number, "agency:in-progress");
-          await addLabel(repo, i.number, "agency:needs-attention");
+          recordIssueStatus(repo, i.number, setBlocked(withStatus("working"), "needsAttention"));
           // DB-only — no GitHub comment (those emailed on every restart and fed a re-dispatch loop).
           pushActivity(repo, i.number, "agency", "done", "⏸ A restart interrupted this mid-run — parked at needs-attention. Press Resume to resume.");
           console.log(`[agency] parked orphaned ${repo} #${i.number}`);
@@ -160,7 +156,7 @@ export async function handleControlCommands(cfg: Config, repo: string): Promise<
     }
     addWatchedRepo(target);
     const access = await ensureRepoAccess(cfg, target);
-    await closeIssue(repo, issue.number, `✅ Now watching \`${target}\`${access}. Pin \`@dev\` on an issue there to start.`);
+    await closeIssue(repo, issue.number, `✅ Now watching \`${target}\`${access}. New issues there land in Inbox on the dashboard.`);
     console.log(`[agency] ${repo} #${issue.number}: /add-repo ${target} -> watching${access}`);
   }
 }

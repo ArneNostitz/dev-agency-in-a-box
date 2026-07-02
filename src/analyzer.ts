@@ -14,7 +14,7 @@ import {
   toolStatsSince, tokensByRoleSince, topIssuesByTokensSince, runStepCountSince, recentLessons,
   getSetting, setSetting,
 } from "./store.js";
-import { createIssue, addLabel } from "./github.js";
+import { createIssue } from "./github.js";
 import { effectiveRepos } from "./commands.js";
 import { resolveChatExec } from "./agents/chat.js";
 import { query } from "@anthropic-ai/claude-agent-sdk";
@@ -91,11 +91,9 @@ export async function runAnalysis(cfg: Config): Promise<number> {
   setSetting(LAST_KEY, new Date().toISOString());
   if (!text.trim()) return 0;
   const body = `🔬 **Process Analyzer — self-improvement proposals** (advisory; approve what you like)\n\n${text}\n\n---\n<details><summary>Telemetry digest</summary>\n\n${digest}\n</details>`;
+  // Advisory only — no DB status is set here, so the next scan surfaces it in Inbox like any
+  // other untouched GitHub issue. Nothing auto-starts it either way.
   const r = await createIssue(repo, "Process Analyzer: improvement proposals", body).catch(() => ({ number: 0 }));
-  if (r.number) {
-    await addLabel(repo, r.number, "agency:analyzer").catch(() => {});
-    await addLabel(repo, r.number, "agency:ignore").catch(() => {}); // advisory — agents don't act on it
-  }
   return r.number;
 }
 

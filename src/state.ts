@@ -2,17 +2,19 @@
  * IssueState — the single owner of an issue's lifecycle (architecture review,
  * Candidate 1). Five lifecycle states plus a separate, extensible BlockedReason.
  *
- * Labels are a WRITE-ONLY projection of this module's state onto GitHub (see
- * `labelsFor`); nothing in the agency reads them back as truth. That removes the
- * class of bugs where the GitHub label and the DB disagreed.
+ * GitHub labels are gone entirely (docs/adr/0003) — the DB `issues.state`/`issues.blocked`
+ * columns are the only representation of an issue's status, full stop.
+ *
+ * `notPlanned` doubles as "Inbox": a GitHub-originated issue the agency has never had a
+ * human decision on. It starts there and moves to `planned`/`working` only when a human
+ * explicitly promotes it from the dashboard — nothing auto-starts it.
  *
  * `parseLegacyStatus` maps the old `agency:*` label strings and the old mixed DB
  * column ("planned" vs "agency:planned") onto the new vocabulary, so the cutover can
  * read existing rows with no data migration.
  *
- * NOTE: IssueKind (epic / audit / queue / analyzer) and IssueFlags (unlimited /
- * ignore / audit-finding) are orthogonal and live elsewhere — this module owns the
- * lifecycle axis only. See CONTEXT.md.
+ * NOTE: IssueKind (epic / audit / analyzer) and IssueFlags (unlimited) are orthogonal
+ * and live elsewhere — this module owns the lifecycle axis only. See CONTEXT.md.
  */
 
 /** The lifecycle position of an issue. */
@@ -63,7 +65,7 @@ export function isBlockedReason(s: unknown): s is BlockedReason {
  * nonsense jumps (e.g. notPlanned → review).
  */
 const ALLOWED_TRANSITIONS: Record<IssueState, IssueState[]> = {
-  notPlanned: ["planned", "done"],
+  notPlanned: ["planned", "working", "done"],
   planned: ["working", "done", "notPlanned"],
   working: ["review", "done", "planned", "notPlanned"],
   review: ["working", "done", "planned"],
@@ -111,62 +113,6 @@ export function isWaitingOnHuman(status: IssueStatus): boolean {
 /** True iff the issue is finished (closed/merged). */
 export function isTerminal(status: IssueStatus): boolean {
   return status.state === "done";
-}
-
-/**
- * The WRITE-ONLY GitHub-label projection of a status. Returns the legacy `agency:*`
- * strings so the human-facing board keeps working during migration; the agency never
- * reads these back. Both the state label and (if any) the blocked label are projected.
- */
-const STATE_LABEL: Record<IssueState, string> = {
-  notPlanned: "", // untouched issue — no label
-  planned: "agency:planned",
-  working: "agency:in-progress",
-  review: "agency:ready",
-  done: "", // done = closed/merged; the closed issue is the signal, no label needed
-};
-
-const BLOCKED_LABEL: Record<BlockedReason, string> = {
-  awaitingApproval: "agency:awaiting-approval",
-  awaitingAnswer: "agency:awaiting-answer",
-  needsAttention: "agency:needs-attention",
-  conflict: "🚧 blocked",
-  rateLimited: "agency:rate-limited",
-  budgetExceeded: "agency:needs-attention", // reuses the attention label; split later if useful
-  held: "agency:held",
-};
-
-/**
- * Canonical GitHub-label strings — the SINGLE source for the `agency:*` projection
- * vocabulary (ADR-0001). Every other module imports these instead of redefining the
- * literals, so the label namespace can't drift. These are write-only projection
- * strings; reading them back as state is the bug the inversion kills.
- */
-export const LABEL_PLANNED = STATE_LABEL.planned;
-export const LABEL_IN_PROGRESS = STATE_LABEL.working;
-export const LABEL_READY = STATE_LABEL.review;
-export const LABEL_AWAITING_ANSWER = BLOCKED_LABEL.awaitingAnswer;
-export const LABEL_AWAITING_APPROVAL = BLOCKED_LABEL.awaitingApproval;
-export const LABEL_NEEDS_ATTENTION = BLOCKED_LABEL.needsAttention;
-export const LABEL_RATE_LIMITED = BLOCKED_LABEL.rateLimited;
-export const LABEL_CONFLICT = BLOCKED_LABEL.conflict;
-
-/** Back-compat aliases for the names github.ts historically exported. */
-export const AWAITING_LABEL = LABEL_AWAITING_ANSWER;
-export const APPROVAL_LABEL = LABEL_AWAITING_APPROVAL;
-
-/** Issues already in an agency lifecycle state — skip these when scanning for fresh work. */
-export const STATE_LABELS = [LABEL_IN_PROGRESS, LABEL_READY, LABEL_NEEDS_ATTENTION];
-
-/** Any state where the agency is paused waiting on the human. */
-export const AWAITING_LABELS = [AWAITING_LABEL, APPROVAL_LABEL];
-
-export function labelsFor(status: IssueStatus): string[] {
-  const out: string[] = [];
-  const s = STATE_LABEL[status.state];
-  if (s) out.push(s);
-  if (status.blocked) out.push(BLOCKED_LABEL[status.blocked]);
-  return out;
 }
 
 /**

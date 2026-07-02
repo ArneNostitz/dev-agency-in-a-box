@@ -31,7 +31,6 @@ import { runOrchestratorChat } from "./agents/orchestrator-chat.js";
 import { listOrchThread, clearOrchThread, setByAgent } from "./store.js";
 import { getIssueBudget, setIssueBudget } from "./budget.js";
 import { renderShell } from "./shell.js";
-import { addLabel, removeLabel } from "./github.js";
 import { afterMerge } from "./merge_hooks.js";
 import { activeClaims } from "./locks.js";
 import { authEnabled, userFromReq, setSessionCookie, clearSessionCookie, parseCookies, SESSION_COOKIE, verifyRecoveryKey } from "./auth.js";
@@ -133,9 +132,7 @@ function readBody(req: IncomingMessage): Promise<Buffer> {
   });
 }
 
-// "unlabeled" lets you retrigger an issue instantly: remove its agency:* label and it
-// becomes actionable again (the @handle in the body re-pins it) — no need to rewrite anything.
-const RELEVANT_ACTIONS = new Set(["opened", "reopened", "labeled", "unlabeled", "edited"]);
+const RELEVANT_ACTIONS = new Set(["opened", "reopened", "edited"]);
 const PR_ACTIONS = new Set(["opened", "reopened", "synchronize", "ready_for_review", "edited"]);
 
 // Static assets (PWA shell extras) live in web/ at the repo root; from the compiled dist/ that's ../web.
@@ -246,7 +243,8 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           const repoT = (getSetting("analyzer_repo") || effectiveRepos(cfg)[0] || "").trim();
           if (!repoT) return void res.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({ error: "no analyzer_repo / watched repo configured" }));
           const r = await createIssue(repoT, title, ibody).catch(() => ({ number: 0 }));
-          if (r.number) { await addLabel(repoT, r.number, "agency:analyzer").catch(() => {}); await addLabel(repoT, r.number, "agency:ignore").catch(() => {}); setSetting("analyzer_last_issue_ts", new Date().toISOString()); }
+          // Advisory only — no DB status set, so it surfaces in Inbox like any other untouched issue.
+          if (r.number) setSetting("analyzer_last_issue_ts", new Date().toISOString());
           res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ number: r.number }));
         })();
         return;
@@ -341,10 +339,9 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           // — not just "ready". Without this the dashboard shows "Create PR" while the PR is already
           // open. We persist what we find, so later polls read it straight from the DB (one gh call/issue
           // only until it's recorded). Skip planned / awaiting-approval (no branch yet).
-          const PR_BACKFILL_STATES = ["agency:ready", "agency:in-progress", "agency:needs-attention", "agency:awaiting-answer", "agency:rate-limited"];
           for (const i of issues) {
             const _pk = `${i.repo}#${i.number}`;
-            if (!i.pr_number && PR_BACKFILL_STATES.includes(i.state ?? "") && Date.now() - (prBackfillChecked.get(_pk) ?? 0) > 60_000) {
+            if (!i.pr_number && (i.state === "working" || i.state === "review") && Date.now() - (prBackfillChecked.get(_pk) ?? 0) > 60_000) {
               prBackfillChecked.set(_pk, Date.now());
               try {
                 const pr = await findPrForBranch(i.repo, `agency/issue-${i.number}`);
@@ -362,16 +359,19 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           for (const i of issues) epicCache[i.repo] ??= epicsByParent(i.repo);
           // child issue number → parent number, per repo
           const childToParentNum: Record<string, Record<number, number>> = {};
+          // parent issue number → title (from tracked issues), keyed by the epics table (isEpic()),
+          // not a lifecycle state — epic-ness is orthogonal to the IssueState enum.
+          const epicTitleMap: Record<string, Record<number, string>> = {};
           for (const [repo, byParent] of Object.entries(epicCache)) {
             childToParentNum[repo] = {};
+            const titles: Record<number, string> = {};
             for (const [parentStr, kids] of Object.entries(byParent)) {
               for (const kid of kids) childToParentNum[repo][kid.child] = Number(parentStr);
+              const parentNum = Number(parentStr);
+              const parentIssue = issues.find((i) => i.repo === repo && i.number === parentNum);
+              if (parentIssue) titles[parentNum] = parentIssue.title;
             }
-          }
-          // parent issue number → title (from tracked issues)
-          const epicTitleMap: Record<string, Record<number, string>> = {};
-          for (const i of issues) {
-            if (i.state === "agency:epic") (epicTitleMap[i.repo] ??= {})[i.number] = i.title;
+            epicTitleMap[repo] = titles;
           }
           // Fetch GitHub-native parent/sub-issue links and merge with DB-backed maps so issues
           // created as sub-issues directly in GitHub (not via the agency planner) are included.
@@ -1058,8 +1058,8 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               );
             }
           }
-          // Make the agent act on the reply (bypasses trigger-mode/mention). onComment re-engages to
-          // ADDRESS the message even if a PR exists (unlike plain Resume, which just offers the merge).
+          // Make the agent act on the reply. onComment re-engages to ADDRESS the message even if a
+          // PR exists (unlike plain Resume, which just offers the merge).
           // Exception: planned / awaiting-approval issues have no branch yet — posting a comment should
           // NOT kick off a run automatically. The human will start it explicitly when ready.
           const issueRow = getIssueRow(repo, number);
@@ -1629,7 +1629,6 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               const body = `${handle} ${(it.scope ?? "").trim()}${pos}\n\nProposed by the 🧭 Orchestrator from a chat. Review and press ▶ Start when ready.`;
               const c = await createIssue(repo, title, body, userTok);
               if (!c.number) continue;
-              await addLabel(repo, c.number, "agency:planned").catch(() => {});
               recordIssueStatus(repo, c.number, withStatus("planned"), { title });
               setByAgent(repo, c.number, true);
               created.push({ number: c.number, title, url: c.url });
@@ -1681,7 +1680,6 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               if (startNew) void startNew(repo, created.number, p.title.trim(), issueBody).catch(() => {});
               else if (start) void start(repo, created.number).catch(() => {});
             } else {
-              await addLabel(repo, created.number, "agency:planned").catch(() => {});
               recordIssueStatus(repo, created.number, withStatus("planned"), { title: p.title.trim() });
             }
             return ok(JSON.stringify({ ok: true, number: created.number, url: created.url }));
@@ -1699,7 +1697,6 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               clearIssueModelOverride(repo, number);
             }
           }
-          await removeLabel(repo, number, "agency:planned").catch(() => {});
           await start(repo, number).catch(() => {});
           return ok();
         }
@@ -1722,7 +1719,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         action?: string;
         pull_request?: { merged?: boolean; head?: { ref?: string } };
         repository?: { full_name?: string };
-        issue?: { number?: number; title?: string; body?: string; labels?: Array<{ name?: string }> };
+        issue?: { number?: number; title?: string; body?: string };
         comment?: { id?: number; body?: string; created_at?: string; user?: { login?: string } };
         sender?: { type?: string };
       } = {};
@@ -1746,8 +1743,8 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
             const isAgency = (payload.comment.body ?? "").includes("<!-- dev-agency -->");
             syncInComment(syncRepo, payload.issue.number, payload.comment.id, payload.comment.user?.login ?? "user", payload.comment.body ?? "", isAgency, payload.comment.created_at ?? "");
           } else if (trackerMode() === "local" && event === "issues" && payload.issue?.number) {
-            // Issue body/labels only adopt into the DB when DB-authoritative tracking is enabled.
-            syncInIssue(syncRepo, payload.issue.number, payload.issue.title ?? "", payload.issue.body ?? "", (payload.issue.labels ?? []).map((l) => l.name ?? "").filter(Boolean));
+            // Issue body only adopts into the DB when DB-authoritative tracking is enabled.
+            syncInIssue(syncRepo, payload.issue.number, payload.issue.title ?? "", payload.issue.body ?? "");
           }
         } catch { /* best effort */ }
       }

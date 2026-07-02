@@ -71,9 +71,11 @@ function repoContext(repo: string): string {
   const liveBlock = inflight.length ? `\n\nIn flight right now (don't propose work that fights these):\n${inflight.join("\n")}` : "";
 
   // Epics and their planned sub-issues (the "handoff codes") so you know how big work was split.
-  const epics = listEpicChildren ? all.filter((i) => i.state === "agency:epic").map((i) => {
+  // Epic-ness is the epics table (isEpic()), not a lifecycle state (docs/adr/0003).
+  const epics = listEpicChildren ? all.flatMap((i) => {
     const kids = (listEpicChildren(repo, i.number) || []).map((c) => `#${c.child} ${c.title}`);
-    return `#${i.number} ${i.title} → ${kids.length ? kids.join(", ") : "(no sub-issues yet)"}`;
+    if (!kids.length) return [];
+    return [`#${i.number} ${i.title} → ${kids.join(", ")}`];
   }) : [];
   const epicBlock = epics.length ? `\n\nEpics & their sub-issues:\n${epics.join("\n")}` : "";
 

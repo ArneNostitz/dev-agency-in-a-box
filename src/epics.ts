@@ -15,8 +15,6 @@ import {
   cloneRepo,
   commentOnIssue,
   upsertTrackerComment,
-  addLabel,
-  removeLabel,
   mergePrForBranch,
   closeIssue,
   type RecentThread,
@@ -27,24 +25,23 @@ import {
   updateEpicChild,
   getEpicMeta,
   setEpicMeta,
-  recordIssueState,
   recordIssueStatus,
+  getIssueStatus,
   recordRun,
   type EpicChild,
 } from "./store.js";
 import { runRole } from "./agents/roleAgent.js";
 import { setActive, clearActive } from "./activity.js";
-import { LABEL_READY as READY, LABEL_IN_PROGRESS as IN_PROGRESS, withStatus } from "./state.js";
+import { withStatus } from "./state.js";
 
-export const EPIC_LABEL = "agency:epic"; // kind label — moves to IssueKind when that module exists
-
-/** Human label for a child's status, from its labels/closed state. */
-export function childStatus(t: RecentThread): string {
+/** Human-readable status for a child's tracking checklist, from DB status + closed state. */
+export function childStatus(repo: string, t: RecentThread): string {
   if (t.closed) return "done";
-  if (t.labels.includes(READY)) return "in review";
-  if (t.labels.includes(IN_PROGRESS)) return "working";
-  if (t.labels.includes("agency:awaiting-approval") || t.labels.includes("agency:awaiting-answer")) return "waiting";
-  if (t.labels.includes("agency:needs-attention")) return "blocked";
+  const s = getIssueStatus(repo, t.number);
+  if (s.state === "review") return "in review";
+  if (s.blocked === "awaitingApproval" || s.blocked === "awaitingAnswer") return "waiting";
+  if (s.blocked === "needsAttention") return "blocked";
+  if (s.state === "working") return "working";
   return "open";
 }
 
@@ -79,7 +76,7 @@ export async function reconcileEpics(repo: string, threads: Map<number, RecentTh
 
     for (const c of children) {
       const t = threads.get(c.child);
-      if (t) updateEpicChild(repo, parent, c.child, childStatus(t), t.closed);
+      if (t) updateEpicChild(repo, parent, c.child, childStatus(repo, t), t.closed);
     }
     const fresh = listEpicChildren(repo, parent);
     const done = fresh.filter((c) => c.closed).length;
@@ -92,11 +89,7 @@ export async function reconcileEpics(repo: string, threads: Map<number, RecentTh
       setEpicMeta(repo, parent, { hash });
     }
 
-    if (done < fresh.length) {
-      recordIssueState(repo, parent, { state: EPIC_LABEL });
-      await addLabel(repo, parent, EPIC_LABEL).catch(() => {});
-      continue;
-    }
+    if (done < fresh.length) continue; // epic-ness is isEpic() (the epics table), not a lifecycle state
     // All children done — run the integration review on the parent once.
     if (!meta.reviewed) {
       setEpicMeta(repo, parent, { reviewed: true });
@@ -132,9 +125,6 @@ async function runEpicReview(repo: string, parent: number, children: EpicChild[]
       parent,
       `🔍 **Epic integration review** · _dev-agency_\n\n${review.text}\n\n— all sub-issues are done. This epic is **ready** to close.`,
     );
-    await removeLabel(repo, parent, EPIC_LABEL).catch(() => {});
-    await removeLabel(repo, parent, IN_PROGRESS).catch(() => {});
-    await addLabel(repo, parent, READY).catch(() => {});
     recordIssueStatus(repo, parent, withStatus("review"));
     console.log(`[agency] epic #${parent} reviewed -> ready`);
   } finally {

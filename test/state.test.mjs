@@ -11,7 +11,6 @@ import {
   clearBlocked,
   isWaitingOnHuman,
   isTerminal,
-  labelsFor,
   parseLegacyStatus,
 } from "../dist/state.js";
 
@@ -44,9 +43,12 @@ test("reopens are allowed: done → working, done → planned", () => {
 
 test("nonsense jumps are rejected", () => {
   assert.equal(canTransition("notPlanned", "review"), false);
-  assert.equal(canTransition("notPlanned", "working"), false);
   assert.equal(canTransition("planned", "review"), false); // must go via working
   assert.equal(canTransition("review", "notPlanned"), false);
+});
+
+test("notPlanned (Inbox) can jump straight to working — the Start action skips Planned", () => {
+  assert.equal(canTransition("notPlanned", "working"), true);
 });
 
 test("every state transitions to itself (no-op)", () => {
@@ -83,29 +85,6 @@ test("isTerminal recognises done regardless of blocked", () => {
   assert.equal(isTerminal(withStatus("review")), false);
 });
 
-// ---- the write-only label projection ----
-
-test("labelsFor projects the legacy agency:* strings", () => {
-  assert.deepEqual(labelsFor(withStatus("planned")), ["agency:planned"]);
-  assert.deepEqual(labelsFor(withStatus("working")), ["agency:in-progress"]);
-  assert.deepEqual(labelsFor(withStatus("review")), ["agency:ready"]);
-  assert.deepEqual(labelsFor(withStatus("notPlanned")), []);
-  assert.deepEqual(labelsFor(withStatus("done")), []); // closed issue is the signal
-});
-
-test("labelsFor projects BOTH the state and the blocked label", () => {
-  // The old code removed the state label when blocking; this projects both (labels are
-  // informative-only, so projecting both is strictly clearer and can't break logic).
-  assert.deepEqual(labelsFor(withStatus("working", "awaitingAnswer")), [
-    "agency:in-progress",
-    "agency:awaiting-answer",
-  ]);
-  assert.deepEqual(labelsFor(withStatus("planned", "awaitingApproval")), [
-    "agency:planned",
-    "agency:awaiting-approval",
-  ]);
-});
-
 // ---- the migration bridge (no data migration needed) ----
 
 test("parseLegacyStatus splits the old single-value representation into state + blocked, loss-free", () => {
@@ -132,25 +111,6 @@ test("parseLegacyStatus tolerates null / empty / unknown / kind-and-flag labels"
   assert.deepEqual(parseLegacyStatus("agency:epic"), STATUS_NOT_PLANNED); // kind, not lifecycle
   assert.deepEqual(parseLegacyStatus("agency:unlimited"), STATUS_NOT_PLANNED); // flag, not lifecycle
   assert.deepEqual(parseLegacyStatus("  agency:ready  "), { state: "review", blocked: null }); // trimmed
-});
-
-// ---- the write-only invariant (ADR-0001) ----
-
-// Labels are a derived projection of state, never an input. This test pins the rule:
-// nothing in this module turns a label back into a status. The only direction is
-// status → labels. Reading labels back as truth is the bug the inversion kills.
-test("labelsFor is a write-only projection: there is no label → status path in this module", () => {
-  // For every status, labelsFor returns *some* strings; but no function here consumes
-  // a label to produce a status. parseLegacyStatus consumes the OLD DB column value
-  // (a single state-ish string), not a label set — and it is loss-free one-way.
-  const seen = new Set();
-  for (const s of ISSUE_STATES) {
-    for (const b of [null, "awaitingAnswer", "conflict", "needsAttention"])
-      for (const l of labelsFor(withStatus(s, b))) seen.add(l);
-  }
-  assert.ok(seen.size > 0, "projection produces labels");
-  // No inverse exists: there is no `parseLabels()` here. (If one is ever added, it must
-  // live at the inbound-sync boundary, not in this pure module — see ADR-0001.)
 });
 
 // ---- a full lifecycle + reopen round-trip ----
