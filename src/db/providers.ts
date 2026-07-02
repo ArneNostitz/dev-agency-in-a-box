@@ -25,6 +25,20 @@ export interface Provider {
   runner?: "claude-sdk" | "claude-cli" | "pi-cli" | "custom-cli";
   /** Command template for custom-cli / cli runners: {model} {systemPrompt} {task} {workdir}. */
   cliCommand?: string;
+  /**
+   * pi runner: pi's OWN built-in provider name (e.g. "zai", "deepseek", "kimi-coding", "openrouter").
+   * The pi runner registers this provider via an isolated ~/.pi/agent/auth.json (pi's real schema) so
+   * pi authenticates against the right endpoint without a hand-built models.json. Optional: when unset,
+   * inferPiProvider() derives it from baseUrl/name so the seeded presets (GLM, DeepSeek, Kimi…) work
+   * with zero configuration. Set it explicitly in Settings → Models & runners to override the guess.
+   */
+  piProvider?: string;
+  /**
+   * Opaque per-runner config blob for future/CLI runners (e.g. a gemini-cli flag set). Not read by the
+   * built-in runners yet — kept on the row so adding a runner is a registry entry + Settings field,
+   * not a schema change. Forward-compatible; safely ignored when unused.
+   */
+  runnerConfig?: Record<string, unknown>;
 }
 
 let _modelsPresetCache: Record<string, string[]> | null = null;
@@ -187,6 +201,30 @@ export function tierModel(providerId: string, tier: Tier): { providerId: string;
 export function parseModelRef(ref: string | undefined | null): { providerId: string; model: string } | null {
   if (!ref) return null; const i = ref.indexOf("/"); if (i <= 0) return null;
   return { providerId: ref.slice(0, i), model: ref.slice(i + 1) };
+}
+
+/**
+ * Map an agency Provider to pi's OWN built-in provider name — the one pi uses to know a provider's
+ * baseUrl/protocol/model-catalog, so the pi runner only has to supply the API key (via an isolated
+ * auth.json in pi's real schema). Explicit `p.piProvider` always wins; otherwise we infer from the
+ * baseUrl/name so the seeded presets (GLM, DeepSeek, Kimi, OpenRouter, OpenAI, Anthropic) work with
+ * no configuration. Returns "" when no built-in matches → the pi runner will register a custom
+ * provider via a real-schema models.json (see preparePiConfig).
+ */
+export function inferPiProvider(p: Provider | null | undefined): string {
+  if (!p) return "";
+  if (p.piProvider && p.piProvider.trim()) return p.piProvider.trim();
+  const url = (p.baseUrl || "").toLowerCase();
+  const name = (p.name || "").toLowerCase();
+  // Order matters: most-specific hosts first. Each entry maps a recognizable baseUrl/name fragment
+  // to pi's built-in provider key (verified against pi's known provider set).
+  if (/zhipu|glm|bigmodel|chatglm|z\.ai|\bzai\b/.test(url + " " + name)) return "zai";
+  if (/deepseek/.test(url + " " + name)) return "deepseek";
+  if (/moonshot|kimi/.test(url + " " + name)) return "kimi-coding";
+  if (/openrouter/.test(url + " " + name)) return "openrouter";
+  if (/api\.openai\.com|openai/.test(url + " " + name)) return "openai";
+  if (/anthropic\.com|claude/.test(url + " " + name)) return "anthropic";
+  return "";
 }
 /** The graceful fallback for a {providerId, model} (the model's slot fallback if it is a tiered model). */
 export function fallbackFor(providerId: string, model: string): { providerId: string; model: string } | null {

@@ -240,6 +240,9 @@ export function ModelsModal({ onClose, reload }) {
   useEffect(refresh, []);
   function saveProviders(list) { return api("/models", { providers: list }).then(() => { reload(); refresh(); }).catch(() => toast("Couldn’t save", "error")); }
   function setRunner(id, runner) { saveProviders(providers.map((p) => (p.id === id ? { ...p, runner: runner || undefined } : p))); }
+  // pi provider name (pi's OWN builtin key, e.g. "zai" for GLM/Zhipu). Drives the pi runner's auth.json.
+  // Auto-inferred from baseUrl/name when blank, so this only needs setting for an unusual mapping.
+  function setPiProvider(id, piProvider) { saveProviders(providers.map((p) => (p.id === id ? { ...p, piProvider: piProvider || undefined } : p))); }
   function removeProvider(id, name) { if (window.confirm("Remove " + name + "?")) saveProviders(providers.filter((p) => p.id !== id)); }
   function clearSecret(key, name) { if (window.confirm("Remove " + name + "?")) api("/user-secret", { key, value: "" }).then(() => { toast("Removed"); reload(); refresh(); }); }
   const RUNNER_OPTS = [{ value: "", label: "SDK" }, { value: "pi-cli", label: "pi" }, { value: "claude-cli", label: "claude" }, { value: "custom-cli", label: "custom" }];
@@ -258,7 +261,10 @@ export function ModelsModal({ onClose, reload }) {
       <div class="modelrow-main"><${ProviderLogo} name=${p.name} size=${16}/> <b>${p.name}</b> <span class="muted" style="font-size:11px">${(p.models || []).length} model${(p.models || []).length === 1 ? "" : "s"}</span></div>
       <${Select} value=${p.runner || ""} options=${RUNNER_OPTS} onChange=${(v) => setRunner(p.id, v)} menuAlign="right"/>
       <button class="iconbtn tip" data-tip="Remove" style="width:30px;height:30px;border:none" onClick=${() => removeProvider(p.id, p.name)}><${Icon} name="trash" size=${15}/></button>
-    </div>`)}
+    </div>`).concat(thirdParty.filter((p) => p.runner === "pi-cli").map((p) => html`<div class="modelrow-sub" key=${p.id + "-pi"} style="display:flex;align-items:center;gap:8px;padding:0 4px 8px">
+      <span class="tip" data-tip="pi's own built-in provider name (e.g. zai for GLM/Zhipu, deepseek, kimi-coding, openrouter). Inferred from the base URL when blank.">pi provider</span>
+      <input placeholder="zai (auto)" value=${p.piProvider || ""} onInput=${(e) => setPiProvider(p.id, e.target.value)} style="flex:1"/>
+    </div>`))}
     ${empty ? html`<div class="muted" style="font-size:12.5px;padding:10px 2px">No models added yet — add one below.</div>` : null}
     <button class="btn primary" style="width:100%;justify-content:center;margin:14px 0 6px" onClick=${() => setAdding(true)}><${Icon} name="plus" size=${15}/> Add provider</button>
     <${ModelsPanel}/>

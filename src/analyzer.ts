@@ -16,8 +16,8 @@ import {
 } from "./store.js";
 import { createIssue } from "./github.js";
 import { effectiveRepos } from "./commands.js";
-import { resolveChatExec } from "./agents/chat.js";
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { resolveChatExec, chatBaseEnv } from "./agents/chat.js";
+import { runLLM } from "./runners/exec.js";
 
 const LAST_KEY = "analyzer_last_run";
 const MIN_NEW_STEPS = Number(process.env.ANALYZER_MIN_STEPS) || 50;
@@ -69,23 +69,32 @@ export async function runAnalysis(cfg: Config): Promise<number> {
   const repo = (getSetting("analyzer_repo") || effectiveRepos(cfg)[0] || "").trim();
   if (!repo) return 0;
   const digest = analysisDigest(since);
-  const { model, env } = resolveChatExec("");
-  const cfgDir = mkdtempSync(join(tmpdir(), "analyzer-"));
+  const { model, provider, authKind } = resolveChatExec("");
   const workdir = mkdtempSync(join(tmpdir(), "analyzer-wd-"));
-  env.CLAUDE_CONFIG_DIR = cfgDir;
   let text = "";
   try {
-    for await (const message of query({
-      prompt: `Analyze this telemetry and propose improvements.\n\n${digest}`,
-      options: { cwd: workdir, systemPrompt: ANALYZER_PERSONA, model, env, allowedTools: [], permissionMode: "bypassPermissions", maxTurns: 6, settingSources: [], stderr: () => {} },
-    })) {
-      if ((message as { type?: string }).type === "assistant") {
-        const content = (message as { message?: { content?: Array<{ type?: string; text?: string }> } }).message?.content;
-        if (Array.isArray(content)) for (const b of content) if (b.type === "text" && b.text) text += b.text;
-      }
-    }
+    await runLLM(
+      {
+        task: `Analyze this telemetry and propose improvements.\n\n${digest}`,
+        cwd: workdir,
+        model,
+        provider,
+        authKind,
+        allowedTools: [],
+        env: chatBaseEnv(),
+        systemPrompt: ANALYZER_PERSONA,
+        abort: new AbortController(),
+        maxTurns: 6,
+        tokenCap: 0,
+      },
+      (message) => {
+        if ((message as { type?: string }).type === "assistant") {
+          const content = (message as { message?: { content?: Array<{ type?: string; text?: string }> } }).message?.content;
+          if (Array.isArray(content)) for (const b of content) if (b.type === "text" && b.text) text += b.text;
+        }
+      },
+    );
   } finally {
-    try { rmSync(cfgDir, { recursive: true, force: true }); } catch { /* noop */ }
     try { rmSync(workdir, { recursive: true, force: true }); } catch { /* noop */ }
   }
   setSetting(LAST_KEY, new Date().toISOString());

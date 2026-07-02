@@ -8,8 +8,18 @@
  * behavior-preserving extraction, not a rewrite. A future deepening could turn this into
  * `run(req): AsyncIterable<RunEvent>`; that's deferred (it's a render change, not needed for
  * the pluggability goal).
+ *
+ * Provider model (#108): the resolved Provider row is passed IN (not a pre-baked Claude-shaped
+ * env). Each runner TRANSLATES the provider for its own backend — the Claude SDK runner builds
+ * ANTHROPIC_* env, the pi runner writes an isolated ~/.pi/agent/auth.json, a future gemini-cli
+ * runner would map its flags. This is what makes runners true plugins: add one entry to the
+ * registry (src/runners/registry.ts) + implement translate-for-this-backend; nothing else changes.
  */
 // AbortController is a global (lib es2022); no import needed.
+import type { Provider } from "../db/providers.js";
+
+/** How the run authenticates — drives each runner's provider translation. */
+export type AuthKind = "subscription" | "apiKey";
 
 /** Everything a runner needs to execute one role turn. */
 export interface RunRequest {
@@ -21,7 +31,19 @@ export interface RunRequest {
   allowedTools: string[];
   /** MCP servers (SDK runners only). */
   mcpServers?: Record<string, unknown>;
-  /** Extra env (e.g. ANTHROPIC_BASE_URL for a routed provider). */
+  /**
+   * The resolved Provider row (the single source of truth: baseUrl/apiKey/model/runner/cliCommand/
+   * piProvider/runnerConfig). Each runner reads what IT needs and ignores the rest. Null only for a
+   * Claude-native/subscription run with no provider row (authKind "subscription").
+   */
+  provider: Provider | null;
+  /** How this run authenticates: "subscription" (Claude-native, no key on the row) | "apiKey" (3rd-party). */
+  authKind: AuthKind;
+  /**
+   * Base subprocess env (process env + GH_TOKEN/GIT identity, never the provider creds). Each runner
+   * layers its own provider auth on top (ANTHROPIC_* for the SDK, auth.json for pi). Kept separate so a
+   * third-party provider's key never leaks into a runner that doesn't use it.
+   */
   env?: Record<string, string>;
   /** System prompt assembled from the editable vault. */
   systemPrompt: string;

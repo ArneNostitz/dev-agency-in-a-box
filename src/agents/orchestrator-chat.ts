@@ -4,13 +4,14 @@
  * — proposes concrete work as a structured handoff the user confirms (it never creates issues
  * itself; that's the confirmed /orch-handoff route). DB-first: the thread lives in `orch_msg`.
  */
-import { query } from "@anthropic-ai/claude-agent-sdk";
-import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendOrchMsg, listOrchThread, recentIssues, getSession, setSession, recordRun, filesFor, listEpicChildren, recentChanges } from "../store.js";
 import { activeClaims } from "../locks.js";
-import { resolveChatExec } from "./chat.js";
+import { resolveChatExec, chatBaseEnv } from "./chat.js";
+import { runLLM } from "../runners/exec.js";
 import { recallWiring, RECALL_PROMPT } from "./recall.js";
 
 export interface HandoffIssue { title: string; scope: string }
@@ -105,10 +106,8 @@ export async function runOrchestratorChat(repo: string, userText: string): Promi
     .map((m) => `${m.role === "user" ? "User" : "Orchestrator"}: ${m.text}`)
     .join("\n\n");
 
-  const { model, env } = resolveChatExec(process.env.ORCHESTRATOR_MODEL || "");
-  const cfgDir = mkdtempSync(join(tmpdir(), "orch-cfg-"));
+  const { model, provider, authKind } = resolveChatExec(process.env.ORCHESTRATOR_MODEL || "");
   const workdir = mkdtempSync(join(tmpdir(), "orch-wd-"));
-  env.CLAUDE_CONFIG_DIR = cfgDir;
   const rc = recallWiring(repo);
   const systemPrompt =
     `${loadPersona()}\n\n` +
@@ -122,35 +121,39 @@ export async function runOrchestratorChat(repo: string, userText: string): Promi
   let text = "";
   let turns = 0;
   try {
-    for await (const message of query({
-      prompt:
-        `### Conversation so far\n${history || "(this is the first message)"}\n\n` +
-        `The user just said:\n${userText}\n\n` +
-        `Respond as the Orchestrator. Discuss and advise conversationally; only append a \`handoff\` block if the user is ready to create work.`,
-      options: {
+    const r = await runLLM(
+      {
+        task:
+          `### Conversation so far\n${history || "(this is the first message)"}\n\n` +
+          `The user just said:\n${userText}\n\n` +
+          `Respond as the Orchestrator. Discuss and advise conversationally; only append a \`handoff\` block if the user is ready to create work.`,
         cwd: workdir,
-        systemPrompt,
         model,
-        env,
+        provider,
+        authKind,
         allowedTools: [...rc.tools],
         mcpServers: { ...rc.servers },
-        permissionMode: "bypassPermissions",
+        env: chatBaseEnv(),
+        systemPrompt,
+        abort: new AbortController(),
+        resumeId,
         maxTurns: 12,
-        settingSources: [],
-        ...(resumeId ? { resume: resumeId } : {}),
-        stderr: () => {},
+        tokenCap: 0,
       },
-    })) {
-      const sid = (message as { session_id?: string }).session_id;
-      if (sid) setSession(repo, 0, ORCH_ROLE, sid);
-      if (message.type === "assistant") {
-        turns++;
-        const content = (message as { message?: { content?: Array<{ type?: string; text?: string }> } }).message?.content;
-        if (Array.isArray(content)) for (const b of content) if (b.type === "text" && b.text?.trim()) text += (text ? "\n\n" : "") + b.text.trim();
-      }
-    }
+      (message) => {
+        const sid = (message as { session_id?: string }).session_id;
+        if (sid) setSession(repo, 0, ORCH_ROLE, sid);
+        const m = message as { type?: string; delta?: string };
+        if (m.type === "assistant") {
+          const content = (message as { message?: { content?: Array<{ type?: string; text?: string }> } }).message?.content;
+          if (Array.isArray(content)) for (const b of content) if (b.type === "text" && b.text?.trim()) text += (text ? "\n\n" : "") + b.text.trim();
+        } else if (m.type === "stream_delta" && typeof m.delta === "string") {
+          // partial text not persisted — the final assistant text wins (mirrors chat.ts)
+        }
+      },
+    );
+    turns = r.turns;
   } finally {
-    try { rmSync(cfgDir, { recursive: true, force: true }); } catch { /* noop */ }
     try { rmSync(workdir, { recursive: true, force: true }); } catch { /* noop */ }
   }
 

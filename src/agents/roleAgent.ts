@@ -4,13 +4,14 @@
  * configured tools and model. This is the single entry point every specialist uses.
  */
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import { getRunner, defaultRunnerKind, summarizeTool, runnerBinary, binaryAvailable } from "../runners/registry.js";
-import type { RunRequest } from "../runners/interface.js";
+import { summarizeTool } from "../runners/registry.js";
+import { runLLM } from "../runners/exec.js";
+import { claudeRunEnv } from "../runners/sdk-claude.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join as pathJoin } from "node:path";
 import { ROLES, modelFor, canonicalModel, type RoleName } from "./roles.js";
-import { tierModel, getIssueProvider, getIssueAgentModels, parseModelRef, fallbackFor, getIssueUseFallback, type Tier } from "../db/providers.js";
+import { tierModel, getIssueProvider, getIssueAgentModels, parseModelRef, fallbackFor, getIssueUseFallback, type Tier, type Provider } from "../db/providers.js";
 import { loadConstitution, loadPersona, loadPlaybooks, loadLearned } from "../memory.js";
 import { pushActivity } from "../activity.js";
 import { recentLessons, recordTokens, recordRunStep, getProviders, getRoleModels, getSessionFallback, setSession, getIssueModelOverride, getGlobalModel, addIssueFiles } from "../store.js";
@@ -76,7 +77,7 @@ function resolveAssignment(role: RoleName, repo: string, issueNumber: number, ex
   const fb = getSessionFallback();
   return fb?.providerId && fb.model ? { providerId: fb.providerId, model: fb.model } : null;
 }
-function resolveRoute(role: RoleName, repo: string, issueNumber: number, explicitModel?: string, agentKey?: string): { model: string; env: Record<string, string>; providerId: string } | null {
+function resolveRoute(role: RoleName, repo: string, issueNumber: number, explicitModel?: string, agentKey?: string): { model: string; provider: Provider; authKind: "subscription" | "apiKey" } | null {
   const assignment = resolveAssignment(role, repo, issueNumber, explicitModel, agentKey);
   if (!assignment?.providerId || !assignment.model) return null;
   const p = getProviders().find((x) => x.id === assignment.providerId);
@@ -84,32 +85,12 @@ function resolveRoute(role: RoleName, repo: string, issueNumber: number, explici
   const ak = anthropicApiKey();
   const auth = providerAuth(p, Boolean(ct || ak));
   if (auth === "missing") return null; // preflight explains what's wrong
-  const env: Record<string, string> = {};
-  for (const [k, v] of Object.entries(process.env)) if (typeof v === "string") env[k] = v;
-  if (auth === "subscription") {
-    // Claude-native provider (e.g. "Claude (Subscription)"): honor the SELECTED model but auth via
-    // the stored Claude OAuth token (or Anthropic API key) on the default endpoint — NOT a key on
-    // the provider row (it has none). Clear any conflicting third-party env so the cred is the only
-    // one the SDK sees.
-    if (ct) {
-      env.CLAUDE_CODE_OAUTH_TOKEN = ct;
-      delete env.ANTHROPIC_API_KEY;
-      delete env.ANTHROPIC_AUTH_TOKEN;
-      delete env.ANTHROPIC_BASE_URL;
-    } else {
-      env.ANTHROPIC_API_KEY = ak;
-      delete env.CLAUDE_CODE_OAUTH_TOKEN;
-      delete env.ANTHROPIC_AUTH_TOKEN;
-      delete env.ANTHROPIC_BASE_URL;
-    }
-    return { model: assignment.model, env, providerId: assignment.providerId };
-  }
-  // Third-party Anthropic-compatible provider: its own key + endpoint.
-  delete env.CLAUDE_CODE_OAUTH_TOKEN; // don't use the Claude subscription for this provider
-  env.ANTHROPIC_BASE_URL = p!.baseUrl;
-  env.ANTHROPIC_AUTH_TOKEN = p!.apiKey;
-  env.ANTHROPIC_API_KEY = p!.apiKey;
-  return { model: assignment.model, env, providerId: assignment.providerId };
+  // The provider row IS the route now (#108): each runner translates it for its own backend. We no
+  // longer bake a Claude-shaped env here — that was the leak that made non-Claude runners (pi)
+  // reverse-engineer it. authKind tells the runner which credential shape to use (subscription vs
+  // the provider's own key + endpoint).
+  const authKind: "subscription" | "apiKey" = auth === "subscription" ? "subscription" : "apiKey";
+  return { model: assignment.model, provider: p!, authKind };
 }
 
 // summarizeTool now lives in src/runners/registry.ts (the one shared copy — issue #61).
@@ -275,46 +256,24 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
     }
   }
   let model = canonicalModel(route?.model ?? input.model ?? modelFor(def));
-  // Build the agent subprocess env: inject the dashboard-stored Claude token (so the SDK
-  // authenticates without CLAUDE_CODE_OAUTH_TOKEN in the container env) and the GitHub bot token
-  // (so the agent's own `git commit && git push` authenticate via gh's credential helper).
-  const ct = claudeToken();
-  const ak = route ? "" : anthropicApiKey();
+  // BASE env only (#108): process env + the GitHub bot token (so the agent's `git commit && git push`
+  // authenticate via gh's credential helper) + commit attribution. NO provider auth here — the runner
+  // translates the provider (SDK → ANTHROPIC_*, pi → isolated auth.json). Mixing them was the leak.
   const bot = ghBotToken();
-  let runEnv: Record<string, string> | undefined = route?.env;
-  if (!route && (ct || ak || bot)) {
-    runEnv = {};
-    for (const [k, v] of Object.entries(process.env)) if (typeof v === "string") runEnv[k] = v;
-  }
-  if (runEnv) {
-    if (!route) {
-      // Clear conflicting auth env so the chosen credential is the only one the SDK sees — a
-      // stale/empty ANTHROPIC_API_KEY (or AUTH_TOKEN) in the container otherwise wins and 401s.
-      if (ct) {
-        runEnv.CLAUDE_CODE_OAUTH_TOKEN = ct;
-        delete runEnv.ANTHROPIC_API_KEY;
-        delete runEnv.ANTHROPIC_AUTH_TOKEN;
-        delete runEnv.ANTHROPIC_BASE_URL;
-      } else if (ak) {
-        runEnv.ANTHROPIC_API_KEY = ak;
-        delete runEnv.CLAUDE_CODE_OAUTH_TOKEN;
-        delete runEnv.ANTHROPIC_AUTH_TOKEN;
-        delete runEnv.ANTHROPIC_BASE_URL;
-      }
-    }
-    if (bot) {
-      runEnv.GH_TOKEN = bot;
-      runEnv.GITHUB_TOKEN = bot;
-      // Attribute the agent's commits to the connected GitHub account (overrides the image's default
-      // git identity) so commits/PRs link to it — no separate bot identity needed.
-      const ident = githubIdentity();
-      if (ident) {
-        const email = noreplyEmail(ident.id, ident.login);
-        runEnv.GIT_AUTHOR_NAME = ident.name;
-        runEnv.GIT_AUTHOR_EMAIL = email;
-        runEnv.GIT_COMMITTER_NAME = ident.name;
-        runEnv.GIT_COMMITTER_EMAIL = email;
-      }
+  let runEnv: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) if (typeof v === "string") runEnv[k] = v;
+  if (bot) {
+    runEnv.GH_TOKEN = bot;
+    runEnv.GITHUB_TOKEN = bot;
+    // Attribute the agent's commits to the connected GitHub account (overrides the image's default
+    // git identity) so commits/PRs link to it — no separate bot identity needed.
+    const ident = githubIdentity();
+    if (ident) {
+      const email = noreplyEmail(ident.id, ident.login);
+      runEnv.GIT_AUTHOR_NAME = ident.name;
+      runEnv.GIT_AUTHOR_EMAIL = email;
+      runEnv.GIT_COMMITTER_NAME = ident.name;
+      runEnv.GIT_COMMITTER_EMAIL = email;
     }
   }
   const budget = loadBudget();
@@ -356,7 +315,11 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
     pushActivity(repo, issueNumber, role, "tool", `⏳ still working… (${Math.round((Date.now() - runStartedAt) / 60000)}m on this step)`);
   }, 60_000);
   // For 401s, name the credential actually used + the likely fixes (this is the #1 support issue).
-  const credVia = route ? `the provider model (${model})` : claudeToken() ? "your Claude subscription token" : anthropicApiKey() ? "your Anthropic API key" : "the container-env credential";
+  const credVia = route
+    ? (route.authKind === "subscription"
+        ? (claudeToken() ? "your Claude subscription token" : anthropicApiKey() ? "your Anthropic API key" : "the container-env credential")
+        : `the provider model (${model})`)
+    : (claudeToken() ? "your Claude subscription token" : anthropicApiKey() ? "your Anthropic API key" : "the container-env credential");
   const authAdvice = (msg: string): string =>
     /401|authenticat|bearer|x-api-key|invalid[_ ]?(api[_ ]?)?key/i.test(msg)
       ? ` — auth failed using ${credVia}. Re-check it in Settings (no spaces, correct type), and confirm MASTER_KEY hasn't changed since you saved it (a changed key makes stored tokens undecryptable, then it silently falls back to a stale env token).`
@@ -364,53 +327,46 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
 
   /** One attempt; pass a session id to resume an interrupted run, else a fresh run. */
   async function runQuery(resumeId?: string): Promise<{ text: string; turns: number; costUsd: number; tokens: number; stopped: string; sessionId?: string }> {
-    // Route through the AgentRunner seam (#63): the backend is a swappable adapter. Default
-    // claude-sdk (the verbatim port of this loop into ClaudeSdkRunner); per-provider / global
-    // setting can switch to a CLI runner (pi, claude-cli, gemini, custom).
-    const rt = route; const providerRow = rt?.providerId ? getProviders().find((x) => x.id === rt.providerId) : null;
-    let runnerKind = (providerRow && (providerRow as { runner?: string }).runner) || defaultRunnerKind();
-    const cliCommand = (providerRow && (providerRow as { cliCommand?: string }).cliCommand) || undefined;
-    // Preflight: a CLI runner needs its binary on PATH. If it's missing (e.g. `pi` isn't installed
-    // in the deploy), fall back to the built-in SDK runner — which drives ANY Anthropic-compatible
-    // provider (incl. GLM/Zhipu) directly — instead of dying with a raw "spawn <cmd> ENOENT".
-    const wantBin = runnerBinary(runnerKind, cliCommand);
-    if (wantBin && !binaryAvailable(wantBin)) {
-      pushActivity(repo, issueNumber, role, "tool", `⚠️ "${wantBin}" not found on PATH — using the built-in SDK runner instead (install ${wantBin}, or set the runner to "claude-sdk" in Settings → Pipeline).`);
-      runnerKind = "claude-sdk";
-    }
-    const runner = getRunner(runnerKind, cliCommand);
-    const req: RunRequest = {
-      task: input.task + coordinationContext(repo, issueNumber, role),
-      cwd: input.workdir,
-      model,
-      allowedTools: [...(customTools ?? def.tools), ...(gn?.tools ?? []), ...rc.tools],
-      mcpServers: { ...(gn?.servers ?? {}), ...rc.servers },
-      env: runEnv,
-      systemPrompt: systemPromptFinal,
-      abort: abortRun.controller,
-      resumeId,
-      maxTurns,
-      tokenCap,
-      template: cliCommand,
-    };
-    const r = await runner.run(req, (message) => {
-      // emitAssistant callback: same side-effects the old inline loop had (SDK path),
-      // plus pi-cli streaming (text deltas + tool summaries → live activity feed).
-      lastMsgAt = Date.now(); // any message = the run is alive (feeds the inactivity watchdog)
-      const sid = (message as { session_id?: string }).session_id;
-      if (sid) sessionId = sid;
-      const m = message as { type?: string; delta?: string; summary?: string };
-      if (m.type === "assistant") {
-        emitAssistant(repo, issueNumber, role, message, input.workdir);
-      } else if (m.type === "stream_delta" && typeof m.delta === "string") {
-        // SDK partial-text fragment — live "typing" feed only, not persisted (final assistant text wins).
-        pushActivity(repo, issueNumber, role, "delta", m.delta);
-      } else if (m.type === "text_delta" && typeof m.delta === "string") {
-        pushActivity(repo, issueNumber, role, "text", m.delta);
-      } else if (m.type === "tool" && typeof m.summary === "string") {
-        pushActivity(repo, issueNumber, role, "tool", m.summary);
-      }
-    });
+    // The single funnel (#108): runLLM resolves the runner from provider.runner (else the global
+    // default), pref­lights the binary (fails LOUD, never silently swaps), and dispatches. Each runner
+    // then translates the provider for its own backend — so a GLM-via-pi pick actually runs on pi,
+    // and a Claude-native pick runs on the SDK. This replaced the inline runner selection + the raw
+    // env that leaked a Claude-SDK shape into every backend.
+    const r = await runLLM(
+      {
+        task: input.task + coordinationContext(repo, issueNumber, role),
+        cwd: input.workdir,
+        model,
+        provider: route?.provider ?? null,
+        authKind: route?.authKind ?? "subscription",
+        allowedTools: [...(customTools ?? def.tools), ...(gn?.tools ?? []), ...rc.tools],
+        mcpServers: { ...(gn?.servers ?? {}), ...rc.servers },
+        env: runEnv,
+        systemPrompt: systemPromptFinal,
+        abort: abortRun.controller,
+        resumeId,
+        maxTurns,
+        tokenCap,
+      },
+      (message) => {
+        // emitAssistant callback: same side-effects the old inline loop had (SDK path),
+        // plus pi-cli streaming (text deltas + tool summaries → live activity feed).
+        lastMsgAt = Date.now(); // any message = the run is alive (feeds the inactivity watchdog)
+        const sid = (message as { session_id?: string }).session_id;
+        if (sid) sessionId = sid;
+        const m = message as { type?: string; delta?: string; summary?: string };
+        if (m.type === "assistant") {
+          emitAssistant(repo, issueNumber, role, message, input.workdir);
+        } else if (m.type === "stream_delta" && typeof m.delta === "string") {
+          // SDK partial-text fragment — live "typing" feed only, not persisted (final assistant text wins).
+          pushActivity(repo, issueNumber, role, "delta", m.delta);
+        } else if (m.type === "text_delta" && typeof m.delta === "string") {
+          pushActivity(repo, issueNumber, role, "text", m.delta);
+        } else if (m.type === "tool" && typeof m.summary === "string") {
+          pushActivity(repo, issueNumber, role, "tool", m.summary);
+        }
+      },
+    );
     if (r.sessionId) sessionId = r.sessionId;
     return r;
   }
@@ -425,7 +381,7 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
   // selected model's fallback (defined per provider tier) and retry — best → worse — until one works
   // or there are no more fallbacks. Disable per issue to stay on the chosen model and fail hard.
   const useFallback = getIssueUseFallback(repo, issueNumber);
-  const triedModels = new Set<string>([`${route?.providerId}/${model}`]);
+  const triedModels = new Set<string>([route ? `${route.provider.id}/${model}` : ""]);
   async function attempt(resumeId?: string): Promise<{ text: string; turns: number; costUsd: number; tokens: number; stopped: string; sessionId?: string }> {
     try {
       return await runQuery(resumeId);
@@ -433,14 +389,16 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
       if (wasAborted()) throw e;
       // Try the fallback model if allowed and one exists that we haven't tried.
       if (useFallback && route) {
-        const fb = fallbackFor(route.providerId, route.model);
+        const fb = fallbackFor(route.provider.id, route.model);
         const key = fb ? `${fb.providerId}/${fb.model}` : "";
         if (fb && key && !triedModels.has(key)) {
           triedModels.add(key);
           const nr = resolveRoute(role, repo, issueNumber, `${fb.providerId}/${fb.model}`, agentKey);
           if (nr) {
-            route = nr; model = canonicalModel(nr.model); runEnv = nr.env;
-            pushActivity(repo, issueNumber, role, "tool", `↘ ${(e as Error).message.slice(0, 80)} — falling back to ${model} (${getProviders().find((x) => x.id === nr.providerId)?.name || nr.providerId})`);
+            // Fallback switches provider/model; the base env (process + GH_TOKEN/GIT identity) is
+            // unchanged — the new route's runner rebuilds provider auth from nr.provider.
+            route = nr; model = canonicalModel(nr.model);
+            pushActivity(repo, issueNumber, role, "tool", `↘ ${(e as Error).message.slice(0, 80)} — falling back to ${model} (${nr.provider.name})`);
             return attempt(undefined); // fresh run on the fallback model
           }
         }
@@ -484,6 +442,8 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
   } finally {
     clearInterval(heartbeat);
     abortRun.release();
+    // CLAUDE_CONFIG_DIR isolation now lives in the runner (ClaudeSdkRunner), so there's no cfgDir to
+    // clean up here. pi's temp HOME is cleaned up inside PiCliRunner's own finally.
   }
 
   const { text, turns, costUsd, tokens, stopped } = r;
@@ -513,19 +473,10 @@ export async function testClaudeAuth(): Promise<{ ok: boolean; via: string; erro
   const ak = ct ? "" : anthropicApiKey();
   const via = ct ? "Claude subscription token" : ak ? "Anthropic API key" : "container-env credential";
   if (!ct && !ak) return { ok: false, via, error: "No Claude credential is set — add a subscription token or API key first." };
-  const runEnv: Record<string, string> = {};
-  for (const [k, v] of Object.entries(process.env)) if (typeof v === "string") runEnv[k] = v;
-  if (ct) {
-    runEnv.CLAUDE_CODE_OAUTH_TOKEN = ct;
-    delete runEnv.ANTHROPIC_API_KEY;
-    delete runEnv.ANTHROPIC_AUTH_TOKEN;
-    delete runEnv.ANTHROPIC_BASE_URL;
-  } else {
-    runEnv.ANTHROPIC_API_KEY = ak;
-    delete runEnv.CLAUDE_CODE_OAUTH_TOKEN;
-    delete runEnv.ANTHROPIC_AUTH_TOKEN;
-    delete runEnv.ANTHROPIC_BASE_URL;
-  }
+  // Same subscription-shaped env every Claude-native run builds now (claudeRunEnv is the one source).
+  const base: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) if (typeof v === "string") base[k] = v;
+  const runEnv = claudeRunEnv(base, null, "subscription");
   // Isolate the test in a throwaway config dir so the CLI authenticates with THIS token only — not a
   // stale ~/.claude credential cached on the (possibly shared) data volume. Makes the test a true
   // check of the token itself; if it passes here but agents still 401, the shared cache is the cause.

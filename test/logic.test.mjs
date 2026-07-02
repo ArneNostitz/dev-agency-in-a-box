@@ -19,6 +19,10 @@ import { parseRateLimit, nextWindowReset, parseResetClock } from "../dist/rateli
 import { pickWebDevScript, isTauriPackage, parseDevPort, parseTunnelUrl, buildLocalCommand } from "../dist/apprun.js";
 import { registerRun, stopRuns, hasActiveRun } from "../dist/abort.js";
 import { parseAuditProposals } from "../dist/auditparse.js";
+import { preparePiConfig, PI_TEMPLATE } from "../dist/runners/sdk-pi.js";
+import { runnerKindFor } from "../dist/runners/exec.js";
+import { readFileSync, rmSync, existsSync } from "node:fs";
+import { join } from "node:path";
 
 test("parseAuditProposals: fenced json, bare array, prose-wrapped, empty, malformed", () => {
   const fenced = 'Here are my findings:\n```json\n[{"title":"Split god object","body":"evidence…"}]\n```\nDone.';
@@ -385,4 +389,64 @@ test("stop flag: request → set, clear → unset, isolated per issue", () => {
   assert.equal(isStopRequested("o/r", 2), false); // other issue unaffected
   clearStop("o/r", 1);
   assert.equal(isStopRequested("o/r", 1), false);
+});
+
+test("preparePiConfig: GLM/Zhipu maps to pi's builtin 'zai' provider — only auth.json is written, NO models.json (pi already knows it)", () => {
+  const provider = { id: "glm-1", name: "GLM (Zhipu)", baseUrl: "https://open.bigmodel.cn/api/anthropic", apiKey: "zhipu-key-x", models: ["glm-5.2"] };
+  const { piProvider, home } = preparePiConfig(provider, "glm-5.2");
+  assert.equal(piProvider, "zai", "the GLM/Zhipu preset resolves to pi's builtin 'zai' provider");
+  assert.ok(home, "an isolated home dir is created");
+  try {
+    // pi's REAL auth.json schema: { "<provider>": { type: "api_key", key } }
+    const auth = JSON.parse(readFileSync(join(home, ".pi", "agent", "auth.json"), "utf8"));
+    assert.equal(auth.zai.type, "api_key");
+    assert.equal(auth.zai.key, "zhipu-key-x");
+    // A builtin provider needs NO models.json — writing one with an invented schema was the #108 bug.
+    assert.equal(existsSync(join(home, ".pi", "agent", "models.json")), false, "builtin provider: no models.json");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("preparePiConfig: the pi invocation template uses --provider so pi targets the right builtin", () => {
+  assert.match(PI_TEMPLATE, /--provider \{piProvider\}/);
+  assert.match(PI_TEMPLATE, /--model \{model\}/);
+});
+
+test("preparePiConfig: no provider / no key → nothing to override (Claude-native route)", () => {
+  assert.equal(preparePiConfig(null, "claude-sonnet-4-6").home, null);
+  assert.equal(preparePiConfig({ id: "x", name: "x", baseUrl: "", apiKey: "", models: [] }, "m").home, null);
+  // An Anthropic-host base URL is the default endpoint, not a custom pi provider.
+  assert.equal(preparePiConfig({ id: "a", name: "Anthropic", baseUrl: "https://api.anthropic.com", apiKey: "k", models: [] }, "claude-sonnet-4-6").piProvider, "anthropic");
+});
+
+test("preparePiConfig: a truly custom provider (no builtin match) ALSO writes a real-schema models.json", () => {
+  const provider = { id: "cust-1", name: "My Gateway", baseUrl: "https://my-gateway.example/anthropic", apiKey: "gw-key", models: ["my-model-1"] };
+  const { piProvider, home } = preparePiConfig(provider, "my-model-1");
+  assert.ok(piProvider, "a provider key is chosen");
+  assert.ok(home, "isolated home created");
+  try {
+    const auth = JSON.parse(readFileSync(join(home, ".pi", "agent", "auth.json"), "utf8"));
+    assert.equal(auth[piProvider].key, "gw-key");
+    // Only the custom case writes models.json — and now in pi's REAL schema (ProviderConfigSchema).
+    const cfg = JSON.parse(readFileSync(join(home, ".pi", "agent", "models.json"), "utf8"));
+    const p = cfg.providers[piProvider];
+    assert.equal(p.baseUrl, "https://my-gateway.example/anthropic");
+    assert.equal(p.api, "anthropic-messages");
+    assert.deepEqual(p.models.map((m) => m.id), ["my-model-1"]);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("#108 scenario: a provider whose runner is 'pi-cli' resolves to the pi runner — it does NOT fall back to claude-sdk", () => {
+  const glmViaPi = { id: "glm-1", name: "GLM (Zhipu)", baseUrl: "https://open.bigmodel.cn/api/anthropic", apiKey: "zhipu-key", models: ["glm-5.2"], runner: "pi-cli" };
+  assert.equal(runnerKindFor(glmViaPi), "pi-cli", "GLM with runner=pi-cli must route through the pi runner");
+  // Without the per-provider runner set, the global default (claude-sdk) is used instead.
+  const glmNoRunner = { ...glmViaPi, runner: undefined };
+  assert.equal(runnerKindFor(glmNoRunner), "claude-sdk");
+});
+
+test("#108 scenario: a Claude-native run (no provider) resolves to claude-sdk", () => {
+  assert.equal(runnerKindFor(null), "claude-sdk");
 });

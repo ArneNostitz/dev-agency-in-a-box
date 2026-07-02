@@ -1,17 +1,71 @@
 /**
- * ClaudeSdkRunner — the default backend, via @anthropic-ai/claude-agent-sdk. This is a
- * behavior-preserving extraction of roleAgent.ts's proven runQuery loop (issue #63): the body
- * is identical, only reorganized behind the AgentRunner interface. Every side-effect the old
- * loop had (session capture, assistant emit, usage + cost + token-cap accounting, stderr
- * capture, abort) is preserved here.
+ * ClaudeSdkRunner — the @anthropic-ai/claude-agent-sdk backend. This is a behavior-preserving
+ * extraction of roleAgent.ts's proven runQuery loop (issue #63): the body is identical, only
+ * reorganized behind the AgentRunner interface. Every side-effect the old loop had (session
+ * capture, assistant emit, usage + cost + token-cap accounting, stderr capture, abort) is here.
+ *
+ * Provider translation (#108): this is the ONLY backend that wants a Claude-shaped env
+ * (ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN / ANTHROPIC_API_KEY, or the Claude subscription
+ * token), so the env-building that used to live in roleAgent.resolveRoute / chat.resolveChatExec
+ * moved HERE. Other runners (pi, gemini-cli, …) translate the same Provider row their own way and
+ * never see these env vars. One source of truth (the Provider row + creds); per-backend translation.
  */
 import { query } from "@anthropic-ai/claude-agent-sdk";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { AgentRunner, RunRequest, RunResult } from "./interface.js";
+import { claudeToken, anthropicApiKey } from "../creds.js";
+
+/**
+ * Build the Claude-shaped env for a run, layered over the base env. Two shapes:
+ *  - subscription: a Claude-native run (no provider row / no third-party key) → use the stored
+ *    Claude subscription token or Anthropic API key on the DEFAULT endpoint, clearing any
+ *    third-party routing so the chosen cred is the only one the SDK sees.
+ *  - apiKey: a third-party Anthropic-compatible provider (GLM, DeepSeek, Kimi…) → the provider's
+ *    own baseUrl + apiKey, with the subscription token removed so the SDK targets that provider.
+ * Exported so the orchestrator/chat paths (which build the same env) share one implementation.
+ */
+export function claudeRunEnv(
+  base: Record<string, string>,
+  provider: { baseUrl?: string; apiKey?: string } | null,
+  authKind: "subscription" | "apiKey",
+): Record<string, string> {
+  const env: Record<string, string> = { ...base };
+  if (authKind === "apiKey" && provider?.baseUrl && provider.apiKey) {
+    delete env.CLAUDE_CODE_OAUTH_TOKEN; // don't use the Claude subscription for this provider
+    env.ANTHROPIC_BASE_URL = provider.baseUrl;
+    env.ANTHROPIC_AUTH_TOKEN = provider.apiKey;
+    env.ANTHROPIC_API_KEY = provider.apiKey;
+    return env;
+  }
+  // subscription (or a malformed apiKey route — fall back to the subscription default, never 401 silent)
+  const ct = claudeToken();
+  if (ct) {
+    env.CLAUDE_CODE_OAUTH_TOKEN = ct;
+    delete env.ANTHROPIC_API_KEY;
+    delete env.ANTHROPIC_AUTH_TOKEN;
+    delete env.ANTHROPIC_BASE_URL;
+  } else {
+    const ak = anthropicApiKey();
+    if (ak) env.ANTHROPIC_API_KEY = ak;
+    delete env.CLAUDE_CODE_OAUTH_TOKEN;
+    delete env.ANTHROPIC_AUTH_TOKEN;
+    delete env.ANTHROPIC_BASE_URL;
+  }
+  return env;
+}
 
 export class ClaudeSdkRunner implements AgentRunner {
   readonly kind = "claude-sdk";
 
   async run(req: RunRequest, emitAssistant: (message: unknown) => void): Promise<RunResult> {
+    // Translate the provider into the env this backend wants — isolated config dir per run so the
+    // SDK authenticates with THIS credential only (never a stale ~/.claude cache on a shared volume).
+    const env = claudeRunEnv(req.env ?? {}, req.provider, req.authKind);
+    const cfgDir = mkdtempSync(join(tmpdir(), "claude-run-"));
+    env.CLAUDE_CONFIG_DIR = cfgDir;
+
     let sessionId = "";
     let text = "";
     let turns = 0;
@@ -34,7 +88,7 @@ export class ClaudeSdkRunner implements AgentRunner {
           model: req.model,
           allowedTools: req.allowedTools,
           mcpServers: (req.mcpServers ?? {}) as never,
-          ...(req.env ? { env: req.env } : {}),
+          env,
           ...(req.resumeId ? { resume: req.resumeId } : {}),
           // Fully autonomous. Requires the container to run as a NON-root user (Claude Code
           // refuses --dangerously-skip-permissions as root) — see Dockerfile `USER node`.
@@ -105,6 +159,8 @@ export class ClaudeSdkRunner implements AgentRunner {
       }
       const detail = stderrBuf.trim().split("\n").slice(-3).join(" ").slice(-400);
       throw new Error(`${msg}${detail ? ` | ${detail}` : ""}`);
+    } finally {
+      try { rmSync(cfgDir, { recursive: true, force: true }); } catch { /* noop */ }
     }
 
     return { text, turns, costUsd, tokens, stopped, sessionId: sessionId || undefined };

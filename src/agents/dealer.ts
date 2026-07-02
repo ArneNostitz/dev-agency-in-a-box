@@ -7,13 +7,13 @@
  * WHICH handle; it never invents a new run path. Deterministic dispatch (an explicit dropdown pick)
  * skips this entirely — no LLM hop.
  */
-import { query } from "@anthropic-ai/claude-agent-sdk";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { listWorkflows, listAgentDefs, recordRun } from "../store.js";
 import type { Issue } from "../github.js";
-import { resolveChatExec } from "./chat.js";
+import { resolveChatExec, chatBaseEnv } from "./chat.js";
+import { runLLM } from "../runners/exec.js";
 
 /** Built-in single-role pins, always available regardless of custom agents. */
 const ROLE_PINS: Array<{ handle: string; what: string }> = [
@@ -53,10 +53,8 @@ function choices(): { lines: string[]; valid: Set<string> } {
 export async function pickDealerDispatch(repo: string, issue: Issue): Promise<string | null> {
   const { lines, valid } = choices();
   if (!lines.length) return null;
-  const { model, env } = resolveChatExec(process.env.DEALER_MODEL || process.env.ORCHESTRATOR_MODEL || "");
-  const cfgDir = mkdtempSync(join(tmpdir(), "dealer-cfg-"));
+  const { model, provider, authKind } = resolveChatExec(process.env.DEALER_MODEL || process.env.ORCHESTRATOR_MODEL || "");
   const workdir = mkdtempSync(join(tmpdir(), "dealer-wd-"));
-  env.CLAUDE_CONFIG_DIR = cfgDir;
   const systemPrompt =
     `You are the dispatcher for a coding agency. Read the issue and pick the SINGLE best route to run it ` +
     `from the menu. Prefer a multi-step WORKFLOW for substantial features; pick a single AGENT for small, ` +
@@ -65,20 +63,31 @@ export async function pickDealerDispatch(repo: string, issue: Issue): Promise<st
   let text = "";
   let turns = 0;
   try {
-    for await (const message of query({
-      prompt: `### Issue #${issue.number}: ${issue.title}\n\n${(issue.body || "").slice(0, 4000) || "(no description)"}\n\nWhich route? Reply with one handle from the menu.`,
-      options: { cwd: workdir, systemPrompt, model, env, allowedTools: [], permissionMode: "bypassPermissions", maxTurns: 1, settingSources: [], stderr: () => {} },
-    })) {
-      if (message.type === "assistant") {
-        turns++;
-        const content = (message as { message?: { content?: Array<{ type?: string; text?: string }> } }).message?.content;
-        if (Array.isArray(content)) for (const b of content) if (b.type === "text" && b.text?.trim()) text += b.text.trim() + " ";
-      }
-    }
+    const r = await runLLM(
+      {
+        task: `### Issue #${issue.number}: ${issue.title}\n\n${(issue.body || "").slice(0, 4000) || "(no description)"}\n\nWhich route? Reply with one handle from the menu.`,
+        cwd: workdir,
+        model,
+        provider,
+        authKind,
+        allowedTools: [],
+        env: chatBaseEnv(),
+        systemPrompt,
+        abort: new AbortController(),
+        maxTurns: 1,
+        tokenCap: 0,
+      },
+      (message) => {
+        if ((message as { type?: string }).type === "assistant") {
+          const content = (message as { message?: { content?: Array<{ type?: string; text?: string }> } }).message?.content;
+          if (Array.isArray(content)) for (const b of content) if (b.type === "text" && b.text?.trim()) text += b.text.trim() + " ";
+        }
+      },
+    );
+    turns = r.turns;
   } catch {
     return null; // dealer is best-effort; caller falls back to its default
   } finally {
-    try { rmSync(cfgDir, { recursive: true, force: true }); } catch { /* noop */ }
     try { rmSync(workdir, { recursive: true, force: true }); } catch { /* noop */ }
   }
   if (turns) try { recordRun(repo, issue.number, "orchestrator", model, turns, "dealer", 0); } catch { /* telemetry best-effort */ }
