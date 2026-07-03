@@ -1,6 +1,6 @@
 // Dev Agency dashboard — settings module (split from app.js; Preact + htm, no build step).
 import { html, useState, useEffect, useRef } from "/web/vendor/standalone.mjs";
-import { Icon, Modal, ProviderLogo, Select, Sheet, Spinner, agentOptions, api, getJSON, md, toast } from "./core.js";
+import { Icon, Modal, ModelSelect, ProviderLogo, Select, Sheet, Spinner, agentOptions, api, getJSON, md, providerModelOptions, toast } from "./core.js";
 import { OB_PROVIDERS } from "./onboarding.js";
 
 
@@ -99,17 +99,17 @@ function ModelsPanel() {
   }, []);
   if (!md) return null;
   const providers = md.providers || [];
-  // Flat list of {providerId, model, label} choices for the fallback select
-  const modelOpts = providers.flatMap((p) => (p.models || []).map((m) => ({ providerId: p.id, model: m, label: p.name + " · " + m, provider: p.name })));
-  const modelSelOpts = modelOpts.map((o) => ({ value: o.providerId + "/" + o.model, label: o.model, logo: o.provider, hint: o.provider }));
+  const modelOpts = providerModelOptions(providers, { short: true });
+  const firstOpt = modelOpts[0] ? { providerId: modelOpts[0].value.split("/")[0], model: modelOpts[0].value.split("/").slice(1).join("/") } : null;
   function addFallback() {
     if (!modelOpts.length) { toast("Add a provider in Models & agents first"); return; }
-    setChain((c) => c.concat(modelOpts[0]));
+    setChain((c) => c.concat(firstOpt));
   }
   function removeFallback(idx) { setChain((c) => c.filter((_, i) => i !== idx)); }
   function setFallbackEntry(idx, opt) {
-    const m = modelOpts.find((o) => o.providerId + "/" + o.model === opt);
-    if (m) setChain((c) => c.map((e, i) => i === idx ? { providerId: m.providerId, model: m.model } : e));
+    if (!opt) return;
+    const parts = opt.split("/");
+    setChain((c) => c.map((e, i) => i === idx ? { providerId: parts[0], model: parts.slice(1).join("/") } : e));
   }
   function save() {
     setBusy(true);
@@ -154,14 +154,14 @@ function ModelsPanel() {
         return out;
       }
       // specific
-      out[role] = rm[role]?.providerId ? rm[role] : (modelOpts[0] ? { providerId: modelOpts[0].providerId, model: modelOpts[0].model } : { providerId: "", model: "" });
+      out[role] = rm[role]?.providerId ? rm[role] : (firstOpt || { providerId: "", model: "" });
       return out;
     });
   }
   const roles = md.roles || [];
   return html`<div class="sec">Models & rate limit</div>
     <label style="margin-top:6px;display:block">Global Default Model</label>
-    <div style="margin-bottom:12px"><${Select} value=${globalModel ? globalModel.providerId + "/" + globalModel.model : ""} options=${[{ value: "", label: "Default (Claude / role defaults)", icon: "flask" }].concat(modelSelOpts)} onChange=${(v) => { if (!v) setGlobalModel(null); else { const parts = v.split("/"); setGlobalModel({ providerId: parts[0], model: parts.slice(1).join("/") }); } }}/></div>
+    <div style="margin-bottom:12px"><${ModelSelect} providers=${providers} value=${globalModel} includeDefault=${true} defaultLabel="Default (Claude / role defaults)" defaultIcon="flask" defaultHint=${undefined} emit="object" onChange=${(v) => setGlobalModel(v)}/></div>
 
     <div class="sec" style="margin-top:14px">Per-agent model</div>
     <div class="muted" style="font-size:12px;margin:0 2px 8px">Each agent gets a model: <b>Default</b> (inherit the global/role default), a <b>Tier</b> (High/Medium/Low resolved against the run's provider), or a <b>Specific model</b>.</div>
@@ -172,7 +172,7 @@ function ModelsPanel() {
         <span style="text-transform:capitalize;font-size:13px;color:var(--ink-2)">${role}</span>
         <${Select} value=${kind} options=${ROLE_KIND_OPTS} onChange=${(v) => setRoleKind(role, v)}/>
         ${kind === "tier" ? html`<${Select} value=${tierWordFor(rv)} options=${TIER_OPTS} onChange=${(v) => { const slot = tierProvider && tierProvider.tiers ? tierProvider.tiers[v] : null; const m = slot && slot.model ? slot.model : (tierProvider && tierProvider.models ? tierProvider.models[0] : ""); setRoleModels((rm) => ({ ...rm, [role]: { providerId: tierProvider ? tierProvider.id : "", model: m } })); }}/>` : null}
-        ${kind === "specific" ? html`<${Select} value=${rv.providerId ? rv.providerId + "/" + rv.model : ""} options=${modelSelOpts} onChange=${(v) => { if (!v) { setRoleModels((rm) => { const o = { ...rm }; delete o[role]; return o; }); } else { const parts = v.split("/"); setRoleModels((rm) => ({ ...rm, [role]: { providerId: parts[0], model: parts.slice(1).join("/") } })); } }}/>` : null}
+        ${kind === "specific" ? html`<${ModelSelect} providers=${providers} value=${rv} emit="object" onChange=${(v) => { if (!v) { setRoleModels((rm) => { const o = { ...rm }; delete o[role]; return o; }); } else { setRoleModels((rm) => ({ ...rm, [role]: v })); } }}/>` : null}
         ${kind === "default" ? html`<span class="muted" style="font-size:12px">inherits global/role default</span>` : null}
       </div>`;
     })}
@@ -181,7 +181,7 @@ function ModelsPanel() {
     <div class="muted" style="font-size:12px;margin:3px 2px 7px">When enabled, hitting the Claude credit/session limit switches all unassigned roles to the first fallback below and retries — instead of stalling.</div>
     <label>Fallback chain (order of models to try when primary is rate-limited)</label>
     ${chain.map((entry, idx) => html`<div key=${idx} style="display:flex;gap:6px;align-items:center;margin-bottom:5px">
-      <${Select} value=${entry.providerId + "/" + entry.model} options=${modelSelOpts} onChange=${(v) => setFallbackEntry(idx, v)}/>
+      <${ModelSelect} providers=${providers} value=${entry} onChange=${(v) => setFallbackEntry(idx, v)}/>
       <button class="iconbtn" title="Remove" onClick=${() => removeFallback(idx)}><${Icon} name="trash" size=${15}/></button>
     </div>`)}
     ${modelOpts.length ? html`<button class="btn ghost" style="margin-bottom:4px" onClick=${addFallback}><${Icon} name="plus" size=${14}/> Add fallback</button>` : html`<div class="muted" style="font-size:12px">No alternative providers configured — add one under <b>Models & API keys</b> first.</div>`}

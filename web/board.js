@@ -1,6 +1,6 @@
 // Dev Agency dashboard — board module (split from app.js; Preact + htm, no build step).
 import { html, useState, useEffect, useMemo } from "/web/vendor/standalone.mjs";
-import { Avatar, COLS, Icon, ProviderLogo, Select, Spinner, ago, api, boardSortCmp, classify, defaultModelLabel, filterByTime, fmtTok, getSetupProgress, ghUrl, isDone, shortModel, statusChip, toast, tokHeat, usageTitle } from "./core.js";
+import { Avatar, COLS, Icon, ModelSelect, ProviderLogo, Select, Spinner, ago, api, boardSortCmp, classify, defaultModelLabel, filterByTime, fmtTok, getSetupProgress, ghUrl, isDone, shortModel, statusChip, toast, tokHeat, usageTitle } from "./core.js";
 import { Breadcrumb } from "./ui.js";
 
 // ---------- sort / group / time options ----------
@@ -228,7 +228,7 @@ function Card({ i, subs, multi, onOpen, onOpenChild, act, data, stream = EMPTY_S
   useEffect(() => { setModelSel(i.modelOverride ? i.modelOverride.providerId + "/" + i.modelOverride.model : ""); }, [i.modelOverride?.providerId, i.modelOverride?.model]);
 
   const providers = data?.providers || [];
-  const modelOpts = useMemo(() => providers.flatMap((p) => (p.models || []).map((m) => ({ value: p.id + "/" + m, short: m, provider: p.name, label: p.name + " · " + m }))), [providers]);
+  const anyModels = useMemo(() => providers.some((p) => (p.models || []).length), [providers]);
 
   // The canonical IssueState enum + BlockedReason drive the quick (CTA) action (ADR-0001).
   let quick = null;
@@ -297,7 +297,11 @@ function Card({ i, subs, multi, onOpen, onOpenChild, act, data, stream = EMPTY_S
       const actions = html`<div class="bcard__actions" onClick=${(e) => e.stopPropagation()}>
         ${notPlanned ? html`<button class="iconbtn-sm tip" data-tip="Close as not planned" disabled=${act.isBusy("close-not-planned", i.repo, i.number)} onClick=${(e) => { e.stopPropagation(); act.closeNotPlanned(i.repo, i.number); }}>${act.isBusy("close-not-planned", i.repo, i.number) ? html`<${Spinner} size=${13}/>` : html`<${Icon} name="x" size=${14}/>`}</button>` : null}
         ${i.state === "notPlanned" ? html`<button class="iconbtn-sm tip" data-tip="Move to Planned (don't start yet)" disabled=${act.isBusy("plan", i.repo, i.number)} onClick=${(e) => { e.stopPropagation(); act.plan(i.repo, i.number); }}>${act.isBusy("plan", i.repo, i.number) ? html`<${Spinner} size=${13}/>` : html`<${Icon} name="planned" size=${14}/>`}</button>` : null}
-        ${modelOpts.length && !isStop ? html`<${ModelPicker} opts=${modelOpts} value=${modelSel} onPick=${onPickModel} defaultLabel=${defaultModelLabel(data)}/>` : null}
+        ${anyModels && !isStop ? html`<${ModelSelect} providers=${providers} data=${data} value=${modelSel} onChange=${onPickModel}
+          includeDefault=${true} defaultLabel="Default model" defaultHint=${defaultModelLabel(data)} btnClass="iconbtn-sm"
+          trigger=${(cur) => cur && cur.logo
+            ? html`<span class="tip" data-tip=${cur.label} style="display:inline-flex"><${ProviderLogo} name=${cur.logo} size=${16}/></span>`
+            : html`<span class="tip" data-tip=${"Default model · " + (defaultModelLabel(data) || "")} style="display:inline-flex"><${Icon} name="sparkles" size=${16}/></span>`}/>` : null}
         ${isStop
           ? html`<button class=${"cardbtn cta stop" + (qBusy ? " busy" : "")} disabled=${qBusy} onClick=${runQuick}>${qBusy ? html`<${Spinner} size=${13}/>` : html`<${Icon} name="stop" size=${13}/>`} ${qBusy ? "working…" : quick.label}</button>`
           : quick
@@ -332,16 +336,6 @@ function statusTip(i, st) {
 
 // Solid status-dot colour per status-chip class (the header dot replaces the old chip).
 const DOT_COLOR = { "s-working": "var(--accent)", "s-ready": "var(--green)", "s-changes": "var(--red)", "s-attn": "var(--amber)", "s-auto": "var(--green)", "s-conflict": "var(--amber)", "s-done": "var(--ink-3)", "s-planned": "var(--ink-3)", "s-epic": "var(--purple)" };
-
-// The per-card LLM picker: an icon button (provider logo) + custom Select menu (fixed → unclipped).
-function ModelPicker({ opts, value, onPick, defaultLabel }) {
-  const cur = opts.find((o) => o.value === value);
-  const options = [{ value: "", label: "Default model", hint: defaultLabel, icon: "sparkles" }].concat(opts.map((o) => ({ value: o.value, label: o.short, logo: o.provider })));
-  return html`<${Select} value=${value} options=${options} onChange=${onPick} btnClass="iconbtn-sm"
-    trigger=${() => cur
-      ? html`<span class="tip" data-tip=${cur.label} style="display:inline-flex"><${ProviderLogo} name=${cur.provider} size=${16}/></span>`
-      : html`<span class="tip" data-tip=${"Default model · " + (defaultLabel || "")} style="display:inline-flex"><${Icon} name="sparkles" size=${16}/></span>`}/>`;
-}
 
 // Collapsible sub-issue list shown on an epic parent's card. Each row carries the child's live
 // status (colored dot + label) and opens the child's detail pane. Children are hidden from their

@@ -82,10 +82,26 @@ export function getProviders(): Provider[] {
   }
 }
 export function setProviders(list: Provider[]): void {
-  setSetting("providers", JSON.stringify(list ?? []));
-  for (const p of list) {
+  const safe = list ?? [];
+  setSetting("providers", JSON.stringify(safe));
+  for (const p of safe) {
     if (p.runner === "pi-cli" && p.apiKey) writePiProviderFiles(p);
   }
+  // Cascade: drop any globalModel / roleModels / fallbackChain entries pointing at a provider that
+  // no longer exists. Otherwise the model pickers keep displaying dead refs (and the UI's Global
+  // Default dropdown shows a phantom selection long after the provider was removed).
+  const validIds = new Set(safe.map((p) => p.id));
+  const gm = getGlobalModel();
+  if (gm && !validIds.has(gm.providerId)) setGlobalModel(null);
+  const rm = getRoleModels();
+  let rmChanged = false;
+  for (const role of Object.keys(rm)) {
+    if (!validIds.has(rm[role]?.providerId)) { delete rm[role]; rmChanged = true; }
+  }
+  if (rmChanged) setRoleModels(rm);
+  const chain = getFallbackChain();
+  const cleanChain = chain.filter((e) => validIds.has(e.providerId));
+  if (cleanChain.length !== chain.length) setFallbackChain(cleanChain);
 }
 
 export function getRoleModels(): Record<string, { providerId: string; model: string }> {

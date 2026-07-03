@@ -2,7 +2,7 @@
 // agents/skills/hooks, a canvas of agent step-nodes wired by real SVG connector lines with gate
 // badges, and a right inspector for the selected node. Replaces the old form-in-a-sheet editor.
 import { html, useState, useEffect, useRef } from "/web/vendor/standalone.mjs";
-import { Avatar, Icon, Modal, Select, ProviderLogo, defaultModelLogo, agentOptions, api, toast, readAttach, Spinner } from "./core.js";
+import { Avatar, Icon, Modal, ModelSelect, Select, ProviderLogo, defaultModelLogo, agentOptions, api, toast, readAttach, Spinner } from "./core.js";
 
 const NODE_W = 220, NODE_BASE = 132, SKILL_H = 28, SLOT_H = 26, SLOT_GAP = 9, BLK_GAP = 48, GMARK_H = 24, GMARK_GAP = 8, PAD = 28, LOOPM = 46;
 const STEP_ROLE = { "@plan": "planner", "@arch": "architect", "@dev": "developer", "@review": "reviewer", "@test": "tester" };
@@ -283,7 +283,7 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
           <label class="bld-lbl">Special instructions <span class="bld-hint">(optional)</span></label>
           <textarea class="bld-ta" rows="3" placeholder=${"Leave blank to use " + labelFor(agentOf(cur), agentOpts) + "’s default task. Add only extra/override instructions for this step."} value=${cur.instruction} onInput=${(e) => patchStep(step, { instruction: e.target.value })}></textarea>
           <label class="bld-lbl">Model</label>
-          <${Select} value=${cur.model || ""} options=${[{ value: "", label: "Default", logo: defaultModelLogo(data) }].concat(modelOpts(data))} onChange=${(v) => patchStep(step, { model: v })}/>
+          <${ModelSelect} data=${data} value=${cur.model || ""} includeDefault=${true} defaultLabel="Default" defaultIcon="sparkles" short=${false} onChange=${(v) => patchStep(step, { model: v })}/>
           ${html`
             <label class="bld-lbl">When this step finishes</label>
             <${Select} value=${(() => { const g = gateAfter(step); return !g ? "continue" : g.condition === "humanApproval" ? "approve" : g.route && g.route.startsWith("loop") ? "loop" : "stop"; })()} options=${[{ value: "continue", label: "Continue to next →" }, { value: "approve", label: "⏸ Pause for my approval" }, { value: "loop", label: "Loop back if…" }, { value: "stop", label: "Stop the workflow" }]} onChange=${(v) => v === "continue" ? setGate(step, { route: "continue", condition: "review:changes" }) : v === "approve" ? setGate(step, { condition: "humanApproval", route: "continue" }) : v === "stop" ? setGate(step, { route: "stop", condition: "review:changes" }) : setGate(step, { route: "loop:" + Math.max(0, step - 1), condition: ((gateAfter(step) || {}).condition === "humanApproval" ? "review:changes" : (gateAfter(step) || {}).condition) || "review:changes" })}/>
@@ -409,7 +409,3 @@ function HookModal({ data, which, onClose, reload }) {
   <//>`;
 }
 
-function modelOpts(data) {
-  const providers = (data && data.providers) || [];
-  return providers.flatMap((p) => (p.models || []).map((m) => ({ value: p.id + "/" + m, label: p.name + " · " + m, logo: p.name })));
-}

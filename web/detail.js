@@ -1,7 +1,7 @@
 // Dev Agency dashboard — detail module (split from app.js; Preact + htm, no build step).
 import { html, useState, useEffect, useRef } from "/web/vendor/standalone.mjs";
 import { Breadcrumb } from "./ui.js";
-import { Avatar, Icon, Modal, ProviderLogo, Select, Sheet, Spinner, agentOptions, agentOnlyOptions, workflowOptions, ago, cap, statusChip, api, commentBadge, defaultModelLabel, fmtTok, getJSON, getSetupProgress, ghUrl, isDone, md, MarkdownArea, readAttach, resolveAgentModel, roleFromComment, shortModel, stripBadge, toast, tokHeat, usageTitle } from "./core.js";
+import { Avatar, Icon, Modal, ModelSelect, ProviderLogo, Select, Sheet, Spinner, agentOptions, agentOnlyOptions, workflowOptions, ago, cap, statusChip, api, commentBadge, defaultModelLabel, fmtTok, getJSON, getSetupProgress, ghUrl, isDone, md, MarkdownArea, parseModelRef, providerModelOptions, readAttach, resolveAgentModel, roleFromComment, shortModel, stripBadge, toast, tokHeat, usageTitle } from "./core.js";
 import { timelineModel } from "./table.js";
 
 
@@ -35,7 +35,7 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
     issue.modelOverride ? issue.modelOverride.providerId + "/" + issue.modelOverride.model : ""
   );
   const providers = data?.providers || [];
-  const modelOpts = providers.flatMap((p) => (p.models || []).map((m) => ({ value: p.id + "/" + m, label: p.name + " · " + m, short: m, provider: p.name })));
+  const anyModels = providers.some((p) => (p.models || []).length);
   // Per-issue workflow pin (persisted via /issue-workflow; honored on resume). Empty = auto-resolve.
   const wfOpts = workflowOptions(data && data.workflows);
   const [issueWf, setIssueWf] = useState(issue.workflowId || "");
@@ -54,9 +54,6 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
   const runWorkflow = (id) => { pinWorkflow(id || ""); const planned = issue.state === "planned" || issue.state === "notPlanned" || !issue.state; (planned ? act.start(repo, number) : act.resume(repo, number)); setRunWfOpen(false); };
   const [runWfOpen, setRunWfOpen] = useState(false);
   const defModelLabel = defaultModelLabel(data);
-  // The "Default" option gets a neutral sparkles glyph (not a provider logo) and names what default
-  // resolves to — so it never looks like a specific provider is pinned.
-  const modelSelOpts = [{ value: "", label: "Default model", hint: defModelLabel, icon: "sparkles" }].concat(modelOpts.map((o) => ({ value: o.value, label: o.short, logo: o.provider, hint: o.provider })));
   const modelTrigger = (cur) => (cur && cur.logo)
     ? html`<span class="tip" data-tip=${cur.label} style="display:inline-flex"><${ProviderLogo} name=${cur.logo} size=${16}/></span>`
     : html`<span class="tip" data-tip=${"Default model · " + defModelLabel} style="display:inline-flex"><${Icon} name="sparkles" size=${16}/></span>`;
@@ -71,15 +68,10 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
   const chatRef = useRef(null);
   const taRef = useRef(null); // compose textarea (auto-grows with content)
   const didScrollRef = useRef(false); // scroll the conversation to the newest message once, on open
-  const updateModelOverride = (val) => {
-    setModelOverride(val);
-    let mo = null;
-    if (val) {
-      const parts = val.split("/");
-      mo = { providerId: parts[0], model: parts.slice(1).join("/") };
-    }
-    issue.modelOverride = mo;
-    api("/model-override", { repo, number, model: mo }).catch((err) => {
+  const updateModelOverride = (mo) => {
+    setModelOverride(mo ? mo.providerId + "/" + mo.model : "");
+    issue.modelOverride = mo || null;
+    api("/model-override", { repo, number, model: mo || null }).catch((err) => {
       toast("Failed to save model override: " + err.message);
     });
   };
@@ -438,7 +430,7 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
       ${tb}
       ${tbLeft}
       <span style="flex:1"></span>
-      ${modelOpts.length ? html`<${Select} value=${modelOverride} options=${modelSelOpts} onChange=${updateModelOverride} menuAlign="right" btnClass="iconbtn" trigger=${modelTrigger}/>` : null}
+      ${anyModels ? html`<${ModelSelect} providers=${providers} data=${data} value=${modelOverride} emit="object" onChange=${updateModelOverride} includeDefault=${true} defaultLabel="Default model" defaultHint=${defModelLabel} menuAlign="right" btnClass="iconbtn" trigger=${modelTrigger}/>` : null}
       ${runAppBtns}
       ${tbRight}
       ${moreItems.length ? html`<span class="dropwrap">
@@ -460,7 +452,7 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
         <div class="composer-row">
           <label class="composer-icon tip" data-tip="Attach a file"><${Icon} name="paperclip" size=${18}/><input type="file" multiple style="display:none" onChange=${pickFiles}/></label>
           <${Select} value=${replyAgent} options=${agentSelOpts} onChange=${setReplyAgent} placeholder="Just comment"/>
-          ${modelOpts && modelOpts.length ? html`<${Select} value=${modelOverride} options=${modelSelOpts} onChange=${updateModelOverride} btnClass="iconbtn" trigger=${modelTrigger}/>` : null}
+          ${anyModels ? html`<${ModelSelect} providers=${providers} data=${data} value=${modelOverride} emit="object" onChange=${updateModelOverride} includeDefault=${true} defaultLabel="Default model" defaultHint=${defModelLabel} btnClass="iconbtn" trigger=${modelTrigger}/>` : null}
           <span class="spacer"></span>
           ${running ? html`<button class=${"btn tip" + (bz("hold") ? " busy" : "")} data-tip="Interrupt & steer — pauses the workflow at the next safe break and folds your message into the next step" disabled=${bz("hold")} onClick=${() => { const t = reply.trim(); act.hold(repo, number, t); if (t) setReply(""); }}>${bz("hold") ? html`<${Spinner} size=${15}/>` : html`<${Icon} name="stop" size=${15}/>`} Interrupt</button>` : null}
           <button class=${"btn primary" + (busy ? " busy" : "")} disabled=${busy} title=${running ? "Send a nudge to the running agent (no interruption)" : "Send"} onClick=${send}>${busy ? html`<${Spinner} size=${15}/>` : running ? html`<${Icon} name="messages" size=${15}/>` : html`<${Icon} name="send" size=${15}/>`} ${running ? "Nudge" : "Send"}</button>
@@ -579,7 +571,7 @@ function DetailTimeline({ issue, data }) {
   // Build {key → step} so a per-agent picker attaches to the matching step (deduped like targets).
   const agentModels = issue.agentModels || {};
   const providers = (data && data.providers) || [];
-  const modelOpts = providers.flatMap((p) => (p.models || []).map((mm) => ({ value: p.id + "/" + mm, label: mm, logo: p.name, hint: p.name })));
+  const modelOpts = providerModelOptions(providers, { short: true });
   const live = !!(issue.active || issue.running);
   // Pair each timeline step with its model target (by role key), preserving timeline order/state.
   return html`<div class="dtl-flow">
@@ -598,14 +590,16 @@ function DetailTimeline({ issue, data }) {
       const curLabel = curOpt ? curOpt.label : (target && target.dflt ? target.dflt : "");
       const curLogo = curOpt ? curOpt.logo : (target && target.dfltProvider) || "";
       const tip = (cap(s.role || s.k)) + (curLabel ? " · " + curLabel : "") + " — click to change model";
-      const selOpts = [{ value: "", label: "Default", hint: target && target.dflt ? target.dflt : "default", icon: "sparkles" }].concat(modelOpts);
       return html`
         ${idx ? html`<span class=${"flow__line" + (idx <= m.current ? " on" : "")}></span>` : null}
         <span class=${"flow__step " + cls}>
           ${target
-            ? html`<span class="tip" data-tip=${tip}><${Select}
+            ? html`<span class="tip" data-tip=${tip}><${ModelSelect}
+                providers=${providers}
                 value=${curRef}
-                options=${selOpts}
+                includeDefault=${true}
+                defaultLabel="Default"
+                defaultHint=${target && target.dflt ? target.dflt : "default"}
                 btnClass="flow__pick"
                 menuAlign=${idx >= m.steps.length - 2 ? "right" : "left"}
                 trigger=${() => html`<span class=${"flow__dot flow__dot--face" + (current && live ? " pulse" : "")}><span class="flow__face"><${Avatar} role=${s.role || s.k} size=${26} crop="head"/></span></span>`}
@@ -660,7 +654,7 @@ export function Composer({ repos, repo, setRepo, onClose, onCreate, data }) {
   const [role, setRole] = useState((data && data.config && data.config.newIssueDefault) || "@dev");
   const [atts, setAtts] = useState([]);
   const providers = data?.providers || [];
-  const modelOpts = providers.flatMap((p) => (p.models || []).map((m) => ({ providerId: p.id, model: m, label: p.name + " · " + m, short: m, provider: p.name })));
+  const anyModels = providers.some((p) => (p.models || []).length);
   // Issue model: "" = default (resolves per agent's own setting), "@individual" = per-agent pickers,
   // else a concrete providerId/model that overrides the WHOLE issue. Default is "" so the picker reads
   // "Default" (not a pinned provider) — each step then uses its own configured model.
@@ -720,28 +714,29 @@ export function Composer({ repos, repo, setRepo, onClose, onCreate, data }) {
     <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
       <${Select} value=${repo || ""} options=${repos.map((r) => ({ value: r, label: r.split("/").pop() }))} onChange=${setRepo}/>
       <${Select} value=${role} options=${agentOptions(data && data.agentDefs, data && data.workflows)} onChange=${setRole}/>
-      ${modelOpts.length ? html`<${Select} value=${model} btnClass="iconbtn-sm" onChange=${setModel}
-        options=${[{ value: "", label: "Default model", hint: defaultModelLabel(data), icon: "sparkles" }]
-          .concat(selWf ? [{ value: "@individual", label: "Individual per agent", hint: "set each step", icon: "users" }] : [])
-          .concat(modelOpts.map((o) => ({ value: o.providerId + "/" + o.model, label: o.short, logo: o.provider })))}
+      ${anyModels ? html`<${ModelSelect} providers=${providers} data=${data} value=${model} btnClass="iconbtn-sm" onChange=${setModel}
+        includeDefault=${true} defaultLabel="Default model"
+        extraOptions=${selWf ? [{ value: "@individual", label: "Individual per agent", hint: "set each step", icon: "users" }] : []}
         trigger=${(cur) => (cur && cur.logo)
           ? html`<span class="tip" data-tip=${cur.label} style="display:inline-flex"><${ProviderLogo} name=${cur.logo} size=${16}/></span>`
           : (cur && cur.icon === "users")
           ? html`<span class="tip" data-tip="Individual model per agent" style="display:inline-flex"><${Icon} name="users" size=${16}/></span>`
           : html`<span class="tip" data-tip=${"Default model · " + defaultModelLabel(data)} style="display:inline-flex"><${Icon} name="sparkles" size=${16}/></span>`}/>` : null}
     </div>
-    ${individual && wfSteps.length && modelOpts.length ? html`<div class="setgrp" style="margin-bottom:10px">
+    ${individual && wfSteps.length && anyModels ? html`<div class="setgrp" style="margin-bottom:10px">
       <div class="muted" style="font-size:12px;margin-bottom:10px">Model per step — the dot opens the picker; blank keeps each agent’s configured model.</div>
       <div style="display:flex;flex-wrap:wrap;gap:16px;justify-content:flex-start">
       ${wfSteps.map((s) => {
         const curVal = stepModels[s.key] || "";
-        const curOpt = curVal ? modelOpts.find((o) => o.providerId + "/" + o.model === curVal) : null;
+        const curRef = curVal ? parseModelRef(curVal) : null;
+        const curProvider = curRef ? (providers.find((p) => p.id === curRef.providerId) || {}).name : "";
         // Override picked → show that; else the agent's own configured model; else true default.
-        const effProvider = curOpt ? curOpt.provider : s.dfltProvider;
-        const effShort = curOpt ? curOpt.short : (s.dflt || "Default");
-        const options = [{ value: "", label: "Default" + (s.dflt ? " · " + s.dflt : ""), hint: s.dfltProvider || defaultModelLabel(data), icon: "sparkles" }].concat(modelOpts.map((o) => ({ value: o.providerId + "/" + o.model, label: o.short, logo: o.provider })));
+        const effProvider = curProvider || s.dfltProvider;
+        const effShort = curRef ? curRef.model : (s.dflt || "Default");
         return html`<div key=${s.key} style="display:flex;flex-direction:column;align-items:center;gap:4px;width:88px;text-align:center">
-          <${Select} value=${curVal} menuAlign="left" btnClass="iconbtn-sm" onChange=${(v) => setStepModels((m) => Object.assign({}, m, { [s.key]: v }))} options=${options}
+          <${ModelSelect} providers=${providers} value=${curVal} menuAlign="left" btnClass="iconbtn-sm"
+            includeDefault=${true} defaultLabel=${"Default" + (s.dflt ? " · " + s.dflt : "")} defaultHint=${s.dfltProvider || defaultModelLabel(data)}
+            onChange=${(v) => setStepModels((m) => Object.assign({}, m, { [s.key]: v }))}
             trigger=${() => effProvider
               ? html`<span class="tip" data-tip=${effShort} style="display:inline-flex"><${ProviderLogo} name=${effProvider} size=${16}/></span>`
               : html`<span class="tip" data-tip=${"Default · " + (s.dflt || defaultModelLabel(data))} style="display:inline-flex"><${Icon} name="sparkles" size=${16}/></span>`}/>

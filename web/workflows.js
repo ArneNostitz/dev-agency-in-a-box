@@ -1,7 +1,7 @@
 // Dev Agency dashboard — workflow builder (Make.com-style vertical flow). Drag to reorder steps;
 // each step picks an agent + instruction + model + forced skills/hooks; gates route between steps.
 import { html, useState } from "/web/vendor/standalone.mjs";
-import { Icon, ProviderLogo, Select, Sheet, Spinner, agentOptions, api, toast } from "./core.js";
+import { Icon, ModelSelect, ProviderLogo, Select, Sheet, Spinner, agentOptions, api, toast } from "./core.js";
 
 const CONDITIONS = [
   { value: "review:changes", label: "Review: changes requested" },
@@ -21,9 +21,6 @@ export function WorkflowEditor({ data, onClose, reload }) {
   const [drag, setDrag] = useState(null);
 
   const stepAgentOpts = agentOptions(data.agentDefs, []); // role pins + agents (not workflows)
-  const modelOpts = [{ value: "", label: "Default model", icon: "flask" }].concat(
-    (data.providers || []).flatMap((p) => (p.models || []).map((m) => ({ value: p.id + "/" + m, label: m, logo: p.name }))),
-  );
   const skillOpts = (data.skills || []).map((s) => ({ value: s.name, label: s.name }));
   const hookOpts = (data.hooks || []).map((h) => ({ value: String(h.id), label: (h.target || "hook") + " · " + (h.phase || "") }));
 
@@ -70,7 +67,7 @@ export function WorkflowEditor({ data, onClose, reload }) {
         onDragStart=${() => setDrag(i)} onDragOver=${(e) => e.preventDefault()} onDrop=${() => { if (drag != null && drag !== i) move(drag, i); setDrag(null); }}>
         <div class="wf-step-h"><${Icon} name="dots" size=${15} cls="wf-grip"/> <span class="wf-num">${i + 1}</span>
           <div style="flex:1"><${Select} value=${st.agent} options=${stepAgentOpts} onChange=${(v) => setStep(i, { agent: v })}/></div>
-          <${Select} value=${st.model} options=${modelOpts} btnClass="iconbtn-sm" onChange=${(v) => setStep(i, { model: v })} trigger=${(cur) => html`<span class="tip" data-tip=${cur ? cur.label : "Default model"} style="display:inline-flex"><${ProviderLogo} name=${cur && cur.logo ? cur.logo : ""} size=${16}/></span>`}/>
+          <${ModelSelect} data=${data} value=${st.model} btnClass="iconbtn-sm" includeDefault=${true} defaultLabel="Default model" defaultIcon="flask" onChange=${(v) => setStep(i, { model: v })} trigger=${(cur) => html`<span class="tip" data-tip=${cur ? cur.label : "Default model"} style="display:inline-flex"><${ProviderLogo} name=${cur && cur.logo ? cur.logo : ""} size=${16}/></span>`}/>
           <button class="iconbtn tip" data-tip="Remove step" style="width:28px;height:28px;border:none" onClick=${() => removeStep(i)}><${Icon} name="trash" size=${14}/></button>
         </div>
         <textarea class="wf-instr" rows="2" placeholder="Instruction for this step…" value=${st.instruction} onInput=${(e) => setStep(i, { instruction: e.target.value })}></textarea>
