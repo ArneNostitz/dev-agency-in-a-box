@@ -254,6 +254,16 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
       pushActivity(input.repo, input.issueNumber, role, "done", `❌ ${msg}`);
       throw new Error(msg);
     }
+    // Nothing explicit was selected AND route is null → no model is configured at all. Do NOT fall
+    // through to the built-in Claude default (that was the silent-Claude leak). Fail loud unless a
+    // Claude credential genuinely exists (saved OR env — the local-dev escape hatch), in which case a
+    // Claude-native run is legitimate and we proceed via modelFor(def) below.
+    const hasClaudeCred = Boolean(claudeToken() || anthropicApiKey());
+    if (!hasClaudeCred) {
+      const msg = `No model is set up — add a provider in Settings → Models, or pick a model for this issue.`;
+      pushActivity(input.repo, input.issueNumber, role, "done", `❌ ${msg}`);
+      throw new Error(msg);
+    }
   }
   let model = canonicalModel(route?.model ?? input.model ?? modelFor(def));
   // BASE env only (#108): process env + the GitHub bot token (so the agent's `git commit && git push`
@@ -288,10 +298,13 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
 
   const assignment = resolveAssignment(role, repo, issueNumber, input.model, agentKey);
   const provider = assignment?.providerId ? getProviders().find((x) => x.id === assignment.providerId) : null;
-  const providerName = provider ? provider.name : "Claude/Anthropic Subscription";
-  const baseUrl = provider ? provider.baseUrl : "https://api.anthropic.com";
-  console.log(`[LLM Call] Invoking LLM for role '${role}' on ${repo}#${issueNumber} using model '${model}' via provider '${providerName}' at URL: ${baseUrl}`);
-  pushActivity(repo, issueNumber, role, "text", `🤖 LLM Call: ${model} via ${providerName} (${baseUrl})`);
+  // Only name "Claude" when a Claude credential actually exists (saved or env). Never invent a
+  // phantom provider/endpoint when nothing is configured — that was the hardcoded-Claude leak.
+  const hasClaudeCred = Boolean(claudeToken() || anthropicApiKey());
+  const providerName = provider ? provider.name : (hasClaudeCred ? "Claude (subscription / API key)" : "(no provider configured)");
+  const baseUrl = provider ? provider.baseUrl : (hasClaudeCred ? "https://api.anthropic.com" : "");
+  console.log(`[LLM Call] Invoking LLM for role '${role}' on ${repo}#${issueNumber} using model '${model}' via provider '${providerName}'${baseUrl ? " at URL: " + baseUrl : ""}`);
+  pushActivity(repo, issueNumber, role, "text", `🤖 LLM Call: ${model} via ${providerName}${baseUrl ? " (" + baseUrl + ")" : ""}`);
 
   // Register this run so the dashboard "Stop" can abort it (and every other role run on the issue).
   const abortRun = registerRun(repo, issueNumber);
@@ -308,7 +321,7 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
   const heartbeat = setInterval(() => {
     if (Date.now() - lastMsgAt > INACTIVITY_MS && !abortRun.controller.signal.aborted) {
       inactiveAborted = true;
-      pushActivity(repo, issueNumber, role, "done", `⏱ No output from ${route ? `the provider model (${model})` : "Claude"} for ${Math.round(INACTIVITY_MS / 60000)}m — aborting. Likely an unreachable endpoint or wrong model id; check Settings → Models.`);
+      pushActivity(repo, issueNumber, role, "done", `⏱ No output from the model (${model}) for ${Math.round(INACTIVITY_MS / 60000)}m — aborting. Likely an unreachable endpoint or wrong model id; check Settings → Models.`);
       try { abortRun.controller.abort(); } catch { /* noop */ }
       return;
     }
@@ -413,7 +426,7 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
       r = await attempt(input.resumeSessionId);
     } catch (err) {
       if (wasAborted()) {
-        if (inactiveAborted) throw new Error(`No response from ${route ? `the provider model (${model})` : "Claude"} for ${Math.round(INACTIVITY_MS / 60000)} minutes — the endpoint may be unreachable or the model id wrong.`);
+        if (inactiveAborted) throw new Error(`No response from the model (${model}) for ${Math.round(INACTIVITY_MS / 60000)} minutes — the endpoint may be unreachable or the model id wrong.`);
         pushActivity(repo, issueNumber, role, "done", "⏹ stopped by user");
         return { text: "", turns: 0, model, costUsd: 0 };
       }
@@ -425,7 +438,7 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
           r = await attempt(undefined);
         } catch (err2) {
           if (wasAborted()) {
-            if (inactiveAborted) throw new Error(`No response from ${route ? `the provider model (${model})` : "Claude"} for ${Math.round(INACTIVITY_MS / 60000)} minutes — the endpoint may be unreachable or the model id wrong.`);
+            if (inactiveAborted) throw new Error(`No response from the model (${model}) for ${Math.round(INACTIVITY_MS / 60000)} minutes — the endpoint may be unreachable or the model id wrong.`);
             pushActivity(repo, issueNumber, role, "done", "⏹ stopped by user");
             return { text: "", turns: 0, model, costUsd: 0 };
           }

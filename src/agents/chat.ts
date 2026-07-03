@@ -56,7 +56,13 @@ export function resolveChatExec(
   if (provider?.baseUrl && provider.apiKey && !modelOverride) {
     return { model: canonicalModel(modelOverride || g!.model), provider, authKind: "apiKey" };
   }
-  // Default: Claude subscription / API key.
+  // No deliberate pick and no configured global provider. Only proceed on a real Claude credential
+  // (saved OR env — the local-dev escape hatch). Otherwise REFUSE: there is no model to run on, and
+  // silently defaulting to Claude was the hardcoded-Claude leak. Callers degrade gracefully.
+  const hasClaudeCred = Boolean(claudeToken() || anthropicApiKey());
+  if (!hasClaudeCred) {
+    throw new Error("No model is set up — add a provider in Settings → Models.");
+  }
   return { model: canonicalModel(modelOverride || MODELS.sonnet), provider: null, authKind: "subscription" };
 }
 
@@ -78,7 +84,15 @@ export async function runChatAgent(def: AgentDef, repo: string, number: number, 
   // the chat → the session auto-switch fallback (rate-limit offload) → the global Settings model → the
   // agent's configured default. The RUNNER now comes from provider.runner via runLLM (not a raw query).
   const pick = getIssueModelOverride(repo, number) ?? getSessionFallback() ?? getGlobalModel();
-  const { model, provider, authKind } = resolveChatExec(def.model, pick);
+  let model = "", provider: Provider | null = null, authKind: "subscription" | "apiKey" = "subscription";
+  try {
+    const resolved = resolveChatExec(def.model, pick);
+    model = resolved.model; provider = resolved.provider; authKind = resolved.authKind;
+  } catch (e) {
+    // No model configured — surface it on the issue thread instead of silently invoking Claude.
+    pushActivity(repo, number, "chat", "done", `❌ ${(e as Error).message}`);
+    throw e;
+  }
   const workdir = mkdtempSync(join(tmpdir(), "chat-wd-"));
   const rc = recallWiring(repo);
   const skills = skillsPrompt(def.skills);

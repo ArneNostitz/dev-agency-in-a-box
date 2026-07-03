@@ -12,6 +12,7 @@ import { appendOrchMsg, listOrchThread, recentIssues, getSession, setSession, re
 import { activeClaims } from "../locks.js";
 import { resolveChatExec, chatBaseEnv } from "./chat.js";
 import { runLLM } from "../runners/exec.js";
+import type { Provider } from "../db/providers.js";
 import { recallWiring, RECALL_PROMPT } from "./recall.js";
 
 export interface HandoffIssue { title: string; scope: string }
@@ -106,7 +107,7 @@ export async function runOrchestratorChat(repo: string, userText: string): Promi
     .map((m) => `${m.role === "user" ? "User" : "Orchestrator"}: ${m.text}`)
     .join("\n\n");
 
-  const { model, provider, authKind } = resolveChatExec(process.env.ORCHESTRATOR_MODEL || "");
+  let model = "", provider = null as Provider | null, authKind = "subscription" as "subscription" | "apiKey";
   const workdir = mkdtempSync(join(tmpdir(), "orch-wd-"));
   const rc = recallWiring(repo);
   const systemPrompt =
@@ -121,6 +122,10 @@ export async function runOrchestratorChat(repo: string, userText: string): Promi
   let text = "";
   let turns = 0;
   try {
+    // resolveChatExec throws when no model is configured — propagate so the caller surfaces it
+    // (better than silently invoking Claude with no credential).
+    const resolved = resolveChatExec(process.env.ORCHESTRATOR_MODEL || "");
+    model = resolved.model; provider = resolved.provider; authKind = resolved.authKind;
     const r = await runLLM(
       {
         task:

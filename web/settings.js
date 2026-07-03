@@ -77,32 +77,15 @@ export function Settings({ data, onClose, reload, openGithubTokens, openModels, 
   <//>`;
 }
 /**
- * Inline models panel in Settings: auto-switch toggle + fallback chain config.
- * Full provider/role management stays in /classic for now; this surfaces the new
- * rate-limit offload settings without requiring a page nav.
+ * Inline models panel: global default model + auto-switch toggle + fallback chain.
+ * Controlled by ModelsModal (which owns the state + the Save button in the footer).
+ * Per-agent model assignment lives in the Agents/Workflow editor, NOT here.
  */
-function ModelsPanel() {
-  const [md, setMd] = useState(null); // /models response
-  const [autoSwitch, setAutoSwitch] = useState(false);
-  const [chain, setChain] = useState([]); // [{providerId, model}]
-  const [globalModel, setGlobalModel] = useState(null); // {providerId, model} | null
-  const [roleModels, setRoleModels] = useState({}); // { role: {providerId, model} }
-  const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    getJSON("/models").then((d) => {
-      setMd(d);
-      setAutoSwitch(d.autoSwitchOnLimit || false);
-      setChain(d.fallbackChain || []);
-      setGlobalModel(d.globalModel || null);
-      setRoleModels(d.roleModels || {});
-    }).catch(() => {});
-  }, []);
-  if (!md) return null;
-  const providers = md.providers || [];
+function ModelsPanel({ providers, globalModel, setGlobalModel, autoSwitch, setAutoSwitch, chain, setChain, onOpenModels }) {
   const modelOpts = providerModelOptions(providers, { short: true });
   const firstOpt = modelOpts[0] ? { providerId: modelOpts[0].value.split("/")[0], model: modelOpts[0].value.split("/").slice(1).join("/") } : null;
   function addFallback() {
-    if (!modelOpts.length) { toast("Add a provider in Models & agents first"); return; }
+    if (!modelOpts.length) { toast("Add a provider first"); return; }
     setChain((c) => c.concat(firstOpt));
   }
   function removeFallback(idx) { setChain((c) => c.filter((_, i) => i !== idx)); }
@@ -111,81 +94,20 @@ function ModelsPanel() {
     const parts = opt.split("/");
     setChain((c) => c.map((e, i) => i === idx ? { providerId: parts[0], model: parts.slice(1).join("/") } : e));
   }
-  function save() {
-    setBusy(true);
-    api("/models", { fallbackChain: chain, autoSwitchOnLimit: autoSwitch, globalModel, roleModels })
-      .then(() => toast("Saved")).catch(() => toast("Couldn't save")).then(() => setBusy(false));
-  }
-  // Per-role model picker (Default / Tier / Specific). roleModels stores a concrete {providerId, model}
-  // OBJECT — the server's resolveAssignment only honors providerId+model (not bare tier words). So a Tier
-  // pick is resolved against the DEFAULT provider's configured tier slot at save time into a concrete
-  // model: re-editing reads the stored value back; switching Default clears it. This keeps the model
-  // pipeline honoring the assignment without a server change.
-  const ROLE_KIND_OPTS = [{ value: "default", label: "Default — inherit" }, { value: "tier", label: "Tier" }, { value: "specific", label: "Specific model" }];
-  const TIER_OPTS = [{ value: "high", label: "High" }, { value: "medium", label: "Medium" }, { value: "low", label: "Low" }];
-  // The provider whose tier slots a "Tier" pick resolves against: the global default's provider, else
-  // the first provider that actually defines tiers, else the first provider.
-  const tierProvider = (() => {
-    const gp = providers.find((p) => p.id === (globalModel && globalModel.providerId));
-    if (gp) return gp;
-    const withTiers = providers.find((p) => p.tiers && Object.keys(p.tiers).length);
-    return withTiers || providers[0] || null;
-  })();
-  const isTierMatch = (v) => v && v.providerId && tierProvider && v.providerId === tierProvider.id && tierProvider.tiers && Object.values(tierProvider.tiers).some((s) => s && s.model === v.model);
-  function roleKind(role) {
-    const v = roleModels[role];
-    if (!v || (!v.providerId && !v.model)) return "default";
-    if (isTierMatch(v)) return "tier";
-    return "specific";
-  }
-  function tierWordFor(v) {
-    if (!v || !tierProvider || !tierProvider.tiers) return "medium";
-    for (const t of ["high", "medium", "low"]) if (tierProvider.tiers[t] && tierProvider.tiers[t].model === v.model) return t;
-    return "medium";
-  }
-  function setRoleKind(role, kind) {
-    setRoleModels((rm) => {
-      const out = { ...rm };
-      if (kind === "default") { delete out[role]; return out; }
-      if (kind === "tier") {
-        const slot = tierProvider && tierProvider.tiers ? (tierProvider.tiers.medium || tierProvider.tiers.high || tierProvider.tiers.low) : null;
-        const m = slot && slot.model ? slot.model : (tierProvider && tierProvider.models ? tierProvider.models[0] : "");
-        out[role] = { providerId: tierProvider ? tierProvider.id : "", model: m };
-        return out;
-      }
-      // specific
-      out[role] = rm[role]?.providerId ? rm[role] : (firstOpt || { providerId: "", model: "" });
-      return out;
-    });
-  }
-  const roles = md.roles || [];
-  return html`<div class="sec">Models & rate limit</div>
+  // Global Default label is provider-neutral — only mentions a backend when one is actually set up.
+  const globalDefaultLabel = (globalModel && globalModel.model) ? "Default (role defaults)" : "Default (set up a provider first)";
+  return html`<div class="sec">Global default & rate limit</div>
     <label style="margin-top:6px;display:block">Global Default Model</label>
-    <div style="margin-bottom:12px"><${ModelSelect} providers=${providers} value=${globalModel} includeDefault=${true} defaultLabel="Default (Claude / role defaults)" defaultIcon="flask" defaultHint=${undefined} emit="object" onChange=${(v) => setGlobalModel(v)}/></div>
+    <div style="margin-bottom:12px"><${ModelSelect} providers=${providers} value=${globalModel} includeDefault=${true} defaultLabel=${globalDefaultLabel} defaultIcon="flask" defaultHint=${undefined} emit="object" onSetUp=${onOpenModels} onChange=${(v) => setGlobalModel(v)}/></div>
 
-    <div class="sec" style="margin-top:14px">Per-agent model</div>
-    <div class="muted" style="font-size:12px;margin:0 2px 8px">Each agent gets a model: <b>Default</b> (inherit the global/role default), a <b>Tier</b> (High/Medium/Low resolved against the run's provider), or a <b>Specific model</b>.</div>
-    ${roles.map((role) => {
-      const kind = roleKind(role);
-      const rv = roleModels[role] || {};
-      return html`<div key=${role} style="display:grid;grid-template-columns:90px 1fr 1fr;gap:8px;align-items:center;margin-bottom:6px">
-        <span style="text-transform:capitalize;font-size:13px;color:var(--ink-2)">${role}</span>
-        <${Select} value=${kind} options=${ROLE_KIND_OPTS} onChange=${(v) => setRoleKind(role, v)}/>
-        ${kind === "tier" ? html`<${Select} value=${tierWordFor(rv)} options=${TIER_OPTS} onChange=${(v) => { const slot = tierProvider && tierProvider.tiers ? tierProvider.tiers[v] : null; const m = slot && slot.model ? slot.model : (tierProvider && tierProvider.models ? tierProvider.models[0] : ""); setRoleModels((rm) => ({ ...rm, [role]: { providerId: tierProvider ? tierProvider.id : "", model: m } })); }}/>` : null}
-        ${kind === "specific" ? html`<${ModelSelect} providers=${providers} value=${rv} emit="object" onChange=${(v) => { if (!v) { setRoleModels((rm) => { const o = { ...rm }; delete o[role]; return o; }); } else { setRoleModels((rm) => ({ ...rm, [role]: v })); } }}/>` : null}
-        ${kind === "default" ? html`<span class="muted" style="font-size:12px">inherits global/role default</span>` : null}
-      </div>`;
-    })}
-
-    <label class="ckline"><input type="checkbox" checked=${autoSwitch} onChange=${(e) => setAutoSwitch(e.target.checked)}/> Auto-switch to fallback model on Claude usage limit</label>
-    <div class="muted" style="font-size:12px;margin:3px 2px 7px">When enabled, hitting the Claude credit/session limit switches all unassigned roles to the first fallback below and retries — instead of stalling.</div>
-    <label>Fallback chain (order of models to try when primary is rate-limited)</label>
+    <label class="ckline"><input type="checkbox" checked=${autoSwitch} onChange=${(e) => setAutoSwitch(e.target.checked)}/> Auto-switch to fallback model on usage limit</label>
+    <div class="muted" style="font-size:12px;margin:3px 2px 7px">When enabled, hitting the primary model's rate/usage limit switches all unassigned roles to the first fallback below and retries — instead of stalling.</div>
+    <label>Fallback chain (order of models to try when the primary is rate-limited)</label>
     ${chain.map((entry, idx) => html`<div key=${idx} style="display:flex;gap:6px;align-items:center;margin-bottom:5px">
-      <${ModelSelect} providers=${providers} value=${entry} onChange=${(v) => setFallbackEntry(idx, v)}/>
+      <${ModelSelect} providers=${providers} value=${entry} onSetUp=${onOpenModels} onChange=${(v) => setFallbackEntry(idx, v)}/>
       <button class="iconbtn" title="Remove" onClick=${() => removeFallback(idx)}><${Icon} name="trash" size=${15}/></button>
     </div>`)}
-    ${modelOpts.length ? html`<button class="btn ghost" style="margin-bottom:4px" onClick=${addFallback}><${Icon} name="plus" size=${14}/> Add fallback</button>` : html`<div class="muted" style="font-size:12px">No alternative providers configured — add one under <b>Models & API keys</b> first.</div>`}
-    <button class="btn primary" style="margin-top:8px" disabled=${busy} onClick=${save}>${busy ? html`<${Spinner} size=${14}/> Saving…` : "Save model settings"}</button>`;
+    ${modelOpts.length ? html`<button class="btn ghost" style="margin-bottom:4px" onClick=${addFallback}><${Icon} name="plus" size=${14}/> Add fallback</button>` : html`<div class="muted" style="font-size:12px">No alternative providers configured — add one above first.</div>`}`;
 }
 function Operations({ meta, values, reload }) {
   const [vals, setVals] = useState(() => Object.assign({}, values));
@@ -293,13 +215,28 @@ export function ModelsModal({ onClose, reload }) {
   const [status, setStatus] = useState(null);
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState(null); // the provider being edited in the full editor
+  // Model-routing settings owned here (so the Save button can live in the footer). Fetched from /models.
+  const [autoSwitch, setAutoSwitch] = useState(false);
+  const [chain, setChain] = useState([]); // [{providerId, model}]
+  const [globalModel, setGlobalModel] = useState(null); // {providerId, model} | null
+  const [busy, setBusy] = useState(false);
   function refresh() {
-    getJSON("/models").then((d) => setProvidersState(d.providers || [])).catch(() => {});
+    getJSON("/models").then((d) => {
+      setProvidersState(d.providers || []);
+      setAutoSwitch(d.autoSwitchOnLimit || false);
+      setChain(d.fallbackChain || []);
+      setGlobalModel(d.globalModel || null);
+    }).catch(() => {});
     getJSON("/data").then((d) => setSecretKeys(d.secretKeys || [])).catch(() => {});
     getJSON("/runner-status").then(setStatus).catch(() => {});
   }
   useEffect(refresh, []);
   function saveProviders(list) { return api("/models", { providers: list }).then(() => { reload(); refresh(); }).catch(() => toast("Couldn’t save", "error")); }
+  function saveSettings() {
+    setBusy(true);
+    api("/models", { fallbackChain: chain, autoSwitchOnLimit: autoSwitch, globalModel })
+      .then(() => toast("Saved")).catch(() => toast("Couldn't save")).then(() => setBusy(false));
+  }
   function setRunner(id, runner) { saveProviders(providers.map((p) => (p.id === id ? { ...p, runner: runner || undefined } : p))); }
   function removeProvider(id, name) { if (window.confirm("Remove " + name + "?")) saveProviders(providers.filter((p) => p.id !== id)); }
   function clearSecret(key, name) { if (window.confirm("Remove " + name + "?")) api("/user-secret", { key, value: "" }).then(() => { toast("Removed"); reload(); refresh(); }); }
@@ -311,7 +248,8 @@ export function ModelsModal({ onClose, reload }) {
   const empty = !thirdParty.length && !claudeSub && !claudeApi;
   const claudeRow = (label, key) => html`<div class="modelrow"><div class="modelrow-main"><${ProviderLogo} name="claude" size=${16}/> <b>Claude</b> <span class="muted" style="font-size:11px">${label}</span></div>
     <button class="iconbtn tip" data-tip="Remove" style="width:30px;height:30px;border:none" onClick=${() => clearSecret(key, "Claude " + label)}><${Icon} name="trash" size=${15}/></button></div>`;
-  return html`<${Modal} title="Models & runners" onClose=${onClose} footer=${html`<button class="btn" onClick=${onClose}>Close</button>`}>
+  const footer = html`<button class="btn" onClick=${onClose}>Close</button><button class="btn primary" disabled=${busy} onClick=${saveSettings}>${busy ? html`<${Spinner} size=${14}/> Saving…` : "Save settings"}</button>`;
+  return html`<${Modal} title="Models & runners" onClose=${onClose} footer=${footer}>
     <div class="muted" style="font-size:12px;margin-bottom:10px">Providers you’ve added. Pick which runner (SDK / pi / claude / custom) drives each — <b>Edit</b> opens the full config (key, URL, models, tiers).</div>
     ${claudeSub ? claudeRow("subscription", "claude_token") : null}
     ${claudeApi ? claudeRow("API key", "anthropic_api_key") : null}
@@ -323,7 +261,7 @@ export function ModelsModal({ onClose, reload }) {
     </div>`)}
     ${empty ? html`<div class="muted" style="font-size:12.5px;padding:10px 2px">No models added yet — add one below.</div>` : null}
     <button class="btn primary" style="width:100%;justify-content:center;margin:14px 0 6px" onClick=${() => setAdding(true)}><${Icon} name="plus" size=${15}/> Add provider</button>
-    <${ModelsPanel}/>
+    <${ModelsPanel} providers=${providers} globalModel=${globalModel} setGlobalModel=${setGlobalModel} autoSwitch=${autoSwitch} setAutoSwitch=${setAutoSwitch} chain=${chain} setChain=${setChain} onOpenModels=${() => setAdding(true)}/>
     ${adding ? html`<${AddProvider} existing=${providers} onClose=${() => setAdding(false)} onSaved=${() => { setAdding(false); refresh(); reload(); }}/>` : null}
     ${editing ? html`<${ProviderEditor} provider=${editing} all=${providers} onClose=${() => setEditing(null)} onSave=${(list) => { setEditing(null); saveProviders(list); }}/>` : null}
   <//>`;

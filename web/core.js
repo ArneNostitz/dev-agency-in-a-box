@@ -80,25 +80,38 @@ const PROVIDER_LOGOS = [
   [/qwen/i, "qwen-color"],
   [/openai|gpt|custom/i, "openai"],
 ];
-// The provider name backing the configured DEFAULT model (global default, else Claude subscription)
-// — so the "Default model" option can show the real logo instead of a generic icon.
+// Is ANY model actually configured? true iff a provider has ≥1 model OR a Claude credential is saved.
+// (A saved Claude subscription token / Anthropic key counts — Claude-native picks need no providers[]
+// row.) This is the single gate that keeps "Claude" out of the UI when nothing is set up.
+export function anyModelSetUp(data) {
+  if (!data) return false;
+  if (Array.isArray(data.providers) && data.providers.some((p) => (p.models || []).length > 0)) return true;
+  const keys = data.secretKeys || [];
+  return keys.includes("claude_token") || keys.includes("anthropic_api_key");
+}
+// The provider name backing the configured DEFAULT model — so the "Default model" option can show the
+// real logo instead of a generic icon. Returns "" when nothing is set up (NEVER a phantom "Claude").
 export function defaultModelLogo(data) {
   const gm = data && data.globalModel;
   if (gm && gm.providerId) {
     const p = ((data && data.providers) || []).find((x) => x.id === gm.providerId);
     if (p && p.name) return p.name;
   }
-  return "Claude";
+  // Only name Claude when a Claude credential genuinely exists; else nothing is configured.
+  const keys = (data && data.secretKeys) || [];
+  return keys.includes("claude_token") || keys.includes("anthropic_api_key") ? "Claude" : "";
 }
 // Human label for what the DEFAULT model actually resolves to — so the "Default" picker can SAY what
-// it is (provider · model) instead of masquerading as a specific provider logo.
+// it is (provider · model). Returns "" when nothing is set up (NEVER a phantom "Claude subscription").
 export function defaultModelLabel(data) {
   const gm = data && data.globalModel;
   if (gm && gm.model) {
     const p = ((data && data.providers) || []).find((x) => x.id === gm.providerId);
     return (p && p.name ? p.name + " · " : "") + shortModel(gm.model);
   }
-  return "Claude subscription";
+  // Only mention Claude when a Claude credential genuinely exists; else nothing is configured.
+  const keys = (data && data.secretKeys) || [];
+  return keys.includes("claude_token") || keys.includes("anthropic_api_key") ? "Claude subscription" : "";
 }
 export function providerLogoSrc(name) {
   const n = String(name || "");
@@ -646,17 +659,25 @@ export function providerModelOptions(providers, { short = true } = {}) {
 //   extraOptions   — extra <Select> options merged AFTER the Default row and BEFORE the models
 //                    (e.g. an "@individual" sentinel). Always emitted as string (emit="object" only
 //                    parses provider/model refs; a sentinel comes back verbatim via extraEmit).
-//   trigger, btnClass, menuAlign, placeholder, disabled — passed through to Select
+//   onSetUp        — called when NO model is set up at all (no providers, no Claude credential).
+//                    Renders a "Set up providers and models" button instead of an empty select.
+//   trigger, btnClass, menuAlign, placeholder, disabled : passed through to Select
 export function ModelSelect({
   providers, data, value, onChange,
   includeDefault = false, defaultLabel = "Default model", defaultHint, defaultIcon = "sparkles",
-  short = true, emit = "string", extraOptions,
+  short = true, emit = "string", extraOptions, onSetUp,
   trigger, btnClass, menuAlign, placeholder, disabled,
 }) {
   const provs = providers || (data && data.providers) || [];
   const strValue = toModelRef(value);
   const dhint = defaultHint !== undefined ? defaultHint : (data ? defaultModelLabel(data) : undefined);
   const baseOpts = providerModelOptions(provs, { short });
+  // No models anywhere AND nothing to default to → show the "set up" CTA instead of an empty menu.
+  // Only when onSetUp is supplied (the caller knows how to open Settings → Models).
+  if (!baseOpts.length && !anyModelSetUp(data) && onSetUp) {
+    return html`<button class=${(btnClass || "btn ghost") + " tip"} data-tip="No model is set up yet"
+      onClick=${onSetUp}><${Icon} name="flask" size=${14}/> Set up providers and models</button>`;
+  }
   const opts = (includeDefault ? [{ value: "", label: defaultLabel, hint: dhint, icon: defaultIcon }] : [])
     .concat(extraOptions || [])
     .concat(baseOpts);
@@ -675,7 +696,49 @@ export function ModelSelect({
     trigger=${trigger} btnClass=${btnClass} menuAlign=${menuAlign} placeholder=${placeholder} disabled=${disabled}/>`;
 }
 
-// ---------- atomic Modal/Dialog ----------
+// Resolve the provider whose High/Medium/Low tier slots a "tier" pick resolves against: the global
+// default's provider, else the first provider that actually defines tiers, else the first provider.
+export function tierProviderFor(data) {
+  const providers = (data && data.providers) || [];
+  const gm = data && data.globalModel;
+  const gp = providers.find((p) => p.id === (gm && gm.providerId));
+  if (gp) return gp;
+  const withTiers = providers.find((p) => p.tiers && Object.keys(p.tiers).length);
+  return withTiers || providers[0] || null;
+}
+
+// The per-agent model picker used in BOTH the Agents page and the Workflow builder (one shared copy).
+// `value` is a model-ref string — one of:
+//   ""                        → Default (inherit the global/role default)
+//   "high"|"medium"|"low"     → a tier, resolved against the run's provider at run time
+//   "providerId/model"        → a concrete model (a tier pinned to a provider, or any specific model)
+// Emits the same string shape via onChange. Renders one <Select>:
+//   [Default] [High · model] [Medium · model] [Low · model] ---- all concrete models ----
+// so tiers sit on top (with their resolved model as a hint) and every available model follows.
+//   props: value, onChange, data, onSetUp (→ "set up" CTA when nothing is configured), btnClass
+export function AgentModelPicker({ value, onChange, data, onSetUp, btnClass }) {
+  const providers = (data && data.providers) || [];
+  const tp = tierProviderFor(data);
+  const tiers = (tp && tp.tiers) || {};
+  const modelOpts = providerModelOptions(providers, { short: true });
+  // No models anywhere AND nothing configured → "set up" CTA (consistent with ModelSelect).
+  if (!modelOpts.length && !anyModelSetUp(data) && onSetUp) {
+    return html`<button class=${(btnClass || "btn ghost") + " tip"} data-tip="No model is set up yet"
+      onClick=${onSetUp}><${Icon} name="flask" size=${14}/> Set up providers and models</button>`;
+  }
+  const tierLabel = (t) => {
+    const slot = tiers[t];
+    const m = slot && slot.model ? shortModel(slot.model) : "—";
+    const cap = t.charAt(0).toUpperCase() + t.slice(1);
+    return cap + " · " + m;
+  };
+  const opts = [{ value: "", label: "Default — inherit", icon: "sparkles" }]
+    .concat(["high", "medium", "low"]
+      .map((t) => ({ value: t, label: tierLabel(t), icon: "layer", logo: tp ? tp.name : "" })))
+    .concat(modelOpts.map((o) => ({ value: o.value, label: o.label, logo: o.logo })));
+  return html`<${Select} value=${value || ""} options=${opts} btnClass=${btnClass}
+    onChange=${(v) => onChange && onChange(v || "")}/>`;
+}
 // Centered dialog with a unified header (title, no ✕), scrollable body, and a footer for CTA
 // buttons. Esc and backdrop-click close it. `footer` is the CTA row (e.g. Close + Save).
 export function Modal({ title, onClose, footer, children, size }) {

@@ -184,8 +184,9 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
     assert.match(root.innerHTML, /GLM \(Zhipu\)/, "an added provider is listed");
     assert.match(root.innerHTML, /Add provider/, "has the Add provider button");
     assert.ok(window.document.querySelector(".modal"), "uses the atomic Modal");
-    assert.match(root.innerHTML, /Per-agent model/, "per-agent tier/specific assignment section renders");
-    assert.match(root.innerHTML, /developer/, "the role list includes developer");
+    assert.match(root.innerHTML, /Global default.{1,12}rate limit/, "global default + fallback section renders (per-agent now lives in the Agents page)");
+    assert.match(root.innerHTML, /Save settings/, "Save lives in the modal footer");
+    assert.doesNotMatch(root.innerHTML, /Per-agent model/, "per-agent model section moved OUT of the Models modal");
     assert.ok(Array.from(window.document.querySelectorAll(".tip")).some((t) => /Edit provider/.test(t.getAttribute("data-tip") || "")), "each provider row has an Edit button");
     const closeBtn = Array.from(window.document.querySelectorAll(".modal-f .btn")).find((b) => /Close/.test(b.textContent));
     if (closeBtn) { click(closeBtn); await tick(40); }
@@ -203,6 +204,23 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
 
   click(q(".sheet .sh .iconbtn"));
   await tick(40);
+
+  // The topbar "Agents" button opens the Agents & Workflow builder, which now owns the per-agent
+  // MODEL assignment (moved out of the Models modal). Open it, open the New-agent form, and confirm
+  // the per-agent model picker (AgentModelPicker) renders there.
+  const agentsBtn = window.document.querySelector('[aria-label="Agents"]');
+  if (agentsBtn) {
+    click(agentsBtn); await tick(60);
+    const newAgentBtn = Array.from(window.document.querySelectorAll("button")).find((b) => /New agent/.test(b.textContent || ""));
+    if (newAgentBtn) { click(newAgentBtn); await tick(60); }
+    // The AgentModelPicker replaces the old free-text Model field. Its closed trigger shows the
+    // "Default — inherit" option (tier/model options live behind the trigger).
+    assert.match(root.innerHTML, /Default — inherit/, "the per-agent model picker renders on the Agents/workflow page (tier/model options behind the trigger)");
+    const closeAgents = window.document.querySelectorAll(".modal-scrim");
+    if (closeAgents.length) { click(closeAgents[0]); await tick(40); }
+    const closeSheet = window.document.querySelector(".sheet .sh .iconbtn");
+    if (closeSheet) { click(closeSheet); await tick(40); }
+  }
 
   // Detail (uses hooks) — open the first card.
   click(q(".bcard"));

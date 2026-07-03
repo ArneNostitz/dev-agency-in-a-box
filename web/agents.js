@@ -1,10 +1,10 @@
 // Dev Agency dashboard — agents module (split from app.js; Preact + htm, no build step).
 import { html, useState } from "/web/vendor/standalone.mjs";
-import { Icon, Sheet, api, toast } from "./core.js";
+import { Icon, Sheet, AgentModelPicker, api, toast } from "./core.js";
 
 
 const AGENT_TOOLS = ["Read", "Glob", "Grep", "Bash", "Write", "Edit"];
-export function AgentEditor({ data, onClose, onSkills, reload }) {
+export function AgentEditor({ data, onClose, onSkills, onOpenModels, reload }) {
   const defs = data.agentDefs || [];
   const blank = { name: "", handle: "", mode: "chat", model: "", tools: ["Read", "Glob", "Grep"], pushesGithub: true, persona: "", defaultTask: "", builtin: false };
   const [sel, setSel] = useState(null); // null = list, "__new__" or a name = edit
@@ -35,7 +35,8 @@ export function AgentEditor({ data, onClose, onSkills, reload }) {
       <label>Handle</label><input value=${form.handle} placeholder=${"@" + (form.name || "agent")} onInput=${(e) => set("handle", e.target.value)}/>
       <label>Mode</label>
       <select class="modelsel" style="max-width:none;width:100%" value=${form.mode} onChange=${(e) => set("mode", e.target.value)}><option value="chat">chat — interactive, no code changes</option><option value="repo">repo — writes code (advanced)</option></select>
-      <label>Model (blank = default / global)</label><input value=${form.model} placeholder="e.g. glm-5.1, or blank" onInput=${(e) => set("model", e.target.value)}/>
+      <label>Model (blank = default / global)</label>
+      <${AgentModelPicker} data=${data} value=${form.model || ""} onSetUp=${onOpenModels} onChange=${(v) => set("model", v)}/>
       <label>Tools</label>
       <div class="toolchips">${AGENT_TOOLS.map((t) => html`<label class="toolchip" key=${t}><input type="checkbox" checked=${form.tools.includes(t)} onChange=${() => toggleTool(t)}/> ${t}</label>`)}</div>
       <label class="ckline"><input type="checkbox" checked=${form.pushesGithub} onChange=${(e) => set("pushesGithub", e.target.checked)}/> Post the result to GitHub</label>

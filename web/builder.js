@@ -2,7 +2,7 @@
 // agents/skills/hooks, a canvas of agent step-nodes wired by real SVG connector lines with gate
 // badges, and a right inspector for the selected node. Replaces the old form-in-a-sheet editor.
 import { html, useState, useEffect, useRef } from "/web/vendor/standalone.mjs";
-import { Avatar, Icon, Modal, ModelSelect, Select, ProviderLogo, defaultModelLogo, agentOptions, api, toast, readAttach, Spinner } from "./core.js";
+import { Avatar, Icon, Modal, ModelSelect, AgentModelPicker, Select, ProviderLogo, defaultModelLogo, agentOptions, api, toast, readAttach, resolveAgentModel, shortModel, Spinner } from "./core.js";
 
 const NODE_W = 220, NODE_BASE = 132, SKILL_H = 28, SLOT_H = 26, SLOT_GAP = 9, BLK_GAP = 48, GMARK_H = 24, GMARK_GAP = 8, PAD = 28, LOOPM = 46;
 const STEP_ROLE = { "@plan": "planner", "@arch": "architect", "@dev": "developer", "@review": "reviewer", "@test": "tester" };
@@ -22,7 +22,7 @@ const agentOf = (s) => (s.agent || "@dev");
 const roleFor = (handle) => STEP_ROLE[(handle || "").toLowerCase()] || (handle || "").replace(/^@/, "") || "agent";
 const labelFor = (handle, opts) => { const o = (opts || []).find((x) => x.value === handle); return o ? o.label : roleFor(handle); };
 
-export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
+export function WorkflowBuilder({ data, onClose, reload, onEditAgent, onOpenModels }) {
   const wfs = (data && data.workflows) || [];
   const [sel, setSel] = useState(null);          // workflow id being edited (or "__new__")
   const [form, setForm] = useState(null);        // working copy
@@ -191,7 +191,7 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
           </div>`)}
         </div>
       </div>
-      ${editAgent ? html`<${AgentModal} data=${data} which=${editAgent} onClose=${() => setEditAgent(null)} reload=${reload}/>` : null}
+      ${editAgent ? html`<${AgentModal} data=${data} which=${editAgent} onClose=${() => setEditAgent(null)} reload=${reload} onOpenModels=${onOpenModels}/>` : null}
       ${editSkill ? html`<${SkillModal} data=${data} which=${editSkill} onClose=${() => setEditSkill(null)} reload=${reload}/>` : null}
       ${editHook ? html`<${HookModal} data=${data} which=${editHook} onClose=${() => setEditHook(null)} reload=${reload}/>` : null}
     </div>`;
@@ -283,7 +283,14 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
           <label class="bld-lbl">Special instructions <span class="bld-hint">(optional)</span></label>
           <textarea class="bld-ta" rows="3" placeholder=${"Leave blank to use " + labelFor(agentOf(cur), agentOpts) + "’s default task. Add only extra/override instructions for this step."} value=${cur.instruction} onInput=${(e) => patchStep(step, { instruction: e.target.value })}></textarea>
           <label class="bld-lbl">Model</label>
-          <${ModelSelect} data=${data} value=${cur.model || ""} includeDefault=${true} defaultLabel="Default" defaultIcon="sparkles" short=${false} onChange=${(v) => patchStep(step, { model: v })}/>
+          <${ModelSelect} data=${data} value=${cur.model || ""} includeDefault=${true} defaultLabel=${(() => {
+            // The agent's own configured model → "default: <Tier|name>"; "" → "Default".
+            const ag = (data.agentDefs || []).find((d) => (d.handle || ("@" + d.name)) === agentOf(cur));
+            const am = ag && ag.model ? String(ag.model).trim() : "";
+            const tier = ["high", "medium", "low"].indexOf(am.toLowerCase()) >= 0 ? am.toLowerCase() : "";
+            const r = tier ? { short: tier.charAt(0).toUpperCase() + tier.slice(1) } : resolveAgentModel(am, data);
+            return r && r.short ? "default: " + r.short : "Default";
+          })()} defaultIcon="sparkles" short=${false} onSetUp=${onOpenModels} onChange=${(v) => patchStep(step, { model: v })}/>
           ${html`
             <label class="bld-lbl">When this step finishes</label>
             <${Select} value=${(() => { const g = gateAfter(step); return !g ? "continue" : g.condition === "humanApproval" ? "approve" : g.route && g.route.startsWith("loop") ? "loop" : "stop"; })()} options=${[{ value: "continue", label: "Continue to next →" }, { value: "approve", label: "⏸ Pause for my approval" }, { value: "loop", label: "Loop back if…" }, { value: "stop", label: "Stop the workflow" }]} onChange=${(v) => v === "continue" ? setGate(step, { route: "continue", condition: "review:changes" }) : v === "approve" ? setGate(step, { condition: "humanApproval", route: "continue" }) : v === "stop" ? setGate(step, { route: "stop", condition: "review:changes" }) : setGate(step, { route: "loop:" + Math.max(0, step - 1), condition: ((gateAfter(step) || {}).condition === "humanApproval" ? "review:changes" : (gateAfter(step) || {}).condition) || "review:changes" })}/>
@@ -306,11 +313,11 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent }) {
         </div>
       </div>
     </div>
-    ${editAgent ? html`<${AgentModal} data=${data} which=${editAgent} onClose=${() => setEditAgent(null)} reload=${reload}/>` : null}
+    ${editAgent ? html`<${AgentModal} data=${data} which=${editAgent} onClose=${() => setEditAgent(null)} reload=${reload} onOpenModels=${onOpenModels}/>` : null}
   </div>`;
 }
 
-function AgentModal({ data, which, onClose, reload }) {
+function AgentModal({ data, which, onClose, reload, onOpenModels }) {
   const defs = (data && data.agentDefs) || [];
   const existing = which === "__new__" ? null : defs.find((d) => (d.handle || ("@" + d.name)) === which || ("@" + d.name) === which || d.name === String(which).replace(/^@/, ""));
   const ROLE_NAMES = { "@plan": "planner", "@arch": "architect", "@dev": "developer", "@review": "reviewer", "@test": "tester" };
@@ -318,29 +325,6 @@ function AgentModal({ data, which, onClose, reload }) {
   const [f, setF] = useState(existing ? Object.assign({ defaultTask: "", avatar: "", interactive: false, canWriteCode: false }, existing) : roleSeed || { name: "", handle: "", model: "", canWriteCode: false, persona: "", defaultTask: "", avatar: "", pushesGithub: true, interactive: false });
   const [busy, setBusy] = useState(false);
   const set = (k, v) => setF((o) => Object.assign({}, o, { [k]: v }));
-  // ---- Model picker (Default / Tier / Advanced) ----
-  // f.model holds one of: "" (default) | a bare tier word "high"|"medium"|"low" (resolves against
-  // the issue/global provider) | a concrete "providerId/model" ref (a tier pinned to a provider, or
-  // an advanced free-typed model). Parse f.model back into picker state when editing.
-  const TIER_WORDS = ["high", "medium", "low"];
-  const provs = (data && data.providers) || [];
-  const parsed = (() => {
-    const m = (f.model || "").trim();
-    if (!m) return { kind: "default", tier: "medium", prov: "", adv: "" };
-    if (TIER_WORDS.indexOf(m.toLowerCase()) >= 0) return { kind: "tier", tier: m.toLowerCase(), prov: "", adv: "" };
-    return { kind: "advanced", tier: "medium", prov: "", adv: m };
-  })();
-  const [mKind, setMKind] = useState(parsed.kind);
-  const [mTier, setMTier] = useState(parsed.tier);
-  const [mAdv, setMAdv] = useState(parsed.adv);
-  // Recompute f.model from picker state and store the right ref string.
-  const applyModel = (kind, tier, adv) => {
-    let v = "";
-    if (kind === "advanced") v = (adv || "").trim();
-    else if (kind === "tier") v = tier; // bare tier word
-    else v = ""; // default
-    set("model", v);
-  };
   function pickAvatar(e) { const file = (e.target.files || [])[0]; if (!file) return; readAttach(file, (a) => { api("/upload-file", { repo: "_agents", number: -1, dataUrl: a.d, name: (f.name || "avatar") }).then((j) => { if (j && j.url) set("avatar", j.url); else toast("Upload failed", "error"); }).catch(() => toast("Upload failed", "error")); }); e.target.value = ""; }
   function save() { if (!f.name.trim()) { toast("Name required"); return; } setBusy(true); api("/agent-def-save", { agentDef: { name: f.name.trim(), handle: f.handle || "@" + f.name.trim(), model: f.model, canWriteCode: !!f.canWriteCode, persona: f.persona, defaultTask: f.defaultTask, avatar: f.avatar, pushesGithub: f.pushesGithub !== false, interactive: !!f.interactive } }).then(() => { toast("Agent saved"); reload && reload(); onClose(); }).catch((e) => toast((e && e.message) || "Couldn’t save", "error")).then(() => setBusy(false)); }
   const footer = html`<button class="btn" onClick=${onClose}>Cancel</button><button class="btn primary" disabled=${busy} onClick=${save}>${busy ? html`<${Spinner} size=${14}/>` : "Save agent"}</button>`;
@@ -359,9 +343,7 @@ function AgentModal({ data, which, onClose, reload }) {
       </div>
     </div>
     <label class="bld-lbl">Model <span class="bld-hint">(blank = default)</span></label>
-    <${Select} value=${mKind} options=${[{ value: "default", label: "Default — inherit" }, { value: "tier", label: "Tier — High / Medium / Low" }, { value: "advanced", label: "Advanced — specific model" }]} onChange=${(v) => { setMKind(v); applyModel(v, mTier, mAdv); }}/>
-    ${mKind === "tier" ? html`<div style="margin-top:6px"><${Select} value=${mTier} options=${[{ value: "high", label: "High" }, { value: "medium", label: "Medium" }, { value: "low", label: "Low" }]} onChange=${(v) => { setMTier(v); applyModel("tier", v, mAdv); }}/><div class="bld-hint" style="margin-top:4px">Resolves against the run\u2019s provider.</div></div>` : null}
-    ${mKind === "advanced" ? html`<input class="bld-num" style="margin-top:6px" value=${mAdv} placeholder="e.g. glm-5.1 or providerId/model" onInput=${(e) => { setMAdv(e.target.value); applyModel("advanced", mTier, e.target.value); }}/>` : null}
+    <${AgentModelPicker} data=${data} value=${f.model || ""} onSetUp=${onOpenModels} onChange=${(v) => set("model", v)}/>
     <label class="bld-lbl">Default task <span class="bld-hint">— pre-fills a workflow step</span></label>
     <textarea class="bld-ta" rows="2" value=${f.defaultTask} placeholder="e.g. Implement the plan and open a PR." onInput=${(e) => set("defaultTask", e.target.value)}></textarea>
     <label class="bld-lbl">Can write code <span class="bld-hint">${f.canWriteCode ? "— edits source files & runs commands" : "— reads anywhere, writes only to _plan/ (specs, notes)"}</span></label>
