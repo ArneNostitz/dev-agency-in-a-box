@@ -1,46 +1,67 @@
 // Dev Agency dashboard — onboarding module (split from app.js; Preact + htm, no build step).
 import { html, useState, useEffect } from "/web/vendor/standalone.mjs";
-import { Icon, ProviderLogo, Sheet, Spinner, api, getJSON, toast } from "./core.js";
+import { Icon, ProviderLogo, ProviderSearchSelect, Sheet, Spinner, api, getJSON, toast } from "./core.js";
 import { Settings, GitHubConnect } from "./settings.js";
 
 
 // ---------- onboarding wizard ----------
-// There is no static model catalog. Provider presets here are URL SHORTCUTS only (name + baseUrl to
-// prefill the form); the model list is always discovered live from the provider on add/refresh.
+// There is no static model catalog. Each provider preset carries its `piKey` — pi's own built-in
+// provider name (per pi's docs/providers.md auth.json table). pi knows each provider's endpoint +
+// model catalog. The user picks a provider + pastes a key; the app writes it (merged) into pi's real
+// ~/.pi/agent/auth.json and discovers models via `pi --list-models --provider <piKey>`.
 
 export const OB_PROVIDERS = [
-  { id: "claude_sub", label: "Claude — subscription", note: "Recommended · runs agents on your plan", icon: "crown", kind: "secret", secretKey: "claude_token",
+  { id: "claude_sub", label: "Claude — subscription", icon: "crown", kind: "secret", secretKey: "claude_token",
     title: "Claude subscription token", placeholder: "paste the setup-token output",
     how: "Runs the agents on your existing Claude plan — no per-token billing.\n\n1. Install the CLI:\n   npm i -g @anthropic-ai/claude-code\n2. Generate a token:\n   claude setup-token\n3. Log in with your Claude plan when the browser opens.\n4. Paste the token it prints below.",
     link: "https://docs.claude.com/en/docs/claude-code", linkLabel: "Claude Code docs" },
-  { id: "claude_api", label: "Claude — API key", note: "Pay-as-you-go", icon: "flask", kind: "secret", secretKey: "anthropic_api_key",
+  { id: "claude_api", label: "Claude — API key", icon: "flask", kind: "secret", secretKey: "anthropic_api_key",
     title: "Claude API key", placeholder: "sk-ant-...",
     how: "Pay-as-you-go billing instead of a subscription.\n\n1. Open platform.claude.com → API keys.\n2. Create a key.\n3. Paste it below.",
     link: "https://platform.claude.com/settings/keys", linkLabel: "Create an API key" },
-  { id: "gemini", label: "Gemini", note: "needs an Anthropic-compatible proxy", icon: "globe", kind: "provider",
-    preset: { name: "Gemini (via proxy)", baseUrl: "" },
-    title: "Gemini base URL + key", placeholder: "AIza...",
-    how: "Google has no native Anthropic-format endpoint, so the agent SDK can't call Gemini directly. Run an Anthropic-compatible gateway (e.g. LiteLLM) and paste its base URL in Settings → Models. GLM, DeepSeek and Kimi work without a proxy.",
-    link: "https://aistudio.google.com/app/apikey", linkLabel: "Create a Gemini API key" },
-  { id: "glm", label: "GLM (Zhipu)", note: "Cheap coding model", icon: "globe", kind: "provider",
-    preset: { name: "GLM (Zhipu)", baseUrl: "https://open.bigmodel.cn/api/anthropic" },
-    title: "GLM API key", placeholder: "GLM API key",
-    how: "An Anthropic-compatible endpoint, good for the cheaper roles.\n\n1. Get an API key from open.bigmodel.cn (Zhipu).\n2. Paste it below.\n\nAfter setup, the available models are discovered live; assign GLM to specific agents in Settings → Models.",
-    link: "https://open.bigmodel.cn/usercenter/apikeys", linkLabel: "Create a GLM API key" },
-  { id: "deepseek", label: "DeepSeek", note: "", icon: "globe", kind: "provider",
-    preset: { name: "DeepSeek", baseUrl: "https://api.deepseek.com/anthropic" },
-    title: "DeepSeek API key", placeholder: "DeepSeek API key",
-    how: "1. Get an API key from platform.deepseek.com.\n2. Paste it below.\n\nAvailable models are discovered live; assign it to agents later in Settings → Models.",
-    link: "https://platform.deepseek.com/api_keys", linkLabel: "Create a DeepSeek API key" },
-  { id: "kimi", label: "Kimi (Moonshot)", note: "", icon: "globe", kind: "provider",
-    preset: { name: "Kimi (Moonshot)", baseUrl: "https://api.moonshot.cn/anthropic" },
-    title: "Kimi API key", placeholder: "Kimi API key",
-    how: "1. Get an API key from platform.moonshot.cn.\n2. Paste it below.\n\nAvailable models are discovered live; assign it to agents later in Settings → Models.",
-    link: "https://platform.moonshot.cn/console/api-keys", linkLabel: "Create a Kimi API key" },
-  { id: "other", label: "Other (Custom)", note: "Needs a router", icon: "settings", kind: "provider", custom: true,
-    title: "Custom provider", placeholder: "API key",
-    how: "OpenAI / Gemini / Ollama need an Anthropic-compatible gateway (claude-code-router or LiteLLM). Run one, then enter its base URL + key here.",
-    link: "https://github.com/musistudio/claude-code-router", linkLabel: "claude-code-router" },
+  // pi builtins (piKey = pi's auth.json key). pi knows the endpoint + catalog for each.
+  { id: "google", piKey: "google", label: "Gemini (Google)", icon: "globe", kind: "provider",
+    placeholder: "AIza…", link: "https://aistudio.google.com/app/apikey", linkLabel: "Create a Gemini API key",
+    how: "1. Create a Gemini API key at aistudio.google.com.\n2. Paste it below. Models are discovered live." },
+  { id: "glm", piKey: "zai", label: "GLM (Zhipu / Z.AI)", icon: "globe", kind: "provider",
+    placeholder: "GLM API key", link: "https://open.bigmodel.cn/usercenter/apikeys", linkLabel: "Create a GLM API key",
+    how: "1. Get an API key from open.bigmodel.cn (Zhipu) or z.ai.\n2. Paste it below." },
+  { id: "deepseek", piKey: "deepseek", label: "DeepSeek", icon: "globe", kind: "provider",
+    placeholder: "DeepSeek API key", link: "https://platform.deepseek.com/api_keys", linkLabel: "Create a DeepSeek API key",
+    how: "1. Get an API key from platform.deepseek.com.\n2. Paste it below." },
+  { id: "kimi", piKey: "kimi-coding", label: "Kimi (Moonshot)", icon: "globe", kind: "provider",
+    placeholder: "Kimi API key", link: "https://platform.moonshot.cn/console/api-keys", linkLabel: "Create a Kimi API key",
+    how: "1. Get an API key from platform.moonshot.cn.\n2. Paste it below." },
+  { id: "openai", piKey: "openai", label: "OpenAI", icon: "globe", kind: "provider",
+    placeholder: "sk-…", link: "https://platform.openai.com/api-keys", linkLabel: "Create an OpenAI API key",
+    how: "1. Get an API key from platform.openai.com.\n2. Paste it below." },
+  { id: "openrouter", piKey: "openrouter", label: "OpenRouter", icon: "globe", kind: "provider",
+    placeholder: "sk-or-…", link: "https://openrouter.ai/keys", linkLabel: "Create an OpenRouter API key",
+    how: "1. Get a key from openrouter.ai.\n2. Paste it below. OpenRouter routes to many providers." },
+  { id: "xai", piKey: "xai", label: "xAI (Grok)", icon: "globe", kind: "provider",
+    placeholder: "xAI API key", link: "https://x.ai/api", linkLabel: "Create an xAI API key",
+    how: "1. Get a key from x.ai.\n2. Paste it below." },
+  { id: "mistral", piKey: "mistral", label: "Mistral", icon: "globe", kind: "provider",
+    placeholder: "Mistral API key", link: "https://console.mistral.ai/api-keys", linkLabel: "Create a Mistral API key",
+    how: "1. Get a key from console.mistral.ai.\n2. Paste it below." },
+  { id: "groq", piKey: "groq", label: "Groq", icon: "globe", kind: "provider",
+    placeholder: "Groq API key", link: "https://console.groq.com/keys", linkLabel: "Create a Groq API key",
+    how: "1. Get a key from console.groq.com.\n2. Paste it below." },
+  { id: "cerebras", piKey: "cerebras", label: "Cerebras", icon: "globe", kind: "provider",
+    placeholder: "Cerebras API key", link: "https://cloud.cerebras.ai", linkLabel: "Create a Cerebras API key",
+    how: "1. Get a key from cloud.cerebras.ai.\n2. Paste it below." },
+  { id: "together", piKey: "together", label: "Together AI", icon: "globe", kind: "provider",
+    placeholder: "Together API key", link: "https://api.together.xyz/settings/api-keys", linkLabel: "Create a Together API key",
+    how: "1. Get a key from api.together.xyz.\n2. Paste it below." },
+  { id: "fireworks", piKey: "fireworks", label: "Fireworks", icon: "globe", kind: "provider",
+    placeholder: "Fireworks API key", link: "https://fireworks.ai/account/api-keys", linkLabel: "Create a Fireworks API key",
+    how: "1. Get a key from fireworks.ai.\n2. Paste it below." },
+  { id: "nvidia", piKey: "nvidia", label: "NVIDIA NIM", icon: "globe", kind: "provider",
+    placeholder: "nvapi-…", link: "https://build.nvidia.com", linkLabel: "Create an NVIDIA API key",
+    how: "1. Get a key from build.nvidia.com.\n2. Paste it below." },
+  { id: "minimax", piKey: "minimax", label: "MiniMax", icon: "globe", kind: "provider",
+    placeholder: "MiniMax API key", link: "https://platform.minimaxi.com", linkLabel: "Create a MiniMax API key",
+    how: "1. Get a key from platform.minimaxi.com.\n2. Paste it below." },
 ];
 const OB_GH_BOT = { id: "github_bot", title: "GitHub bot token", icon: "pr", kind: "secret", secretKey: "github_bot_token", placeholder: "github_pat_...",
   how: "The account the agency ACTS as — its commits and pull requests. Best practice: a dedicated bot GitHub account.\n\n1. On the bot account: github.com → Settings → Developer settings → Fine-grained tokens → Generate new token.\n2. Repository access: the repos you'll use.\n3. Permissions: Contents, Issues, Pull requests, Workflows = Read & write; Metadata = Read.\n4. Paste the token (github_pat_…) below.",
@@ -49,12 +70,10 @@ const OB_GH_OWNER = { id: "github_owner", title: "Your GitHub token", optional: 
   how: "Lets the agency comment and open issues under YOUR name, and auto-invite the bot to repos. Same steps as the bot token, on your own account (add Administration: Read & write for auto-invite).\n\nOptional — skip if you'll invite the bot manually.",
   link: "https://github.com/settings/tokens?type=beta", linkLabel: "Create a fine-grained token" };
 
-function ObTokenStep({ def, existing, onDone, onBack }) {
+function ObTokenStep({ def, onDone, onBack }) {
   const [val, setVal] = useState("");
-  const [baseUrl, setBaseUrl] = useState(def.preset?.baseUrl || "");
   const [busy, setBusy] = useState(false);
   const [test, setTest] = useState(null); // null | "testing" | {ok, via, error}
-  const isClaude = def.secretKey === "claude_token" || def.secretKey === "anthropic_api_key";
   const v = val.trim();
   // Catch the most common 401 cause: pasting the wrong token TYPE into the wrong option.
   const shapeWarn = def.secretKey === "claude_token" && /^sk-ant-api/.test(v)
@@ -65,12 +84,7 @@ function ObTokenStep({ def, existing, onDone, onBack }) {
     ? "An Anthropic API key usually starts with “sk-ant-”. If this is a subscription token, use the “Claude — subscription” option."
     : "";
   function storeVal() {
-    if (def.kind === "secret") return api("/user-secret", { key: def.secretKey, value: v });
-    const prov = { id: def.id + "-" + Date.now().toString(36), name: def.preset?.name || "Custom", baseUrl: def.custom ? baseUrl.trim() : def.preset.baseUrl, apiKey: v, models: [] };
-    // Save, then discover models live from the provider's /v1/models (best-effort — never blocks).
-    return api("/models", { providers: (existing || []).concat(prov) }).then(() =>
-      api("/discover-models", { id: prov.id }).catch(() => {}),
-    );
+    return api("/user-secret", { key: def.secretKey, value: v });
   }
   function save() {
     if (!v) { toast(def.optional ? "Paste a token or Skip" : "Paste the token"); return; }
@@ -87,12 +101,10 @@ function ObTokenStep({ def, existing, onDone, onBack }) {
     <div class="obh">${def.title}</div>
     <div class="obsteps">${def.how}</div>
     ${def.link ? html`<a class="oblink" href=${def.link} target="_blank" rel="noopener">${def.linkLabel} <${Icon} name="link" size=${14}/></a>` : null}
-    ${def.custom ? html`<label>Base URL (Anthropic-compatible)</label><input placeholder="https://…/anthropic" value=${baseUrl} onInput=${(e) => setBaseUrl(e.target.value)}/>` : null}
-    <label>${def.custom ? "API key" : "Token"}</label>
+    <label>Token</label>
     <input type="password" autocomplete="off" placeholder=${def.placeholder} value=${val} onInput=${(e) => { setVal(e.target.value); setTest(null); }}/>
     <div class="muted" style="font-size:11px;margin:3px 2px 0">Paste it exactly — no spaces or line breaks (a stray space causes a 401).</div>
     ${shapeWarn ? html`<div class="testres bad">⚠ ${shapeWarn}</div>` : null}
-    ${isClaude ? html`<div class="muted" style="font-size:11px;margin:4px 2px 0">Tip: “Save & test” makes a real call so you know it works before any agent runs.</div>` : null}
     ${test && test !== "testing" ? html`<div class=${"testres " + (test.ok ? "ok" : "bad")}>${test.ok ? "✓ Authenticated via " + (test.via || "Claude") : "✗ " + (test.error || "Failed")}</div>` : null}
     <div class="obnav">
       <button class="btn" onClick=${onBack}>Back</button>
@@ -108,7 +120,6 @@ function ObAddModels({ onNext, onBack }) {
   const [secretKeys, setSecretKeys] = useState([]);
   const [pid, setPid] = useState("");
   const [val, setVal] = useState("");
-  const [baseUrl, setBaseUrl] = useState("");
   const [busy, setBusy] = useState(false);
   function refresh() {
     getJSON("/models").then((d) => setProviders(d.providers || [])).catch(() => {});
@@ -122,14 +133,15 @@ function ObAddModels({ onNext, onBack }) {
   providers.forEach((x) => added.push(x.name));
   function add() {
     if (!def) return;
-    if ((def.kind !== "secret" && def.custom && !baseUrl.trim())) { toast("Enter the base URL"); return; }
-    if (!val.trim()) { toast(def.kind === "secret" ? "Paste the token" : "Paste the key"); return; }
+    if (!val.trim()) { toast(def.kind === "secret" ? "Paste the token" : "Paste the API key"); return; }
     setBusy(true);
-    const done = () => { setBusy(false); setPid(""); setVal(""); setBaseUrl(""); refresh(); toast("Added"); };
+    const done = () => { setBusy(false); setPid(""); setVal(""); refresh(); toast("Added"); };
     const fail = () => { setBusy(false); toast("Couldn’t save", "error"); };
     if (def.kind === "secret") api("/user-secret", { key: def.secretKey, value: val.trim() }).then(done).catch(fail);
     else {
-      const prov = { id: def.id + "-" + Date.now().toString(36), name: def.preset?.name || "Custom", baseUrl: def.custom ? baseUrl.trim() : def.preset.baseUrl, apiKey: val.trim(), models: [] };
+      // pi provider: name + piKey + key. The app writes the key into pi's auth.json (the login) and
+      // discovers models live via `pi --list-models`.
+      const prov = { id: def.id + "-" + Date.now().toString(36), name: def.label, piKey: def.piKey, apiKey: val.trim(), models: [] };
       api("/models", { providers: providers.concat(prov) }).then(() =>
         // Discover models live after adding (best-effort). Then run `done`.
         api("/discover-models", { id: prov.id }).catch(() => {}),
@@ -142,15 +154,11 @@ function ObAddModels({ onNext, onBack }) {
     <div class="obsub">Pick a provider, paste its key — done. Claude (subscription) is the recommended default; add more anytime in Settings.</div>
     ${added.length ? html`<div style="display:flex;flex-direction:column;gap:5px;margin:4px 0 10px">${added.map((n, ix) => html`<div key=${ix} style="display:flex;align-items:center;gap:7px;font-size:13px"><span class="statuschip s-ready"><${Icon} name="check" size=${12}/></span> <${ProviderLogo} name=${n} size=${15}/> ${n}</div>`)}</div>` : null}
     <label>+ Add a provider</label>
-    <select value=${pid} onChange=${(e) => { setPid(e.target.value); setVal(""); setBaseUrl(""); }}>
-      <option value="">Select a provider…</option>
-      ${OB_PROVIDERS.map((x) => html`<option key=${x.id} value=${x.id}>${x.label}</option>`)}
-    </select>
+    <${ProviderSearchSelect} value=${pid} onChange=${(v) => { setPid(v); setVal(""); }} options=${OB_PROVIDERS.map((p) => ({ id: p.id, label: p.label, logo: p.label }))}/>
     ${def ? html`
-      ${def ? html`<div style="display:flex;align-items:center;gap:7px;margin:6px 2px;font-weight:560"><${ProviderLogo} name=${def.preset?.name || def.label} size=${18}/> ${def.label}</div>` : null}
+      <div style="display:flex;align-items:center;gap:7px;margin:6px 2px;font-weight:560"><${ProviderLogo} name=${def.label} size=${18}/> ${def.label}</div>
       ${def.how ? html`<div class="muted" style="font-size:11px;white-space:pre-wrap;margin:6px 2px">${def.how}</div>` : null}
       ${def.link ? html`<a class="oblink" href=${def.link} target="_blank" rel="noopener">${def.linkLabel || "Get a key"} <${Icon} name="link" size=${14}/></a>` : null}
-      ${def.custom ? html`<label>Base URL (Anthropic-compatible)</label><input placeholder="https://…/anthropic" value=${baseUrl} onInput=${(e) => setBaseUrl(e.target.value)}/>` : null}
       <label>${def.kind === "secret" ? "Token" : "API key"}</label>
       <input type="password" autocomplete="off" placeholder=${def.placeholder} value=${val} onInput=${(e) => setVal(e.target.value)}/>
       <button class="btn primary" style="width:100%;margin-top:8px;justify-content:center" disabled=${busy} onClick=${add}>${busy ? html`<${Spinner} size=${15}/>` : html`<${Icon} name="plus" size=${15}/>`} Add ${def.label}</button>

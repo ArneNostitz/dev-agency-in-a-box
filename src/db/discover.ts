@@ -1,16 +1,11 @@
 /**
  * Live model discovery. pi is the ONLY source of model lists (besides Claude-native, which is keyed
- * off the saved Claude/Anthropic secret and needs no discovery). pi offers basically every model, so
- * every non-Claude provider is a pi provider. There is no static catalog and no HTTP /v1/msodels path.
+ * off the saved Claude/Anthropic secret and needs no discovery). pi knows every provider's full model
+ * catalog (updated per release), so discovery = `pi --list-models --provider <piKey>`.
  *
- *   `pi --list-models --provider {piProvider}`
- *
- * Auth: pi's --list-models does NOT pick the key up from the --api-key flag alone (it prints
- * "No models available. Use /login"). pi reads credentials from its agent config dir's auth.json, so
- * we register the key the SAME way a real run does: writePiProviderFiles() writes
- * ~/.pi-agency/providers/<id>/auth.json (pi's real schema) and we point pi at that dir via
- * PI_CODING_AGENT_DIR. --api-key is also passed per the docs; the dir registration is what works.
- * Sources: https://github.com/earendil-works/pi/tree/main/packages/coding-agent#programmatic-usage
+ * Auth is already handled: setProviders writes the key (merged) into pi's REAL ~/.pi/agent/auth.json
+ * (the login), so pi authenticates for --list-models too. No --api-key flag needed, no env juggling.
+ * Sources: https://github.com/earendil-works/pi/tree/main/packages/coding-agent (docs/providers.md)
  *
  * On success the discovered model ids are persisted into the provider row (by the caller, via
  * setProviders). On failure we return {models:[], error} and NEVER throw — the caller leaves the
@@ -18,7 +13,7 @@
  */
 import { spawn } from "node:child_process";
 import type { Provider } from "./providers.js";
-import { inferPiProvider, writePiProviderFiles, getPiProviderDir } from "./providers.js";
+import { inferPiProvider } from "./providers.js";
 
 export interface DiscoverResult {
   models: string[];
@@ -32,47 +27,30 @@ export interface DiscoverResult {
 /**
  * Discover a provider's available models via `pi --list-models`.
  *
- * Never throws. A provider with no resolvable pi provider name returns an actionable error.
+ * Never throws. A provider with no resolvable pi key returns an actionable error.
  */
 export async function discoverProviderModels(provider: Provider): Promise<DiscoverResult> {
-  const pi = inferPiProvider(provider);
+  const pi = (provider.piKey || inferPiProvider(provider)).trim();
   if (!pi) {
     return {
       models: [],
       via: "pi",
-      error: "Couldn't infer this provider's pi name. Set a base URL or name that matches a pi provider (e.g. zai for GLM, deepseek, kimi).",
+      error: "This provider has no pi key. Pick a provider from the list when adding it.",
     };
   }
-  return viaPi(provider, pi);
-}
-
-/**
- * pi path: `pi --list-models --provider {piProvider}`, with the key registered into pi's per-provider
- * config dir so pi actually authenticates (not just --api-key, which --list-models ignores).
- */
-async function viaPi(provider: Provider, piProvider: string): Promise<DiscoverResult> {
-  // --mode only affects run output, not --list-models (pi prints a table regardless). Omit it.
-  const args = ["--list-models", "--provider", piProvider];
-  if (provider.apiKey) args.push("--api-key", provider.apiKey);
-  // Register the key into pi's isolated per-provider config dir (mirrors the run path). Build a clean
-  // env (string values only) so PI_CODING_AGENT_DIR can be added without TS complaining about
-  // `string | undefined`. Best-effort: on failure we still try — pi may pick the key from --api-key/env.
-  const env: Record<string, string> = {};
-  for (const [k, v] of Object.entries(process.env)) if (typeof v === "string") env[k] = v;
+  // Auth already lives in pi's real ~/.pi/agent/auth.json (written at save). Just list models.
+  // NOTE: `--provider <pi>` does NOT filter pi's list output (pi lists models from ALL authenticated
+  // providers). We pass it anyway, then filter rows by the provider column (column 1) in the parser
+  // so each provider gets only its own models.
+  const args = ["--list-models", "--provider", pi];
   try {
-    if (provider.apiKey) {
-      writePiProviderFiles(provider);
-      env.PI_CODING_AGENT_DIR = getPiProviderDir(provider.id);
-    }
-  } catch { /* best-effort — fall through and let pi try --api-key / env */ }
-  try {
-    const out = await runPi(args, env);
+    const out = await runPi(args);
     // pi prints the model table to BOTH stdout and stderr; parse whichever has content.
-    const models = parsePiModels(out.stdout || out.stderr);
+    const models = parsePiModels(out.stdout || out.stderr, pi);
     if (out.code !== 0 && !models.length) {
       return { models: [], via: "pi", error: `pi --list-models exited ${out.code}${out.stderr.trim() ? ": " + out.stderr.trim().slice(0, 200) : ""}` };
     }
-    if (!models.length) return { models: [], via: "pi", error: `pi --list-models returned no models.${out.stderr.trim() ? " " + out.stderr.trim().slice(0, 200) : ""}` };
+    if (!models.length) return { models: [], via: "pi", error: `pi --list-models returned no models for provider "${pi}".${out.stderr.trim() ? " " + out.stderr.trim().slice(0, 200) : ""}` };
     return { models, runner: "pi-cli", via: "pi" };
   } catch (e) {
     return { models: [], via: "pi", error: `Couldn't run pi (${(e as Error).message || e}). Is the pi CLI installed?` };
@@ -81,10 +59,10 @@ async function viaPi(provider: Provider, piProvider: string): Promise<DiscoverRe
 
 interface PiRun { code: number; stdout: string; stderr: string; }
 
-/** Spawn pi with the given args (+ env override) and collect stdout/stderr + exit code. */
-function runPi(args: string[], env?: Record<string, string>): Promise<PiRun> {
+/** Spawn pi with the given args and collect stdout/stderr + exit code. */
+function runPi(args: string[]): Promise<PiRun> {
   return new Promise((resolve) => {
-    const proc = spawn("pi", args, { shell: false, env: env ?? process.env });
+    const proc = spawn("pi", args, { shell: false });
     let stdout = "";
     let stderr = "";
     proc.stdout.on("data", (c: Buffer) => (stdout += c.toString()));
@@ -102,29 +80,33 @@ function runPi(args: string[], env?: Record<string, string>): Promise<PiRun> {
  *   zai       glm-4.7       204.8K   131.1K   yes       no
  *   ...
  *
- * The model id is the 2nd whitespace-separated column. `--mode` does NOT change this (it only affects
- * run output). We skip the header row and any separator lines, and take column 2 of each data row.
- * Also accepts a JSON array (future-proofing) and a bare one-id-per-line format as last resorts.
+ * IMPORTANT: pi lists models from ALL authenticated providers (the `--provider` flag does NOT filter
+ * the list). Each row is tagged with its provider in column 1, so we filter rows where column 1
+ * matches `piKey`, then take column 2 (the model id). When `piKey` is empty (legacy), no filter.
+ * Also accepts a JSON array (future-proofing) as a last resort.
  */
-function parsePiModels(text: string): string[] {
+function parsePiModels(text: string, piKey = ""): string[] {
   const t = (text || "").trim();
   if (!t) return [];
   // Try JSON first (a future pi build may emit structured output).
   try {
     const parsed = JSON.parse(t);
     const arr = Array.isArray(parsed) ? parsed : Array.isArray((parsed as { models?: unknown[] }).models) ? (parsed as { models: unknown[] }).models : [];
-    const fromJson = arr.map((r) => (r as { id?: string; name?: string }).id || (r as { name?: string }).name).filter((m): m is string => Boolean(m));
+    const rows = arr.map((r) => (r as { provider?: string; id?: string; name?: string }));
+    const matched = piKey ? rows.filter((r) => r.provider === piKey) : rows;
+    const fromJson = matched.map((r) => r.id || r.name).filter((m): m is string => Boolean(m));
     if (fromJson.length) return fromJson;
   } catch { /* not JSON — fall through to the table parser */ }
-  // pi's actual format: a space-separated table; model id is the 2nd column. Skip the header row.
+  // pi's actual format: a space-separated table. Column 1 = provider, column 2 = model id.
   const lines = t.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   const models: string[] = [];
   for (let i = 0; i < lines.length; i++) {
     const cols = lines[i].split(/\s+/);
     // Header row: "provider model context max-out thinking images" — skip it.
     if (i === 0 && cols[0] === "provider" && cols[1] === "model") continue;
-    // Data row: take column 2 (the model id). Guard against short/separator rows.
-    if (cols.length >= 2 && cols[1] && !/^[-=]+$/.test(cols[1])) models.push(cols[1]);
+    // Data row: column 1 must match the requested piKey (pi lists ALL providers' models). Column 2
+    // is the model id. Guard against short/separator rows.
+    if (cols.length >= 2 && cols[1] && !/^[-=]+$/.test(cols[1]) && (!piKey || cols[0] === piKey)) models.push(cols[1]);
   }
   return models;
 }
