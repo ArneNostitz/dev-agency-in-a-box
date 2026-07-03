@@ -98,7 +98,8 @@ import {
 import { claimFiles, releaseFiles, claimBarrier } from "./locks.js";
 import { afterMerge } from "./merge_hooks.js";
 import { isStructural, structuralFlagKey } from "./coordination.js";
-import { parseRateLimit, nextWindowReset } from "./ratelimit.js";
+import { parseRateLimit, nextWindowReset, RateLimitedError } from "./ratelimit.js";
+import { isProviderRateLimited, clearProviderRateLimited } from "./db/ratelimit.js";
 import { startPreviewSweeper, killAllApps } from "./apprun.js";
 import { setActive, clearActive, getActive } from "./activity.js";
 import { stopRuns, requestStop, clearStop, isStopRequested, requestHold, clearHold, queueSteer } from "./abort.js";
@@ -119,14 +120,17 @@ import {
 const MAX_AUTOFIX = 2;
 
 // ---- usage-limit handling (pure script — works with zero tokens) ----
+// Rate limits are now PER-PROVIDER (set in roleAgent where the provider is known, stored in the
+// rate_limited table with a provider_id). There is no global pause anymore — a Claude 429 never
+// blocks a GLM run. These helpers are kept as no-ops for backward-compat with any remaining callers.
 
-/** Pause all NEW agent dispatch until this ms-epoch (persisted so it survives restarts). */
+/** @deprecated No global pause — rate limits are per-provider. Always returns false. */
 function pausedUntil(): number {
-  const t = Date.parse(getSetting("agents_paused_until") ?? "");
-  return Number.isFinite(t) ? t : 0;
+  return 0;
 }
+/** @deprecated No global pause — rate limits are per-provider. No-op. */
 function agentsArePaused(): boolean {
-  return Date.now() < pausedUntil();
+  return false;
 }
 /**
  * Pause new dispatch until untilMs. A `parsed` reset (read straight from Claude's "resets …" error)
@@ -144,52 +148,61 @@ function nextResetMs(): number {
 }
 
 /**
- * If `msg` is a usage-limit wall, handle it. Returns:
- *   false    — not a rate limit (caller handles as normal error)
+ * Handle a rate-limit wall for a SPECIFIC provider. Returns:
+ *   false    — not a rate limit / no RateLimitedError (caller handles as normal error)
  *   true     — parked for auto-resume (caller returns early)
- *   "switch" — auto-switched all Claude roles to the fallback model (caller should retry the pipeline)
+ *   "switch" — switched to the next-best available provider in the fallback chain (caller retries)
  *
- * When auto_switch_on_limit is ON and a fallback chain is configured, instead of parking
- * the issue we re-route all unassigned (Claude) roles to the first fallback provider and
- * signal the caller to retry. No tokens used.
+ * The rate limit is scoped to the provider that hit the wall (its piKey/id) — a Claude 429 never
+ * blocks a GLM run. When a fallback chain is configured, we walk it best→worst, skip providers that
+ * are themselves rate-limited, and switch+continue on the first available. Only when NO fallback is
+ * available do we park the issue (auto-resume after THIS provider's reset).
  */
-async function maybeParkRateLimited(repo: string, number: number, msg: string, isPr = false): Promise<boolean | "switch"> {
-  const rl = parseRateLimit(msg);
-  if (!rl.limited) return false;
-  const parsed = Boolean(rl.resetAt && rl.resetAt > Date.now());
-  const resetAt = parsed ? (rl.resetAt as number) : nextResetMs();
-
-  // Auto-switch: when enabled and a fallback model is configured, set a session-level fallback
-  // for all unassigned roles instead of permanently overwriting the DB. The session fallback is
-  // cleared in the processIssue finally block after the retry, so user assignments are untouched.
-  if (!isPr && getAutoSwitchOnLimit()) {
-    const chain = getFallbackChain();
-    if (chain.length > 0) {
-      const fallback = chain[0];
-      setSessionFallback(fallback);
-      // Still pause the global agent queue so we don't spam the exhausted Claude endpoint
-      // with other issues — but this issue will retry immediately with the fallback.
-      pauseAgents(resetAt, parsed);
-      await commentOnIssue(
-        repo,
-        number,
-        `🔄 Claude usage limit hit — auto-switched to **${fallback.model}** for all unassigned roles. Retrying with the fallback model…`,
-      ).catch(() => {});
-      console.log(`[agency] rate-limited ${repo} #${number}: auto-switched to fallback ${fallback.model} (session-only, ${ALL_ROLES.length} roles)`);
-      return "switch";
-    }
-  }
-
-  pauseAgents(resetAt, parsed); // a reset time read from Claude's error is authoritative
-  const when = new Date(resetAt).toLocaleString();
-  if (isPr) {
-    await commentOnPr(repo, number, `⏳ Hit the Claude usage limit — I'll retry automatically after the window resets (~${when}).`).catch(() => {});
-  } else {
-    setRateLimited(repo, number, new Date(resetAt).toISOString());
+async function maybeParkRateLimited(repo: string, number: number, err: unknown, isPr = false): Promise<boolean | "switch"> {
+  // Only react to a typed RateLimitedError (the string-parse version is gone — detection now happens
+  // in roleAgent where the provider is known).
+  const rlError = err instanceof RateLimitedError ? err : null;
+  if (!rlError) {
+    // Legacy: some callers may still pass a raw error whose message looks like a limit. Detect that
+    // too, but we have no provider context → treat as a generic (empty-provider) limit.
+    const msg = (err as Error)?.message ?? String(err);
+    const rl = parseRateLimit(msg);
+    if (!rl.limited) return false;
+    const resetAt = rl.resetAt && rl.resetAt > Date.now() ? rl.resetAt : nextResetMs();
+    setRateLimited(repo, number, "", new Date(resetAt).toISOString());
     recordIssueStatus(repo, number, setBlocked(withStatus("working"), "rateLimited"));
-    await commentOnIssue(repo, number, `⏳ Hit the Claude usage limit. I'll **auto-resume** this after the window resets (~${when}) — no action needed.`).catch(() => {});
+    const when = new Date(resetAt).toLocaleString();
+    await commentOnIssue(repo, number, `⏳ Rate-limited — I'll **auto-resume** after the window resets (~${when}).`).catch(() => {});
+    return true;
   }
-  console.log(`[agency] rate-limited ${repo} #${number}; auto-resume after ${new Date(resetAt).toISOString()}`);
+
+  const { providerId, resetAt } = rlError;
+  const when = new Date(resetAt).toLocaleString();
+
+  // Walk the fallback chain best→worst for the next available (non-rate-limited) provider.
+  const chain = getFallbackChain();
+  const next = chain.find((entry) => entry.providerId !== providerId && !isProviderRateLimited(entry.providerId));
+  if (next) {
+    // Switch all unassigned roles to this provider/model for the retry (session-only).
+    setSessionFallback(next);
+    await commentOnIssue(
+      repo,
+      number,
+      `🔄 Provider rate-limited — switched to **${next.model}** and continuing. (Will return to the preferred model after ~${when}.)`,
+    ).catch(() => {});
+    console.log(`[agency] rate-limited ${repo} #${number} (provider ${providerId}): switched to ${next.model}`);
+    return "switch";
+  }
+
+  // No fallback available → park this issue for THIS provider's auto-resume.
+  setRateLimited(repo, number, providerId, new Date(resetAt).toISOString());
+  recordIssueStatus(repo, number, setBlocked(withStatus("working"), "rateLimited"));
+  if (isPr) {
+    await commentOnPr(repo, number, `⏳ Rate-limited — I'll retry automatically after the window resets (~${when}).`).catch(() => {});
+  } else {
+    await commentOnIssue(repo, number, `⏳ Rate-limited — I'll **auto-resume** after the window resets (~${when}) — no action needed.`).catch(() => {});
+  }
+  console.log(`[agency] rate-limited ${repo} #${number} (provider ${providerId}); auto-resume after ${new Date(resetAt).toISOString()}`);
   return true;
 }
 /** Don't re-engage closed threads older than this (keeps the scan cheap). DB-first → env → 21. */
@@ -239,13 +252,13 @@ async function processIssue(cfg: Config, repo: string, issue: Issue, opts: { fre
       // enabled) and retry once; otherwise park for auto-resume. Chat previously ignored this, so a
       // usage-limited chat agent just posted "failed" instead of falling back like the other roles.
       const msg = (err as Error).message ?? String(err);
-      const rl = await maybeParkRateLimited(repo, issue.number, msg);
+      const rl = await maybeParkRateLimited(repo, issue.number, err);
       if (rl === "switch") {
         try {
           await runChat();
         } catch (err2) {
           const msg2 = (err2 as Error).message ?? String(err2);
-          if (!(await maybeParkRateLimited(repo, issue.number, msg2))) {
+          if (!(await maybeParkRateLimited(repo, issue.number, err2))) {
             await commentOnIssue(repo, issue.number, `❌ ${chatDef.name} failed: ${msg2.slice(0, 200)}`).catch(() => {});
           }
         }
@@ -352,7 +365,7 @@ async function processIssue(cfg: Config, repo: string, issue: Issue, opts: { fre
   } catch (err) {
     const msg = (err as Error).message ?? String(err);
     console.error(`[agency] pipeline error ${repo} #${issue.number}:`, msg);
-    const rl = await maybeParkRateLimited(repo, issue.number, msg);
+    const rl = await maybeParkRateLimited(repo, issue.number, err);
     if (rl === "switch") {
       // Auto-switched to fallback model — retry the pipeline in the same workdir (no re-clone).
       try {
@@ -360,7 +373,7 @@ async function processIssue(cfg: Config, repo: string, issue: Issue, opts: { fre
       } catch (err2) {
         const msg2 = (err2 as Error).message ?? String(err2);
         console.error(`[agency] pipeline error after model switch ${repo} #${issue.number}:`, msg2);
-        if (await maybeParkRateLimited(repo, issue.number, msg2)) return;
+        if (await maybeParkRateLimited(repo, issue.number, err2)) return;
         recordIssueStatus(repo, issue.number, setBlocked(withStatus("working"), "needsAttention"));
         await commentOnIssue(repo, issue.number, `❌ Run failed even after model switch: ${msg2.slice(0, 300)} — fix and re-pin.`).catch(() => {});
       }
@@ -394,7 +407,7 @@ async function processPrFeedbackOne(
   } catch (err) {
     const msg = (err as Error).message ?? String(err);
     console.error(`[agency] pr-fix error ${repo} PR#${pr.number}:`, msg);
-    if (await maybeParkRateLimited(repo, pr.number, msg, true)) return;
+    if (await maybeParkRateLimited(repo, pr.number, err, true)) return;
     await commentOnPr(repo, pr.number, `❌ Couldn't apply the fix: ${msg.slice(0, 300)}`).catch(() => {});
   } finally {
     clearActive(repo, pr.number);
@@ -458,7 +471,7 @@ async function processHealOne(
   } catch (err) {
     const msg = (err as Error).message ?? String(err);
     console.error(`[agency] auto-heal error ${repo} PR#${pr.number}:`, msg);
-    if (await maybeParkRateLimited(repo, pr.number, msg, true)) return;
+    if (await maybeParkRateLimited(repo, pr.number, err, true)) return;
     await commentOnPr(repo, pr.number, `❌ Auto-heal failed: ${msg.slice(0, 300)}`).catch(() => {});
   } finally {
     clearActive(repo, pr.number);
@@ -485,7 +498,7 @@ async function processFollowUp(cfg: Config, repo: string, issue: Issue): Promise
   } catch (err) {
     const msg = (err as Error).message ?? String(err);
     console.error(`[agency] follow-up error ${repo} #${issue.number}:`, msg);
-    if (await maybeParkRateLimited(repo, issue.number, msg)) return;
+    if (await maybeParkRateLimited(repo, issue.number, err)) return;
     recordIssueStatus(repo, issue.number, setBlocked(withStatus("working"), "needsAttention"));
     await commentOnIssue(repo, issue.number, `❌ Follow-up failed: ${msg.slice(0, 300)} — comment again to retry.`).catch(() => {});
   } finally {
@@ -504,7 +517,7 @@ export async function forceResume(cfg: Config, repo: string, number: number, add
   // Don't let a manual Resume hammer the usage wall — it'll auto-resume after the reset.
   if (agentsArePaused()) {
     const until = new Date(pausedUntil()).toLocaleString();
-    setRateLimited(repo, number, new Date(pausedUntil()).toISOString());
+    setRateLimited(repo, number, "", new Date(Date.now() + 5 * 3600000).toISOString());
     recordIssueStatus(repo, number, setBlocked(withStatus("working"), "rateLimited"));
     await commentOnIssue(
       repo,
@@ -580,7 +593,7 @@ async function processResume(cfg: Config, repo: string, issue: Issue): Promise<v
   } catch (err) {
     const msg = (err as Error).message ?? String(err);
     console.error(`[agency] resume error ${repo} #${issue.number}:`, msg);
-    if (await maybeParkRateLimited(repo, issue.number, msg)) return;
+    if (await maybeParkRateLimited(repo, issue.number, err)) return;
     recordIssueStatus(repo, issue.number, setBlocked(withStatus("working"), "needsAttention"));
     await commentOnIssue(repo, issue.number, `❌ Resume failed: ${msg.slice(0, 300)} — press Resume again.`).catch(() => {});
   } finally {
@@ -597,7 +610,7 @@ export async function forceFix(cfg: Config, repo: string, number: number): Promi
   const issue = await getIssue(repo, number);
   if (!issue) return;
   if (agentsArePaused()) {
-    setRateLimited(repo, number, new Date(pausedUntil()).toISOString());
+    setRateLimited(repo, number, "", new Date(Date.now() + 5 * 3600000).toISOString());
     recordIssueStatus(repo, number, setBlocked(withStatus("working"), "rateLimited"));
     await commentOnIssue(repo, number, `⏳ Rate-limited — I'll run the fix automatically after the usage window resets (~${new Date(pausedUntil()).toLocaleString()}).`).catch(() => {});
     return;
@@ -627,7 +640,7 @@ async function processFix(cfg: Config, repo: string, issue: Issue, conflict: boo
   } catch (err) {
     const msg = (err as Error).message ?? String(err);
     console.error(`[agency] fix error ${repo} #${issue.number}:`, msg);
-    if (await maybeParkRateLimited(repo, issue.number, msg)) return;
+    if (await maybeParkRateLimited(repo, issue.number, err)) return;
     recordIssueStatus(repo, issue.number, setBlocked(withStatus("working"), "needsAttention"));
     await commentOnIssue(repo, issue.number, `❌ Fix run failed: ${msg.slice(0, 300)} — press Fix again.`).catch(() => {});
   } finally {
@@ -642,7 +655,7 @@ async function processFix(cfg: Config, repo: string, issue: Issue, conflict: boo
 /** Dashboard-first instant start: dispatch from the title/body we already have — no GitHub read. */
 export async function forceStartWith(cfg: Config, repo: string, number: number, title: string, body: string): Promise<void> {
   if (agentsArePaused()) {
-    setRateLimited(repo, number, new Date(pausedUntil()).toISOString());
+    setRateLimited(repo, number, "", new Date(Date.now() + 5 * 3600000).toISOString());
     recordIssueStatus(repo, number, setBlocked(withStatus("working"), "rateLimited"));
     return;
   }
@@ -655,7 +668,7 @@ export async function forceStart(cfg: Config, repo: string, number: number): Pro
   const issue = await getIssue(repo, number);
   if (!issue) return;
   if (agentsArePaused()) {
-    setRateLimited(repo, number, new Date(pausedUntil()).toISOString());
+    setRateLimited(repo, number, "", new Date(Date.now() + 5 * 3600000).toISOString());
     recordIssueStatus(repo, number, setBlocked(withStatus("working"), "rateLimited"));
     await commentOnIssue(repo, number, `⏳ Rate-limited — I'll start this automatically after the usage window resets (~${new Date(pausedUntil()).toLocaleString()}).`).catch(() => {});
     return;
@@ -677,7 +690,7 @@ export async function forceApprove(cfg: Config, repo: string, number: number): P
   // Approving during the usage-limit window: queue the build for auto-resume after the reset
   // (so you can approve anytime, even rate-limited).
   if (agentsArePaused()) {
-    setRateLimited(repo, number, new Date(pausedUntil()).toISOString());
+    setRateLimited(repo, number, "", new Date(Date.now() + 5 * 3600000).toISOString());
     recordIssueStatus(repo, number, setBlocked(withStatus("working"), "rateLimited"));
     await commentOnIssue(
       repo,
@@ -847,7 +860,7 @@ export async function runAuditOn(cfg: Config, repo: string, number: number): Pro
       const msg = (err as Error).message ?? String(err);
       // Survive a usage limit (auto-resumes after reset) or any error (resumable) — the tracking
       // issue persists either way, so the audit is never silently lost.
-      if (!(await maybeParkRateLimited(repo, number, msg))) {
+      if (!(await maybeParkRateLimited(repo, number, err))) {
         recordIssueStatus(repo, number, setBlocked(withStatus("working"), "needsAttention"));
         await commentOnIssue(repo, number, `❌ Audit run failed: ${msg.slice(0, 300)} — press **Resume** to retry.`).catch(() => {});
       }
@@ -1125,7 +1138,7 @@ async function reconcileRateLimited(cfg: Config): Promise<void> {
         if (!hit) continue;
         const rl = parseRateLimit(hit.body);
         const at = rl.resetAt && rl.resetAt > Date.now() ? rl.resetAt : nextResetMs();
-        setRateLimited(repo, issue.number, new Date(at).toISOString());
+        setRateLimited(repo, issue.number, "", new Date(at).toISOString());
         recordIssueStatus(repo, issue.number, setBlocked(withStatus("working"), "rateLimited"));
         // If the reset is still in the future, hold new dispatch too so we don't re-hit the wall.
         if (at > Date.now()) pauseAgents(at);
@@ -1140,8 +1153,9 @@ async function reconcileRateLimited(cfg: Config): Promise<void> {
 }
 
 /**
- * Pure-script auto-resume: every minute, re-run any issue whose usage-limit reset time has
- * passed, and lift the global pause once it's over. No agent/AI calls — works with zero tokens.
+ * Pure-script auto-resume: every minute, re-run any issue whose per-provider rate-limit reset has
+ * passed. Rate limits are per-provider, so a GLM reset re-runs the issue on the best available model
+ * (GLM is eligible again). No global pause anymore.
  */
 function startAutoResume(cfg: Config): void {
   setInterval(() => {
@@ -1149,13 +1163,9 @@ function startAutoResume(cfg: Config): void {
     try {
       const due = dueRateLimited(new Date().toISOString());
       for (const r of due) {
-        clearRateLimited(r.repo, r.number);
-        console.log(`[agency] auto-resume after usage reset: ${r.repo} #${r.number}`);
+        clearRateLimited(r.repo, r.number, r.providerId);
+        console.log(`[agency] auto-resume after provider reset: ${r.repo} #${r.number} (provider ${r.providerId})`);
         void forceResume(cfg, r.repo, r.number);
-      }
-      if (pausedUntil() && Date.now() >= pausedUntil()) {
-        setSetting("agents_paused_until", ""); // window reset — accept new work again
-        console.log("[agency] usage window reset — resuming normal operation.");
       }
     } catch (err) {
       console.error("[agency] auto-resume tick error:", (err as Error).message);

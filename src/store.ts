@@ -59,7 +59,7 @@ export type { User, UserRow } from "./db/users.js";
 export { recordReview, getReview, clearReview, listReviews } from "./db/reviews.js";
 export type { ReviewVerdict } from "./db/reviews.js";
 export { recordConflict, getConflict, clearConflict, listConflicts } from "./db/conflicts.js";
-export { setRateLimited, clearRateLimited, listRateLimited, dueRateLimited } from "./db/ratelimit.js";
+export { setRateLimited, clearRateLimited, clearProviderRateLimited, isProviderRateLimited, listRateLimited, dueRateLimited } from "./db/ratelimit.js";
 export {
   recordRun, issueSpend, recordTokens, tokensByRoleSince, tokensByDaySince,
   topIssuesByTokensSince, tokensByIssueAll, tokensSince, tokensByModelSince, spendSince,

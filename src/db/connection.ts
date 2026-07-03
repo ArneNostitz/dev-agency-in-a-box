@@ -167,7 +167,7 @@ export function getDb(): DatabaseSync | null {
         PRIMARY KEY (repo, parent)
       );
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
-      CREATE TABLE IF NOT EXISTS rate_limited (repo TEXT NOT NULL, number INTEGER NOT NULL, resume_at TEXT, PRIMARY KEY (repo, number));
+      CREATE TABLE IF NOT EXISTS rate_limited (repo TEXT NOT NULL, number INTEGER NOT NULL, provider_id TEXT NOT NULL DEFAULT '', resume_at TEXT, PRIMARY KEY (repo, number, provider_id));
       CREATE TABLE IF NOT EXISTS pr_review (repo TEXT NOT NULL, number INTEGER NOT NULL, verdict TEXT, summary TEXT, updated_at TEXT, PRIMARY KEY (repo, number));
       CREATE TABLE IF NOT EXISTS pr_conflict (repo TEXT NOT NULL, number INTEGER NOT NULL, sha TEXT, files TEXT, updated_at TEXT, PRIMARY KEY (repo, number));
       -- Per-run tool-call telemetry (v3): the raw material the Process Analyzer mines for repeating
@@ -286,6 +286,16 @@ export function getDb(): DatabaseSync | null {
         /* column already there */
       }
     }
+    // Migrate rate_limited to the per-provider schema (provider_id column + 3-col PK). The old table
+    // had PK (repo, number) and no provider_id; a stale provider-agnostic row there is exactly the bug
+    // where a Claude limit blocked a GLM run, so rebuild the table (rows are transient — re-derived).
+    try {
+      const cols = d.prepare("PRAGMA table_info(rate_limited)").all() as Array<{ name: string }>;
+      if (cols.length && !cols.some((c) => c.name === "provider_id")) {
+        d.exec("DROP TABLE rate_limited");
+        d.exec("CREATE TABLE rate_limited (repo TEXT NOT NULL, number INTEGER NOT NULL, provider_id TEXT NOT NULL DEFAULT '', resume_at TEXT, PRIMARY KEY (repo, number, provider_id))");
+      }
+    } catch { /* table absent or fresh — the CREATE above already made the new schema */ }
     // DB-first backfill: existing rows predate the created_at column. Their true creation time is
     // unknown, so use the earliest timestamp the DB itself holds (updated_at) — never GitHub.
     try { d.exec("UPDATE issues SET created_at = updated_at WHERE created_at IS NULL AND updated_at IS NOT NULL"); } catch { /* noop */ }
