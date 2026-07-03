@@ -185,7 +185,7 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
   assert.match(root.innerHTML, /Show agent avatars/, "appearance section has the avatars toggle");
   assert.match(root.innerHTML, /Team \(admin\)/, "admin team section renders");
   assert.match(root.innerHTML, /Automation/, "automation panel renders");
-  assert.match(root.innerHTML, /Agent runner/, "runner picker renders in settings");
+  assert.doesNotMatch(root.innerHTML, /Agent runner/, "runner picker removed (runner is auto-decided: Claude→claude-sdk, else pi)");
   assert.match(root.innerHTML, /arne/, "signed-in user shown");
   // Models & runners modal (redesigned picker): list of added models + per-row runner + Add.
   const modelsBtn = Array.from(window.document.querySelectorAll(".btn")).find((b) => /Models & API keys/.test(b.textContent));

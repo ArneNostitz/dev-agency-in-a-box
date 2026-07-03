@@ -79,6 +79,13 @@ export function parsePiLine(line: string): PiEvent[] {
     const msg = (obj as { message?: Record<string, unknown> }).message;
     const u = readUsage(msg);
     if (u) out.push({ usage: u });
+    // Surface a per-turn error (e.g. "401 token expired") so the live feed shows WHY a run stalls
+    // instead of just printing the heartbeat ("still working…") until it times out.
+    const stopReason = (msg as { stopReason?: string })?.stopReason;
+    const errMsg = (msg as { errorMessage?: string })?.errorMessage;
+    if (stopReason === "error" && typeof errMsg === "string" && errMsg.trim()) {
+      out.push({ textDelta: `❌ ${errMsg.trim().slice(0, 300)}` });
+    }
     if (type === "turn_end") {
       out.push({ turnEnded: true });
       const text = assistantText(msg);

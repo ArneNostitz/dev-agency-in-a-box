@@ -412,12 +412,17 @@ test("preparePiConfig: Claude-native / empty providers resolve safely", () => {
   assert.equal(preparePiConfig(null).piProvider, "", "null provider → empty key");
 });
 
-test("#108 scenario: a provider whose runner is 'pi-cli' resolves to the pi runner — it does NOT fall back to claude-sdk", () => {
-  const glmViaPi = { id: "glm-1", name: "GLM (Zhipu)", baseUrl: "https://open.bigmodel.cn/api/anthropic", apiKey: "zhipu-key", models: ["glm-5.2"], runner: "pi-cli" };
-  assert.equal(runnerKindFor(glmViaPi), "pi-cli", "GLM with runner=pi-cli must route through the pi runner");
-  // Without the per-provider runner set, the global default (claude-sdk) is used instead.
-  const glmNoRunner = { ...glmViaPi, runner: undefined };
-  assert.equal(runnerKindFor(glmNoRunner), "claude-sdk");
+test("runnerKindFor: a provider with a piKey routes to pi; Claude-native routes to claude-sdk", () => {
+  // The runner is decided by IDENTITY, not a per-provider runner field or a global setting:
+  //   Claude (subscription / no provider) → claude-sdk; anything with a piKey → pi-cli.
+  const glm = { id: "glm-1", name: "GLM (Zhipu)", piKey: "zai", apiKey: "zhipu-key", models: ["glm-5.2"] };
+  assert.equal(runnerKindFor(glm, "apiKey"), "pi-cli", "a piKey provider routes to pi");
+  assert.equal(runnerKindFor(glm), "pi-cli", "piKey wins even without authKind");
+  assert.equal(runnerKindFor(null), "claude-sdk", "no provider → Claude SDK");
+  assert.equal(runnerKindFor(null, "subscription"), "claude-sdk", "subscription → Claude SDK");
+  // Legacy row with baseUrl + apiKey but no piKey still routes to pi (it's a non-Claude provider).
+  const legacy = { id: "x", name: "DeepSeek", baseUrl: "https://api.deepseek.com", apiKey: "k", models: [] };
+  assert.equal(runnerKindFor(legacy, "apiKey"), "pi-cli", "legacy non-Claude provider with apiKey → pi");
 });
 
 test("#108 scenario: a Claude-native run (no provider) resolves to claude-sdk", () => {
