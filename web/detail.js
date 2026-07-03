@@ -2,6 +2,7 @@
 import { html, useState, useEffect, useRef } from "/web/vendor/standalone.mjs";
 import { Breadcrumb } from "./ui.js";
 import { Avatar, Icon, Modal, ProviderLogo, Select, Sheet, Spinner, agentOptions, agentOnlyOptions, workflowOptions, ago, cap, statusChip, api, commentBadge, defaultModelLabel, fmtTok, getJSON, getSetupProgress, ghUrl, isDone, md, MarkdownArea, readAttach, resolveAgentModel, roleFromComment, shortModel, stripBadge, toast, tokHeat, usageTitle } from "./core.js";
+import { timelineModel } from "./table.js";
 
 
 // ---------- Detail ----------
@@ -425,6 +426,7 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
       </div>
       <button class="iconbtn ghost dclose" aria-label="Close" data-tip="Close" onClick=${onClose}><${Icon} name="x" size=${18}/></button>
     </div>
+    <${DetailTimeline} issue=${issue} data=${data}/>
     <div class="dtoolbar">
       ${wfOpts.length ? (running
         ? html`<span class="wfctl wfctl--running tip" data-tip="Workflow running — stop the issue to switch"><${Icon} name="loader" size=${14} cls="spin"/> <span class="wfctl__name">${activeWfName}</span></span>`
@@ -555,6 +557,97 @@ function stepModelTargets(wf, agentDefs, data) {
     out.push({ key, label: cap(name), dfltRef: m ? m.ref : "", dflt: m ? m.short : "", dfltProvider: m ? m.provider : "" });
   }
   return out;
+}
+
+// ---------- Detail timeline (top of detail page) ----------
+// Renders the workflow steps as a .flow (same classes as table.js WorkflowTimeline). For a WORKFLOW
+// issue, each step's avatar is a model-picker Select: the same model dropdown used everywhere else,
+// but positioned on the step's avatar instead of an icon button. Clicking it writes a per-agent model
+// override for THIS issue (/issue-agent-model, keyed by the step's role — priority 1 in the server's
+// resolveAssignment, so it reliably takes effect). Non-workflow / not-started → falls back to the
+// plain WorkflowTimeline (or nothing), so nothing changes for issues without steps.
+function DetailTimeline({ issue, data }) {
+  const m = timelineModel(issue);
+  if (m.epic || !m.started) return null; // epic bar or nothing-yet → no interactive timeline
+  // Only a real workflow has steps whose agent we can target. Solo-role / generic issues render the
+  // shared (non-interactive) timeline — there's only one agent, the whole-issue picker already covers it.
+  const wf = (data && data.workflows || []).find((w) => w.id === issue.workflowId);
+  if (!wf || !m.workflow) {
+    return html`<${PlainTimeline} i=${issue}/>`;
+  }
+  const targets = stepModelTargets(wf, data && data.agentDefs, data);
+  // Build {key → step} so a per-agent picker attaches to the matching step (deduped like targets).
+  const agentModels = issue.agentModels || {};
+  const providers = (data && data.providers) || [];
+  const modelOpts = providers.flatMap((p) => (p.models || []).map((mm) => ({ value: p.id + "/" + mm, label: mm, logo: p.name, hint: p.name })));
+  const live = !!(issue.active || issue.running);
+  // Pair each timeline step with its model target (by role key), preserving timeline order/state.
+  return html`<div class="dtl-flow">
+    ${m.steps.map((s, idx) => {
+      const done = s.st === "done";
+      const current = idx === m.current && !done;
+      const blocked = s.st === "attention";
+      const cls = done ? "done" : current ? (blocked ? "blocked" : "current") : blocked ? "blocked" : "pending";
+      // Match the timeline step to its model target by ROLE KEY (both sides are the lowercased role
+      // name) — more robust than matching display labels, which can differ (ws.name vs agentDef name).
+      const roleKey = String(s.role || s.k || "").toLowerCase();
+      const target = targets.find((t) => t.key === roleKey) || targets.find((t) => (t.label || "").toLowerCase() === roleKey);
+      // The live per-issue override for this step's agent (if any), else its resolved default.
+      const curRef = target ? (agentModels[target.key] || target.dfltRef) : "";
+      const curOpt = curRef ? modelOpts.find((o) => o.value === curRef) : null;
+      const curLabel = curOpt ? curOpt.label : (target && target.dflt ? target.dflt : "");
+      const curLogo = curOpt ? curOpt.logo : (target && target.dfltProvider) || "";
+      const tip = (cap(s.role || s.k)) + (curLabel ? " · " + curLabel : "") + " — click to change model";
+      const selOpts = [{ value: "", label: "Default", hint: target && target.dflt ? target.dflt : "default", icon: "sparkles" }].concat(modelOpts);
+      return html`
+        ${idx ? html`<span class=${"flow__line" + (idx <= m.current ? " on" : "")}></span>` : null}
+        <span class=${"flow__step " + cls}>
+          ${target
+            ? html`<span class="tip" data-tip=${tip}><${Select}
+                value=${curRef}
+                options=${selOpts}
+                btnClass="flow__pick"
+                menuAlign=${idx >= m.steps.length - 2 ? "right" : "left"}
+                trigger=${() => html`<span class=${"flow__dot flow__dot--face" + (current && live ? " pulse" : "")}><span class="flow__face"><${Avatar} role=${s.role || s.k} size=${26} crop="head"/></span></span>`}
+                onChange=${(v) => setStepModel(issue, target.key, v)}
+              /></span>`
+            : html`<span class=${"flow__dot" + (current && live ? " pulse" : "") + (s.role ? " flow__dot--face" : "")}>${done ? html`<${Icon} name="check" size=${10}/>` : s.role ? html`<span class="flow__face"><${Avatar} role=${s.role} size=${26} crop="head"/></span>` : null}</span>`}
+          <span class="flow__lbl">${(current && live) ? html`<${Icon} name=${(statusChip(issue) || {}).icon || "circle"} size=${11} cls="flow__act"/> ` : null}${s.label}</span>
+        </span>`;
+    })}
+  </div>`;
+}
+
+// Write a per-step model override for this issue (live, via /issue-agent-model). Updates the local
+// issue object optimistically so the timeline reflects it immediately.
+function setStepModel(issue, key, value) {
+  if (!issue.agentModels) issue.agentModels = {};
+  if (value) issue.agentModels[key] = value; else delete issue.agentModels[key];
+  api("/issue-agent-model", { repo: issue.repo, number: issue.number, agent: key, model: value || "" })
+    .catch((err) => toast("Couldn't set step model: " + ((err && err.message) || ""), "error"));
+}
+
+// Non-interactive timeline for solo-role / generic issues (one agent — whole-issue picker covers it).
+// Mirrors table.js WorkflowTimeline markup without re-importing it (keeps detail.js self-contained).
+function PlainTimeline({ i }) {
+  const m = timelineModel(i);
+  if (m.epic || !m.started) return null;
+  const live = !!(i.active || i.running);
+  return html`<div class="dtl-flow">
+    ${m.steps.map((s, idx) => {
+      const done = s.st === "done";
+      const current = idx === m.current && !done;
+      const blocked = s.st === "attention";
+      const cls = done ? "done" : current ? (blocked ? "blocked" : "current") : blocked ? "blocked" : "pending";
+      const face = current ? i.role : (s.role || null);
+      return html`
+        ${idx ? html`<span class=${"flow__line" + (idx <= m.current ? " on" : "")}></span>` : null}
+        <span class=${"flow__step " + cls}>
+          <span class=${"flow__dot" + (current && live ? " pulse" : "") + (face ? " flow__dot--face" : "")}>${done && !face ? html`<${Icon} name="check" size=${10}/>` : face ? html`<span class="flow__face"><${Avatar} role=${face} size=${26} crop="head"/></span>` : null}</span>
+          <span class="flow__lbl">${(current && live) ? html`<${Icon} name=${(statusChip(i) || {}).icon || "circle"} size=${11} cls="flow__act"/> ` : null}${s.label}</span>
+        </span>`;
+    })}
+  </div>`;
 }
 
 // ---------- Composer ----------

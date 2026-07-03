@@ -406,6 +406,12 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .tl-epic-track{height:6px;border-radius:var(--radius-pill);background:var(--surface-3);overflow:hidden}
 .tl-epic-fill{height:100%;background:var(--purple);border-radius:var(--radius-pill)}
 .tl-epic-lbl{display:inline-flex;align-items:center;gap:5px}
+/* Detail-page timeline wrapper (top of detail) + the per-step model-picker that sits ON a step's avatar. */
+.dtl-flow{padding:8px 16px 2px;border-bottom:1px solid var(--line)}
+.dtl-flow .flow{padding:0 4px}
+.flow__pick{border:none;background:transparent!important;padding:0!important;line-height:0;cursor:pointer;border-radius:50%}
+.flow__pick:hover{box-shadow:0 0 0 2px var(--accent-weak)}
+.flow__pick .sel-cur{gap:0}
 
 /* ── Board ─────────────────────────────────────────────────────── */
 .board{padding:16px;overflow-y:auto;flex:1;container-type:inline-size;container-name:listpane}

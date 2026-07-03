@@ -86,6 +86,7 @@ function ModelsPanel() {
   const [autoSwitch, setAutoSwitch] = useState(false);
   const [chain, setChain] = useState([]); // [{providerId, model}]
   const [globalModel, setGlobalModel] = useState(null); // {providerId, model} | null
+  const [roleModels, setRoleModels] = useState({}); // { role: {providerId, model} }
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     getJSON("/models").then((d) => {
@@ -93,6 +94,7 @@ function ModelsPanel() {
       setAutoSwitch(d.autoSwitchOnLimit || false);
       setChain(d.fallbackChain || []);
       setGlobalModel(d.globalModel || null);
+      setRoleModels(d.roleModels || {});
     }).catch(() => {});
   }, []);
   if (!md) return null;
@@ -111,12 +113,70 @@ function ModelsPanel() {
   }
   function save() {
     setBusy(true);
-    api("/models", { fallbackChain: chain, autoSwitchOnLimit: autoSwitch, globalModel })
+    api("/models", { fallbackChain: chain, autoSwitchOnLimit: autoSwitch, globalModel, roleModels })
       .then(() => toast("Saved")).catch(() => toast("Couldn't save")).then(() => setBusy(false));
   }
+  // Per-role model picker (Default / Tier / Specific). roleModels stores a concrete {providerId, model}
+  // OBJECT — the server's resolveAssignment only honors providerId+model (not bare tier words). So a Tier
+  // pick is resolved against the DEFAULT provider's configured tier slot at save time into a concrete
+  // model: re-editing reads the stored value back; switching Default clears it. This keeps the model
+  // pipeline honoring the assignment without a server change.
+  const ROLE_KIND_OPTS = [{ value: "default", label: "Default — inherit" }, { value: "tier", label: "Tier" }, { value: "specific", label: "Specific model" }];
+  const TIER_OPTS = [{ value: "high", label: "High" }, { value: "medium", label: "Medium" }, { value: "low", label: "Low" }];
+  // The provider whose tier slots a "Tier" pick resolves against: the global default's provider, else
+  // the first provider that actually defines tiers, else the first provider.
+  const tierProvider = (() => {
+    const gp = providers.find((p) => p.id === (globalModel && globalModel.providerId));
+    if (gp) return gp;
+    const withTiers = providers.find((p) => p.tiers && Object.keys(p.tiers).length);
+    return withTiers || providers[0] || null;
+  })();
+  const isTierMatch = (v) => v && v.providerId && tierProvider && v.providerId === tierProvider.id && tierProvider.tiers && Object.values(tierProvider.tiers).some((s) => s && s.model === v.model);
+  function roleKind(role) {
+    const v = roleModels[role];
+    if (!v || (!v.providerId && !v.model)) return "default";
+    if (isTierMatch(v)) return "tier";
+    return "specific";
+  }
+  function tierWordFor(v) {
+    if (!v || !tierProvider || !tierProvider.tiers) return "medium";
+    for (const t of ["high", "medium", "low"]) if (tierProvider.tiers[t] && tierProvider.tiers[t].model === v.model) return t;
+    return "medium";
+  }
+  function setRoleKind(role, kind) {
+    setRoleModels((rm) => {
+      const out = { ...rm };
+      if (kind === "default") { delete out[role]; return out; }
+      if (kind === "tier") {
+        const slot = tierProvider && tierProvider.tiers ? (tierProvider.tiers.medium || tierProvider.tiers.high || tierProvider.tiers.low) : null;
+        const m = slot && slot.model ? slot.model : (tierProvider && tierProvider.models ? tierProvider.models[0] : "");
+        out[role] = { providerId: tierProvider ? tierProvider.id : "", model: m };
+        return out;
+      }
+      // specific
+      out[role] = rm[role]?.providerId ? rm[role] : (modelOpts[0] ? { providerId: modelOpts[0].providerId, model: modelOpts[0].model } : { providerId: "", model: "" });
+      return out;
+    });
+  }
+  const roles = md.roles || [];
   return html`<div class="sec">Models & rate limit</div>
     <label style="margin-top:6px;display:block">Global Default Model</label>
     <div style="margin-bottom:12px"><${Select} value=${globalModel ? globalModel.providerId + "/" + globalModel.model : ""} options=${[{ value: "", label: "Default (Claude / role defaults)", icon: "flask" }].concat(modelSelOpts)} onChange=${(v) => { if (!v) setGlobalModel(null); else { const parts = v.split("/"); setGlobalModel({ providerId: parts[0], model: parts.slice(1).join("/") }); } }}/></div>
+
+    <div class="sec" style="margin-top:14px">Per-agent model</div>
+    <div class="muted" style="font-size:12px;margin:0 2px 8px">Each agent gets a model: <b>Default</b> (inherit the global/role default), a <b>Tier</b> (High/Medium/Low resolved against the run's provider), or a <b>Specific model</b>.</div>
+    ${roles.map((role) => {
+      const kind = roleKind(role);
+      const rv = roleModels[role] || {};
+      return html`<div key=${role} style="display:grid;grid-template-columns:90px 1fr 1fr;gap:8px;align-items:center;margin-bottom:6px">
+        <span style="text-transform:capitalize;font-size:13px;color:var(--ink-2)">${role}</span>
+        <${Select} value=${kind} options=${ROLE_KIND_OPTS} onChange=${(v) => setRoleKind(role, v)}/>
+        ${kind === "tier" ? html`<${Select} value=${tierWordFor(rv)} options=${TIER_OPTS} onChange=${(v) => { const slot = tierProvider && tierProvider.tiers ? tierProvider.tiers[v] : null; const m = slot && slot.model ? slot.model : (tierProvider && tierProvider.models ? tierProvider.models[0] : ""); setRoleModels((rm) => ({ ...rm, [role]: { providerId: tierProvider ? tierProvider.id : "", model: m } })); }}/>` : null}
+        ${kind === "specific" ? html`<${Select} value=${rv.providerId ? rv.providerId + "/" + rv.model : ""} options=${modelSelOpts} onChange=${(v) => { if (!v) { setRoleModels((rm) => { const o = { ...rm }; delete o[role]; return o; }); } else { const parts = v.split("/"); setRoleModels((rm) => ({ ...rm, [role]: { providerId: parts[0], model: parts.slice(1).join("/") } })); } }}/>` : null}
+        ${kind === "default" ? html`<span class="muted" style="font-size:12px">inherits global/role default</span>` : null}
+      </div>`;
+    })}
+
     <label class="ckline"><input type="checkbox" checked=${autoSwitch} onChange=${(e) => setAutoSwitch(e.target.checked)}/> Auto-switch to fallback model on Claude usage limit</label>
     <div class="muted" style="font-size:12px;margin:3px 2px 7px">When enabled, hitting the Claude credit/session limit switches all unassigned roles to the first fallback below and retries — instead of stalling.</div>
     <label>Fallback chain (order of models to try when primary is rate-limited)</label>
@@ -232,6 +292,7 @@ export function ModelsModal({ onClose, reload }) {
   const [secretKeys, setSecretKeys] = useState([]);
   const [status, setStatus] = useState(null);
   const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState(null); // the provider being edited in the full editor
   function refresh() {
     getJSON("/models").then((d) => setProvidersState(d.providers || [])).catch(() => {});
     getJSON("/data").then((d) => setSecretKeys(d.secretKeys || [])).catch(() => {});
@@ -240,9 +301,6 @@ export function ModelsModal({ onClose, reload }) {
   useEffect(refresh, []);
   function saveProviders(list) { return api("/models", { providers: list }).then(() => { reload(); refresh(); }).catch(() => toast("Couldn’t save", "error")); }
   function setRunner(id, runner) { saveProviders(providers.map((p) => (p.id === id ? { ...p, runner: runner || undefined } : p))); }
-  // pi provider name (pi's OWN builtin key, e.g. "zai" for GLM/Zhipu). Drives the pi runner's auth.json.
-  // Auto-inferred from baseUrl/name when blank, so this only needs setting for an unusual mapping.
-  function setPiProvider(id, piProvider) { saveProviders(providers.map((p) => (p.id === id ? { ...p, piProvider: piProvider || undefined } : p))); }
   function removeProvider(id, name) { if (window.confirm("Remove " + name + "?")) saveProviders(providers.filter((p) => p.id !== id)); }
   function clearSecret(key, name) { if (window.confirm("Remove " + name + "?")) api("/user-secret", { key, value: "" }).then(() => { toast("Removed"); reload(); refresh(); }); }
   const RUNNER_OPTS = [{ value: "", label: "SDK" }, { value: "pi-cli", label: "pi" }, { value: "claude-cli", label: "claude" }, { value: "custom-cli", label: "custom" }];
@@ -254,21 +312,62 @@ export function ModelsModal({ onClose, reload }) {
   const claudeRow = (label, key) => html`<div class="modelrow"><div class="modelrow-main"><${ProviderLogo} name="claude" size=${16}/> <b>Claude</b> <span class="muted" style="font-size:11px">${label}</span></div>
     <button class="iconbtn tip" data-tip="Remove" style="width:30px;height:30px;border:none" onClick=${() => clearSecret(key, "Claude " + label)}><${Icon} name="trash" size=${15}/></button></div>`;
   return html`<${Modal} title="Models & runners" onClose=${onClose} footer=${html`<button class="btn" onClick=${onClose}>Close</button>`}>
-    <div class="muted" style="font-size:12px;margin-bottom:10px">Only the providers you’ve added. The dropdown picks which CLI runs each one — SDK is the default.</div>
+    <div class="muted" style="font-size:12px;margin-bottom:10px">Providers you’ve added. Pick which runner (SDK / pi / claude / custom) drives each — <b>Edit</b> opens the full config (key, URL, models, tiers).</div>
     ${claudeSub ? claudeRow("subscription", "claude_token") : null}
     ${claudeApi ? claudeRow("API key", "anthropic_api_key") : null}
     ${thirdParty.map((p) => html`<div class="modelrow" key=${p.id}>
       <div class="modelrow-main"><${ProviderLogo} name=${p.name} size=${16}/> <b>${p.name}</b> <span class="muted" style="font-size:11px">${(p.models || []).length} model${(p.models || []).length === 1 ? "" : "s"}</span></div>
+      <button class="da-iconbtn da-iconbtn--sm tip" data-tip="Edit provider" onClick=${() => setEditing(p)}><${Icon} name="pencil" size=${14}/></button>
       <${Select} value=${p.runner || ""} options=${RUNNER_OPTS} onChange=${(v) => setRunner(p.id, v)} menuAlign="right"/>
       <button class="iconbtn tip" data-tip="Remove" style="width:30px;height:30px;border:none" onClick=${() => removeProvider(p.id, p.name)}><${Icon} name="trash" size=${15}/></button>
-    </div>`).concat(thirdParty.filter((p) => p.runner === "pi-cli").map((p) => html`<div class="modelrow-sub" key=${p.id + "-pi"} style="display:flex;align-items:center;gap:8px;padding:0 4px 8px">
-      <span class="tip" data-tip="pi's own built-in provider name (e.g. zai for GLM/Zhipu, deepseek, kimi-coding, openrouter). Inferred from the base URL when blank.">pi provider</span>
-      <input placeholder="zai (auto)" value=${p.piProvider || ""} onInput=${(e) => setPiProvider(p.id, e.target.value)} style="flex:1"/>
-    </div>`))}
+    </div>`)}
     ${empty ? html`<div class="muted" style="font-size:12.5px;padding:10px 2px">No models added yet — add one below.</div>` : null}
     <button class="btn primary" style="width:100%;justify-content:center;margin:14px 0 6px" onClick=${() => setAdding(true)}><${Icon} name="plus" size=${15}/> Add provider</button>
     <${ModelsPanel}/>
     ${adding ? html`<${AddProvider} existing=${providers} onClose=${() => setAdding(false)} onSaved=${() => { setAdding(false); refresh(); reload(); }}/>` : null}
+    ${editing ? html`<${ProviderEditor} provider=${editing} all=${providers} onClose=${() => setEditing(null)} onSave=${(list) => { setEditing(null); saveProviders(list); }}/>` : null}
+  <//>`;
+}
+
+// Full per-provider editor: name, baseUrl, apiKey, models list, High/Medium/Low tiers (+ each tier's
+// fallback), runner, piProvider, cliCommand. The whole Provider row round-trips through /models
+// (setProviders stores it wholesale), so a Save here just rewrites the provider in the list.
+function ProviderEditor({ provider, all, onClose, onSave }) {
+  const [f, setF] = useState(() => ({ ...provider }));
+  const set = (k, v) => setF((o) => ({ ...o, [k]: v }));
+  // tiers live under f.tiers = { high:{model,fallback}, medium:{...}, low:{...} } — all optional.
+  const tiers = f.tiers || {};
+  const setTier = (tier, field, v) => setF((o) => ({ ...o, tiers: { ...(o.tiers || {}), [tier]: { ...((o.tiers || {})[tier] || {}), [field]: v } } }));
+  const modelList = (f.models || []);
+  const TIER_OPTS = [{ value: "", label: "(none)" }].concat(modelList.map((m) => ({ value: m, label: m })));
+  const RUNNER_OPTS = [{ value: "", label: "SDK (in-process)" }, { value: "pi-cli", label: "pi CLI" }, { value: "claude-cli", label: "claude CLI" }, { value: "custom-cli", label: "Custom CLI" }];
+  function save() {
+    // Drop empty tiers entirely so we don't persist {model:""} noise.
+    const cleanTiers = {};
+    for (const t of ["high", "medium", "low"]) { const s = (f.tiers || {})[t]; if (s && s.model) cleanTiers[t] = { model: s.model, fallback: s.fallback || "" }; }
+    const cleaned = { ...f, models: modelList.filter(Boolean), tiers: Object.keys(cleanTiers).length ? cleanTiers : undefined };
+    onSave(all.map((p) => (p.id === provider.id ? cleaned : p)));
+  }
+  return html`<${Modal} title=${"Edit " + (provider.name || "provider")} size="lg" onClose=${onClose} footer=${html`<button class="btn" onClick=${onClose}>Cancel</button><button class="btn primary" onClick=${save}>Save</button>`}>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div><label>Name</label><input value=${f.name || ""} onInput=${(e) => set("name", e.target.value)}/></div>
+      <div><label>Runner</label><${Select} value=${f.runner || ""} options=${RUNNER_OPTS} onChange=${(v) => set("runner", v || undefined)}/></div>
+      <div style="grid-column:1/-1"><label>Base URL <span class="muted" style="font-weight:400">(Anthropic-compatible endpoint)</span></label><input value=${f.baseUrl || ""} placeholder="https://open.bigmodel.cn/api/anthropic" onInput=${(e) => set("baseUrl", e.target.value)}/></div>
+      <div style="grid-column:1/-1"><label>API key</label><input type="password" autocomplete="off" value=${f.apiKey || ""} placeholder=${f.apiKey ? "•••••• saved — type to replace" : "paste key"} onInput=${(e) => set("apiKey", e.target.value)}/></div>
+    </div>
+    ${f.runner === "pi-cli" ? html`<div><label>pi provider <span class="muted" style="font-weight:400">(pi's own builtin name, e.g. zai; blank = auto from URL)</span></label><input value=${f.piProvider || ""} placeholder="zai (auto)" onInput=${(e) => set("piProvider", e.target.value)}/></div>` : null}
+    ${(f.runner === "custom-cli" || f.runner === "pi-cli" || f.runner === "claude-cli") ? html`<div><label>CLI command template <span class="muted" style="font-weight:400">(placeholders: {model} {systemPrompt} {task} {workdir} {piProvider})</span></label><input value=${f.cliCommand || ""} placeholder="blank = built-in default" onInput=${(e) => set("cliCommand", e.target.value)}/></div>` : null}
+
+    <div class="sec" style="margin-top:16px">Models</div>
+    <div class="muted" style="font-size:11px;margin:0 0 6px">One per line. These are the ids passed to the runner (e.g. glm-5.2, claude-sonnet-4-6).</div>
+    <textarea style="min-height:80px;font-family:inherit" value=${modelList.join("\n")} onInput=${(e) => set("models", e.target.value.split("\n"))}></textarea>
+
+    <div class="sec" style="margin-top:16px">Tiers <span class="muted" style="text-transform:none;font-weight:400">— High / Medium / Low model slots + each one's graceful fallback</span></div>
+    ${["high", "medium", "low"].map((t) => html`<div key=${t} style="display:grid;grid-template-columns:64px 1fr 1fr;gap:8px;align-items:end;margin-bottom:6px">
+      <span style="text-transform:capitalize;font-size:13px;color:var(--ink-2);padding-bottom:9px">${t}</span>
+      <div><label style="margin:0 2px 3px">model</label><${Select} value=${(tiers[t] || {}).model || ""} options=${TIER_OPTS} onChange=${(v) => setTier(t, "model", v)}/></div>
+      <div><label style="margin:0 2px 3px">fallback <span class="muted" style="font-weight:400">(providerId/model)</span></label><input value=${(tiers[t] || {}).fallback || ""} placeholder="providerId/model" onInput=${(e) => setTier(t, "fallback", e.target.value)}/></div>
+    </div>`)}
   <//>`;
 }
 
