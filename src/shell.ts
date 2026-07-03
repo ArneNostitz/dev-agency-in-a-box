@@ -414,7 +414,7 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .flow__pick .sel-cur{gap:0}
 
 /* ── Board ─────────────────────────────────────────────────────── */
-/* Board's outer wrapper is the scroll container. `.slot>div` already gives us flex:1;min-height:0
+/* Board's outer wrapper is the scroll container. .slot>div already gives us flex:1;min-height:0
    but not display:flex, so the inner .board/.board-bands wouldn't get a bounded height — the page
    would grow and get clipped by .slot's overflow:hidden. This makes the wrapper a flex-column
    scroller so grouped-by-repo bands (and the 5th board column) can scroll into view. */
