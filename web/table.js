@@ -65,6 +65,7 @@ export function statusField(i) {
     case "s-auto": return { label: "Auto-resume", kind: "queued", icon: "hourglass", chip: "s-auto" };
     case "s-epic": return { label: "Epic " + (i.epic ? i.epic.done + "/" + i.epic.total : ""), kind: i.epic && i.epic.done >= i.epic.total ? "ready" : "running", icon: "layers", chip: "s-epic" };
     case "s-working": return i.queued && !i.active ? { label: "Queued", kind: "queued", icon: "clock", chip: "s-working" } : { label: "Working" + role, kind: "running", icon: "loader", chip: "s-working", live: true };
+    case "s-inbox": return { label: "Inbox", kind: "inbox", icon: "inbox", chip: "s-inbox" };
     default: return { label: "Planned", kind: "planned", icon: "planned", chip: "s-planned" };
   }
 }
@@ -194,8 +195,8 @@ function IssueRow({ i, multi, onOpen, act, avatarsOn, excerpt, open = false, chi
 const REPO_HUES = ["var(--accent)", "var(--green)", "var(--amber)", "var(--purple)", "var(--red)", "#0ea5e9"];
 function repoColor(repo) { let h = 0; for (let n = 0; n < (repo || "").length; n++) h = (h * 31 + repo.charCodeAt(n)) >>> 0; return REPO_HUES[h % REPO_HUES.length]; }
 
-// Order: needs-you first, then running, then queued/planned, then done — most-actionable on top.
-const KIND_ORDER = { attention: 0, ready: 1, running: 2, queued: 3, planned: 4, done: 5 };
+// Order: needs-you first, then running, then queued/planned, inbox before done — most-actionable on top.
+const KIND_ORDER = { attention: 0, ready: 1, running: 2, queued: 3, planned: 4, inbox: 5, done: 6 };
 const SORT_OPTS = [
   { v: "smart", label: "Most actionable", short: "Actionable", icon: "alert" },
   { v: "updated", label: "Recently updated", short: "Recent", icon: "clock" },
@@ -215,14 +216,15 @@ const GROUP_OPTS = [
 // legacy aliases used by the cyc() helper / defaults
 const GROUPS = GROUP_OPTS.map((g) => [g.v, g.short]);
 const TIMES = TIME_OPTS.map((g) => [g.v, g.short]);
-const KIND_LABEL = { attention: "Needs you", ready: "Ready to merge", running: "Working", queued: "Queued", planned: "Planned", done: "Done" };
-const KIND_ICON = { attention: "alert", ready: "merge", running: "loader", queued: "clock", planned: "planned", done: "check" };
+const KIND_LABEL = { attention: "Needs you", ready: "Ready to merge", running: "Working", queued: "Queued", planned: "Planned", inbox: "Inbox", done: "Done" };
+const KIND_ICON = { attention: "alert", ready: "merge", running: "loader", queued: "clock", planned: "planned", inbox: "inbox", done: "check" };
 
 // Overview stats: data drives the UI — surface "what needs me?" before any row is read.
 export const STAT_DEFS = [
   { k: "needs", label: "Needs you", kinds: ["attention", "ready"], cls: "attention", icon: "alert" },
   { k: "running", label: "Working", kinds: ["running"], cls: "running", icon: "loader" },
   { k: "queued", label: "Queued", kinds: ["queued"], cls: "queued", icon: "clock" },
+  { k: "inbox", label: "Inbox", kinds: ["inbox"], cls: "inbox", icon: "inbox" },
   { k: "planned", label: "Planned", kinds: ["planned"], cls: "planned", icon: "planned" },
   { k: "done", label: "Done", kinds: ["done"], cls: "done", icon: "check" },
 ];
@@ -279,6 +281,7 @@ const STATUS_FILTER_OPTS = [
   { v: "needs", label: "Needs you", icon: "alert" },
   { v: "running", label: "Working", icon: "loader" },
   { v: "queued", label: "Queued", icon: "clock" },
+  { v: "inbox", label: "Inbox", icon: "inbox" },
   { v: "planned", label: "Planned", icon: "planned" },
   { v: "done", label: "Done", icon: "check" },
 ];

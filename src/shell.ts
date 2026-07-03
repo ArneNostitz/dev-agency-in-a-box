@@ -414,7 +414,12 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .flow__pick .sel-cur{gap:0}
 
 /* ── Board ─────────────────────────────────────────────────────── */
-.board{padding:16px;overflow-y:auto;flex:1;container-type:inline-size;container-name:listpane}
+/* Board's outer wrapper is the scroll container. `.slot>div` already gives us flex:1;min-height:0
+   but not display:flex, so the inner .board/.board-bands wouldn't get a bounded height — the page
+   would grow and get clipped by .slot's overflow:hidden. This makes the wrapper a flex-column
+   scroller so grouped-by-repo bands (and the 5th board column) can scroll into view. */
+.boardwrap{flex:1;min-height:0;display:flex;flex-direction:column;overflow-y:auto;container-type:inline-size;container-name:listpane}
+.board{padding:16px;flex:1}
 .board-cols{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;align-items:start}
 /* group-by-repo: ONE full-width band (row) per repo, stacked vertically; the 4 status columns live
    inside each band (.band-cols). Mirrors the .board container's own page padding/centering. No inner
@@ -831,10 +836,10 @@ textarea{resize:vertical;min-height:64px}
 /* desktop */
 @media(min-width:880px){
   .tabbar{display:none}
-  .board{max-width:1500px;margin:0 auto;display:grid;grid-template-columns:repeat(4,1fr);gap:12px;align-items:start;padding:14px}
+  .board{max-width:1500px;margin:0 auto;display:grid;grid-template-columns:repeat(5,1fr);gap:12px;align-items:start;padding:14px}
   .board.group-repo{grid-template-columns:repeat(auto-fill,minmax(260px,1fr))}
   .board-bands{max-width:1500px;margin:0 auto;padding:14px;width:100%}
-  .band-cols{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+  .band-cols{display:grid;grid-template-columns:repeat(5,1fr);gap:12px}
   .col{margin:0}
   .cards{max-height:calc(100dvh - 200px);overflow-y:auto;padding-right:2px}
   .sheet.bottom{left:50%;top:50%;right:auto;bottom:auto;width:min(620px,92vw);max-height:88dvh;border-radius:16px;border:1px solid var(--line);transform:translate(-50%,-50%) scale(.97);opacity:0;pointer-events:none;transition:opacity .18s,transform .18s ease}
