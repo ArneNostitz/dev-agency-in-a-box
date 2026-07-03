@@ -3,44 +3,36 @@
  * Extracted from store.ts (Candidate 3, #70). Depends on settings (getSetting/setSetting).
  *
  * There is NO static model catalog here. A provider's `models[]` is populated by LIVE discovery
- * (src/db/discover.ts: HTTP /v1/models or `pi --list-models`) on add/refresh, and persisted into
- * the provider row. The DB (settings → "providers") is the single source of truth for what's
- * configured; discovery just fills the model lists.
+ * (`pi --list-models`) on add/refresh, and persisted into the provider row. The DB
+ * (settings → "providers") is the single source of truth for what's configured; discovery just
+ * fills the model lists.
+ *
+ * Provider model (per pi's docs): a provider is identified by its `piKey` — pi's own built-in
+ * provider name (e.g. "google", "zai", "deepseek", "kimi-coding"). pi knows the endpoint + model
+ * catalog for each. The user picks a provider + pastes a key; setProviders writes that key (merged)
+ * into pi's real ~/.pi/agent/auth.json (the login), and runs/discovery use `pi --provider <piKey>`.
  */
 import { getDb } from "./connection.js";
 import { getSetting, setSetting } from "./settings.js";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { writePiAuthKey } from "./pi-auth.js";
 
 export type Tier = "high" | "medium" | "low";
-/** A model tier slot: which model + its graceful-fallback (a "providerId/model" string, "" = none). */
-export interface TierSlot { model: string; fallback: string; }
+/** A model tier slot: which model the per-agent picker offers for this tier. */
+export interface TierSlot { model: string; fallback?: string; }
 export interface Provider {
   id: string;
   name: string;
-  baseUrl: string;
+  /** pi's built-in provider key (e.g. "google", "zai", "deepseek"). pi knows the endpoint + catalog. */
+  piKey: string;
   apiKey: string;
   models: string[];
-  /** Per-provider High/Medium/Low model slots (each with its own fallback model). */
+  /** Per-provider High/Medium/Low model slots the per-agent picker offers. */
   tiers?: { high?: TierSlot; medium?: TierSlot; low?: TierSlot };
-  /** Which runner executes roles on this provider. Default claude-sdk. pi/claude/gemini CLIs via cli. */
-  runner?: "claude-sdk" | "claude-cli" | "pi-cli" | "custom-cli";
-  /** Command template for custom-cli / cli runners: {model} {systemPrompt} {task} {workdir}. */
+  /** Legacy fields kept for backward-compat with old rows; not user-facing anymore. */
+  baseUrl?: string;
+  runner?: string;
   cliCommand?: string;
-  /**
-   * pi runner: pi's OWN built-in provider name (e.g. "zai", "deepseek", "kimi-coding", "openrouter").
-   * The pi runner registers this provider via an isolated ~/.pi/agent/auth.json (pi's real schema) so
-   * pi authenticates against the right endpoint without a hand-built models.json. Optional: when unset,
-   * inferPiProvider() derives it from baseUrl/name so the seeded presets (GLM, DeepSeek, Kimi…) work
-   * with zero configuration. Set it explicitly in Settings → Models & runners to override the guess.
-   */
   piProvider?: string;
-  /**
-   * Opaque per-runner config blob for future/CLI runners (e.g. a gemini-cli flag set). Not read by the
-   * built-in runners yet — kept on the row so adding a runner is a registry entry + Settings field,
-   * not a schema change. Forward-compatible; safely ignored when unused.
-   */
   runnerConfig?: Record<string, unknown>;
 }
 
@@ -54,8 +46,11 @@ export function getProviders(): Provider[] {
 export function setProviders(list: Provider[]): void {
   const safe = list ?? [];
   setSetting("providers", JSON.stringify(safe));
+  // Register each provider's key into pi's REAL auth store (~/.pi/agent/auth.json), merged — this is
+  // the "login" pi's own /login performs. pi then authenticates for runs + --list-models.
   for (const p of safe) {
-    if (p.runner === "pi-cli" && p.apiKey) writePiProviderFiles(p);
+    const key = (p.piKey || inferPiProvider(p)).trim();
+    if (key && p.apiKey) writePiAuthKey(key, p.apiKey);
   }
   // Cascade: drop any globalModel / roleModels / fallbackChain entries pointing at a provider that
   // no longer exists. Otherwise the model pickers keep displaying dead refs (and the UI's Global
@@ -199,57 +194,17 @@ export function parseModelRef(ref: string | undefined | null): { providerId: str
  */
 export const BUILTIN_PI_PROVIDERS = new Set(["zai", "anthropic", "openai", "google", "deepseek", "kimi-coding", "openrouter"]);
 
-/** Permanent per-provider dir for pi's agent config (auth.json / models.json). Used as PI_CODING_AGENT_DIR. */
-export function getPiProviderDir(providerId: string): string {
-  return join(homedir(), ".pi-agency", "providers", providerId);
-}
-
 /**
- * Write (or refresh) pi's auth.json + optional models.json into the provider's permanent config dir.
- * Called at save time (setProviders) and as a safety net before each pi run (preparePiConfig).
- * Writing once at save time avoids per-run temp dir creation/cleanup and concurrent-run I/O.
- */
-export function writePiProviderFiles(provider: Provider): void {
-  if (!provider.apiKey) return;
-  const piProvider = inferPiProvider(provider) || "dev-agency-custom";
-  const dir = getPiProviderDir(provider.id);
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(
-    join(dir, "auth.json"),
-    JSON.stringify({ [piProvider]: { type: "api_key", key: provider.apiKey } }, null, 2),
-  );
-  if (!BUILTIN_PI_PROVIDERS.has(piProvider) && provider.baseUrl) {
-    writeFileSync(
-      join(dir, "models.json"),
-      JSON.stringify({
-        providers: {
-          [piProvider]: {
-            baseUrl: provider.baseUrl,
-            api: "anthropic-messages",
-            apiKey: provider.apiKey,
-            models: provider.models.map((id) => ({ id, name: id })),
-          },
-        },
-      }, null, 2),
-    );
-  }
-}
-
-/**
- * Map an agency Provider to pi's OWN built-in provider name — the one pi uses to know a provider's
- * baseUrl/protocol/model-catalog, so the pi runner only has to supply the API key (via an isolated
- * auth.json in pi's real schema). Explicit `p.piProvider` always wins; otherwise we infer from the
- * baseUrl/name so the seeded presets (GLM, DeepSeek, Kimi, OpenRouter, OpenAI, Anthropic) work with
- * no configuration. Returns "" when no built-in matches → the pi runner will register a custom
- * provider via a real-schema models.json (see preparePiConfig).
+ * Resolve a provider to pi's built-in provider key. The primary source is the explicit `piKey` on the
+ * row (set when the provider was added via the preset dropdown). The legacy baseUrl/name regex
+ * inference is kept ONLY as a fallback for old rows that predate `piKey`. Returns "" when unknown.
  */
 export function inferPiProvider(p: Provider | null | undefined): string {
   if (!p) return "";
+  if (p.piKey && p.piKey.trim()) return p.piKey.trim();
   if (p.piProvider && p.piProvider.trim()) return p.piProvider.trim();
   const url = (p.baseUrl || "").toLowerCase();
   const name = (p.name || "").toLowerCase();
-  // Order matters: most-specific hosts first. Each entry maps a recognizable baseUrl/name fragment
-  // to pi's built-in provider key (verified against pi's known provider set).
   if (/zhipu|glm|bigmodel|chatglm|z\.ai|\bzai\b/.test(url + " " + name)) return "zai";
   if (/deepseek/.test(url + " " + name)) return "deepseek";
   if (/moonshot|kimi/.test(url + " " + name)) return "kimi-coding";

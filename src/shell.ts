@@ -879,6 +879,17 @@ textarea{resize:vertical;min-height:64px}
 .sel-itxt{flex:1}
 .sel-hint{color:var(--ink-3);font-size:11px}
 .sel-badge{margin-left:auto;flex:0 0 auto;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;padding:1px 6px;border-radius:999px}
+/* ProviderSearchSelect (searchable provider combobox for the Add-provider form) */
+.pss{position:relative;display:inline-block;width:100%}
+.pss-btn{display:flex;align-items:center;justify-content:space-between;gap:6px;width:100%;font:13px inherit;border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:8px;padding:8px 10px;cursor:pointer}
+.pss-btn:hover{border-color:var(--line-2)}
+.pss-menu{position:absolute;z-index:301;top:calc(100% + 4px);left:0;width:100%;min-width:240px;max-height:320px;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 28px rgba(0,0,0,.20),0 3px 8px rgba(0,0,0,.12);padding:5px;animation:selpop .1s ease-out}
+.pss-input{width:100%;font:13px inherit;border:1px solid var(--line);border-radius:7px;padding:7px 9px;background:var(--bg-2);color:var(--ink);margin-bottom:4px}
+.pss-input:focus{outline:none;border-color:var(--accent)}
+.pss-list{overflow-y:auto;overscroll-behavior:contain;max-height:240px;display:flex;flex-direction:column;gap:1px}
+.pss-item{display:flex;align-items:center;gap:8px;width:100%;text-align:left;border:none;background:transparent;color:var(--ink);padding:7px 9px;border-radius:7px;cursor:pointer;font:13px inherit}
+.pss-item.hi,.pss-item:hover{background:var(--surface-2)}
+.pss-item.on{color:var(--accent);font-weight:560}
 .b-wf{background:var(--accent-weak);color:var(--accent)}
 .b-role{background:var(--surface-2);color:var(--ink-2)}
 .b-chat{background:var(--amber-weak);color:var(--amber)}

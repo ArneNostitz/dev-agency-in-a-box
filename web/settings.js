@@ -1,6 +1,6 @@
 // Dev Agency dashboard — settings module (split from app.js; Preact + htm, no build step).
 import { html, useState, useEffect, useRef } from "/web/vendor/standalone.mjs";
-import { Icon, Modal, ModelSelect, ProviderLogo, Select, Sheet, Spinner, agentOptions, api, getJSON, md, providerModelOptions, toast } from "./core.js";
+import { Icon, Modal, ModelSelect, ProviderLogo, ProviderSearchSelect, Select, Sheet, Spinner, agentOptions, api, getJSON, md, providerModelOptions, toast } from "./core.js";
 import { OB_PROVIDERS } from "./onboarding.js";
 
 
@@ -296,7 +296,7 @@ function ProviderEditor({ provider, all, onClose, onSave }) {
   // refreshed models back into the form. Shows where the list came from (live/pi) or the error.
   function refreshModels() {
     if (discovering) return;
-    if (!f.baseUrl || !f.apiKey) { setDiscoverMsg("Enter a base URL + API key first."); return; }
+    if (!f.apiKey) { setDiscoverMsg("Enter the API key first."); return; }
     setDiscovering(true); setDiscoverMsg("Saving & discovering…");
     const cleaned = cleanedForm();
     api("/models", { providers: all.map((p) => (p.id === provider.id ? cleaned : p)) }).then(() =>
@@ -312,7 +312,6 @@ function ProviderEditor({ provider, all, onClose, onSave }) {
   }
   return html`<${Modal} title=${"Edit " + (provider.name || "provider")} size="lg" onClose=${onClose} footer=${html`<button class="btn" onClick=${onClose}>Cancel</button><button class="btn primary" onClick=${save}>Save</button>`}>
     <div><label>Name</label><input value=${f.name || ""} onInput=${(e) => set("name", e.target.value)}/></div>
-    <div style="margin-top:10px"><label>Base URL <span class="muted" style="font-weight:400">(Anthropic-compatible endpoint)</span></label><input value=${f.baseUrl || ""} placeholder="https://open.bigmodel.cn/api/anthropic" onInput=${(e) => set("baseUrl", e.target.value)}/></div>
     <div style="margin-top:10px"><label>API key</label><input type="password" autocomplete="off" value=${f.apiKey || ""} placeholder=${f.apiKey ? "•••••• saved — type to replace" : "paste key"} onInput=${(e) => set("apiKey", e.target.value)}/></div>
 
     <div class="sec" style="margin-top:16px;display:flex;align-items:center;gap:8px"><span>Models</span>
@@ -330,15 +329,13 @@ function ProviderEditor({ provider, all, onClose, onSave }) {
   <//>`;
 }
 
-// Add a provider: pick it first (logo dropdown), then paste its key — with a single "Get key" button
-// that opens the right page. Runs on the SDK by default (best for Anthropic-compatible providers);
-// change the per-provider CLI later in the list. Claude subscription/API are stored as secrets.
+// Add a provider: search-pick it (pi knows the endpoint + catalog), then paste its key. Claude
+// subscription/API are stored as secrets. The runner is always pi for non-Claude providers.
 function AddProvider({ existing, onClose, onSaved }) {
-  const [pid, setPid] = useState(OB_PROVIDERS[0].id);
+  const [pid, setPid] = useState("");
   const [val, setVal] = useState("");
-  const [baseUrl, setBaseUrl] = useState("");
   const def = OB_PROVIDERS.find((p) => p.id === pid);
-  const opts = OB_PROVIDERS.map((p) => ({ value: p.id, label: p.label, logo: p.preset && p.preset.name ? p.preset.name : p.label }));
+  const opts = OB_PROVIDERS.map((p) => ({ id: p.id, label: p.label, logo: p.label }));
   function save() {
     if (!def) return;
     if (def.kind === "secret") {
@@ -346,28 +343,29 @@ function AddProvider({ existing, onClose, onSaved }) {
       api("/user-secret", { key: def.secretKey, value: val.trim() }).then(() => { toast("Saved " + def.label); onSaved(); }).catch(() => toast("Couldn’t save", "error"));
       return;
     }
-    if (def.custom && !baseUrl.trim()) { toast("Enter the base URL"); return; }
+    if (!def.piKey) { toast("Pick a provider first"); return; }
     if (!val.trim()) { toast("Paste the API key"); return; }
-    const prov = { id: def.id + "-" + Date.now().toString(36), name: def.preset && def.preset.name ? def.preset.name : "Custom", baseUrl: def.custom ? baseUrl.trim() : def.preset.baseUrl, apiKey: val.trim(), models: [] };
+    // pi provider: name + piKey + key. setProviders writes the key (merged) into pi's auth.json
+    // (the login); discovery then fills models via `pi --list-models --provider <piKey>`.
+    const prov = { id: def.id + "-" + Date.now().toString(36), name: def.label, piKey: def.piKey, apiKey: val.trim(), models: [] };
     api("/models", { providers: (existing || []).concat(prov) }).then(() => {
       toast("Added " + prov.name + " — discovering models…");
-      // Live discovery: fetch the provider's /v1/models (or pi --list-models) and persist the list.
       api("/discover-models", { id: prov.id })
         .then((r) => { toast(r && r.ok ? "Discovered " + (r.models || []).length + " models (via " + r.via + ")" : (r && r.error ? "Couldn't discover models: " + r.error : "No models discovered"), r && r.ok ? "" : "error"); })
         .catch(() => toast("Couldn't discover models", "error"))
         .then(onSaved);
     }).catch(() => toast("Couldn’t save", "error"));
   }
-  return html`<${Modal} title="Add provider" size="sm" onClose=${onClose} footer=${html`<button class="btn" onClick=${onClose}>Cancel</button><button class="btn primary" onClick=${save}>Add</button>`}>
+  return html`<${Modal} title="Add provider" size="sm" onClose=${onClose} footer=${html`<button class="btn" onClick=${onClose}>Cancel</button><button class="btn primary" disabled=${!def} onClick=${save}>Add</button>`}>
     <label>Provider</label>
-    <${Select} value=${pid} options=${opts} onChange=${(v) => { setPid(v); setVal(""); setBaseUrl(""); }}/>
-    ${def && def.custom ? html`<label style="margin-top:10px">Base URL (Anthropic-compatible)</label><input placeholder="https://…/anthropic" value=${baseUrl} onInput=${(e) => setBaseUrl(e.target.value)}/>` : null}
-    <label style="margin-top:10px">${def && def.kind === "secret" ? "Token" : "API key"}</label>
-    <div style="display:flex;gap:8px">
-      <input type="password" autocomplete="off" style="flex:1" placeholder=${def ? def.placeholder : "key"} value=${val} onInput=${(e) => setVal(e.target.value)}/>
-      ${def && def.link ? html`<button class="btn" onClick=${() => window.open(def.link, "_blank", "noopener")}><${Icon} name="link" size=${14}/> Get key</button>` : null}
-    </div>
-    <div class="muted" style="font-size:11px;margin-top:8px">Runs on the built-in SDK by default — change the CLI per provider in the list after adding.</div>
+    <${ProviderSearchSelect} value=${pid} options=${opts} onChange=${(v) => { setPid(v); setVal(""); }}/>
+    ${def ? html`
+      <label style="margin-top:10px">${def.kind === "secret" ? "Token" : "API key"}</label>
+      <div style="display:flex;gap:8px">
+        <input type="password" autocomplete="off" style="flex:1" placeholder=${def.placeholder || "key"} value=${val} onInput=${(e) => setVal(e.target.value)}/>
+        ${def.link ? html`<button class="btn" onClick=${() => window.open(def.link, "_blank", "noopener")}><${Icon} name="link" size=${14}/> Get key</button>` : null}
+      </div>
+      ${def.how ? html`<div class="muted" style="font-size:11px;margin-top:8px;white-space:pre-wrap">${def.how}</div>` : null}` : html`<div class="muted" style="font-size:12px;margin-top:10px">Search for a provider above (Gemini, GLM, DeepSeek, OpenAI…).</div>`}
   <//>`;
 }
 
