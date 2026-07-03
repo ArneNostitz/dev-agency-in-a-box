@@ -11,10 +11,8 @@ export function Settings({ data, onClose, reload, openGithubTokens, openModels, 
   const [maxTok, setMaxTok] = useState(cfg.maxTokensPerRun || 600000);
   const [avatarsOn, setAvatarsOn] = useState(cfg.avatars !== "off");
   const [selfImprove, setSelfImprove] = useState((data.ops || {}).self_improve != null ? !!(data.ops || {}).self_improve : true);
-  const [runner, setRunner] = useState(cfg.agentRunner || "claude-sdk");
-  const [cliCmd, setCliCmd] = useState(cfg.agentCliCommand || "");
   const [newDefault, setNewDefault] = useState(cfg.newIssueDefault || "@dev");
-  function save() { api("/settings", { maxTokensPerRun: Number(maxTok) || 0, avatars: avatarsOn ? "on" : "off", agentRunner: runner, agentCliCommand: cliCmd, newIssueDefault: newDefault, ...(admin ? { ops: { self_improve: selfImprove } } : {}) }).then(() => { toast("Saved"); onClose(); reload(); }); }
+  function save() { api("/settings", { maxTokensPerRun: Number(maxTok) || 0, avatars: avatarsOn ? "on" : "off", newIssueDefault: newDefault, ...(admin ? { ops: { self_improve: selfImprove } } : {}) }).then(() => { toast("Saved"); onClose(); reload(); }); }
   function changePw() { const np = window.prompt("New password (8+ characters)"); if (np == null) return; if (np.length < 8) { toast("8+ characters"); return; } api("/set-password", { value: np }).then(() => toast("Password changed")).catch((e) => toast((e && e.message) || "Couldn’t change", "error")); }
   return html`<${Sheet} title="Settings" onClose=${onClose} footer=${html`<button class="btn" onClick=${onClose}>Cancel</button><button class="btn primary" onClick=${save}>Save</button>`}>
 
@@ -49,7 +47,6 @@ export function Settings({ data, onClose, reload, openGithubTokens, openModels, 
       <div class="muted" style="font-size:12px;margin-bottom:4px">What a new issue is assigned to when you open the composer.</div>
       <${Select} value=${newDefault} options=${agentOptions(data && data.agentDefs, data && data.workflows)} onChange=${setNewDefault}/>
       <label style="margin-top:8px">Max tokens per run (0 = off)</label><input type="number" min="0" step="50000" value=${maxTok} onInput=${(e) => setMaxTok(e.target.value)}/>
-      <${RunnerPicker} runner=${runner} setRunner=${setRunner} cliCmd=${cliCmd} setCliCmd=${setCliCmd} admin=${admin}/>
     </div>
 
     ${admin ? html`<div class="setgrp">
@@ -367,46 +364,6 @@ function AddProvider({ existing, onClose, onSaved }) {
       </div>
       ${def.how ? html`<div class="muted" style="font-size:11px;margin-top:8px;white-space:pre-wrap">${def.how}</div>` : null}` : html`<div class="muted" style="font-size:12px;margin-top:10px">Search for a provider above (Gemini, GLM, DeepSeek, OpenAI…).</div>`}
   <//>`;
-}
-
-function RunnerPicker({ runner, setRunner, cliCmd, setCliCmd, admin }) {
-  const [status, setStatus] = useState(null);
-  const [installing, setInstalling] = useState("");
-  const [pkg, setPkg] = useState("");
-  const [log, setLog] = useState("");
-  function refresh() { getJSON("/runner-status").then(setStatus).catch(() => {}); }
-  useEffect(refresh, []);
-  const byKind = {}; (status && status.runners || []).forEach((r) => (byKind[r.kind] = r));
-  const sel = byKind[runner];
-  function doInstall(kind, value) {
-    setInstalling(kind); setLog("");
-    api("/install-cli", { kind, value }).then((r) => {
-      setLog(r.log || "");
-      toast(r.available ? "Installed " + (r.pkg || kind) : "Install ran but the binary still isn't found", r.available ? "info" : "error");
-      refresh();
-    }).catch((e) => toast((e && e.message) || "Install failed", "error")).finally(() => setInstalling(""));
-  }
-  return html`
-    <label>Agent runner — how roles execute</label>
-    <${Select} value=${runner} onChange=${setRunner} options=${[
-      { value: "claude-sdk", label: "Claude SDK (default — in-process)" },
-      { value: "pi-cli", label: "pi CLI (subprocess)" },
-      { value: "claude-cli", label: "claude CLI (subprocess)" },
-      { value: "custom-cli", label: "Custom CLI" },
-    ]}/>
-    ${sel && sel.binary ? html`<div style="display:flex;align-items:center;gap:8px;margin:7px 2px;flex-wrap:wrap">
-      ${sel.available
-        ? html`<span class="statuschip s-ready"><${Icon} name="check" size=${12}/> ${sel.binary} installed</span>`
-        : html`<span class="statuschip s-attn"><${Icon} name="alert" size=${12}/> ${sel.binary} not installed</span>
-            ${admin ? html`<button class="btn" style="padding:2px 10px;font-size:12px" disabled=${installing === runner} onClick=${() => doInstall(runner)}>${installing === runner ? html`<${Spinner} size=${13}/> Installing…` : html`<${Icon} name="plus" size=${13}/> Install ${sel.binary}`}</button>` : null}`}
-    </div>` : null}
-    ${runner === "custom-cli" && admin ? html`<div style="display:flex;gap:8px;margin:7px 0">
-      <input placeholder="npm package to install (e.g. @org/some-cli)" value=${pkg} onInput=${(e) => setPkg(e.target.value)}/>
-      <button class="btn" disabled=${installing === "custom-cli" || !pkg} onClick=${() => doInstall("custom-cli", pkg)}>${installing === "custom-cli" ? html`<${Spinner} size=${13}/>` : "Install"}</button>
-    </div>` : null}
-    ${log ? html`<pre class="cmdbox" style="white-space:pre-wrap;max-height:120px;overflow:auto;font-size:11px;margin:4px 0">${log}</pre>` : null}
-    ${runner === "custom-cli" || runner === "pi-cli" || runner === "claude-cli" ? html`<label>CLI command template — <code>{model}</code> <code>{systemPrompt}</code> <code>{task}</code> <code>{workdir}</code> (blank = built-in default)</label><input type="text" value=${cliCmd} placeholder=${runner === "pi-cli" ? "pi --mode print --model {model} --system-prompt {systemPrompt} {task}" : runner === "claude-cli" ? "claude -p {task}" : ""} onInput=${(e) => setCliCmd(e.target.value)}/>` : null}
-  `;
 }
 
 function SecretField({ field, isSet, reload }) {

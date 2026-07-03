@@ -13,7 +13,7 @@
  * changes. That is the "runners as plugins" contract.
  */
 import type { AgentRunner, RunRequest, RunResult, RunnerKind } from "./interface.js";
-import { getRunner, defaultRunnerKind, runnerBinary, binaryAvailable } from "./registry.js";
+import { getRunner, runnerBinary, binaryAvailable } from "./registry.js";
 import type { Provider } from "../db/providers.js";
 
 export interface LlmRunOptions {
@@ -44,12 +44,15 @@ export interface LlmRunOptions {
 }
 
 /**
- * The runner kind for this run: the provider's configured runner, else the global agent_runner
- * setting, else claude-sdk. Pure — exported so callers/tests can predict which backend a run uses.
+ * The runner kind for a run, decided purely by what the provider IS (no global setting, no
+ * per-provider runner field):
+ *   - Claude-native (authKind "subscription", or no provider row) → claude-sdk (always).
+ *   - everything else (a provider with a piKey) → pi-cli.
  */
-export function runnerKindFor(provider: Provider | null): RunnerKind {
-  const k = (provider && (provider as { runner?: string }).runner) || defaultRunnerKind();
-  return k as RunnerKind;
+export function runnerKindFor(provider: Provider | null, authKind?: "subscription" | "apiKey"): RunnerKind {
+  if (provider && provider.piKey) return "pi-cli";
+  if (authKind === "apiKey" && provider) return "pi-cli";
+  return "claude-sdk";
 }
 
 /**
@@ -58,7 +61,7 @@ export function runnerKindFor(provider: Provider | null): RunnerKind {
  * real deploy problem (e.g. `pi` not installed) behind a run that "works" on the wrong backend.
  */
 export async function runLLM(opts: LlmRunOptions, emitAssistant: (message: unknown) => void): Promise<RunResult> {
-  const kind = runnerKindFor(opts.provider);
+  const kind = runnerKindFor(opts.provider, opts.authKind);
   const cliCommand = opts.cliCommand || opts.provider?.cliCommand || undefined;
   const wantBin = runnerBinary(kind, cliCommand);
   if (wantBin && !binaryAvailable(wantBin)) {
