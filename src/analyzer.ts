@@ -69,10 +69,11 @@ export async function runAnalysis(cfg: Config): Promise<number> {
   const repo = (getSetting("analyzer_repo") || effectiveRepos(cfg)[0] || "").trim();
   if (!repo) return 0;
   const digest = analysisDigest(since);
-  const { model, provider, authKind } = resolveChatExec("");
   const workdir = mkdtempSync(join(tmpdir(), "analyzer-wd-"));
   let text = "";
   try {
+    // resolveChatExec throws when no model is configured — the analyzer is advisory, so skip silently.
+    const { model, provider, authKind } = resolveChatExec("");
     await runLLM(
       {
         task: `Analyze this telemetry and propose improvements.\n\n${digest}`,
@@ -94,6 +95,10 @@ export async function runAnalysis(cfg: Config): Promise<number> {
         }
       },
     );
+  } catch (e) {
+    // No model configured, or the LLM call failed — analyzer is advisory; skip this cycle.
+    try { rmSync(workdir, { recursive: true, force: true }); } catch { /* noop */ }
+    return 0;
   } finally {
     try { rmSync(workdir, { recursive: true, force: true }); } catch { /* noop */ }
   }

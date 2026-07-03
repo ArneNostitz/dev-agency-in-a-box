@@ -6,7 +6,7 @@ import { timelineModel } from "./table.js";
 
 
 // ---------- Detail ----------
-export function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIssue, data, isOnline = true, onQueueComment, docked = false }) {
+export function Detail({ issue, activity, act, isDesktop, startError, onClose, onOpenIssue, data, isOnline = true, onQueueComment, docked = false, onOpenModels }) {
   const [tab, setTab] = useState("chat"); // mobile sub-tab: chat | stream
   const [thread, setThread] = useState(null);
   const [pr, setPr] = useState(null);
@@ -35,7 +35,6 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
     issue.modelOverride ? issue.modelOverride.providerId + "/" + issue.modelOverride.model : ""
   );
   const providers = data?.providers || [];
-  const anyModels = providers.some((p) => (p.models || []).length);
   // Per-issue workflow pin (persisted via /issue-workflow; honored on resume). Empty = auto-resolve.
   const wfOpts = workflowOptions(data && data.workflows);
   const [issueWf, setIssueWf] = useState(issue.workflowId || "");
@@ -418,7 +417,7 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
       </div>
       <button class="iconbtn ghost dclose" aria-label="Close" data-tip="Close" onClick=${onClose}><${Icon} name="x" size=${18}/></button>
     </div>
-    <${DetailTimeline} issue=${issue} data=${data}/>
+    <${DetailTimeline} issue=${issue} data=${data} onOpenModels=${onOpenModels}/>
     <div class="dtoolbar">
       ${wfOpts.length ? (running
         ? html`<span class="wfctl wfctl--running tip" data-tip="Workflow running — stop the issue to switch"><${Icon} name="loader" size=${14} cls="spin"/> <span class="wfctl__name">${activeWfName}</span></span>`
@@ -430,7 +429,7 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
       ${tb}
       ${tbLeft}
       <span style="flex:1"></span>
-      ${anyModels ? html`<${ModelSelect} providers=${providers} data=${data} value=${modelOverride} emit="object" onChange=${updateModelOverride} includeDefault=${true} defaultLabel="Default model" defaultHint=${defModelLabel} menuAlign="right" btnClass="iconbtn" trigger=${modelTrigger}/>` : null}
+      ${html`<${ModelSelect} providers=${providers} data=${data} value=${modelOverride} emit="object" onChange=${updateModelOverride} includeDefault=${true} defaultLabel="Default model" defaultHint=${defModelLabel} onSetUp=${onOpenModels} menuAlign="right" btnClass="iconbtn" trigger=${modelTrigger}/>`}
       ${runAppBtns}
       ${tbRight}
       ${moreItems.length ? html`<span class="dropwrap">
@@ -452,7 +451,7 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
         <div class="composer-row">
           <label class="composer-icon tip" data-tip="Attach a file"><${Icon} name="paperclip" size=${18}/><input type="file" multiple style="display:none" onChange=${pickFiles}/></label>
           <${Select} value=${replyAgent} options=${agentSelOpts} onChange=${setReplyAgent} placeholder="Just comment"/>
-          ${anyModels ? html`<${ModelSelect} providers=${providers} data=${data} value=${modelOverride} emit="object" onChange=${updateModelOverride} includeDefault=${true} defaultLabel="Default model" defaultHint=${defModelLabel} btnClass="iconbtn" trigger=${modelTrigger}/>` : null}
+          ${html`<${ModelSelect} providers=${providers} data=${data} value=${modelOverride} emit="object" onChange=${updateModelOverride} includeDefault=${true} defaultLabel="Default model" defaultHint=${defModelLabel} onSetUp=${onOpenModels} btnClass="iconbtn" trigger=${modelTrigger}/>`}
           <span class="spacer"></span>
           ${running ? html`<button class=${"btn tip" + (bz("hold") ? " busy" : "")} data-tip="Interrupt & steer — pauses the workflow at the next safe break and folds your message into the next step" disabled=${bz("hold")} onClick=${() => { const t = reply.trim(); act.hold(repo, number, t); if (t) setReply(""); }}>${bz("hold") ? html`<${Spinner} size=${15}/>` : html`<${Icon} name="stop" size=${15}/>`} Interrupt</button>` : null}
           <button class=${"btn primary" + (busy ? " busy" : "")} disabled=${busy} title=${running ? "Send a nudge to the running agent (no interruption)" : "Send"} onClick=${send}>${busy ? html`<${Spinner} size=${15}/>` : running ? html`<${Icon} name="messages" size=${15}/>` : html`<${Icon} name="send" size=${15}/>`} ${running ? "Nudge" : "Send"}</button>
@@ -545,8 +544,14 @@ function stepModelTargets(wf, agentDefs, data) {
     // The model this step resolves to absent a per-issue override — step.model → agent's model →
     // per-role model (Settings → Models) → global. Tier words resolve to concrete models for display.
     const roleM = rm[key] && rm[key].model ? { ref: rm[key].providerId + "/" + rm[key].model, short: shortModel(rm[key].model), provider: ((data.providers || []).find((p) => p.id === rm[key].providerId) || {}).name } : null;
+    // The effective raw model source (step override → agent definition → role), to detect a bare tier
+    // word so the default label reads "default: Medium" rather than the resolved model name.
+    const rawModel = (s.model && String(s.model).trim()) || (def && def.model && String(def.model).trim()) || (rm[key] && rm[key].model ? rm[key].providerId + "/" + rm[key].model : "");
+    const tierHit = rawModel && ["high", "medium", "low"].indexOf(String(rawModel).toLowerCase()) >= 0 ? String(rawModel).toLowerCase() : "";
     const m = resolveAgentModel(s.model, data) || resolveAgentModel(def && def.model, data) || roleM || null;
-    out.push({ key, label: cap(name), dfltRef: m ? m.ref : "", dflt: m ? m.short : "", dfltProvider: m ? m.provider : "" });
+    // Default label: "default: <Tier|modelName>" — a tier pick shows the tier word, else the model name.
+    const dfltLabel = tierHit ? "default: " + cap(tierHit) : (m ? "default: " + m.short : "");
+    out.push({ key, label: cap(name), dfltRef: m ? m.ref : "", dflt: dfltLabel, dfltShort: m ? m.short : "", dfltProvider: m ? m.provider : "" });
   }
   return out;
 }
@@ -558,7 +563,7 @@ function stepModelTargets(wf, agentDefs, data) {
 // override for THIS issue (/issue-agent-model, keyed by the step's role — priority 1 in the server's
 // resolveAssignment, so it reliably takes effect). Non-workflow / not-started → falls back to the
 // plain WorkflowTimeline (or nothing), so nothing changes for issues without steps.
-function DetailTimeline({ issue, data }) {
+function DetailTimeline({ issue, data, onOpenModels }) {
   const m = timelineModel(issue);
   if (m.epic || !m.started) return null; // epic bar or nothing-yet → no interactive timeline
   // Only a real workflow has steps whose agent we can target. Solo-role / generic issues render the
@@ -596,10 +601,12 @@ function DetailTimeline({ issue, data }) {
           ${target
             ? html`<span class="tip" data-tip=${tip}><${ModelSelect}
                 providers=${providers}
+                data=${data}
                 value=${curRef}
                 includeDefault=${true}
                 defaultLabel="Default"
                 defaultHint=${target && target.dflt ? target.dflt : "default"}
+                onSetUp=${onOpenModels}
                 btnClass="flow__pick"
                 menuAlign=${idx >= m.steps.length - 2 ? "right" : "left"}
                 trigger=${() => html`<span class=${"flow__dot flow__dot--face" + (current && live ? " pulse" : "")}><span class="flow__face"><${Avatar} role=${s.role || s.k} size=${26} crop="head"/></span></span>`}
@@ -645,7 +652,7 @@ function PlainTimeline({ i }) {
 }
 
 // ---------- Composer ----------
-export function Composer({ repos, repo, setRepo, onClose, onCreate, data }) {
+export function Composer({ repos, repo, setRepo, onClose, onCreate, data, onOpenModels }) {
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const ndraftKey = "draft:newissue:" + (repo || "_");
@@ -714,14 +721,14 @@ export function Composer({ repos, repo, setRepo, onClose, onCreate, data }) {
     <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
       <${Select} value=${repo || ""} options=${repos.map((r) => ({ value: r, label: r.split("/").pop() }))} onChange=${setRepo}/>
       <${Select} value=${role} options=${agentOptions(data && data.agentDefs, data && data.workflows)} onChange=${setRole}/>
-      ${anyModels ? html`<${ModelSelect} providers=${providers} data=${data} value=${model} btnClass="iconbtn-sm" onChange=${setModel}
+      ${html`<${ModelSelect} providers=${providers} data=${data} value=${model} btnClass="iconbtn-sm" onChange=${setModel} onSetUp=${onOpenModels}
         includeDefault=${true} defaultLabel="Default model"
         extraOptions=${selWf ? [{ value: "@individual", label: "Individual per agent", hint: "set each step", icon: "users" }] : []}
         trigger=${(cur) => (cur && cur.logo)
           ? html`<span class="tip" data-tip=${cur.label} style="display:inline-flex"><${ProviderLogo} name=${cur.logo} size=${16}/></span>`
           : (cur && cur.icon === "users")
           ? html`<span class="tip" data-tip="Individual model per agent" style="display:inline-flex"><${Icon} name="users" size=${16}/></span>`
-          : html`<span class="tip" data-tip=${"Default model · " + defaultModelLabel(data)} style="display:inline-flex"><${Icon} name="sparkles" size=${16}/></span>`}/>` : null}
+          : html`<span class="tip" data-tip=${"Default model · " + defaultModelLabel(data)} style="display:inline-flex"><${Icon} name="sparkles" size=${16}/></span>`}/>`}
     </div>
     ${individual && wfSteps.length && anyModels ? html`<div class="setgrp" style="margin-bottom:10px">
       <div class="muted" style="font-size:12px;margin-bottom:10px">Model per step — the dot opens the picker; blank keeps each agent’s configured model.</div>
@@ -732,14 +739,14 @@ export function Composer({ repos, repo, setRepo, onClose, onCreate, data }) {
         const curProvider = curRef ? (providers.find((p) => p.id === curRef.providerId) || {}).name : "";
         // Override picked → show that; else the agent's own configured model; else true default.
         const effProvider = curProvider || s.dfltProvider;
-        const effShort = curRef ? curRef.model : (s.dflt || "Default");
+        const effShort = curRef ? curRef.model : (s.dfltShort || "Default");
         return html`<div key=${s.key} style="display:flex;flex-direction:column;align-items:center;gap:4px;width:88px;text-align:center">
-          <${ModelSelect} providers=${providers} value=${curVal} menuAlign="left" btnClass="iconbtn-sm"
-            includeDefault=${true} defaultLabel=${"Default" + (s.dflt ? " · " + s.dflt : "")} defaultHint=${s.dfltProvider || defaultModelLabel(data)}
+          <${ModelSelect} providers=${providers} data=${data} value=${curVal} menuAlign="left" btnClass="iconbtn-sm" onSetUp=${onOpenModels}
+            includeDefault=${true} defaultLabel=${s.dflt || "Default"} defaultHint=${s.dfltProvider || defaultModelLabel(data)}
             onChange=${(v) => setStepModels((m) => Object.assign({}, m, { [s.key]: v }))}
             trigger=${() => effProvider
               ? html`<span class="tip" data-tip=${effShort} style="display:inline-flex"><${ProviderLogo} name=${effProvider} size=${16}/></span>`
-              : html`<span class="tip" data-tip=${"Default · " + (s.dflt || defaultModelLabel(data))} style="display:inline-flex"><${Icon} name="sparkles" size=${16}/></span>`}/>
+              : html`<span class="tip" data-tip=${s.dflt || ("Default · " + defaultModelLabel(data))} style="display:inline-flex"><${Icon} name="sparkles" size=${16}/></span>`}/>
           <span style="font-size:12px;font-weight:600;line-height:1.2">${s.label}</span>
           <span style="font-size:11px;color:var(--ink-3);line-height:1.2;word-break:break-word">${effShort}</span>
         </div>`;

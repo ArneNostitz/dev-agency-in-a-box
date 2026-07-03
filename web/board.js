@@ -45,7 +45,7 @@ export function nestedChildKeys(issues) {
   return keys;
 }
 
-export function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, onOpenChild, onAddRepo, onAddIssue, onAnalyze, auditRepos, act, data }) {
+export function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, onOpenChild, onAddRepo, onAddIssue, onAnalyze, auditRepos, act, data, onOpenModels }) {
   // Board-owned controls — distinct localStorage keys to avoid collision with the legacy "boardSort" JSON key.
   const [boardSort,  setBoardSort]  = useState(() => { try { return localStorage.getItem("boardCtrlSort")  || "updated_desc"; } catch (e) { return "updated_desc"; } });
   const [boardGroup, setBoardGroup] = useState(() => { try { return localStorage.getItem("boardCtrlGroup") || "state";        } catch (e) { return "state";        } });
@@ -87,7 +87,7 @@ export function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, onOpe
     for (const a of (data && data.activity) || []) { const k = a.repo + "#" + a.number; let arr = m.get(k); if (!arr) { arr = []; m.set(k, arr); } arr.push(a); }
     return m;
   }, [data && data.activity]);
-  const renderCard = (i) => html`<${Card} key=${i.repo + "#" + i.number} i=${i} subs=${subsFor(i)} multi=${!repoFilter && repos.length > 1} onOpen=${onOpen} onOpenChild=${onOpenChild} act=${act} data=${data} stream=${streamByKey.get(i.repo + "#" + i.number) || EMPTY_STREAM}/>`;
+  const renderCard = (i) => html`<${Card} key=${i.repo + "#" + i.number} i=${i} subs=${subsFor(i)} multi=${!repoFilter && repos.length > 1} onOpen=${onOpen} onOpenChild=${onOpenChild} act=${act} data=${data} onOpenModels=${onOpenModels} stream=${streamByKey.get(i.repo + "#" + i.number) || EMPTY_STREAM}/>`;
   const controls = html`<div class="listbar">
     <button class="da-btn da-btn--primary da-btn--sm" onClick=${() => onAddIssue(repoFilter || (repos && repos.length === 1 ? repos[0] : null))}><${Icon} name="plus" size=${15}/> New</button>
     <span style="flex:1"></span>
@@ -220,7 +220,7 @@ function BHeat({ i }) {
   </span>`;
 }
 
-function Card({ i, subs, multi, onOpen, onOpenChild, act, data, stream = EMPTY_STREAM }) {
+function Card({ i, subs, multi, onOpen, onOpenChild, act, data, onOpenModels, stream = EMPTY_STREAM }) {
   const st = statusChip(i);
   const done = isDone(i);
   const tmp = i._tmp || i.number < 0; // optimistic, not yet confirmed by GitHub
@@ -228,7 +228,6 @@ function Card({ i, subs, multi, onOpen, onOpenChild, act, data, stream = EMPTY_S
   useEffect(() => { setModelSel(i.modelOverride ? i.modelOverride.providerId + "/" + i.modelOverride.model : ""); }, [i.modelOverride?.providerId, i.modelOverride?.model]);
 
   const providers = data?.providers || [];
-  const anyModels = useMemo(() => providers.some((p) => (p.models || []).length), [providers]);
 
   // The canonical IssueState enum + BlockedReason drive the quick (CTA) action (ADR-0001).
   let quick = null;
@@ -297,8 +296,8 @@ function Card({ i, subs, multi, onOpen, onOpenChild, act, data, stream = EMPTY_S
       const actions = html`<div class="bcard__actions" onClick=${(e) => e.stopPropagation()}>
         ${notPlanned ? html`<button class="iconbtn-sm tip" data-tip="Close as not planned" disabled=${act.isBusy("close-not-planned", i.repo, i.number)} onClick=${(e) => { e.stopPropagation(); act.closeNotPlanned(i.repo, i.number); }}>${act.isBusy("close-not-planned", i.repo, i.number) ? html`<${Spinner} size=${13}/>` : html`<${Icon} name="x" size=${14}/>`}</button>` : null}
         ${i.state === "notPlanned" ? html`<button class="iconbtn-sm tip" data-tip="Move to Planned (don't start yet)" disabled=${act.isBusy("plan", i.repo, i.number)} onClick=${(e) => { e.stopPropagation(); act.plan(i.repo, i.number); }}>${act.isBusy("plan", i.repo, i.number) ? html`<${Spinner} size=${13}/>` : html`<${Icon} name="planned" size=${14}/>`}</button>` : null}
-        ${anyModels && !isStop ? html`<${ModelSelect} providers=${providers} data=${data} value=${modelSel} onChange=${onPickModel}
-          includeDefault=${true} defaultLabel="Default model" defaultHint=${defaultModelLabel(data)} btnClass="iconbtn-sm"
+        ${!isStop ? html`<${ModelSelect} providers=${providers} data=${data} value=${modelSel} onChange=${onPickModel}
+          includeDefault=${true} defaultLabel="Default model" defaultHint=${defaultModelLabel(data)} btnClass="iconbtn-sm" onSetUp=${onOpenModels}
           trigger=${(cur) => cur && cur.logo
             ? html`<span class="tip" data-tip=${cur.label} style="display:inline-flex"><${ProviderLogo} name=${cur.logo} size=${16}/></span>`
             : html`<span class="tip" data-tip=${"Default model · " + (defaultModelLabel(data) || "")} style="display:inline-flex"><${Icon} name="sparkles" size=${16}/></span>`}/>` : null}

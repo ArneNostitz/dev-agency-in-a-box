@@ -14,6 +14,7 @@ import { listWorkflows, listAgentDefs, recordRun } from "../store.js";
 import type { Issue } from "../github.js";
 import { resolveChatExec, chatBaseEnv } from "./chat.js";
 import { runLLM } from "../runners/exec.js";
+import type { Provider } from "../db/providers.js";
 
 /** Built-in single-role pins, always available regardless of custom agents. */
 const ROLE_PINS: Array<{ handle: string; what: string }> = [
@@ -53,7 +54,7 @@ function choices(): { lines: string[]; valid: Set<string> } {
 export async function pickDealerDispatch(repo: string, issue: Issue): Promise<string | null> {
   const { lines, valid } = choices();
   if (!lines.length) return null;
-  const { model, provider, authKind } = resolveChatExec(process.env.DEALER_MODEL || process.env.ORCHESTRATOR_MODEL || "");
+  let model = "", provider = null as Provider | null, authKind = "subscription" as "subscription" | "apiKey";
   const workdir = mkdtempSync(join(tmpdir(), "dealer-wd-"));
   const systemPrompt =
     `You are the dispatcher for a coding agency. Read the issue and pick the SINGLE best route to run it ` +
@@ -63,6 +64,10 @@ export async function pickDealerDispatch(repo: string, issue: Issue): Promise<st
   let text = "";
   let turns = 0;
   try {
+    // resolveChatExec throws when no model is configured — dealer is best-effort, so treat that as
+    // "can't decide" and let the caller fall back to its default route.
+    const resolved = resolveChatExec(process.env.DEALER_MODEL || process.env.ORCHESTRATOR_MODEL || "");
+    model = resolved.model; provider = resolved.provider; authKind = resolved.authKind;
     const r = await runLLM(
       {
         task: `### Issue #${issue.number}: ${issue.title}\n\n${(issue.body || "").slice(0, 4000) || "(no description)"}\n\nWhich route? Reply with one handle from the menu.`,
