@@ -1,5 +1,21 @@
 /**
- * Detecting (and recovering from) Claude subscription usage-limit walls — all in plain code,
+ * Typed rate-limit error thrown from roleAgent when a provider hits a usage/rate wall. Carries the
+ * provider id (so runner.ts can scope the limit and walk the fallback chain) and the reset time.
+ * runner.ts catches this and switches to the next-best available provider in the fallback chain.
+ */
+export class RateLimitedError extends Error {
+  readonly providerId: string;
+  readonly resetAt: number;
+  constructor(providerId: string, resetAt: number, message: string) {
+    super(message);
+    this.name = "RateLimitedError";
+    this.providerId = providerId;
+    this.resetAt = resetAt;
+  }
+}
+
+/**
+ * Detecting (and recovering from) provider usage-limit walls — all in plain code,
  * NO agent/AI calls, so it works even when there are zero tokens left.
  *
  * When a run fails because the 5-hour usage limit is hit, we park the issue as "rate-limited"

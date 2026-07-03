@@ -14,7 +14,8 @@ import { ROLES, modelFor, canonicalModel, type RoleName } from "./roles.js";
 import { tierModel, getIssueProvider, getIssueAgentModels, parseModelRef, fallbackFor, getIssueUseFallback, type Tier, type Provider } from "../db/providers.js";
 import { loadConstitution, loadPersona, loadPlaybooks, loadLearned } from "../memory.js";
 import { pushActivity } from "../activity.js";
-import { recentLessons, recordTokens, recordRunStep, getProviders, getRoleModels, getSessionFallback, setSession, getIssueModelOverride, getGlobalModel, addIssueFiles } from "../store.js";
+import { recentLessons, recordTokens, recordRunStep, getProviders, getRoleModels, getSessionFallback, setSession, getIssueModelOverride, getGlobalModel, addIssueFiles, getFallbackChain, setRateLimited, isProviderRateLimited } from "../store.js";
+import { parseRateLimit, RateLimitedError } from "../ratelimit.js";
 import { addClaimFiles } from "../locks.js";
 import { coordinationContext } from "../coordination.js";
 import { loadBudget } from "../budget.js";
@@ -49,17 +50,18 @@ function parseModelStr(s: string | undefined): { providerId: string; model: stri
 // default to the Claude SDK, so GLM/Gemini runs errored).
 const TIERS: ReadonlySet<string> = new Set(["high", "medium", "low"]);
 function resolveAssignment(role: RoleName, repo: string, issueNumber: number, explicitModel?: string, agentKey?: string): { providerId: string; model: string } | null {
-  // 1) PER-AGENT override on the issue wins (set on the timeline). Key by the custom handle or role.
+  // 1) The per-issue model override (the detail-view / chatbox / new-issue picker) is HIGHEST
+  //    priority: if the user picks a model there it overrides EVERYTHING — per-agent picks, the
+  //    workflow's per-step model, and all defaults. It applies to every step/agent in the run.
+  //    (One-shot: cleared after the run.) When it's set we ignore `explicitModel` entirely so a
+  //    workflow step can't override the user's deliberate pick.
+  const issueOverride = getIssueModelOverride(repo, issueNumber);
+  if (issueOverride?.providerId && issueOverride.model) return { providerId: issueOverride.providerId, model: issueOverride.model };
+  // 2) PER-AGENT override on the issue (set on the timeline). Key by the custom handle or role.
   const agentModels = getIssueAgentModels(repo, issueNumber);
   const ak = (agentKey || role).toLowerCase();
   const perAgent = parseModelRef(agentModels[ak] || agentModels["@" + ak] || agentModels[role]);
   if (perAgent) return perAgent;
-  // 2) The per-issue one-shot model override (chatbox / new-issue model picker). This is the user's
-  //    DELIBERATE pick for this run, so it must beat every default below — including the issue-wide
-  //    provider's medium tier (the bug: picking "sonnet" was silently overruled by the provider
-  //    default → ran opus). Cleared after the run, so it only affects the run it was chosen for.
-  const issueOverride = getIssueModelOverride(repo, issueNumber);
-  if (issueOverride?.providerId && issueOverride.model) return { providerId: issueOverride.providerId, model: issueOverride.model };
   // 3) The step's explicit selection: a TIER keyword resolves against the issue's provider; or a
   //    concrete "providerId/model" ref; otherwise fall through.
   const issueProvider = getIssueProvider(repo, issueNumber);
@@ -254,18 +256,21 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
       pushActivity(input.repo, input.issueNumber, role, "done", `❌ ${msg}`);
       throw new Error(msg);
     }
-    // Nothing explicit was selected AND route is null → no model is configured at all. Do NOT fall
-    // through to the built-in Claude default (that was the silent-Claude leak). Fail loud unless a
-    // Claude credential genuinely exists (saved OR env — the local-dev escape hatch), in which case a
-    // Claude-native run is legitimate and we proceed via modelFor(def) below.
+    // No assignment resolved at all (no per-issue/per-role/global model). This is a Claude-plan
+    // deployment with nothing else configured: a Claude-native run on the subscription is the intended
+    // default, so allow it ONLY when a Claude credential genuinely exists. If none exists, fail loud
+    // (don't fall through to a phantom Claude run). This never silently swaps a chosen provider for
+    // Claude — a provider that WAS chosen but couldn't route already failed loud above.
     const hasClaudeCred = Boolean(claudeToken() || anthropicApiKey());
     if (!hasClaudeCred) {
-      const msg = `No model is set up — add a provider in Settings → Models, or pick a model for this issue.`;
+      const msg = `No model is set up for this agent — assign one in Settings → Models (or pick a model on the issue).`;
       pushActivity(input.repo, input.issueNumber, role, "done", `❌ ${msg}`);
       throw new Error(msg);
     }
+    // Claude-native: synthesize the route so the run uses claude-sdk + the Claude credential.
+    route = { model: modelFor(def), provider: null as Provider | null as Provider, authKind: "subscription" };
   }
-  let model = canonicalModel(route?.model ?? input.model ?? modelFor(def));
+  let model = canonicalModel(route.model);
   // BASE env only (#108): process env + the GitHub bot token (so the agent's `git commit && git push`
   // authenticate via gh's credential helper) + commit attribution. NO provider auth here — the runner
   // translates the provider (SDK → ANTHROPIC_*, pi → isolated auth.json). Mixing them was the leak.
@@ -400,18 +405,29 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
       return await runQuery(resumeId);
     } catch (e) {
       if (wasAborted()) throw e;
-      // Try the fallback model if allowed and one exists that we haven't tried.
+      const msg = (e as Error).message ?? String(e);
+      // Rate-limit detection happens HERE (where the provider is known), not in runner.ts. On a hit,
+      // mark THIS provider rate-limited and throw a typed RateLimitedError so runner.ts can switch the
+      // whole run to the next-best available provider in the fallback chain (instead of parking).
+      const rl = parseRateLimit(msg);
+      if (rl.limited && route) {
+        const pid = route.provider.piKey || route.provider.id;
+        const resetAt = rl.resetAt && rl.resetAt > Date.now() ? rl.resetAt : Date.now() + 5 * 3600_000;
+        setRateLimited(repo, issueNumber, pid, new Date(resetAt).toISOString());
+        throw new RateLimitedError(pid, resetAt, msg);
+      }
+      // Try the graceful (tier) fallback if allowed, one that hasn't been tried AND isn't rate-limited.
       if (useFallback && route) {
         const fb = fallbackFor(route.provider.id, route.model);
         const key = fb ? `${fb.providerId}/${fb.model}` : "";
-        if (fb && key && !triedModels.has(key)) {
+        if (fb && key && !triedModels.has(key) && !isProviderRateLimited(fb.providerId)) {
           triedModels.add(key);
           const nr = resolveRoute(role, repo, issueNumber, `${fb.providerId}/${fb.model}`, agentKey);
           if (nr) {
             // Fallback switches provider/model; the base env (process + GH_TOKEN/GIT identity) is
             // unchanged — the new route's runner rebuilds provider auth from nr.provider.
             route = nr; model = canonicalModel(nr.model);
-            pushActivity(repo, issueNumber, role, "tool", `↘ ${(e as Error).message.slice(0, 80)} — falling back to ${model} (${nr.provider.name})`);
+            pushActivity(repo, issueNumber, role, "tool", `↘ ${msg.slice(0, 80)} — falling back to ${model} (${nr.provider.name})`);
             return attempt(undefined); // fresh run on the fallback model
           }
         }
