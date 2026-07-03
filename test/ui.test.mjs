@@ -91,6 +91,10 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
       // Issue 3 simulates the "fix" flow: has a PR (was in Review) but is now actively being fixed.
       // classify() must put it in Working (via i.running), not keep it in Review (via i.pr_number).
       { repo: "acme/app", number: 3, title: "Fix running now", state: "working", pr_number: 7, running: true, updated_at: new Date().toISOString(), auto: {} },
+      // Issue 4: a workflow in progress with real steps → exercises the detail-page timeline + per-step picker.
+      { repo: "acme/app", number: 4, title: "Workflow run", state: "working", running: true, workflowId: "full-build",
+        wfSteps: [{ agent: "@plan", name: "Plan", role: "planner" }, { agent: "@dev", name: "Dev", role: "developer" }],
+        wfStep: 1, agentModels: {}, updated_at: new Date().toISOString(), auto: {} },
     ],
   };
   const route = (u) => {
@@ -99,7 +103,7 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
     if (u.includes("/thread")) return { author: "arne", createdAt: new Date().toISOString(), body: "hello", comments: [] };
     if (u.includes("/app-info")) return { kind: "none" };
     if (u.includes("/pr-status")) return { review: { verdict: "approved" }, merge: { mergeable: "clean" } };
-    if (u.includes("/models")) return { providers: [{ id: "glm-1", name: "GLM (Zhipu)", baseUrl: "https://open.bigmodel.cn/api/anthropic", apiKey: "x", models: ["glm-4.6"] }], roleModels: {}, globalModel: null, fallbackChain: [], autoSwitchOnLimit: false, roles: [] };
+    if (u.includes("/models")) return { providers: [{ id: "glm-1", name: "GLM (Zhipu)", baseUrl: "https://open.bigmodel.cn/api/anthropic", apiKey: "x", models: ["glm-4.6"], tiers: { medium: { model: "glm-4.6", fallback: "" } } }], roleModels: {}, globalModel: null, fallbackChain: [], autoSwitchOnLimit: false, roles: ["planner", "developer", "reviewer", "tester"] };
     if (u.includes("/runner-status")) return { runners: [{ kind: "claude-sdk", label: "Claude Agent SDK (built-in)", binary: null, available: true }, { kind: "pi-cli", label: "pi", binary: "pi", pkg: "@earendil-works/pi-coding-agent", available: false }] };
     return {};
   };
@@ -180,6 +184,9 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
     assert.match(root.innerHTML, /GLM \(Zhipu\)/, "an added provider is listed");
     assert.match(root.innerHTML, /Add provider/, "has the Add provider button");
     assert.ok(window.document.querySelector(".modal"), "uses the atomic Modal");
+    assert.match(root.innerHTML, /Per-agent model/, "per-agent tier/specific assignment section renders");
+    assert.match(root.innerHTML, /developer/, "the role list includes developer");
+    assert.ok(Array.from(window.document.querySelectorAll(".tip")).some((t) => /Edit provider/.test(t.getAttribute("data-tip") || "")), "each provider row has an Edit button");
     const closeBtn = Array.from(window.document.querySelectorAll(".modal-f .btn")).find((b) => /Close/.test(b.textContent));
     if (closeBtn) { click(closeBtn); await tick(40); }
   }
@@ -201,6 +208,15 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
   click(q(".bcard"));
   await tick(80);
   assert.match(root.innerHTML, /Conversation/, "detail opens with conversation pane");
+
+  // Open the workflow issue → its detail-page timeline (with per-step model pickers) must render.
+  const wfCard = Array.from(window.document.querySelectorAll(".bcard")).find((c) => /Workflow run/.test(c.textContent));
+  if (wfCard) {
+    click(wfCard); await tick(80);
+    assert.match(root.innerHTML, /Workflow run/, "workflow issue detail opens");
+    assert.ok(window.document.querySelector(".dtl-flow"), "detail-page timeline (.dtl-flow) renders for a workflow issue");
+    assert.ok(window.document.querySelectorAll(".dtl-flow .flow__pick").length >= 2, "each workflow step's avatar is a per-step model picker (.flow__pick)");
+  }
 
   dom.window.close();
 });
