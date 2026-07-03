@@ -237,10 +237,8 @@ export function ModelsModal({ onClose, reload }) {
     api("/models", { fallbackChain: chain, autoSwitchOnLimit: autoSwitch, globalModel })
       .then(() => toast("Saved")).catch(() => toast("Couldn't save")).then(() => setBusy(false));
   }
-  function setRunner(id, runner) { saveProviders(providers.map((p) => (p.id === id ? { ...p, runner: runner || undefined } : p))); }
   function removeProvider(id, name) { if (window.confirm("Remove " + name + "?")) saveProviders(providers.filter((p) => p.id !== id)); }
   function clearSecret(key, name) { if (window.confirm("Remove " + name + "?")) api("/user-secret", { key, value: "" }).then(() => { toast("Removed"); reload(); refresh(); }); }
-  const RUNNER_OPTS = [{ value: "", label: "SDK" }, { value: "pi-cli", label: "pi" }, { value: "claude-cli", label: "claude" }, { value: "custom-cli", label: "custom" }];
   // Dedupe: a Claude-native provider (no key, no/anthropic base URL) IS the subscription secret below.
   const isClaudeNative = (p) => !p.apiKey && (!p.baseUrl || /anthropic\.com/i.test(p.baseUrl));
   const thirdParty = providers.filter((p) => !isClaudeNative(p));
@@ -250,13 +248,12 @@ export function ModelsModal({ onClose, reload }) {
     <button class="iconbtn tip" data-tip="Remove" style="width:30px;height:30px;border:none" onClick=${() => clearSecret(key, "Claude " + label)}><${Icon} name="trash" size=${15}/></button></div>`;
   const footer = html`<button class="btn" onClick=${onClose}>Close</button><button class="btn primary" disabled=${busy} onClick=${saveSettings}>${busy ? html`<${Spinner} size=${14}/> Saving…` : "Save settings"}</button>`;
   return html`<${Modal} title="Models & runners" onClose=${onClose} footer=${footer}>
-    <div class="muted" style="font-size:12px;margin-bottom:10px">Providers you’ve added. Pick which runner (SDK / pi / claude / custom) drives each — <b>Edit</b> opens the full config (key, URL, models, tiers).</div>
+    <div class="muted" style="font-size:12px;margin-bottom:10px">Providers you’ve added. The runner is auto-resolved (Claude-native for Claude, pi for everything else) — <b>Edit</b> opens the full config (key, URL, models, tiers).</div>
     ${claudeSub ? claudeRow("subscription", "claude_token") : null}
     ${claudeApi ? claudeRow("API key", "anthropic_api_key") : null}
     ${thirdParty.map((p) => html`<div class="modelrow" key=${p.id}>
       <div class="modelrow-main"><${ProviderLogo} name=${p.name} size=${16}/> <b>${p.name}</b> <span class="muted" style="font-size:11px">${(p.models || []).length} model${(p.models || []).length === 1 ? "" : "s"}</span></div>
       <button class="da-iconbtn da-iconbtn--sm tip" data-tip="Edit provider" onClick=${() => setEditing(p)}><${Icon} name="pencil" size=${14}/></button>
-      <${Select} value=${p.runner || ""} options=${RUNNER_OPTS} onChange=${(v) => setRunner(p.id, v)} menuAlign="right"/>
       <button class="iconbtn tip" data-tip="Remove" style="width:30px;height:30px;border:none" onClick=${() => removeProvider(p.id, p.name)}><${Icon} name="trash" size=${15}/></button>
     </div>`)}
     ${empty ? html`<div class="muted" style="font-size:12.5px;padding:10px 2px">No models added yet — add one below.</div>` : null}
@@ -275,16 +272,21 @@ function ProviderEditor({ provider, all, onClose, onSave }) {
   const [discovering, setDiscovering] = useState(false);
   const [discoverMsg, setDiscoverMsg] = useState("");
   const set = (k, v) => setF((o) => ({ ...o, [k]: v }));
-  // tiers live under f.tiers = { high:{model,fallback}, medium:{...}, low:{...} } — all optional.
+  // tiers = { high:{model}, medium:{model}, low:{model} } — model-only slots the per-agent picker
+  // uses. The runner / pi-provider / cliCommand are auto-resolved (pi is the only non-Claude path),
+  // so they're not exposed here.
   const tiers = f.tiers || {};
-  const setTier = (tier, field, v) => setF((o) => ({ ...o, tiers: { ...(o.tiers || {}), [tier]: { ...((o.tiers || {})[tier] || {}), [field]: v } } }));
+  const setTierModel = (tier, v) => setF((o) => {
+    const next = { ...(o.tiers || {}) };
+    if (v) next[tier] = { model: v }; else delete next[tier];
+    return { ...o, tiers: Object.keys(next).length ? next : undefined };
+  });
   const modelList = (f.models || []);
   const TIER_OPTS = [{ value: "", label: "(none)" }].concat(modelList.map((m) => ({ value: m, label: m })));
-  const RUNNER_OPTS = [{ value: "", label: "SDK (in-process)" }, { value: "pi-cli", label: "pi CLI" }, { value: "claude-cli", label: "claude CLI" }, { value: "custom-cli", label: "Custom CLI" }];
   function cleanedForm() {
     // Drop empty tiers entirely so we don't persist {model:""} noise.
     const cleanTiers = {};
-    for (const t of ["high", "medium", "low"]) { const s = (f.tiers || {})[t]; if (s && s.model) cleanTiers[t] = { model: s.model, fallback: s.fallback || "" }; }
+    for (const t of ["high", "medium", "low"]) { const s = (f.tiers || {})[t]; if (s && s.model) cleanTiers[t] = { model: s.model }; }
     return { ...f, models: modelList.filter(Boolean), tiers: Object.keys(cleanTiers).length ? cleanTiers : undefined };
   }
   function save() {
@@ -301,7 +303,7 @@ function ProviderEditor({ provider, all, onClose, onSave }) {
       api("/discover-models", { id: provider.id }),
     ).then((r) => {
       if (r && r.ok) {
-        setF((o) => ({ ...o, models: r.models || [], ...(o.runner ? {} : r.runner ? { runner: r.runner } : {}) }));
+        setF((o) => ({ ...o, models: r.models || [] }));
         setDiscoverMsg("Discovered " + (r.models || []).length + " models (via " + r.via + ").");
       } else {
         setDiscoverMsg(r && r.error ? "Couldn't discover: " + r.error : "No models discovered.");
@@ -309,14 +311,9 @@ function ProviderEditor({ provider, all, onClose, onSave }) {
     }).catch(() => setDiscoverMsg("Couldn't discover models.")).then(() => setDiscovering(false));
   }
   return html`<${Modal} title=${"Edit " + (provider.name || "provider")} size="lg" onClose=${onClose} footer=${html`<button class="btn" onClick=${onClose}>Cancel</button><button class="btn primary" onClick=${save}>Save</button>`}>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-      <div><label>Name</label><input value=${f.name || ""} onInput=${(e) => set("name", e.target.value)}/></div>
-      <div><label>Runner</label><${Select} value=${f.runner || ""} options=${RUNNER_OPTS} onChange=${(v) => set("runner", v || undefined)}/></div>
-      <div style="grid-column:1/-1"><label>Base URL <span class="muted" style="font-weight:400">(Anthropic-compatible endpoint)</span></label><input value=${f.baseUrl || ""} placeholder="https://open.bigmodel.cn/api/anthropic" onInput=${(e) => set("baseUrl", e.target.value)}/></div>
-      <div style="grid-column:1/-1"><label>API key</label><input type="password" autocomplete="off" value=${f.apiKey || ""} placeholder=${f.apiKey ? "•••••• saved — type to replace" : "paste key"} onInput=${(e) => set("apiKey", e.target.value)}/></div>
-    </div>
-    ${f.runner === "pi-cli" ? html`<div><label>pi provider <span class="muted" style="font-weight:400">(pi's own builtin name, e.g. zai; blank = auto from URL)</span></label><input value=${f.piProvider || ""} placeholder="zai (auto)" onInput=${(e) => set("piProvider", e.target.value)}/></div>` : null}
-    ${(f.runner === "custom-cli" || f.runner === "pi-cli" || f.runner === "claude-cli") ? html`<div><label>CLI command template <span class="muted" style="font-weight:400">(placeholders: {model} {systemPrompt} {task} {workdir} {piProvider})</span></label><input value=${f.cliCommand || ""} placeholder="blank = built-in default" onInput=${(e) => set("cliCommand", e.target.value)}/></div>` : null}
+    <div><label>Name</label><input value=${f.name || ""} onInput=${(e) => set("name", e.target.value)}/></div>
+    <div style="margin-top:10px"><label>Base URL <span class="muted" style="font-weight:400">(Anthropic-compatible endpoint)</span></label><input value=${f.baseUrl || ""} placeholder="https://open.bigmodel.cn/api/anthropic" onInput=${(e) => set("baseUrl", e.target.value)}/></div>
+    <div style="margin-top:10px"><label>API key</label><input type="password" autocomplete="off" value=${f.apiKey || ""} placeholder=${f.apiKey ? "•••••• saved — type to replace" : "paste key"} onInput=${(e) => set("apiKey", e.target.value)}/></div>
 
     <div class="sec" style="margin-top:16px;display:flex;align-items:center;gap:8px"><span>Models</span>
       <button class="btn ghost" style="padding:3px 10px;font-size:12px;margin-left:auto" disabled=${discovering} onClick=${refreshModels}>${discovering ? html`<${Spinner} size=${12}/> Discovering…` : html`<${Icon} name="refresh" size=${12}/> Refresh from provider`}</button>
@@ -325,11 +322,10 @@ function ProviderEditor({ provider, all, onClose, onSave }) {
     ${discoverMsg ? html`<div class=${"testres " + (/discovered/i.test(discoverMsg) ? "good" : "bad")} style="margin-bottom:6px">${discoverMsg}</div>` : null}
     <textarea style="min-height:80px;font-family:inherit" value=${modelList.join("\n")} onInput=${(e) => set("models", e.target.value.split("\n"))}></textarea>
 
-    <div class="sec" style="margin-top:16px">Tiers <span class="muted" style="text-transform:none;font-weight:400">— High / Medium / Low model slots + each one's graceful fallback</span></div>
-    ${["high", "medium", "low"].map((t) => html`<div key=${t} style="display:grid;grid-template-columns:64px 1fr 1fr;gap:8px;align-items:end;margin-bottom:6px">
+    <div class="sec" style="margin-top:16px">Tiers <span class="muted" style="text-transform:none;font-weight:400">— the High / Medium / Low model slots the per-agent picker offers</span></div>
+    ${["high", "medium", "low"].map((t) => html`<div key=${t} style="display:grid;grid-template-columns:64px 1fr;gap:8px;align-items:end;margin-bottom:6px">
       <span style="text-transform:capitalize;font-size:13px;color:var(--ink-2);padding-bottom:9px">${t}</span>
-      <div><label style="margin:0 2px 3px">model</label><${Select} value=${(tiers[t] || {}).model || ""} options=${TIER_OPTS} onChange=${(v) => setTier(t, "model", v)}/></div>
-      <div><label style="margin:0 2px 3px">fallback <span class="muted" style="font-weight:400">(providerId/model)</span></label><input value=${(tiers[t] || {}).fallback || ""} placeholder="providerId/model" onInput=${(e) => setTier(t, "fallback", e.target.value)}/></div>
+      <div><label style="margin:0 2px 3px">model</label><${Select} value=${(tiers[t] || {}).model || ""} options=${TIER_OPTS} onChange=${(v) => setTierModel(t, v)}/></div>
     </div>`)}
   <//>`;
 }
