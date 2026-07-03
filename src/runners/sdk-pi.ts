@@ -20,12 +20,9 @@
  * docs/providers.md — auth resolves flag → auth.json → env → models.json.
  */
 import { spawn } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import type { AgentRunner, RunRequest, RunResult } from "./interface.js";
 import type { Provider } from "../db/providers.js";
-import { inferPiProvider } from "../db/providers.js";
+import { inferPiProvider, getPiProviderDir, writePiProviderFiles } from "../db/providers.js";
 import { parsePiLine, ZERO_USAGE, type PiUsage } from "./pi-parse.js";
 
 /**
@@ -38,64 +35,28 @@ export const PI_TEMPLATE = "pi --mode json --print --provider {piProvider} --mod
 /** Mark an Anthropic/Anthropic-compatible base URL so we never point pi (provider-keyed) at it. */
 const ANTHROPIC_HOST = /(^|\/\/)(api\.)?anthropic\.com(\/|$)/i;
 
-/**
- * pi's built-in provider keys (verified against pi's known provider set). When the resolved provider
- * maps to one of these, pi knows its endpoint + catalog and we only need to supply the key.
- */
-const BUILTIN_PI_PROVIDERS = new Set(["zai", "anthropic", "openai", "google", "deepseek", "kimi-coding", "openrouter"]);
-
-/** The config the pi runner materializes into an isolated temp HOME for one run. */
+/** The config the pi runner uses to set PI_CODING_AGENT_DIR for a run. */
 export interface PiConfig {
   /** pi's own provider name to pass as --provider (a builtin, or a custom key registered in models.json). */
   piProvider: string;
-  /** Temp HOME dir containing ~/.pi/agent/{auth.json[, models.json]}; caller removes it when done. null = no override needed. */
-  home: string | null;
+  /** Permanent per-provider config dir to set as PI_CODING_AGENT_DIR; null = no override needed. */
+  agentDir: string | null;
 }
 
 /**
- * Materialize an isolated ~/.pi/agent config for this run, from the Provider row:
- *  - BUILTIN provider (zai/deepseek/kimi-coding/openrouter/openai/anthropic): write ONLY auth.json in
- *    pi's real schema `{ "<name>": { type: "api_key", key } }`. pi knows the rest.
- *  - CUSTOM provider (custom baseUrl, no builtin name): ALSO write a real-schema models.json registering
- *    the provider + model (ProviderConfigSchema from pi's model-registry.js), keyed by a stable slug.
- *  - No provider / Anthropic-default: return { home: null } — pi's built-in CLAUDE/ANTHROPIC_* env
- *    handling already covers a subscription/API-key run (we pass those through the base env).
- * Returns the temp HOME to clean up (or null) + the piProvider to invoke.
+ * Resolve the pi provider name + permanent agent-config dir for a run.
+ *  - BUILTIN provider (zai/deepseek/…): auth.json was written at save time (setProviders).
+ *    Safety-net call to writePiProviderFiles ensures it exists after a container restart.
+ *  - CUSTOM provider: same — models.json is also written (all provider.models, not just one).
+ *  - No provider / Anthropic-default: return { agentDir: null } — pi uses ANTHROPIC_* env.
+ * Returns piProvider (for --provider flag) + agentDir (for PI_CODING_AGENT_DIR). Never a temp dir.
  */
-export function preparePiConfig(provider: Provider | null, model: string): PiConfig {
-  if (!provider || !provider.apiKey) return { piProvider: "", home: null };
-  // Don't hijack a Claude-native/Anthropic route into pi — pi handles that via ANTHROPIC_* env too,
-  // and overriding HOME would just drop the user's real ~/.pi for no benefit.
-  if (ANTHROPIC_HOST.test(provider.baseUrl || "")) return { piProvider: "anthropic", home: null };
-
+export function preparePiConfig(provider: Provider | null): PiConfig {
+  if (!provider || !provider.apiKey) return { piProvider: "", agentDir: null };
+  if (ANTHROPIC_HOST.test(provider.baseUrl || "")) return { piProvider: "anthropic", agentDir: null };
   const piProvider = inferPiProvider(provider) || "dev-agency-custom";
-  const home = mkdtempSync(join(tmpdir(), "pi-home-"));
-  const agentDir = join(home, ".pi", "agent");
-  mkdirSync(agentDir, { recursive: true });
-
-  // auth.json — pi's REAL schema (the only thing a builtin provider needs).
-  writeFileSync(
-    join(agentDir, "auth.json"),
-    JSON.stringify({ [piProvider]: { type: "api_key", key: provider.apiKey } }, null, 2),
-  );
-
-  // models.json — ONLY for a truly custom provider pi doesn't ship. Uses pi's real ProviderConfigSchema
-  // (NOT the invented "dev-agency-routed" shape that broke #108): providers.<key> = { baseUrl, apiKey,
-  // api, models:[{id,name}] }. For a builtin, skip this entirely — pi already has the catalog.
-  if (!BUILTIN_PI_PROVIDERS.has(piProvider) && provider.baseUrl) {
-    const config = {
-      providers: {
-        [piProvider]: {
-          baseUrl: provider.baseUrl,
-          api: "anthropic-messages",
-          apiKey: provider.apiKey,
-          models: [{ id: model, name: model }],
-        },
-      },
-    };
-    writeFileSync(join(agentDir, "models.json"), JSON.stringify(config, null, 2));
-  }
-  return { piProvider, home };
+  writePiProviderFiles(provider); // safety-net: write/refresh if missing (e.g. after container restart)
+  return { piProvider, agentDir: getPiProviderDir(provider.id) };
 }
 
 export class PiCliRunner implements AgentRunner {
@@ -113,19 +74,16 @@ export class PiCliRunner implements AgentRunner {
         .replace(/{task}/g, req.task)
         .replace(/{workdir}/g, req.cwd),
     );
-    const { home } = preparePiConfig(req.provider, req.model);
-    // Base env is what roleAgent built (process env + GH_TOKEN/GIT identity, never the provider key —
-    // pi reads the key from the isolated auth.json). Redirect HOME so pi finds our config, not the
-    // operator's real ~/.pi (keeps runs isolated + concurrent-safe; never drops a real config again).
-    const env: Record<string, string> = { ...process.env, ...(req.env ?? {}), ...(home ? { HOME: home } : {}) };
-    // The API key must NOT travel in env here (pi would then read ANTHROPIC_API_KEY and route wrong);
-    // it lives only in the isolated auth.json we just wrote. Strip any stale third-party routing.
+    const { agentDir } = preparePiConfig(req.provider);
+    // PI_CODING_AGENT_DIR is pi's own env var for its agent config dir (auth.json / models.json).
+    // Using it instead of overriding HOME keeps the subprocess's home intact for everything else.
+    const env: Record<string, string> = { ...process.env, ...(req.env ?? {}), ...(agentDir ? { PI_CODING_AGENT_DIR: agentDir } : {}) };
+    // Strip provider creds from env — pi reads the key from auth.json in the config dir.
     delete env.ANTHROPIC_BASE_URL;
     delete env.ANTHROPIC_AUTH_TOKEN;
     delete env.ANTHROPIC_API_KEY;
 
-    try {
-      return await new Promise<RunResult>((resolve, reject) => {
+    return await new Promise<RunResult>((resolve, reject) => {
         const proc = spawn(cmd, args, { cwd: req.cwd, shell: false, env });
         let finalText = "";
         let turns = 0;
@@ -173,9 +131,6 @@ export class PiCliRunner implements AgentRunner {
           });
         });
       });
-    } finally {
-      if (home) try { rmSync(home, { recursive: true, force: true }); } catch { /* noop */ }
-    }
   }
 }
 

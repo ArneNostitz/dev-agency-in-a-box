@@ -393,18 +393,18 @@ test("stop flag: request → set, clear → unset, isolated per issue", () => {
 
 test("preparePiConfig: GLM/Zhipu maps to pi's builtin 'zai' provider — only auth.json is written, NO models.json (pi already knows it)", () => {
   const provider = { id: "glm-1", name: "GLM (Zhipu)", baseUrl: "https://open.bigmodel.cn/api/anthropic", apiKey: "zhipu-key-x", models: ["glm-5.2"] };
-  const { piProvider, home } = preparePiConfig(provider, "glm-5.2");
+  const { piProvider, agentDir } = preparePiConfig(provider);
   assert.equal(piProvider, "zai", "the GLM/Zhipu preset resolves to pi's builtin 'zai' provider");
-  assert.ok(home, "an isolated home dir is created");
+  assert.ok(agentDir, "a permanent agent config dir is returned");
   try {
     // pi's REAL auth.json schema: { "<provider>": { type: "api_key", key } }
-    const auth = JSON.parse(readFileSync(join(home, ".pi", "agent", "auth.json"), "utf8"));
+    const auth = JSON.parse(readFileSync(join(agentDir, "auth.json"), "utf8"));
     assert.equal(auth.zai.type, "api_key");
     assert.equal(auth.zai.key, "zhipu-key-x");
     // A builtin provider needs NO models.json — writing one with an invented schema was the #108 bug.
-    assert.equal(existsSync(join(home, ".pi", "agent", "models.json")), false, "builtin provider: no models.json");
+    assert.equal(existsSync(join(agentDir, "models.json")), false, "builtin provider: no models.json");
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    rmSync(agentDir, { recursive: true, force: true });
   }
 });
 
@@ -414,28 +414,28 @@ test("preparePiConfig: the pi invocation template uses --provider so pi targets 
 });
 
 test("preparePiConfig: no provider / no key → nothing to override (Claude-native route)", () => {
-  assert.equal(preparePiConfig(null, "claude-sonnet-4-6").home, null);
-  assert.equal(preparePiConfig({ id: "x", name: "x", baseUrl: "", apiKey: "", models: [] }, "m").home, null);
+  assert.equal(preparePiConfig(null).agentDir, null);
+  assert.equal(preparePiConfig({ id: "x", name: "x", baseUrl: "", apiKey: "", models: [] }).agentDir, null);
   // An Anthropic-host base URL is the default endpoint, not a custom pi provider.
-  assert.equal(preparePiConfig({ id: "a", name: "Anthropic", baseUrl: "https://api.anthropic.com", apiKey: "k", models: [] }, "claude-sonnet-4-6").piProvider, "anthropic");
+  assert.equal(preparePiConfig({ id: "a", name: "Anthropic", baseUrl: "https://api.anthropic.com", apiKey: "k", models: [] }).piProvider, "anthropic");
 });
 
 test("preparePiConfig: a truly custom provider (no builtin match) ALSO writes a real-schema models.json", () => {
   const provider = { id: "cust-1", name: "My Gateway", baseUrl: "https://my-gateway.example/anthropic", apiKey: "gw-key", models: ["my-model-1"] };
-  const { piProvider, home } = preparePiConfig(provider, "my-model-1");
+  const { piProvider, agentDir } = preparePiConfig(provider);
   assert.ok(piProvider, "a provider key is chosen");
-  assert.ok(home, "isolated home created");
+  assert.ok(agentDir, "permanent agent config dir returned");
   try {
-    const auth = JSON.parse(readFileSync(join(home, ".pi", "agent", "auth.json"), "utf8"));
+    const auth = JSON.parse(readFileSync(join(agentDir, "auth.json"), "utf8"));
     assert.equal(auth[piProvider].key, "gw-key");
     // Only the custom case writes models.json — and now in pi's REAL schema (ProviderConfigSchema).
-    const cfg = JSON.parse(readFileSync(join(home, ".pi", "agent", "models.json"), "utf8"));
+    const cfg = JSON.parse(readFileSync(join(agentDir, "models.json"), "utf8"));
     const p = cfg.providers[piProvider];
     assert.equal(p.baseUrl, "https://my-gateway.example/anthropic");
     assert.equal(p.api, "anthropic-messages");
     assert.deepEqual(p.models.map((m) => m.id), ["my-model-1"]);
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    rmSync(agentDir, { recursive: true, force: true });
   }
 });
 
