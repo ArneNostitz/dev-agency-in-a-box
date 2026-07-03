@@ -1418,9 +1418,9 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           return ok();
         }
         if (path === "/discover-models") {
-          // Live model discovery for one provider (on add + manual Refresh). Runs discoverProviderModels
-          // (HTTP /v1/models or `pi --list-models`), persists the discovered models into the row, applies
-          // the suggested runner when the row has none, and returns the result. Never throws.
+          // Live model discovery for one provider (on add + manual Refresh). pi is the only source:
+          // `pi --list-models` (with the key registered into pi's config dir). Persists the discovered
+          // models into the row, applies pi-cli as the runner when the row has none, returns the result.
           if (!actor || actor.role !== "admin") return void res.writeHead(403, { "content-type": "application/json" }).end('{"error":"admin only"}');
           const id = String(p.id ?? "").trim();
           const list = getProviders();

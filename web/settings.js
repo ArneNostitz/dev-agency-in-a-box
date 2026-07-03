@@ -321,7 +321,7 @@ function ProviderEditor({ provider, all, onClose, onSave }) {
     <div class="sec" style="margin-top:16px;display:flex;align-items:center;gap:8px"><span>Models</span>
       <button class="btn ghost" style="padding:3px 10px;font-size:12px;margin-left:auto" disabled=${discovering} onClick=${refreshModels}>${discovering ? html`<${Spinner} size=${12}/> Discovering…` : html`<${Icon} name="refresh" size=${12}/> Refresh from provider`}</button>
     </div>
-    <div class="muted" style="font-size:11px;margin:0 0 6px">Discovered live from the provider's /v1/models (or <code>pi --list-models</code>). Editable below — one id per line.</div>
+    <div class="muted" style="font-size:11px;margin:0 0 6px">Discovered live via <code>pi --list-models</code>. Editable below — one id per line.</div>
     ${discoverMsg ? html`<div class=${"testres " + (/discovered/i.test(discoverMsg) ? "good" : "bad")} style="margin-bottom:6px">${discoverMsg}</div>` : null}
     <textarea style="min-height:80px;font-family:inherit" value=${modelList.join("\n")} onInput=${(e) => set("models", e.target.value.split("\n"))}></textarea>
 
