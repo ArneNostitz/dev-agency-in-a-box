@@ -606,6 +606,75 @@ export function Select({ value, options, onChange, trigger, btnClass, menuAlign,
   </div>`;
 }
 
+// ---------- ModelSelect (one reusable model picker used EVERYWHERE) ----------
+// Round-trips a "providerId/model" ref through a normalized <Select>. Sources options from a
+// providers list (either passed directly or read from `data.providers`). All model pickers across
+// the app go through this — see the sites that used to hand-roll `providers.flatMap(...)`.
+export function parseModelRef(ref) {
+  if (!ref || typeof ref !== "string") return null;
+  const i = ref.indexOf("/");
+  if (i <= 0) return null;
+  return { providerId: ref.slice(0, i), model: ref.slice(i + 1) };
+}
+export function toModelRef(v) {
+  if (!v) return "";
+  if (typeof v === "string") return v;
+  return v.providerId && v.model ? v.providerId + "/" + v.model : "";
+}
+// Flat list of {value:"providerId/model", label, logo, hint} for every model on every provider.
+// `short` → label is just the model id; false → "providerName · model".
+export function providerModelOptions(providers, { short = true } = {}) {
+  return (providers || []).flatMap((p) => (p.models || []).map((m) => ({
+    value: p.id + "/" + m,
+    label: short ? m : ((p.name || "") + " · " + m),
+    logo: p.name,
+    hint: p.name,
+  })));
+}
+// The one true model picker.
+// Props:
+//   providers      — list from /models (falls back to data.providers)
+//   data           — /models response; used for defaultHint = defaultModelLabel(data)
+//   value          — "providerId/model" string OR {providerId, model} object OR null
+//   onChange(ref)  — fires with the string "providerId/model" ("" when cleared)
+//   includeDefault — prepend a "Default" option that clears the ref
+//   defaultLabel   — label for that Default option ("Default model" by default)
+//   defaultHint    — sub-label for the Default option (falls back to defaultModelLabel(data))
+//   defaultIcon    — icon name for the Default option ("sparkles" by default)
+//   short          — labels are model-only (true) or "provider · model" (false)
+//   emit           — "string" (default) or "object": shape of onChange arg
+//   extraOptions   — extra <Select> options merged AFTER the Default row and BEFORE the models
+//                    (e.g. an "@individual" sentinel). Always emitted as string (emit="object" only
+//                    parses provider/model refs; a sentinel comes back verbatim via extraEmit).
+//   trigger, btnClass, menuAlign, placeholder, disabled — passed through to Select
+export function ModelSelect({
+  providers, data, value, onChange,
+  includeDefault = false, defaultLabel = "Default model", defaultHint, defaultIcon = "sparkles",
+  short = true, emit = "string", extraOptions,
+  trigger, btnClass, menuAlign, placeholder, disabled,
+}) {
+  const provs = providers || (data && data.providers) || [];
+  const strValue = toModelRef(value);
+  const dhint = defaultHint !== undefined ? defaultHint : (data ? defaultModelLabel(data) : undefined);
+  const baseOpts = providerModelOptions(provs, { short });
+  const opts = (includeDefault ? [{ value: "", label: defaultLabel, hint: dhint, icon: defaultIcon }] : [])
+    .concat(extraOptions || [])
+    .concat(baseOpts);
+  const emitVal = (v) => {
+    if (!onChange) return;
+    if (emit === "object") {
+      // Sentinels (non-empty non-ref) pass through as-is; refs parse; "" clears.
+      if (v && parseModelRef(v)) onChange(parseModelRef(v));
+      else if (v) onChange(v);
+      else onChange(null);
+    } else {
+      onChange(v || "");
+    }
+  };
+  return html`<${Select} value=${strValue} options=${opts} onChange=${emitVal}
+    trigger=${trigger} btnClass=${btnClass} menuAlign=${menuAlign} placeholder=${placeholder} disabled=${disabled}/>`;
+}
+
 // ---------- atomic Modal/Dialog ----------
 // Centered dialog with a unified header (title, no ✕), scrollable body, and a footer for CTA
 // buttons. Esc and backdrop-click close it. `footer` is the CTA row (e.g. Close + Save).
