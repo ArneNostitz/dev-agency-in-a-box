@@ -45,7 +45,7 @@ export function nestedChildKeys(issues) {
   return keys;
 }
 
-export function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, onOpenChild, onAddRepo, onAddIssue, onAnalyze, auditRepos, act, data, statStrip = null }) {
+export function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, onOpenChild, onAddRepo, onAddIssue, onAnalyze, auditRepos, act, data }) {
   // Board-owned controls — distinct localStorage keys to avoid collision with the legacy "boardSort" JSON key.
   const [boardSort,  setBoardSort]  = useState(() => { try { return localStorage.getItem("boardCtrlSort")  || "updated_desc"; } catch (e) { return "updated_desc"; } });
   const [boardGroup, setBoardGroup] = useState(() => { try { return localStorage.getItem("boardCtrlGroup") || "state";        } catch (e) { return "state";        } });
@@ -90,7 +90,6 @@ export function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, onOpe
   const renderCard = (i) => html`<${Card} key=${i.repo + "#" + i.number} i=${i} subs=${subsFor(i)} multi=${!repoFilter && repos.length > 1} onOpen=${onOpen} onOpenChild=${onOpenChild} act=${act} data=${data} stream=${streamByKey.get(i.repo + "#" + i.number) || EMPTY_STREAM}/>`;
   const controls = html`<div class="listbar">
     <button class="da-btn da-btn--primary da-btn--sm" onClick=${() => onAddIssue(repoFilter || (repos && repos.length === 1 ? repos[0] : null))}><${Icon} name="plus" size=${15}/> New</button>
-    ${statStrip ? html`<div class="listbar__stats">${statStrip}</div>` : null}
     <span style="flex:1"></span>
     <${BoardControls} boardSort=${boardSort} setBoardSort=${setBoardSort} boardGroup=${boardGroup} setBoardGroup=${setBoardGroup} boardTime=${boardTime} setBoardTime=${setBoardTime}/>
   </div>`;
@@ -149,7 +148,7 @@ export function Board({ issues, repos, repoFilter, tab, isDesktop, onOpen, onOpe
     </div>`;
   }
 
-  return html`<div>${controls}${boardContent}</div>`;
+  return html`<div class="boardwrap">${controls}${boardContent}</div>`;
 
 }
 

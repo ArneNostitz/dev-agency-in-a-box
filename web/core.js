@@ -337,7 +337,7 @@ export const COLS = [
   { k: "notPlanned", label: "Inbox", icon: "inbox" },
   { k: "planned", label: "Planned", icon: "planned" },
   { k: "working", label: "Working", icon: "loader" },
-  { k: "review", label: "Review", icon: "alert" },
+  { k: "review", label: "Needs you", icon: "alert" },
   { k: "done", label: "Done", icon: "check" },
 ];
 
