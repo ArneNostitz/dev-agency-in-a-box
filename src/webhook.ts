@@ -19,7 +19,7 @@ import { join } from "node:path";
 import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import type { Config } from "./config.js";
-import { recentRuns, roleRunsByIssue, filesFor, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordIssueStatus, recordPr, tokensSince, tokensByModelSince, tokensByRoleSince, tokensByDaySince, topIssuesByTokensSince, tokensByIssueAll, toolStatsSince, runStepCountSince, recentLessons, recordConflict, getConflict, clearConflict, listConflicts, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getGlobalModel, setGlobalModel, getFallbackChain, setFallbackChain, getAutoSwitchOnLimit, setIssueModelOverride, getIssueModelOverride, clearIssueModelOverride, setIssueWorkflow, getIssueWorkflow, clearIssueWorkflow, getWorkflow, getIssueProvider, setIssueProvider, getIssueAgentModels, setIssueAgentModel, getIssueUseFallback, setIssueUseFallback, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, getIssueRow, getModelsPresets, listAgentDefs, upsertAgentDef, deleteAgentDef, listWorkflows, upsertWorkflow, deleteWorkflow, getDefaultWorkflowId, setDefaultWorkflowId, listSkills, upsertSkill, deleteSkill, listHooks, upsertHook, deleteHook, type AutoKind, type Provider, type AgentDef, type Skill, type Hook } from "./store.js";
+import { recentRuns, roleRunsByIssue, filesFor, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordIssueStatus, recordPr, tokensSince, tokensByModelSince, tokensByRoleSince, tokensByDaySince, topIssuesByTokensSince, tokensByIssueAll, toolStatsSince, runStepCountSince, recentLessons, recordConflict, getConflict, clearConflict, listConflicts, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getGlobalModel, setGlobalModel, getFallbackChain, setFallbackChain, getAutoSwitchOnLimit, setIssueModelOverride, getIssueModelOverride, clearIssueModelOverride, setIssueWorkflow, getIssueWorkflow, clearIssueWorkflow, getWorkflow, getIssueProvider, setIssueProvider, getIssueAgentModels, setIssueAgentModel, getIssueUseFallback, setIssueUseFallback, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, getIssueRow, listAgentDefs, upsertAgentDef, deleteAgentDef, listWorkflows, upsertWorkflow, deleteWorkflow, getDefaultWorkflowId, setDefaultWorkflowId, listSkills, upsertSkill, deleteSkill, listHooks, upsertHook, deleteHook, type AutoKind, type Provider, type AgentDef, type Skill, type Hook } from "./store.js";
 import { mergeEpic, isEpic } from "./epics.js";
 import { versionInfo } from "./version.js";
 import { startDeviceFlow, pollDeviceToken, fetchGitHubUser } from "./github-oauth.js";
@@ -37,7 +37,9 @@ import { authEnabled, userFromReq, setSessionCookie, clearSessionCookie, parseCo
 import { OPS_SETTINGS, opsSettingsValues } from "./settings.js";
 import { getSecretSetting, setSecretSetting, getUserSecretStatus } from "./store.js";
 import { masterKeyConfigured } from "./crypto.js";
-import { ghBotToken, ghUserToken } from "./creds.js";
+import { ghBotToken, ghUserToken, claudeToken, anthropicApiKey } from "./creds.js";
+import { providerAuth } from "./agents/provider-auth.js";
+import { discoverProviderModels } from "./db/discover.js";
 import { testClaudeAuth } from "./agents/roleAgent.js";
 import { ALL_ROLES, roleForText, loadHandleRoleMap } from "./agents/roles.js";
 import { resolveWorkflow } from "./workflow.js";
@@ -63,6 +65,16 @@ import { ensureRepoIndex } from "./gitnexus.js";
 
 type ProcessAll = (cfg: Config) => Promise<number>;
 type Resume = (repo: string, number: number) => Promise<void>;
+
+/**
+ * Stamp each provider row with its auth status so the frontend model pickers can show a provider's
+ * models ONLY when it's actually authenticated (auth !== "missing"). Mirrors the runtime's own
+ * providerAuth() decision, so the picker's view matches what a run will actually use.
+ */
+function annotateProviders(list: Provider[]): (Provider & { auth: "apiKey" | "subscription" | "missing" })[] {
+  const hasClaudeCred = Boolean(claudeToken() || anthropicApiKey());
+  return (list || []).map((p) => ({ ...p, auth: providerAuth(p, hasClaudeCred) }));
+}
 
 // Cache native sub-issue relationships per repo (TTL: 60s) so the 5s poll doesn't hammer GitHub.
 const _nativeSubIssueCache = new Map<string, { ts: number; data: NativeSubIssueData }>();
@@ -514,7 +526,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               github: { connected: Boolean(githubOAuthToken()), user: githubIdentity(), clientIdSet: Boolean(githubOAuthClientId()) },
               ops: opsSettingsValues(),
               opsMeta: OPS_SETTINGS,
-              providers: getProviders(),
+              providers: annotateProviders(getProviders()),
               roleModels: getRoleModels(),
               globalModel: getGlobalModel(),
               agentDefs: listAgentDefs(),
@@ -612,23 +624,12 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
       if (url === "/models") {
         res.writeHead(200, { "content-type": "application/json" }).end(
           JSON.stringify({
-            providers: getProviders(),
+            providers: annotateProviders(getProviders()),
             roleModels: getRoleModels(),
             globalModel: getGlobalModel(),
             fallbackChain: getFallbackChain(),
             autoSwitchOnLimit: getAutoSwitchOnLimit(),
             roles: ALL_ROLES,
-            // Editable presets — all expose a native Anthropic-compatible endpoint.
-            presets: (() => {
-              const pm = getModelsPresets();
-              return [
-                { name: "Gemini (via proxy)", baseUrl: "", models: pm["Gemini"] || [] },
-                { name: "GLM (Zhipu)", baseUrl: "https://open.bigmodel.cn/api/anthropic", models: pm["GLM (Zhipu)"] || [] },
-                { name: "DeepSeek", baseUrl: "https://api.deepseek.com/anthropic", models: pm["DeepSeek"] || [] },
-                { name: "Kimi (Moonshot)", baseUrl: "https://api.moonshot.cn/anthropic", models: pm["Kimi (Moonshot)"] || [] },
-                { name: "Custom (Anthropic-compatible)", baseUrl: "", models: [] },
-              ];
-            })(),
           }),
         );
         return;
@@ -959,11 +960,11 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
     }
 
     // Dashboard actions (auth required), not GitHub webhooks.
-    if (["/archive", "/comment", "/comment-edit", "/run-checks", "/merge", "/close", "/close-not-planned", "/create-pr", "/delete", "/resume", "/stop", "/hold", "/fix", "/auto", "/start", "/new-issue", "/approve", "/audit", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude", "/model-override", "/issue-workflow", "/issue-provider", "/issue-agent-model", "/issue-use-fallback", "/issue-budget", "/agent-def-save", "/agent-def-delete", "/skill-save", "/skill-delete", "/skill-import", "/hook-save", "/hook-delete", "/analyzer-run", "/refresh", "/refresh-issue", "/cancel", "/install-cli", "/gh-connect", "/gh-connect-poll", "/gh-disconnect", "/workflow-save", "/workflow-delete", "/default-workflow", "/orch-chat", "/orch-handoff", "/orch-clear"].includes(path)) {
+    if (["/archive", "/comment", "/comment-edit", "/run-checks", "/merge", "/close", "/close-not-planned", "/create-pr", "/delete", "/resume", "/stop", "/hold", "/fix", "/auto", "/start", "/new-issue", "/approve", "/audit", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/discover-models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude", "/model-override", "/issue-workflow", "/issue-provider", "/issue-agent-model", "/issue-use-fallback", "/issue-budget", "/agent-def-save", "/agent-def-delete", "/skill-save", "/skill-delete", "/skill-import", "/hook-save", "/hook-delete", "/analyzer-run", "/refresh", "/refresh-issue", "/cancel", "/install-cli", "/gh-connect", "/gh-connect-poll", "/gh-disconnect", "/workflow-save", "/workflow-delete", "/default-workflow", "/orch-chat", "/orch-handoff", "/orch-clear"].includes(path)) {
       const actor = userFromReq(req);
       if (!actor) return void res.writeHead(401, { "content-type": "application/json" }).end('{"error":"auth required"}');
       void readBody(req).then(async (body) => {
-        let p: { repo?: string; number?: number; commentId?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; pctNow?: number; tracker?: string; agentDef?: Partial<AgentDef> & { name: string }; agentName?: string; workflow?: { id: string; name: string; trigger?: string; steps?: unknown[]; gates?: unknown[]; hooks?: unknown[] }; workflowId?: string; skill?: Partial<Skill> & { name: string }; skillName?: string; hook?: { id?: number; target: string; phase: "pre" | "post"; command: string; enabled?: boolean }; hookId?: number; dataUrl?: string; name?: string; providers?: Provider[]; roleModels?: Record<string, { providerId: string; model: string }>; globalModel?: { providerId: string; model: string } | null; fallbackChain?: Array<{ providerId: string; model: string }>; autoSwitchOnLimit?: boolean; model?: { providerId: string; model: string } | null; agentModels?: Record<string, string>; newIssueDefault?: string; kind?: string; value?: string; skipArchitect?: string; gitnexus?: string; maxTokensPerRun?: number; maxReviseRounds?: number; auditThreshold?: number; start?: boolean; email?: string; key?: string; ops?: Record<string, string | number | boolean>; agentRunner?: string; agentCliCommand?: string; webhookSecret?: string; analyzerUrl?: string; avatars?: string; source?: string } = {};
+        let p: { repo?: string; number?: number; commentId?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; pctNow?: number; tracker?: string; agentDef?: Partial<AgentDef> & { name: string }; agentName?: string; workflow?: { id: string; name: string; trigger?: string; steps?: unknown[]; gates?: unknown[]; hooks?: unknown[] }; workflowId?: string; skill?: Partial<Skill> & { name: string }; skillName?: string; hook?: { id?: number; target: string; phase: "pre" | "post"; command: string; enabled?: boolean }; hookId?: number; dataUrl?: string; name?: string; providers?: Provider[]; roleModels?: Record<string, { providerId: string; model: string }>; globalModel?: { providerId: string; model: string } | null; fallbackChain?: Array<{ providerId: string; model: string }>; autoSwitchOnLimit?: boolean; model?: { providerId: string; model: string } | null; agentModels?: Record<string, string>; newIssueDefault?: string; kind?: string; value?: string; skipArchitect?: string; gitnexus?: string; maxTokensPerRun?: number; maxReviseRounds?: number; auditThreshold?: number; start?: boolean; email?: string; key?: string; ops?: Record<string, string | number | boolean>; agentRunner?: string; agentCliCommand?: string; webhookSecret?: string; analyzerUrl?: string; avatars?: string; source?: string; id?: string; discover?: boolean } = {};
         try {
           p = JSON.parse(body.toString("utf8"));
         } catch {
@@ -1415,6 +1416,22 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           if (Array.isArray(p.fallbackChain)) setFallbackChain(p.fallbackChain);
           if (typeof p.autoSwitchOnLimit === "boolean") setSetting("auto_switch_on_limit", p.autoSwitchOnLimit ? "on" : "off");
           return ok();
+        }
+        if (path === "/discover-models") {
+          // Live model discovery for one provider (on add + manual Refresh). Runs discoverProviderModels
+          // (HTTP /v1/models or `pi --list-models`), persists the discovered models into the row, applies
+          // the suggested runner when the row has none, and returns the result. Never throws.
+          if (!actor || actor.role !== "admin") return void res.writeHead(403, { "content-type": "application/json" }).end('{"error":"admin only"}');
+          const id = String(p.id ?? "").trim();
+          const list = getProviders();
+          const provider = list.find((x) => x.id === id);
+          if (!provider) return void res.writeHead(404, { "content-type": "application/json" }).end(JSON.stringify({ error: "Provider not found." }));
+          const r = await discoverProviderModels(provider);
+          if (r.models.length) {
+            const next = list.map((x) => x.id === id ? { ...x, models: r.models, ...(x.runner ? {} : r.runner ? { runner: r.runner } : {}) } : x);
+            setProviders(next);
+          }
+          return void res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ ok: r.models.length > 0, models: r.models, via: r.via, runner: r.runner, error: r.error }));
         }
         if (path === "/install-cli") {
           if (!actor || actor.role !== "admin") return void res.writeHead(403, { "content-type": "application/json" }).end('{"error":"admin only"}');

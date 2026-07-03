@@ -85,6 +85,12 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
     workflows: [{ id: "full-build", name: "Full build", trigger: "@dev", steps: [], gates: [], builtin: true }],
     active: [], inflight: [], rateLimited: [], runs: [], activity: [], spendToday: { costUsd: 0 },
     session: { tokens: 0, budget: 0 }, config: {},
+    // /data carries the same provider list as /models, with auth annotations. The model pickers read
+    // this: an auth:"missing" provider's models must NEVER reach a picker.
+    providers: [
+      { id: "glm-1", name: "GLM (Zhipu)", baseUrl: "https://open.bigmodel.cn/api/anthropic", apiKey: "x", models: ["glm-4.6"], auth: "apiKey" },
+      { id: "ds-dead", name: "DeepSeek", baseUrl: "https://api.deepseek.com/anthropic", apiKey: "", models: ["deepseek-chat"], auth: "missing" },
+    ],
     issues: [
       { repo: "acme/app", number: 1, title: "A planned task", state: "planned", updated_at: new Date().toISOString(), auto: {} },
       { repo: "acme/app", number: 2, title: "Ready PR", state: "review", pr_number: 5, review: "approved", updated_at: new Date().toISOString(), auto: {} },
@@ -103,7 +109,12 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
     if (u.includes("/thread")) return { author: "arne", createdAt: new Date().toISOString(), body: "hello", comments: [] };
     if (u.includes("/app-info")) return { kind: "none" };
     if (u.includes("/pr-status")) return { review: { verdict: "approved" }, merge: { mergeable: "clean" } };
-    if (u.includes("/models")) return { providers: [{ id: "glm-1", name: "GLM (Zhipu)", baseUrl: "https://open.bigmodel.cn/api/anthropic", apiKey: "x", models: ["glm-4.6"], tiers: { medium: { model: "glm-4.6", fallback: "" } } }], roleModels: {}, globalModel: null, fallbackChain: [], autoSwitchOnLimit: false, roles: ["planner", "developer", "reviewer", "tester"] };
+    if (u.includes("/models")) return { providers: [
+      // Authenticated → its models ARE available to pickers.
+      { id: "glm-1", name: "GLM (Zhipu)", baseUrl: "https://open.bigmodel.cn/api/anthropic", apiKey: "x", models: ["glm-4.6"], tiers: { medium: { model: "glm-4.6", fallback: "" } }, auth: "apiKey" },
+      // Keyless → auth "missing" → its models MUST NOT appear in any picker.
+      { id: "ds-dead", name: "DeepSeek", baseUrl: "https://api.deepseek.com/anthropic", apiKey: "", models: ["deepseek-chat"], auth: "missing" },
+    ], roleModels: {}, globalModel: null, fallbackChain: [], autoSwitchOnLimit: false, roles: ["planner", "developer", "reviewer", "tester"] };
     if (u.includes("/runner-status")) return { runners: [{ kind: "claude-sdk", label: "Claude Agent SDK (built-in)", binary: null, available: true }, { kind: "pi-cli", label: "pi", binary: "pi", pkg: "@earendil-works/pi-coding-agent", available: false }] };
     return {};
   };

@@ -80,12 +80,16 @@ const PROVIDER_LOGOS = [
   [/qwen/i, "qwen-color"],
   [/openai|gpt|custom/i, "openai"],
 ];
-// Is ANY model actually configured? true iff a provider has ≥1 model OR a Claude credential is saved.
-// (A saved Claude subscription token / Anthropic key counts — Claude-native picks need no providers[]
-// row.) This is the single gate that keeps "Claude" out of the UI when nothing is set up.
+// A provider counts as "available" (its models show in pickers) only when it's authenticated.
+// The backend annotates each row with auth: "apiKey" | "subscription" | "missing" via providerAuth().
+export function authedProviders(data) {
+  return ((data && data.providers) || []).filter((p) => p.auth === "apiKey" || p.auth === "subscription");
+}
+// Is ANY model actually available? true iff ≥1 authenticated provider has models OR a Claude
+// credential is saved (Claude-native picks need no providers[] row).
 export function anyModelSetUp(data) {
   if (!data) return false;
-  if (Array.isArray(data.providers) && data.providers.some((p) => (p.models || []).length > 0)) return true;
+  if (authedProviders(data).some((p) => (p.models || []).length > 0)) return true;
   const keys = data.secretKeys || [];
   return keys.includes("claude_token") || keys.includes("anthropic_api_key");
 }
@@ -634,15 +638,41 @@ export function toModelRef(v) {
   if (typeof v === "string") return v;
   return v.providerId && v.model ? v.providerId + "/" + v.model : "";
 }
-// Flat list of {value:"providerId/model", label, logo, hint} for every model on every provider.
-// `short` → label is just the model id; false → "providerName · model".
+// Flat list of {value:"providerId/model", label, logo, hint} for every model on every AUTHENTICATED
+// provider. A provider's models reach the picker ONLY when auth is "apiKey" or "subscription" — the
+// single rule that keeps unconfigured/keyless providers out of every model menu. `short` → model id.
 export function providerModelOptions(providers, { short = true } = {}) {
-  return (providers || []).flatMap((p) => (p.models || []).map((m) => ({
-    value: p.id + "/" + m,
-    label: short ? m : ((p.name || "") + " · " + m),
-    logo: p.name,
-    hint: p.name,
-  })));
+  return (providers || [])
+    .filter((p) => p.auth === "apiKey" || p.auth === "subscription")
+    .flatMap((p) => (p.models || []).map((m) => ({
+      value: p.id + "/" + m,
+      label: short ? m : ((p.name || "") + " · " + m),
+      logo: p.name,
+      hint: p.name,
+    })));
+}
+
+// Is a configured model ref still offered by its provider? If not, suggest the closest substitute
+// (same tier model if the provider is tiered, else the first available model on that provider).
+// Returns {available, substitute}. Used to warn (never auto-change) when discovery drops a model.
+export function modelAvailability(ref, providers) {
+  const r = typeof ref === "string" ? parseModelRef(ref) : ref;
+  if (!r || !r.providerId) return { available: true, substitute: null };
+  const p = ((providers || []).find((x) => x.id === r.providerId)) || null;
+  // Unknown provider (e.g. deleted, or a tier resolved at run time) — not ours to flag as stale.
+  if (!p) return { available: true, substitute: null };
+  const models = (p && p.models) || [];
+  if (models.includes(r.model)) return { available: true, substitute: null };
+  // Stale: try same-tier slot, else first model on the provider.
+  let substitute = null;
+  if (p && p.tiers) {
+    for (const t of ["high", "medium", "low"]) {
+      const slot = p.tiers[t];
+      if (slot && slot.model && slot.model !== r.model) { substitute = slot.model; break; }
+    }
+  }
+  if (!substitute && models.length) substitute = models[0];
+  return { available: false, substitute };
 }
 // The one true model picker.
 // Props:
@@ -692,8 +722,13 @@ export function ModelSelect({
       onChange(v || "");
     }
   };
-  return html`<${Select} value=${strValue} options=${opts} onChange=${emitVal}
+  // Stale-model warning: the selected model is no longer in its provider's discovered list. Show a
+  // warning chip beside the trigger (and a tooltip suggesting the substitute). Never auto-change it.
+  const stale = strValue ? modelAvailability(strValue, provs) : { available: true, substitute: null };
+  const staleTip = stale.available ? "" : (stale.substitute ? `⚠ ${parseModelRef(strValue).model} no longer available — try ${stale.substitute}` : `⚠ ${parseModelRef(strValue).model} no longer available`);
+  const sel = html`<${Select} value=${strValue} options=${opts} onChange=${emitVal}
     trigger=${trigger} btnClass=${btnClass} menuAlign=${menuAlign} placeholder=${placeholder} disabled=${disabled}/>`;
+  return stale.available ? sel : html`<span style="display:inline-flex;align-items:center;gap:3px">${sel}<span class="tip" data-tip=${staleTip} style="color:var(--amber);display:inline-flex"><${Icon} name="alert" size=${13}/></span></span>`;
 }
 
 // Resolve the provider whose High/Medium/Low tier slots a "tier" pick resolves against: the global
@@ -736,8 +771,13 @@ export function AgentModelPicker({ value, onChange, data, onSetUp, btnClass }) {
     .concat(["high", "medium", "low"]
       .map((t) => ({ value: t, label: tierLabel(t), icon: "layer", logo: tp ? tp.name : "" })))
     .concat(modelOpts.map((o) => ({ value: o.value, label: o.label, logo: o.logo })));
-  return html`<${Select} value=${value || ""} options=${opts} btnClass=${btnClass}
+  // Stale warning only for concrete refs (tier words resolve at run time, so they're never "stale").
+  const isRef = value && value.indexOf("/") > 0;
+  const stale = isRef ? modelAvailability(value, providers) : { available: true, substitute: null };
+  const staleTip = stale.available ? "" : (stale.substitute ? `⚠ ${parseModelRef(value).model} no longer available — try ${stale.substitute}` : `⚠ ${parseModelRef(value).model} no longer available`);
+  const sel = html`<${Select} value=${value || ""} options=${opts} btnClass=${btnClass}
     onChange=${(v) => onChange && onChange(v || "")}/>`;
+  return stale.available ? sel : html`<span style="display:inline-flex;align-items:center;gap:3px">${sel}<span class="tip" data-tip=${staleTip} style="color:var(--amber);display:inline-flex"><${Icon} name="alert" size=${13}/></span></span>`;
 }
 // Centered dialog with a unified header (title, no ✕), scrollable body, and a footer for CTA
 // buttons. Esc and backdrop-click close it. `footer` is the CTA row (e.g. Close + Save).
