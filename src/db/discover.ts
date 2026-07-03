@@ -37,35 +37,29 @@ function modelsEndpoint(baseUrl: string): string {
 /**
  * Discover a provider's available models.
  *
- * Strategy:
- *   - pi-cli provider, OR an HTTP failure on a pi-builtin provider → try `pi --list-models`.
- *   - otherwise (and as the first attempt for anything with a baseUrl + apiKey) → HTTP /v1/models.
- *   - if both attempted and both failed → return the more useful error, empty model list.
+ * Strategy (mutually exclusive paths — a provider is EITHER pi OR HTTP, never both):
+ *   - pi provider (runner === "pi-cli", OR inferPiProvider() matches a pi builtin) → `pi --list-models`
+ *     ONLY. Never the Anthropic-style /v1/models endpoint. pi is the source of truth for its own
+ *     providers' models (https://github.com/earendil-works/pi/tree/main/packages/coding-agent).
+ *   - every other provider with a baseUrl + apiKey → HTTP GET {baseUrl}/v1/models.
  *
- * Never throws. A provider with no baseUrl+apiKey and no pi mapping returns an actionable error.
+ * Never throws. Failures return {models:[], error} and leave the existing list untouched.
  */
 export async function discoverProviderModels(provider: Provider): Promise<DiscoverResult> {
   const pi = inferPiProvider(provider);
-  const wantsPi = provider.runner === "pi-cli" || (pi && !provider.baseUrl);
-  const httpCapable = Boolean(provider.baseUrl && provider.apiKey);
+  const isPiProvider = provider.runner === "pi-cli" || Boolean(pi);
 
-  // pi-first when explicitly requested, or when there's no baseUrl to probe (a pi builtin keyed by name).
-  if (wantsPi && pi) {
-    const r = await viaPi(provider, pi);
-    if (r.models.length || !httpCapable) return r; // pi answered, or HTTP isn't even possible
-    // pi failed but HTTP is possible → fall through to HTTP as a second attempt.
+  // pi provider → pi --list-models ONLY (never the HTTP /v1/models endpoint).
+  if (isPiProvider) {
+    if (!pi) {
+      return { models: [], via: "pi", error: "This provider is set to run via pi but its pi provider name couldn't be inferred — set a base URL or name that matches a pi builtin (e.g. zai, deepseek, kimi)." };
+    }
+    return viaPi(provider, pi);
   }
 
-  if (httpCapable) {
-    const r = await viaHttp(provider);
-    if (r.models.length) return r;
-    // HTTP failed; if this looks like a pi builtin, try pi before giving up.
-    if (!wantsPi && pi && !ANTHROPIC_HOST.test(provider.baseUrl || "")) {
-      const pr = await viaPi(provider, pi);
-      if (pr.models.length) return pr;
-      return { ...r, error: r.error || pr.error };
-    }
-    return r;
+  // Non-pi provider → HTTP /v1/models.
+  if (provider.baseUrl && provider.apiKey) {
+    return viaHttp(provider);
   }
 
   return {
