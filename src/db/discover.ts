@@ -1,105 +1,71 @@
 /**
- * Live model discovery for providers. THE only source of model lists — there is no static catalog.
+ * Live model discovery. pi is the ONLY source of model lists (besides Claude-native, which is keyed
+ * off the saved Claude/Anthropic secret and needs no discovery). pi offers basically every model, so
+ * every non-Claude provider is a pi provider. There is no static catalog and no HTTP /v1/msodels path.
  *
- * Two paths, both live:
- *   1. HTTP  — `GET {baseUrl}/v1/models` (Anthropic/OpenAI-compatible) with x-api-key auth.
- *   2. pi    — `pi --list-models --provider {piProvider} --api-key {apiKey} --mode json` subprocess.
+ *   `pi --list-models --provider {piProvider} --mode json`
+ *
+ * Auth: pi's --list-models does NOT pick the key up from the --api-key flag alone (it prints
+ * "No models available. Use /login"). pi reads credentials from its agent config dir's auth.json, so
+ * we register the key the SAME way a real run does: writePiProviderFiles() writes
+ * ~/.pi-agency/providers/<id>/auth.json (pi's real schema) and we point pi at that dir via
+ * PI_CODING_AGENT_DIR. --api-key is also passed per the docs; the dir registration is what works.
+ * Sources: https://github.com/earendil-works/pi/tree/main/packages/coding-agent#programmatic-usage
  *
  * On success the discovered model ids are persisted into the provider row (by the caller, via
- * setProviders). On failure we return `{models:[], error}` and NEVER throw — the caller leaves the
- * existing list untouched and surfaces the error. There is no silent fallback to any static list.
- *
- * Discovery is triggered on provider add (and on manual "Refresh models"), NOT on every picker open.
+ * setProviders). On failure we return {models:[], error} and NEVER throw — the caller leaves the
+ * existing list untouched. Discovery runs on provider add + manual "Refresh", never on picker open.
  */
 import { spawn } from "node:child_process";
 import type { Provider } from "./providers.js";
-import { inferPiProvider } from "./providers.js";
+import { inferPiProvider, writePiProviderFiles, getPiProviderDir } from "./providers.js";
 
 export interface DiscoverResult {
   models: string[];
   /** Suggested runner for the provider, applied only when the provider has no explicit runner. */
-  runner?: "claude-sdk" | "pi-cli";
-  /** Where the list came from: "live" (HTTP /v1/models) | "pi" (pi --list-models). */
-  via: "live" | "pi";
+  runner?: "pi-cli";
+  /** Always "pi" — pi is the only discovery source. */
+  via: "pi";
   error?: string;
 }
 
-const ANTHROPIC_HOST = /(^|\/\/)(api\.)?anthropic\.com(\/|$)/i;
-
-/** Resolve a provider's /v1/models endpoint URL from its baseUrl (handles trailing slash + /v1 dupes). */
-function modelsEndpoint(baseUrl: string): string {
-  let b = (baseUrl || "").trim().replace(/\/+$/, "");
-  if (!b) return "";
-  if (!/\/v1$/.test(b)) b += "/v1";
-  return b + "/models";
-}
-
 /**
- * Discover a provider's available models.
+ * Discover a provider's available models via `pi --list-models`.
  *
- * Strategy (mutually exclusive paths — a provider is EITHER pi OR HTTP, never both):
- *   - pi provider (runner === "pi-cli", OR inferPiProvider() matches a pi builtin) → `pi --list-models`
- *     ONLY. Never the Anthropic-style /v1/models endpoint. pi is the source of truth for its own
- *     providers' models (https://github.com/earendil-works/pi/tree/main/packages/coding-agent).
- *   - every other provider with a baseUrl + apiKey → HTTP GET {baseUrl}/v1/models.
- *
- * Never throws. Failures return {models:[], error} and leave the existing list untouched.
+ * Never throws. A provider with no resolvable pi provider name returns an actionable error.
  */
 export async function discoverProviderModels(provider: Provider): Promise<DiscoverResult> {
   const pi = inferPiProvider(provider);
-  const isPiProvider = provider.runner === "pi-cli" || Boolean(pi);
-
-  // pi provider → pi --list-models ONLY (never the HTTP /v1/models endpoint).
-  if (isPiProvider) {
-    if (!pi) {
-      return { models: [], via: "pi", error: "This provider is set to run via pi but its pi provider name couldn't be inferred — set a base URL or name that matches a pi builtin (e.g. zai, deepseek, kimi)." };
-    }
-    return viaPi(provider, pi);
+  if (!pi) {
+    return {
+      models: [],
+      via: "pi",
+      error: "Couldn't infer this provider's pi name. Set a base URL or name that matches a pi provider (e.g. zai for GLM, deepseek, kimi).",
+    };
   }
-
-  // Non-pi provider → HTTP /v1/models.
-  if (provider.baseUrl && provider.apiKey) {
-    return viaHttp(provider);
-  }
-
-  return {
-    models: [],
-    via: "live",
-    error: "No base URL + API key set, and no matching pi provider — cannot discover models. Enter a base URL and key, then refresh.",
-  };
+  return viaPi(provider, pi);
 }
 
-/** HTTP path: GET {baseUrl}/v1/models. Anthropic-compatible (x-api-key) and OpenAI-shaped ({data:[]}). */
-async function viaHttp(provider: Provider): Promise<DiscoverResult> {
-  const endpoint = modelsEndpoint(provider.baseUrl);
-  if (!endpoint) return { models: [], via: "live", error: "No base URL set." };
-  const isAnthropic = ANTHROPIC_HOST.test(provider.baseUrl || "");
-  const headers: Record<string, string> = isAnthropic
-    ? { "x-api-key": provider.apiKey, "anthropic-version": "2023-06-01" }
-    : { authorization: `Bearer ${provider.apiKey}` };
-  try {
-    const res = await fetch(endpoint, { headers, signal: AbortSignal.timeout(8000) });
-    if (!res.ok) {
-      return { models: [], via: "live", error: `GET ${endpoint} → HTTP ${res.status}${res.status === 401 || res.status === 403 ? " (auth rejected — check the API key)" : ""}` };
-    }
-    const json = (await res.json()) as { data?: Array<{ id?: string }>; models?: Array<{ id?: string }> };
-    const rows = json.data || json.models || [];
-    const models = rows.map((r) => r.id).filter((m): m is string => Boolean(m && typeof m === "string"));
-    if (!models.length) return { models: [], via: "live", error: `${endpoint} returned no model ids.` };
-    return { models, runner: "claude-sdk", via: "live" };
-  } catch (e) {
-    const msg = (e as Error).message || String(e);
-    return { models: [], via: "live", error: `Couldn't reach ${endpoint} (${msg}). Check the base URL is reachable and Anthropic-compatible.` };
-  }
-}
-
-/** pi path: `pi --list-models --provider {piProvider} --api-key {apiKey} --mode json`. */
+/**
+ * pi path: `pi --list-models --provider {piProvider} --mode json`, with the key registered into pi's
+ * per-provider config dir so pi actually authenticates (not just --api-key, which --list-models ignores).
+ */
 async function viaPi(provider: Provider, piProvider: string): Promise<DiscoverResult> {
-  // Don't hand pi a real baseUrl via --provider; pi knows its builtins' endpoints. We only supply the key.
   const args = ["--mode", "json", "--list-models", "--provider", piProvider];
   if (provider.apiKey) args.push("--api-key", provider.apiKey);
+  // Register the key into pi's isolated per-provider config dir (mirrors the run path). Build a clean
+  // env (string values only) so PI_CODING_AGENT_DIR can be added without TS complaining about
+  // `string | undefined`. Best-effort: on failure we still try — pi may pick the key from --api-key/env.
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) if (typeof v === "string") env[k] = v;
   try {
-    const out = await runPi(args);
+    if (provider.apiKey) {
+      writePiProviderFiles(provider);
+      env.PI_CODING_AGENT_DIR = getPiProviderDir(provider.id);
+    }
+  } catch { /* best-effort — fall through and let pi try --api-key / env */ }
+  try {
+    const out = await runPi(args, env);
     if (out.code !== 0 && !out.stdout.trim()) {
       return { models: [], via: "pi", error: `pi --list-models exited ${out.code}${out.stderr.trim() ? ": " + out.stderr.trim().slice(0, 200) : ""}` };
     }
@@ -113,10 +79,10 @@ async function viaPi(provider: Provider, piProvider: string): Promise<DiscoverRe
 
 interface PiRun { code: number; stdout: string; stderr: string; }
 
-/** Spawn pi with the given args and collect stdout/stderr + exit code. */
-function runPi(args: string[]): Promise<PiRun> {
+/** Spawn pi with the given args (+ env override) and collect stdout/stderr + exit code. */
+function runPi(args: string[], env?: Record<string, string>): Promise<PiRun> {
   return new Promise((resolve) => {
-    const proc = spawn("pi", args, { shell: false });
+    const proc = spawn("pi", args, { shell: false, env: env ?? process.env });
     let stdout = "";
     let stderr = "";
     proc.stdout.on("data", (c: Buffer) => (stdout += c.toString()));
