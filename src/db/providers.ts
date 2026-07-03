@@ -6,7 +6,8 @@
  */
 import { getDb } from "./connection.js";
 import { getSetting, setSetting } from "./settings.js";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -82,6 +83,9 @@ export function getProviders(): Provider[] {
 }
 export function setProviders(list: Provider[]): void {
   setSetting("providers", JSON.stringify(list ?? []));
+  for (const p of list) {
+    if (p.runner === "pi-cli" && p.apiKey) writePiProviderFiles(p);
+  }
 }
 
 export function getRoleModels(): Record<string, { providerId: string; model: string }> {
@@ -201,6 +205,48 @@ export function tierModel(providerId: string, tier: Tier): { providerId: string;
 export function parseModelRef(ref: string | undefined | null): { providerId: string; model: string } | null {
   if (!ref) return null; const i = ref.indexOf("/"); if (i <= 0) return null;
   return { providerId: ref.slice(0, i), model: ref.slice(i + 1) };
+}
+
+/**
+ * pi's built-in provider keys. When the resolved provider maps to one of these, pi already knows
+ * its endpoint + model catalog — we only need to supply the API key via auth.json.
+ */
+export const BUILTIN_PI_PROVIDERS = new Set(["zai", "anthropic", "openai", "google", "deepseek", "kimi-coding", "openrouter"]);
+
+/** Permanent per-provider dir for pi's agent config (auth.json / models.json). Used as PI_CODING_AGENT_DIR. */
+export function getPiProviderDir(providerId: string): string {
+  return join(homedir(), ".pi-agency", "providers", providerId);
+}
+
+/**
+ * Write (or refresh) pi's auth.json + optional models.json into the provider's permanent config dir.
+ * Called at save time (setProviders) and as a safety net before each pi run (preparePiConfig).
+ * Writing once at save time avoids per-run temp dir creation/cleanup and concurrent-run I/O.
+ */
+export function writePiProviderFiles(provider: Provider): void {
+  if (!provider.apiKey) return;
+  const piProvider = inferPiProvider(provider) || "dev-agency-custom";
+  const dir = getPiProviderDir(provider.id);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, "auth.json"),
+    JSON.stringify({ [piProvider]: { type: "api_key", key: provider.apiKey } }, null, 2),
+  );
+  if (!BUILTIN_PI_PROVIDERS.has(piProvider) && provider.baseUrl) {
+    writeFileSync(
+      join(dir, "models.json"),
+      JSON.stringify({
+        providers: {
+          [piProvider]: {
+            baseUrl: provider.baseUrl,
+            api: "anthropic-messages",
+            apiKey: provider.apiKey,
+            models: provider.models.map((id) => ({ id, name: id })),
+          },
+        },
+      }, null, 2),
+    );
+  }
 }
 
 /**
