@@ -5,13 +5,8 @@ import { Settings, GitHubConnect } from "./settings.js";
 
 
 // ---------- onboarding wizard ----------
-let modelsConfig = {
-  "Gemini": ["gemini-3.5-flash", "gemini-3.5-pro", "gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-pro", "gemini-1.5-flash"],
-  "GLM (Zhipu)": ["glm-5.2", "glm-5.1", "glm-4.6", "glm-4.5"],
-  "DeepSeek": ["deepseek-chat", "deepseek-reasoner"],
-  "Kimi (Moonshot)": ["kimi-k2-0905-preview"]
-};
-getJSON("/web/models.json").then((m) => { if (m) modelsConfig = m; }).catch(() => {});
+// There is no static model catalog. Provider presets here are URL SHORTCUTS only (name + baseUrl to
+// prefill the form); the model list is always discovered live from the provider on add/refresh.
 
 export const OB_PROVIDERS = [
   { id: "claude_sub", label: "Claude — subscription", note: "Recommended · runs agents on your plan", icon: "crown", kind: "secret", secretKey: "claude_token",
@@ -23,24 +18,24 @@ export const OB_PROVIDERS = [
     how: "Pay-as-you-go billing instead of a subscription.\n\n1. Open platform.claude.com → API keys.\n2. Create a key.\n3. Paste it below.",
     link: "https://platform.claude.com/settings/keys", linkLabel: "Create an API key" },
   { id: "gemini", label: "Gemini", note: "needs an Anthropic-compatible proxy", icon: "globe", kind: "provider",
-    preset: { name: "Gemini (via proxy)", baseUrl: "", get models() { return modelsConfig["Gemini"] || []; } },
+    preset: { name: "Gemini (via proxy)", baseUrl: "" },
     title: "Gemini base URL + key", placeholder: "AIza...",
     how: "Google has no native Anthropic-format endpoint, so the agent SDK can't call Gemini directly. Run an Anthropic-compatible gateway (e.g. LiteLLM) and paste its base URL in Settings → Models. GLM, DeepSeek and Kimi work without a proxy.",
     link: "https://aistudio.google.com/app/apikey", linkLabel: "Create a Gemini API key" },
   { id: "glm", label: "GLM (Zhipu)", note: "Cheap coding model", icon: "globe", kind: "provider",
-    preset: { name: "GLM (Zhipu)", baseUrl: "https://open.bigmodel.cn/api/anthropic", get models() { return modelsConfig["GLM (Zhipu)"] || []; } },
+    preset: { name: "GLM (Zhipu)", baseUrl: "https://open.bigmodel.cn/api/anthropic" },
     title: "GLM API key", placeholder: "GLM API key",
-    how: "An Anthropic-compatible endpoint, good for the cheaper roles.\n\n1. Get an API key from open.bigmodel.cn (Zhipu).\n2. Paste it below.\n\nAfter setup, assign GLM to specific agents in Settings → Models.",
+    how: "An Anthropic-compatible endpoint, good for the cheaper roles.\n\n1. Get an API key from open.bigmodel.cn (Zhipu).\n2. Paste it below.\n\nAfter setup, the available models are discovered live; assign GLM to specific agents in Settings → Models.",
     link: "https://open.bigmodel.cn/usercenter/apikeys", linkLabel: "Create a GLM API key" },
   { id: "deepseek", label: "DeepSeek", note: "", icon: "globe", kind: "provider",
-    preset: { name: "DeepSeek", baseUrl: "https://api.deepseek.com/anthropic", get models() { return modelsConfig["DeepSeek"] || []; } },
+    preset: { name: "DeepSeek", baseUrl: "https://api.deepseek.com/anthropic" },
     title: "DeepSeek API key", placeholder: "DeepSeek API key",
-    how: "1. Get an API key from platform.deepseek.com.\n2. Paste it below.\n\nAssign it to agents later in Settings → Models.",
+    how: "1. Get an API key from platform.deepseek.com.\n2. Paste it below.\n\nAvailable models are discovered live; assign it to agents later in Settings → Models.",
     link: "https://platform.deepseek.com/api_keys", linkLabel: "Create a DeepSeek API key" },
   { id: "kimi", label: "Kimi (Moonshot)", note: "", icon: "globe", kind: "provider",
-    preset: { name: "Kimi (Moonshot)", baseUrl: "https://api.moonshot.cn/anthropic", get models() { return modelsConfig["Kimi (Moonshot)"] || []; } },
+    preset: { name: "Kimi (Moonshot)", baseUrl: "https://api.moonshot.cn/anthropic" },
     title: "Kimi API key", placeholder: "Kimi API key",
-    how: "1. Get an API key from platform.moonshot.cn.\n2. Paste it below.\n\nAssign it to agents later in Settings → Models.",
+    how: "1. Get an API key from platform.moonshot.cn.\n2. Paste it below.\n\nAvailable models are discovered live; assign it to agents later in Settings → Models.",
     link: "https://platform.moonshot.cn/console/api-keys", linkLabel: "Create a Kimi API key" },
   { id: "other", label: "Other (Custom)", note: "Needs a router", icon: "settings", kind: "provider", custom: true,
     title: "Custom provider", placeholder: "API key",
@@ -71,8 +66,11 @@ function ObTokenStep({ def, existing, onDone, onBack }) {
     : "";
   function storeVal() {
     if (def.kind === "secret") return api("/user-secret", { key: def.secretKey, value: v });
-    const prov = { id: def.id + "-" + Date.now().toString(36), name: def.preset?.name || "Custom", baseUrl: def.custom ? baseUrl.trim() : def.preset.baseUrl, apiKey: v, models: def.preset?.models || [] };
-    return api("/models", { providers: (existing || []).concat(prov) });
+    const prov = { id: def.id + "-" + Date.now().toString(36), name: def.preset?.name || "Custom", baseUrl: def.custom ? baseUrl.trim() : def.preset.baseUrl, apiKey: v, models: [] };
+    // Save, then discover models live from the provider's /v1/models (best-effort — never blocks).
+    return api("/models", { providers: (existing || []).concat(prov) }).then(() =>
+      api("/discover-models", { id: prov.id }).catch(() => {}),
+    );
   }
   function save() {
     if (!v) { toast(def.optional ? "Paste a token or Skip" : "Paste the token"); return; }
@@ -131,8 +129,11 @@ function ObAddModels({ onNext, onBack }) {
     const fail = () => { setBusy(false); toast("Couldn’t save", "error"); };
     if (def.kind === "secret") api("/user-secret", { key: def.secretKey, value: val.trim() }).then(done).catch(fail);
     else {
-      const prov = { id: def.id + "-" + Date.now().toString(36), name: def.preset?.name || "Custom", baseUrl: def.custom ? baseUrl.trim() : def.preset.baseUrl, apiKey: val.trim(), models: def.preset?.models || [] };
-      api("/models", { providers: providers.concat(prov) }).then(done).catch(fail);
+      const prov = { id: def.id + "-" + Date.now().toString(36), name: def.preset?.name || "Custom", baseUrl: def.custom ? baseUrl.trim() : def.preset.baseUrl, apiKey: val.trim(), models: [] };
+      api("/models", { providers: providers.concat(prov) }).then(() =>
+        // Discover models live after adding (best-effort). Then run `done`.
+        api("/discover-models", { id: prov.id }).catch(() => {}),
+      ).then(done).catch(fail);
     }
   }
   return html`

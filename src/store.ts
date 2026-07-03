@@ -32,7 +32,7 @@ export type { AutoKind, AutoValue } from "./db/auto.js";
 export { upsertSkill, getSkill, listSkills, deleteSkill, skillsPrompt, upsertHook, listHooks, deleteHook, seedLibrary } from "./db/skills_hooks.js";
 export type { Skill, Hook } from "./db/skills_hooks.js";
 export {
-  getModelsPresets, getProviders, setProviders, getRoleModels, setRoleModels,
+  getProviders, setProviders, getRoleModels, setRoleModels,
   getGlobalModel, setGlobalModel, setSessionFallback, clearSessionFallback, getSessionFallback,
   getFallbackChain, setFallbackChain, getAutoSwitchOnLimit,
   setIssueModelOverride, getIssueModelOverride, clearIssueModelOverride,

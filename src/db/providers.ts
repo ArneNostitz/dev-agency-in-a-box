@@ -1,15 +1,17 @@
 /**
  * LLM providers, model assignments, fallback chain, and per-issue model overrides.
- * Extracted from store.ts (Candidate 3, #70). Depends on settings (getSetting/setSetting)
- * and reads web/models.json for presets. NOTE: the models.json path is relative to this
- * file (src/db/), so it's ../../web/models.json.
+ * Extracted from store.ts (Candidate 3, #70). Depends on settings (getSetting/setSetting).
+ *
+ * There is NO static model catalog here. A provider's `models[]` is populated by LIVE discovery
+ * (src/db/discover.ts: HTTP /v1/models or `pi --list-models`) on add/refresh, and persisted into
+ * the provider row. The DB (settings → "providers") is the single source of truth for what's
+ * configured; discovery just fills the model lists.
  */
 import { getDb } from "./connection.js";
 import { getSetting, setSetting } from "./settings.js";
-import { readFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 
 export type Tier = "high" | "medium" | "low";
 /** A model tier slot: which model + its graceful-fallback (a "providerId/model" string, "" = none). */
@@ -42,41 +44,9 @@ export interface Provider {
   runnerConfig?: Record<string, unknown>;
 }
 
-let _modelsPresetCache: Record<string, string[]> | null = null;
-export function getModelsPresets(): Record<string, string[]> {
-  if (_modelsPresetCache) return _modelsPresetCache;
-  try {
-    const filePath = join(dirname(fileURLToPath(import.meta.url)), "../../web/models.json");
-    if (existsSync(filePath)) {
-      _modelsPresetCache = JSON.parse(readFileSync(filePath, "utf8")) as Record<string, string[]>;
-      return _modelsPresetCache;
-    }
-  } catch {
-    /* ignore */
-  }
-  return {
-    "Claude (Subscription)": ["claude-opus-4-8", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"],
-    "Gemini": ["gemini-3.5-flash", "gemini-3.5-pro", "gemini-2.5-flash", "gemini-2.5-pro", "gemini-1.5-pro", "gemini-1.5-flash"],
-    "GLM (Zhipu)": ["glm-5.2", "glm-5.1", "glm-4.6", "glm-4.5"],
-    "DeepSeek": ["deepseek-chat", "deepseek-reasoner"],
-    "Kimi (Moonshot)": ["kimi-k2-0905-preview"]
-  };
-}
-
 export function getProviders(): Provider[] {
   try {
-    const list = JSON.parse(getSetting("providers") ?? "[]") as Provider[];
-    const presets = getModelsPresets();
-    for (const p of list) {
-      const presetModels = presets[p.name];
-      if (presetModels && presetModels.length) {
-        const missing = presetModels.filter((m) => !p.models.includes(m));
-        if (missing.length > 0) {
-          p.models = [...missing, ...p.models];
-        }
-      }
-    }
-    return list;
+    return JSON.parse(getSetting("providers") ?? "[]") as Provider[];
   } catch {
     return [];
   }

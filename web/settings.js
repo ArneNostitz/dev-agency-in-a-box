@@ -272,6 +272,8 @@ export function ModelsModal({ onClose, reload }) {
 // (setProviders stores it wholesale), so a Save here just rewrites the provider in the list.
 function ProviderEditor({ provider, all, onClose, onSave }) {
   const [f, setF] = useState(() => ({ ...provider }));
+  const [discovering, setDiscovering] = useState(false);
+  const [discoverMsg, setDiscoverMsg] = useState("");
   const set = (k, v) => setF((o) => ({ ...o, [k]: v }));
   // tiers live under f.tiers = { high:{model,fallback}, medium:{...}, low:{...} } — all optional.
   const tiers = f.tiers || {};
@@ -279,12 +281,32 @@ function ProviderEditor({ provider, all, onClose, onSave }) {
   const modelList = (f.models || []);
   const TIER_OPTS = [{ value: "", label: "(none)" }].concat(modelList.map((m) => ({ value: m, label: m })));
   const RUNNER_OPTS = [{ value: "", label: "SDK (in-process)" }, { value: "pi-cli", label: "pi CLI" }, { value: "claude-cli", label: "claude CLI" }, { value: "custom-cli", label: "Custom CLI" }];
-  function save() {
+  function cleanedForm() {
     // Drop empty tiers entirely so we don't persist {model:""} noise.
     const cleanTiers = {};
     for (const t of ["high", "medium", "low"]) { const s = (f.tiers || {})[t]; if (s && s.model) cleanTiers[t] = { model: s.model, fallback: s.fallback || "" }; }
-    const cleaned = { ...f, models: modelList.filter(Boolean), tiers: Object.keys(cleanTiers).length ? cleanTiers : undefined };
-    onSave(all.map((p) => (p.id === provider.id ? cleaned : p)));
+    return { ...f, models: modelList.filter(Boolean), tiers: Object.keys(cleanTiers).length ? cleanTiers : undefined };
+  }
+  function save() {
+    onSave(all.map((p) => (p.id === provider.id ? cleanedForm() : p)));
+  }
+  // Save the current form, then run live model discovery against the saved provider and pull the
+  // refreshed models back into the form. Shows where the list came from (live/pi) or the error.
+  function refreshModels() {
+    if (discovering) return;
+    if (!f.baseUrl || !f.apiKey) { setDiscoverMsg("Enter a base URL + API key first."); return; }
+    setDiscovering(true); setDiscoverMsg("Saving & discovering…");
+    const cleaned = cleanedForm();
+    api("/models", { providers: all.map((p) => (p.id === provider.id ? cleaned : p)) }).then(() =>
+      api("/discover-models", { id: provider.id }),
+    ).then((r) => {
+      if (r && r.ok) {
+        setF((o) => ({ ...o, models: r.models || [], ...(o.runner ? {} : r.runner ? { runner: r.runner } : {}) }));
+        setDiscoverMsg("Discovered " + (r.models || []).length + " models (via " + r.via + ").");
+      } else {
+        setDiscoverMsg(r && r.error ? "Couldn't discover: " + r.error : "No models discovered.");
+      }
+    }).catch(() => setDiscoverMsg("Couldn't discover models.")).then(() => setDiscovering(false));
   }
   return html`<${Modal} title=${"Edit " + (provider.name || "provider")} size="lg" onClose=${onClose} footer=${html`<button class="btn" onClick=${onClose}>Cancel</button><button class="btn primary" onClick=${save}>Save</button>`}>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
@@ -296,8 +318,11 @@ function ProviderEditor({ provider, all, onClose, onSave }) {
     ${f.runner === "pi-cli" ? html`<div><label>pi provider <span class="muted" style="font-weight:400">(pi's own builtin name, e.g. zai; blank = auto from URL)</span></label><input value=${f.piProvider || ""} placeholder="zai (auto)" onInput=${(e) => set("piProvider", e.target.value)}/></div>` : null}
     ${(f.runner === "custom-cli" || f.runner === "pi-cli" || f.runner === "claude-cli") ? html`<div><label>CLI command template <span class="muted" style="font-weight:400">(placeholders: {model} {systemPrompt} {task} {workdir} {piProvider})</span></label><input value=${f.cliCommand || ""} placeholder="blank = built-in default" onInput=${(e) => set("cliCommand", e.target.value)}/></div>` : null}
 
-    <div class="sec" style="margin-top:16px">Models</div>
-    <div class="muted" style="font-size:11px;margin:0 0 6px">One per line. These are the ids passed to the runner (e.g. glm-5.2, claude-sonnet-4-6).</div>
+    <div class="sec" style="margin-top:16px;display:flex;align-items:center;gap:8px"><span>Models</span>
+      <button class="btn ghost" style="padding:3px 10px;font-size:12px;margin-left:auto" disabled=${discovering} onClick=${refreshModels}>${discovering ? html`<${Spinner} size=${12}/> Discovering…` : html`<${Icon} name="refresh" size=${12}/> Refresh from provider`}</button>
+    </div>
+    <div class="muted" style="font-size:11px;margin:0 0 6px">Discovered live from the provider's /v1/models (or <code>pi --list-models</code>). Editable below — one id per line.</div>
+    ${discoverMsg ? html`<div class=${"testres " + (/discovered/i.test(discoverMsg) ? "good" : "bad")} style="margin-bottom:6px">${discoverMsg}</div>` : null}
     <textarea style="min-height:80px;font-family:inherit" value=${modelList.join("\n")} onInput=${(e) => set("models", e.target.value.split("\n"))}></textarea>
 
     <div class="sec" style="margin-top:16px">Tiers <span class="muted" style="text-transform:none;font-weight:400">— High / Medium / Low model slots + each one's graceful fallback</span></div>
@@ -327,8 +352,15 @@ function AddProvider({ existing, onClose, onSaved }) {
     }
     if (def.custom && !baseUrl.trim()) { toast("Enter the base URL"); return; }
     if (!val.trim()) { toast("Paste the API key"); return; }
-    const prov = { id: def.id + "-" + Date.now().toString(36), name: def.preset && def.preset.name ? def.preset.name : "Custom", baseUrl: def.custom ? baseUrl.trim() : def.preset.baseUrl, apiKey: val.trim(), models: (def.preset && def.preset.models) || [] };
-    api("/models", { providers: (existing || []).concat(prov) }).then(() => { toast("Added " + prov.name); onSaved(); }).catch(() => toast("Couldn’t save", "error"));
+    const prov = { id: def.id + "-" + Date.now().toString(36), name: def.preset && def.preset.name ? def.preset.name : "Custom", baseUrl: def.custom ? baseUrl.trim() : def.preset.baseUrl, apiKey: val.trim(), models: [] };
+    api("/models", { providers: (existing || []).concat(prov) }).then(() => {
+      toast("Added " + prov.name + " — discovering models…");
+      // Live discovery: fetch the provider's /v1/models (or pi --list-models) and persist the list.
+      api("/discover-models", { id: prov.id })
+        .then((r) => { toast(r && r.ok ? "Discovered " + (r.models || []).length + " models (via " + r.via + ")" : (r && r.error ? "Couldn't discover models: " + r.error : "No models discovered"), r && r.ok ? "" : "error"); })
+        .catch(() => toast("Couldn't discover models", "error"))
+        .then(onSaved);
+    }).catch(() => toast("Couldn’t save", "error"));
   }
   return html`<${Modal} title="Add provider" size="sm" onClose=${onClose} footer=${html`<button class="btn" onClick=${onClose}>Cancel</button><button class="btn primary" onClick=${save}>Add</button>`}>
     <label>Provider</label>
