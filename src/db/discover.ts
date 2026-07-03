@@ -3,7 +3,7 @@
  * off the saved Claude/Anthropic secret and needs no discovery). pi offers basically every model, so
  * every non-Claude provider is a pi provider. There is no static catalog and no HTTP /v1/msodels path.
  *
- *   `pi --list-models --provider {piProvider} --mode json`
+ *   `pi --list-models --provider {piProvider}`
  *
  * Auth: pi's --list-models does NOT pick the key up from the --api-key flag alone (it prints
  * "No models available. Use /login"). pi reads credentials from its agent config dir's auth.json, so
@@ -47,11 +47,12 @@ export async function discoverProviderModels(provider: Provider): Promise<Discov
 }
 
 /**
- * pi path: `pi --list-models --provider {piProvider} --mode json`, with the key registered into pi's
- * per-provider config dir so pi actually authenticates (not just --api-key, which --list-models ignores).
+ * pi path: `pi --list-models --provider {piProvider}`, with the key registered into pi's per-provider
+ * config dir so pi actually authenticates (not just --api-key, which --list-models ignores).
  */
 async function viaPi(provider: Provider, piProvider: string): Promise<DiscoverResult> {
-  const args = ["--mode", "json", "--list-models", "--provider", piProvider];
+  // --mode only affects run output, not --list-models (pi prints a table regardless). Omit it.
+  const args = ["--list-models", "--provider", piProvider];
   if (provider.apiKey) args.push("--api-key", provider.apiKey);
   // Register the key into pi's isolated per-provider config dir (mirrors the run path). Build a clean
   // env (string values only) so PI_CODING_AGENT_DIR can be added without TS complaining about
@@ -66,10 +67,11 @@ async function viaPi(provider: Provider, piProvider: string): Promise<DiscoverRe
   } catch { /* best-effort — fall through and let pi try --api-key / env */ }
   try {
     const out = await runPi(args, env);
-    if (out.code !== 0 && !out.stdout.trim()) {
+    // pi prints the model table to BOTH stdout and stderr; parse whichever has content.
+    const models = parsePiModels(out.stdout || out.stderr);
+    if (out.code !== 0 && !models.length) {
       return { models: [], via: "pi", error: `pi --list-models exited ${out.code}${out.stderr.trim() ? ": " + out.stderr.trim().slice(0, 200) : ""}` };
     }
-    const models = parsePiModels(out.stdout);
     if (!models.length) return { models: [], via: "pi", error: `pi --list-models returned no models.${out.stderr.trim() ? " " + out.stderr.trim().slice(0, 200) : ""}` };
     return { models, runner: "pi-cli", via: "pi" };
   } catch (e) {
@@ -93,19 +95,36 @@ function runPi(args: string[], env?: Record<string, string>): Promise<PiRun> {
 }
 
 /**
- * Parse `pi --list-models --mode json` output. pi prints a JSON array of model objects (each with an
- * `id`/`name`) or, in some builds, one JSON object per line. Accept both; fall back to splitting
- * trimmed non-empty lines when the output isn't JSON.
+ * Parse `pi --list-models` output. pi prints a space-aligned TABLE (verified against pi 0.79.6):
+ *
+ *   provider  model         context  max-out  thinking  images
+ *   zai       glm-4.5-air   131.1K   98.3K    yes       no
+ *   zai       glm-4.7       204.8K   131.1K   yes       no
+ *   ...
+ *
+ * The model id is the 2nd whitespace-separated column. `--mode` does NOT change this (it only affects
+ * run output). We skip the header row and any separator lines, and take column 2 of each data row.
+ * Also accepts a JSON array (future-proofing) and a bare one-id-per-line format as last resorts.
  */
-function parsePiModels(stdout: string): string[] {
-  const text = stdout.trim();
-  if (!text) return [];
+function parsePiModels(text: string): string[] {
+  const t = (text || "").trim();
+  if (!t) return [];
+  // Try JSON first (a future pi build may emit structured output).
   try {
-    const parsed = JSON.parse(text);
+    const parsed = JSON.parse(t);
     const arr = Array.isArray(parsed) ? parsed : Array.isArray((parsed as { models?: unknown[] }).models) ? (parsed as { models: unknown[] }).models : [];
-    return arr.map((r) => (r as { id?: string; name?: string }).id || (r as { name?: string }).name).filter((m): m is string => Boolean(m));
-  } catch {
-    // Not JSON — treat each non-empty line as a model id (pi's non-json list format).
-    return text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    const fromJson = arr.map((r) => (r as { id?: string; name?: string }).id || (r as { name?: string }).name).filter((m): m is string => Boolean(m));
+    if (fromJson.length) return fromJson;
+  } catch { /* not JSON — fall through to the table parser */ }
+  // pi's actual format: a space-separated table; model id is the 2nd column. Skip the header row.
+  const lines = t.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const models: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const cols = lines[i].split(/\s+/);
+    // Header row: "provider model context max-out thinking images" — skip it.
+    if (i === 0 && cols[0] === "provider" && cols[1] === "model") continue;
+    // Data row: take column 2 (the model id). Guard against short/separator rows.
+    if (cols.length >= 2 && cols[1] && !/^[-=]+$/.test(cols[1])) models.push(cols[1]);
   }
+  return models;
 }
