@@ -1,0 +1,61 @@
+// Onboarding provider presets — static catalog data, extracted here to break the settings↔onboarding
+// import cycle. Both settings.js and onboarding.js import this from ../data/providers.js.
+//
+// There is no static model catalog. Each provider preset carries its `piKey` — pi's own built-in
+// provider name (per pi's docs/providers.md auth.json table). pi knows each provider's endpoint +
+// model catalog. The user picks a provider + pastes a key; the app writes it (merged) into pi's real
+// ~/.pi/agent/auth.json and discovers models via `pi --list-models --provider <piKey>`.
+
+export const OB_PROVIDERS = [
+  { id: "claude_sub", label: "Claude — subscription", icon: "crown", kind: "secret", secretKey: "claude_token",
+    title: "Claude subscription token", placeholder: "paste the setup-token output",
+    how: "Runs the agents on your existing Claude plan — no per-token billing.\n\n1. Install the CLI:\n   npm i -g @anthropic-ai/claude-code\n2. Generate a token:\n   claude setup-token\n3. Log in with your Claude plan when the browser opens.\n4. Paste the token it prints below.",
+    link: "https://docs.claude.com/en/docs/claude-code", linkLabel: "Claude Code docs" },
+  { id: "claude_api", label: "Claude — API key", icon: "flask", kind: "secret", secretKey: "anthropic_api_key",
+    title: "Claude API key", placeholder: "sk-ant-...",
+    how: "Pay-as-you-go billing instead of a subscription.\n\n1. Open platform.claude.com → API keys.\n2. Create a key.\n3. Paste it below.",
+    link: "https://platform.claude.com/settings/keys", linkLabel: "Create an API key" },
+  // pi builtins (piKey = pi's auth.json key). pi knows the endpoint + catalog for each.
+  { id: "google", piKey: "google", label: "Gemini (Google)", icon: "globe", kind: "provider",
+    placeholder: "AIza…", link: "https://aistudio.google.com/app/apikey", linkLabel: "Create a Gemini API key",
+    how: "1. Create a Gemini API key at aistudio.google.com.\n2. Paste it below. Models are discovered live." },
+  { id: "glm", piKey: "zai", label: "GLM (Zhipu / Z.AI)", icon: "globe", kind: "provider",
+    placeholder: "GLM API key", link: "https://open.bigmodel.cn/usercenter/apikeys", linkLabel: "Create a GLM API key",
+    how: "1. Get an API key from open.bigmodel.cn (Zhipu) or z.ai.\n2. Paste it below." },
+  { id: "deepseek", piKey: "deepseek", label: "DeepSeek", icon: "globe", kind: "provider",
+    placeholder: "DeepSeek API key", link: "https://platform.deepseek.com/api_keys", linkLabel: "Create a DeepSeek API key",
+    how: "1. Get an API key from platform.deepseek.com.\n2. Paste it below." },
+  { id: "kimi", piKey: "kimi-coding", label: "Kimi (Moonshot)", icon: "globe", kind: "provider",
+    placeholder: "Kimi API key", link: "https://platform.moonshot.cn/console/api-keys", linkLabel: "Create a Kimi API key",
+    how: "1. Get an API key from platform.moonshot.cn.\n2. Paste it below." },
+  { id: "openai", piKey: "openai", label: "OpenAI", icon: "globe", kind: "provider",
+    placeholder: "sk-…", link: "https://platform.openai.com/api-keys", linkLabel: "Create an OpenAI API key",
+    how: "1. Get an API key from platform.openai.com.\n2. Paste it below." },
+  { id: "openrouter", piKey: "openrouter", label: "OpenRouter", icon: "globe", kind: "provider",
+    placeholder: "sk-or-…", link: "https://openrouter.ai/keys", linkLabel: "Create an OpenRouter API key",
+    how: "1. Get a key from openrouter.ai.\n2. Paste it below. OpenRouter routes to many providers." },
+  { id: "xai", piKey: "xai", label: "xAI (Grok)", icon: "globe", kind: "provider",
+    placeholder: "xAI API key", link: "https://x.ai/api", linkLabel: "Create an xAI API key",
+    how: "1. Get a key from x.ai.\n2. Paste it below." },
+  { id: "mistral", piKey: "mistral", label: "Mistral", icon: "globe", kind: "provider",
+    placeholder: "Mistral API key", link: "https://console.mistral.ai/api-keys", linkLabel: "Create a Mistral API key",
+    how: "1. Get a key from console.mistral.ai.\n2. Paste it below." },
+  { id: "groq", piKey: "groq", label: "Groq", icon: "globe", kind: "provider",
+    placeholder: "Groq API key", link: "https://console.groq.com/keys", linkLabel: "Create a Groq API key",
+    how: "1. Get a key from console.groq.com.\n2. Paste it below." },
+  { id: "cerebras", piKey: "cerebras", label: "Cerebras", icon: "globe", kind: "provider",
+    placeholder: "Cerebras API key", link: "https://cloud.cerebras.ai", linkLabel: "Create a Cerebras API key",
+    how: "1. Get a key from cloud.cerebras.ai.\n2. Paste it below." },
+  { id: "together", piKey: "together", label: "Together AI", icon: "globe", kind: "provider",
+    placeholder: "Together API key", link: "https://api.together.xyz/settings/api-keys", linkLabel: "Create a Together API key",
+    how: "1. Get a key from api.together.xyz.\n2. Paste it below." },
+  { id: "fireworks", piKey: "fireworks", label: "Fireworks", icon: "globe", kind: "provider",
+    placeholder: "Fireworks API key", link: "https://fireworks.ai/account/api-keys", linkLabel: "Create a Fireworks API key",
+    how: "1. Get a key from fireworks.ai.\n2. Paste it below." },
+  { id: "nvidia", piKey: "nvidia", label: "NVIDIA NIM", icon: "globe", kind: "provider",
+    placeholder: "nvapi-…", link: "https://build.nvidia.com", linkLabel: "Create an NVIDIA API key",
+    how: "1. Get a key from build.nvidia.com.\n2. Paste it below." },
+  { id: "minimax", piKey: "minimax", label: "MiniMax", icon: "globe", kind: "provider",
+    placeholder: "MiniMax API key", link: "https://platform.minimaxi.com", linkLabel: "Create a MiniMax API key",
+    how: "1. Get a key from platform.minimaxi.com.\n2. Paste it below." },
+];
