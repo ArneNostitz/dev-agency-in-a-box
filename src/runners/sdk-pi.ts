@@ -101,18 +101,25 @@ export class PiSdkRunner implements AgentRunner {
     // 2. Resource loader carries OUR system prompt. createAgentSession has no systemPrompt option,
     //    so this is the official path. We disable pi's own context/extension/skill/theme discovery
     //    (noContextFiles/noExtensions/…) for deterministic autonomous runs — the agency provides the
-    //    full system prompt and tool list. Trust prompts never fire because no extensions load.
-    //    Re-enable extensions here when the agency grows a pi-extension story.
-    const resourceLoader = new DefaultResourceLoader({
-      cwd: req.cwd,
-      agentDir: getAgentDir(),
-      systemPrompt: req.systemPrompt,
-      noContextFiles: true,
-      noExtensions: true,
-      noSkills: true,
-      noPromptTemplates: true,
-      noThemes: true,
-    });
+      //    full system prompt and tool list. Trust prompts never fire because no extensions load.
+      //    Re-enable extensions here when the agency grows a pi-extension story.
+      //
+      //    CRITICAL: reload() MUST be called after construction. DefaultResourceLoader stores the
+      //    raw `systemPrompt` option in `systemPromptSource` but only resolves it into the usable
+      //    `systemPrompt` field inside reload(). createAgentSession skips its own reload() when a
+      //    loader is supplied (it assumes the caller already reloaded), so without this call pi runs
+      //    with an EMPTY system prompt — the planner produces no plans, every role loses its persona.
+      const resourceLoader = new DefaultResourceLoader({
+        cwd: req.cwd,
+        agentDir: getAgentDir(),
+        systemPrompt: req.systemPrompt,
+        noContextFiles: true,
+        noExtensions: true,
+        noSkills: true,
+        noPromptTemplates: true,
+        noThemes: true,
+      });
+      await resourceLoader.reload();
 
     // 3. In-memory session — the agency persists resume ids itself (sessions table), so pi's own
     //    session files aren't needed.

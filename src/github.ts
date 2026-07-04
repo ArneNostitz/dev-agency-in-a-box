@@ -1168,23 +1168,27 @@ export interface MergeStatus {
   state: string; // OPEN | MERGED | CLOSED
   /** "clean" = no conflicts & can merge; "conflict" = needs a merge/rebase; "unknown" otherwise. */
   mergeable: "clean" | "conflict" | "unknown";
+  /** True if the PR was merged into the base branch (the dashboard hides the Merge button when set). */
+  merged: boolean;
 }
 
 /**
  * Ask GitHub whether a branch's PR can merge cleanly (conflict detection). Used by the dashboard
- * to decide between "merge" vs "fix" — no agent/tokens, just one `gh` API read.
+ * to decide between "merge" vs "fix" — no agent/tokens, just one `gh` API read. Queries ALL states
+ * (not just open) so a merged PR is detected — the dashboard hides the Merge button when merged=true.
  */
 export async function prMergeStatus(repo: string, branch: string): Promise<MergeStatus | null> {
   const out = await gh([
-    "pr", "list", "--repo", repo, "--head", branch, "--state", "open",
+    "pr", "list", "--repo", repo, "--head", branch, "--state", "all",
     "--json", "number,state,mergeable", "--limit", "1",
   ]).catch(() => "[]");
   const raw = JSON.parse(out) as Array<{ number: number; state: string; mergeable: string }>;
   if (raw.length === 0) return null;
   const p = raw[0];
+  const state = (p.state || "").toUpperCase();
   const m = (p.mergeable || "").toUpperCase();
   const mergeable = m === "MERGEABLE" ? "clean" : m === "CONFLICTING" ? "conflict" : "unknown";
-  return { prNumber: p.number, state: p.state, mergeable };
+  return { prNumber: p.number, state, mergeable, merged: state === "MERGED" };
 }
 
 // ---- GitHub-native sub-issue relationships ----

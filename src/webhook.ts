@@ -19,7 +19,7 @@ import { join } from "node:path";
 import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import type { Config } from "./config.js";
-import { recentRuns, roleRunsByIssue, filesFor, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordIssueStatus, recordPr, tokensSince, tokensByModelSince, tokensByRoleSince, tokensByDaySince, topIssuesByTokensSince, tokensByIssueAll, toolStatsSince, runStepCountSince, recentLessons, recordConflict, getConflict, clearConflict, listConflicts, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getGlobalModel, setGlobalModel, getFallbackChain, setFallbackChain, getAutoSwitchOnLimit, setIssueModelOverride, getIssueModelOverride, clearIssueModelOverride, setIssueWorkflow, getIssueWorkflow, clearIssueWorkflow, getWorkflow, getIssueProvider, setIssueProvider, clearIssueProvider, getIssueAgentModels, setIssueAgentModel, getIssueUseFallback, setIssueUseFallback, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, getIssueRow, clearRateLimited, getDb, listAgentDefs, upsertAgentDef, deleteAgentDef, listWorkflows, upsertWorkflow, deleteWorkflow, getDefaultWorkflowId, setDefaultWorkflowId, listSkills, upsertSkill, deleteSkill, listHooks, upsertHook, deleteHook, type AutoKind, type Provider, type AgentDef, type Skill, type Hook } from "./store.js";
+import { recentRuns, roleRunsByIssue, filesFor, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordIssueStatus, getIssueStatus, listEpicChildren, recordPr, tokensSince, tokensByModelSince, tokensByRoleSince, tokensByDaySince, topIssuesByTokensSince, tokensByIssueAll, toolStatsSince, runStepCountSince, recentLessons, recordConflict, getConflict, clearConflict, listConflicts, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getGlobalModel, setGlobalModel, getFallbackChain, setFallbackChain, getAutoSwitchOnLimit, setIssueModelOverride, getIssueModelOverride, clearIssueModelOverride, setIssueWorkflow, getIssueWorkflow, clearIssueWorkflow, getWorkflow, getIssueProvider, setIssueProvider, clearIssueProvider, getIssueAgentModels, setIssueAgentModel, getIssueUseFallback, setIssueUseFallback, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, getIssueRow, clearRateLimited, getDb, listAgentDefs, upsertAgentDef, deleteAgentDef, listWorkflows, upsertWorkflow, deleteWorkflow, getDefaultWorkflowId, setDefaultWorkflowId, listSkills, upsertSkill, deleteSkill, listHooks, upsertHook, deleteHook, type AutoKind, type Provider, type AgentDef, type Skill, type Hook } from "./store.js";
 import { mergeEpic, isEpic } from "./epics.js";
 import { versionInfo } from "./version.js";
 import { startDeviceFlow, pollDeviceToken, fetchGitHubUser } from "./github-oauth.js";
@@ -962,7 +962,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
     }
 
     // Dashboard actions (auth required), not GitHub webhooks.
-    if (["/archive", "/comment", "/comment-edit", "/run-checks", "/merge", "/close", "/close-not-planned", "/create-pr", "/delete", "/resume", "/stop", "/hold", "/fix", "/auto", "/start", "/new-issue", "/approve", "/audit", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/discover-models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude", "/model-override", "/issue-workflow", "/issue-provider", "/issue-agent-model", "/issue-use-fallback", "/issue-budget", "/agent-def-save", "/agent-def-delete", "/skill-save", "/skill-delete", "/skill-import", "/hook-save", "/hook-delete", "/analyzer-run", "/refresh", "/refresh-issue", "/cancel", "/reset-issue", "/install-cli", "/gh-connect", "/gh-connect-poll", "/gh-disconnect", "/workflow-save", "/workflow-delete", "/default-workflow", "/orch-chat", "/orch-handoff", "/orch-clear"].includes(path)) {
+    if (["/archive", "/comment", "/comment-edit", "/run-checks", "/merge", "/close", "/close-not-planned", "/create-pr", "/delete", "/resume", "/stop", "/hold", "/fix", "/auto", "/start", "/start-children", "/new-issue", "/approve", "/audit", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/discover-models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude", "/model-override", "/issue-workflow", "/issue-provider", "/issue-agent-model", "/issue-use-fallback", "/issue-budget", "/agent-def-save", "/agent-def-delete", "/skill-save", "/skill-delete", "/skill-import", "/hook-save", "/hook-delete", "/analyzer-run", "/refresh", "/refresh-issue", "/cancel", "/reset-issue", "/install-cli", "/gh-connect", "/gh-connect-poll", "/gh-disconnect", "/workflow-save", "/workflow-delete", "/default-workflow", "/orch-chat", "/orch-handoff", "/orch-clear"].includes(path)) {
       const actor = userFromReq(req);
       if (!actor) return void res.writeHead(401, { "content-type": "application/json" }).end('{"error":"auth required"}');
       void readBody(req).then(async (body) => {
@@ -1200,6 +1200,23 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
             return ok();
           }
           return res.writeHead(409).end(JSON.stringify({ error: r.msg }));
+        }
+        if (path === "/start-children") {
+          // Epic "Start sub-issues": find the first child that isn't done/working and start it.
+          if (!repo || !number) return res.writeHead(400).end("{}");
+          const kids = listEpicChildren(repo, number);
+          if (!kids.length) return res.writeHead(404).end(JSON.stringify({ error: "Not an epic (no sub-issues)." }));
+          // Pick the next child to start: skip done + already-working ones, prefer the first open one.
+          const next = kids.find((c) => {
+            const st = getIssueStatus(repo, c.child);
+            return st.state !== "done" && st.state !== "working" && !c.closed;
+          });
+          if (!next) return res.writeHead(409).end(JSON.stringify({ error: "All sub-issues are already done or in progress." }));
+          if (!start) return res.writeHead(500).end(JSON.stringify({ error: "Start handler unavailable." }));
+          await start(repo, next.child).catch((e) => {
+            throw new Error(`Couldn't start sub-issue #${next.child}: ${(e as Error).message}`);
+          });
+          return ok(JSON.stringify({ ok: true, started: next.child }));
         }
         if (path === "/create-pr") {
           // Deterministic, token-free: open a PR from the already-pushed branch (reviewer approved).

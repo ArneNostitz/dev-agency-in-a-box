@@ -36,8 +36,11 @@ import { withStatus } from "./state.js";
 
 /** Human-readable status for a child's tracking checklist, from DB status + closed state. */
 export function childStatus(repo: string, t: RecentThread): string {
-  if (t.closed) return "done";
   const s = getIssueStatus(repo, t.number);
+  // "done" when either the GitHub thread is closed OR the agency DB marked it done (PR merged). The
+  // DB state flips at merge time; the GitHub close may lag or never fire — counting only t.closed
+  // left the epic counter stuck after a sub-issue's PR merged.
+  if (t.closed || s.state === "done") return "done";
   if (s.state === "review") return "in review";
   if (s.blocked === "awaitingApproval" || s.blocked === "awaitingAnswer") return "waiting";
   if (s.blocked === "needsAttention") return "blocked";
@@ -76,7 +79,13 @@ export async function reconcileEpics(repo: string, threads: Map<number, RecentTh
 
     for (const c of children) {
       const t = threads.get(c.child);
-      if (t) updateEpicChild(repo, parent, c.child, childStatus(repo, t), t.closed);
+      if (t) {
+        const status = childStatus(repo, t);
+        // A child counts as closed (✓) when its GitHub thread is closed OR the agency DB state is
+        // "done" (PR merged). Both update the checklist + the n/m counter.
+        const isDone = t.closed || status === "done";
+        updateEpicChild(repo, parent, c.child, status, isDone);
+      }
     }
     const fresh = listEpicChildren(repo, parent);
     const done = fresh.filter((c) => c.closed).length;

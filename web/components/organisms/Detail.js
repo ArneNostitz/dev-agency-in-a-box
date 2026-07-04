@@ -38,21 +38,10 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
   const [pr, setPr] = useState(null);
   const [appInfo, setAppInfo] = useState(null);
   const [reply, setReply] = useState("");
-  const [replyAgent, setReplyAgent] = useState(""); // address a specific agent in chat
-  // Preselect who you're talking to: the RUNNING agent while it works (a comment = a nudge), or the
-  // NEXT-in-line agent when parked "needs you" (so your reply briefs the right teammate).
+  const [replyAgent, setReplyAgent] = useState(""); // address a specific agent in chat (user-chosen)
+  // Map a role to its @-handle. Used only for the dropdown's OPTIONS (the user picks explicitly —
+  // no auto-preselection, which was silently prepending "@dev " to every chat message the user typed).
   const roleHandle = (role) => role ? ("@" + String(role).toLowerCase().replace("developer","dev").replace("planner","plan").replace("reviewer","review").replace("tester","test").replace("architect","arch")) : "";
-  useEffect(() => {
-    const runningNow = !!(issue.running || issue.active || issue.queued);
-    if (runningNow && issue.role) setReplyAgent(roleHandle(issue.role));
-    else if (issue.blocked && issue.lastRole) {
-      // next-in-line: a tiny plan→dev→test→review order map.
-      const order = ["planner", "developer", "tester", "reviewer"];
-      const i2 = order.indexOf(String(issue.lastRole).toLowerCase());
-      const next = i2 >= 0 && i2 < order.length - 1 ? order[i2 + 1] : issue.lastRole;
-      setReplyAgent(roleHandle(next));
-    }
-  }, [issue.running, issue.active, issue.queued, issue.role, issue.blocked, issue.lastRole]);
   const [atts, setAtts] = useState([]);
   const [busy, setBusy] = useState(false);
   const [armed, setArmed] = useState(""); // two-tap confirm: which destructive action is armed
@@ -295,6 +284,9 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
     //  • hasPr    — a PR exists → the goal is Merge (or Fix/Resolve if blocked). Never Create PR/Close.
     //  • approved — reviewer approved but no PR yet → Create PR (token-free).
     const hasPr = !!issue.pr_number;
+    // A merged PR (from /pr-status) takes precedence over the DB state label — the merge webhook
+    // may lag, but GitHub knows immediately. Hide all merge/fix actions once merged.
+    const prMerged = !!(pr && pr.merge && pr.merge.merged);
     const parked = !st || st === "notPlanned" || st === "planned";
     const awaiting = issue.blocked === "awaitingApproval";
     const approved = review === "approved";
@@ -317,14 +309,17 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
     // close & archive, create-PR, update, run-checks, budget, delete) lives in the hamburger.
     if (running) {
       tbRight.push(bStop()); // a run is executing → the only meaningful action is Stop
+    } else if (prMerged) {
+      // PR already merged on GitHub — no merge/fix/approve action, just let the DB catch up.
+      tbRight.push(bResume());
+    } else if (awaiting) {
+      tbRight.push(bApprove()); // awaiting plan approval — MUST come before the parked branch below
     } else if (hasPr) {
       if (conflict) tbRight.push(bFix());
       else if (needsFix) tbRight.push(bFix());
       else tbRight.push(bMerge(false));
     } else if (parked) {
       tbRight.push(bResume()); // a started-but-parked issue continues with Resume (no Start/Play)
-    } else if (awaiting) {
-      tbRight.push(bApprove());
     } else if (issue.epic) {
       tbRight.push(bClose(true));
     } else if (approved) {
@@ -373,12 +368,13 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
 
   const prBar = issue.pr_url ? (() => {
     const ma = armed === "merge", mb = bz("merge");
+    const prMergedBar = !!(pr && pr.merge && pr.merge.merged);
     return html`<div class="prbar">
-      <span class="prbar-l"><${Icon} name="pr" size=${15}/> PR #${issue.pr_number}${review === "approved" ? html` · <span style="color:var(--green)">approved</span>` : review === "changes" ? html` · <span style="color:var(--red)">changes requested</span>` : ""}</span>
+      <span class="prbar-l"><${Icon} name="pr" size=${15}/> PR #${issue.pr_number}${prMergedBar ? html` · <span style="color:var(--green)">merged ✓</span>` : review === "approved" ? html` · <span style="color:var(--green)">approved</span>` : review === "changes" ? html` · <span style="color:var(--red)">changes requested</span>` : ""}</span>
       <a class="btn ghost" href=${issue.pr_url} target="_blank" rel="noopener"><${Icon} name="link" size=${14}/> Open on GitHub</a>
       ${conflict ? html`<span class="muted" style="font-size:12px">conflicts — resolve first</span>`
         : review === "changes" ? html`<button class=${"btn " + (bz("fix") ? "" : "primary")} disabled=${bz("fix")} onClick=${() => act.fix(repo, number).then(onClose)}>${bz("fix") ? html`<${Spinner} size=${14}/>` : html`<${Icon} name="wrench" size=${14}/>`} Fix</button>` : null}
-      ${!conflict ? html`<button class=${"btn green" + (mb ? " busy" : "")} disabled=${mb} onClick=${() => confirmAct("merge", () => act.merge(repo, number).then(onClose))}>${mb ? html`<${Spinner} size=${14}/> Merging…` : html`<${Icon} name="merge" size=${14}/> ${ma ? "Confirm merge" : review === "changes" ? "Merge anyway" : "Merge"}`}</button>` : null}
+      ${!conflict && !prMergedBar ? html`<button class=${"btn green" + (mb ? " busy" : "")} disabled=${mb} onClick=${() => confirmAct("merge", () => act.merge(repo, number).then(onClose))}>${mb ? html`<${Spinner} size=${14}/> Merging…` : html`<${Icon} name="merge" size=${14}/> ${ma ? "Confirm merge" : review === "changes" ? "Merge anyway" : "Merge"}`}</button>` : null}
     </div>`;
   })() : null;
   const conflictBox = conflict ? html`<div class="conflictbox">
@@ -390,7 +386,7 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
 
   const chatPane = html`<div class="dpane chat" ref=${chatRef} onScroll=${onChatScroll}>
     ${!chatAtTop ? html`<div class="scroll-fab-wrap top"><button class="iconbtn scroll-fab" title="Scroll to top" onClick=${() => { chatRef.current.scrollTop = 0; }}><${Icon} name="chevup" size=${16}/></button></div>` : null}
-    ${issue.epic ? html`<${EpicChecklist} epic=${issue.epic} repo=${repo} onOpen=${onOpenIssue} onClose=${() => act.close(repo, number).then(onClose)} closing=${act.isBusy("close", repo, number)}/>` : null}
+    ${issue.epic ? html`<${EpicChecklist} epic=${{ ...issue.epic, parent: number }} repo=${repo} onOpen=${onOpenIssue} onClose=${() => act.close(repo, number).then(onClose)} closing=${act.isBusy("close", repo, number)} act=${act}/>` : null}
     ${conflictBox}
     ${issue.blocked === "held" ? html`<div class="heldbar">
       <span class="heldbar__l"><${Icon} name="clock" size=${15}/> Workflow on hold${(issue.steers && issue.steers.length) ? html` · ${issue.steers.length} steer${issue.steers.length > 1 ? "s" : ""} queued` : ""}</span>
@@ -491,9 +487,10 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
 
 // Epic parent: a checklist of every sub-issue (✓ done / ○ open), each a link to its detail page,
 // plus a one-click "Complete & close" once they're all done.
-function EpicChecklist({ epic, repo, onOpen, onClose, closing }) {
+function EpicChecklist({ epic, repo, onOpen, onClose, closing, act }) {
   const all = epic.total > 0 && epic.done >= epic.total;
   const kids = (epic.children || []).slice().sort((a, b) => (a.closed === b.closed ? a.child - b.child : a.closed ? 1 : -1));
+  const startingKids = act && act.isBusy && act.isBusy("startChildren", repo, epic.parent || 0);
   return html`<div class="epicbox">
     <div class="sec" style="margin:10px 2px 6px">Sub-issues ${epic.done}/${epic.total}${all ? html` · <span class="epicalldone">all done ✓</span>` : null}</div>
     <div class="epiclist">
@@ -503,6 +500,7 @@ function EpicChecklist({ epic, repo, onOpen, onClose, closing }) {
         <span class="epictitle">${c.title || "#" + c.child}</span>
       </button>`)}
     </div>
+    ${!all && act ? html`<button class=${"btn primary" + (startingKids ? " busy" : "")} disabled=${startingKids} onClick=${() => act.startChildren(repo, epic.parent || 0)} style="margin-top:9px;width:100%;justify-content:center">${startingKids ? html`<${Spinner} size=${15}/> Starting…` : html`<${Icon} name="play" size=${15}/> Start next sub-issue`}</button>` : null}
     ${all ? html`<button class="btn green" disabled=${closing} onClick=${onClose} style="margin-top:9px;width:100%;justify-content:center">${closing ? html`<${Spinner} size=${15}/> Closing…` : html`<${Icon} name="check" size=${15}/> Complete & close epic`}</button>` : null}
   </div>`;
 }
