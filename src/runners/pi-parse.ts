@@ -67,6 +67,8 @@ export function parsePiLine(line: string): PiEvent[] {
     if (ev) {
       const et = ev.type as string | undefined;
       if (et === "text_delta" && typeof ev.delta === "string") out.push({ textDelta: ev.delta });
+      if (et === "thinking_delta" && typeof ev.delta === "string") out.push({ textDelta: ev.delta });
+      // Some pi versions nest tool_execution_start inside message_update.assistantMessageEvent.
       if (et === "tool_execution_start") {
         const name = (ev.toolName as string) || "tool";
         const desc = summarizeArgs(ev.args);
@@ -75,6 +77,15 @@ export function parsePiLine(line: string): PiEvent[] {
     }
     const u = readUsage((ev as { partial?: unknown })?.partial ?? obj);
     if (u) out.push({ usage: u });
+  } else if (type === "tool_execution_start") {
+    // Top-level tool events (pi's JSON mode emits these OUTSIDE message_update, per docs/json.md).
+    const name = (obj.toolName as string) || "tool";
+    const desc = summarizeArgs(obj.args);
+    out.push({ tool: `🔧 ${name}${desc ? `: ${desc}` : ""}` });
+  } else if (type === "tool_execution_end") {
+    const name = (obj.toolName as string) || "tool";
+    const isError = (obj as { isError?: boolean }).isError;
+    if (isError) out.push({ tool: `⚠️ ${name} failed` });
   } else if (type === "message_end" || type === "turn_end") {
     const msg = (obj as { message?: Record<string, unknown> }).message;
     const u = readUsage(msg);
