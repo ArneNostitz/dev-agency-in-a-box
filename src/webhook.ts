@@ -19,7 +19,7 @@ import { join } from "node:path";
 import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import type { Config } from "./config.js";
-import { recentRuns, roleRunsByIssue, filesFor, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordIssueStatus, recordPr, tokensSince, tokensByModelSince, tokensByRoleSince, tokensByDaySince, topIssuesByTokensSince, tokensByIssueAll, toolStatsSince, runStepCountSince, recentLessons, recordConflict, getConflict, clearConflict, listConflicts, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getGlobalModel, setGlobalModel, getFallbackChain, setFallbackChain, getAutoSwitchOnLimit, setIssueModelOverride, getIssueModelOverride, clearIssueModelOverride, setIssueWorkflow, getIssueWorkflow, clearIssueWorkflow, getWorkflow, getIssueProvider, setIssueProvider, getIssueAgentModels, setIssueAgentModel, getIssueUseFallback, setIssueUseFallback, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, getIssueRow, listAgentDefs, upsertAgentDef, deleteAgentDef, listWorkflows, upsertWorkflow, deleteWorkflow, getDefaultWorkflowId, setDefaultWorkflowId, listSkills, upsertSkill, deleteSkill, listHooks, upsertHook, deleteHook, type AutoKind, type Provider, type AgentDef, type Skill, type Hook } from "./store.js";
+import { recentRuns, roleRunsByIssue, filesFor, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordIssueStatus, recordPr, tokensSince, tokensByModelSince, tokensByRoleSince, tokensByDaySince, topIssuesByTokensSince, tokensByIssueAll, toolStatsSince, runStepCountSince, recentLessons, recordConflict, getConflict, clearConflict, listConflicts, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getGlobalModel, setGlobalModel, getFallbackChain, setFallbackChain, getAutoSwitchOnLimit, setIssueModelOverride, getIssueModelOverride, clearIssueModelOverride, setIssueWorkflow, getIssueWorkflow, clearIssueWorkflow, getWorkflow, getIssueProvider, setIssueProvider, clearIssueProvider, getIssueAgentModels, setIssueAgentModel, getIssueUseFallback, setIssueUseFallback, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, getIssueRow, clearRateLimited, getDb, listAgentDefs, upsertAgentDef, deleteAgentDef, listWorkflows, upsertWorkflow, deleteWorkflow, getDefaultWorkflowId, setDefaultWorkflowId, listSkills, upsertSkill, deleteSkill, listHooks, upsertHook, deleteHook, type AutoKind, type Provider, type AgentDef, type Skill, type Hook } from "./store.js";
 import { mergeEpic, isEpic } from "./epics.js";
 import { versionInfo } from "./version.js";
 import { startDeviceFlow, pollDeviceToken, fetchGitHubUser } from "./github-oauth.js";
@@ -47,7 +47,7 @@ import { hasActiveRun, requestHold, queueSteer, peekSteer, isHoldRequested } fro
 import { renderLogin, renderInvite, renderSetup, renderForgot, renderReset } from "./authpages.js";
 import { authenticate, createSession, revokeSession, getInvite, acceptInvite, createInvite, createUser, listUsers, listInvites, setUserSecret, listUserSecretKeys, countUsers, setUserPassword, getUserByName, getUserByNameOrEmail, createPasswordReset, consumePasswordReset, type User } from "./store.js";
 import { emailEnabled, sendPasswordReset } from "./email.js";
-import { subscribe, getActive, pushActivity } from "./activity.js";
+import { subscribe, getActive, pushActivity, clearActivity } from "./activity.js";
 import { inFlightKeys } from "./pool.js";
 import { listRateLimited } from "./store.js";
 import { getConversation, conversationCount, foldInGitHubComment, recordOutgoingComment, setCommentGhId, updateCommentBody } from "./store.js";
@@ -960,7 +960,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
     }
 
     // Dashboard actions (auth required), not GitHub webhooks.
-    if (["/archive", "/comment", "/comment-edit", "/run-checks", "/merge", "/close", "/close-not-planned", "/create-pr", "/delete", "/resume", "/stop", "/hold", "/fix", "/auto", "/start", "/new-issue", "/approve", "/audit", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/discover-models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude", "/model-override", "/issue-workflow", "/issue-provider", "/issue-agent-model", "/issue-use-fallback", "/issue-budget", "/agent-def-save", "/agent-def-delete", "/skill-save", "/skill-delete", "/skill-import", "/hook-save", "/hook-delete", "/analyzer-run", "/refresh", "/refresh-issue", "/cancel", "/install-cli", "/gh-connect", "/gh-connect-poll", "/gh-disconnect", "/workflow-save", "/workflow-delete", "/default-workflow", "/orch-chat", "/orch-handoff", "/orch-clear"].includes(path)) {
+    if (["/archive", "/comment", "/comment-edit", "/run-checks", "/merge", "/close", "/close-not-planned", "/create-pr", "/delete", "/resume", "/stop", "/hold", "/fix", "/auto", "/start", "/new-issue", "/approve", "/audit", "/settings", "/agent-save", "/agent-revert", "/app-run", "/app-stop", "/upload-image", "/upload-file", "/add-repo", "/remove-repo", "/models", "/discover-models", "/invite-create", "/user-secret", "/onboarded", "/set-password", "/test-claude", "/model-override", "/issue-workflow", "/issue-provider", "/issue-agent-model", "/issue-use-fallback", "/issue-budget", "/agent-def-save", "/agent-def-delete", "/skill-save", "/skill-delete", "/skill-import", "/hook-save", "/hook-delete", "/analyzer-run", "/refresh", "/refresh-issue", "/cancel", "/reset-issue", "/install-cli", "/gh-connect", "/gh-connect-poll", "/gh-disconnect", "/workflow-save", "/workflow-delete", "/default-workflow", "/orch-chat", "/orch-handoff", "/orch-clear"].includes(path)) {
       const actor = userFromReq(req);
       if (!actor) return void res.writeHead(401, { "content-type": "application/json" }).end('{"error":"auth required"}');
       void readBody(req).then(async (body) => {
@@ -1256,6 +1256,24 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           // it in Planned (DB is the source of truth; the branch/PR stays on GitHub untouched).
           if (!repo || !number) return res.writeHead(400).end("{}");
           if (stop) await stop(repo, number).catch(() => {});
+          recordIssueStatus(repo, number, withStatus("planned"));
+          return ok();
+        }
+        if (path === "/reset-issue") {
+          // FULL reset: wipe all progress (activity stream, plan, session, overrides, rate-limits) and
+          // return the issue to its initial "just created" planned state. Like git revert for an issue:
+          // the branch/PR stays on GitHub but the dashboard starts fresh. Aborts any running agent first.
+          if (!repo || !number) return res.writeHead(400).end("{}");
+          if (stop) await stop(repo, number).catch(() => {});
+          clearActivity(repo, number);
+          clearIssueModelOverride(repo, number);
+          clearIssueWorkflow(repo, number);
+          clearIssueProvider(repo, number);
+          // Wipe per-issue settings (plan, role, solo, dealer, budget, agent models).
+          for (const key of [`issue_plan.${repo}#${number}`, `issue_role.${repo}#${number}`, `issue_solo.${repo}#${number}`, `issue_dealer.${repo}#${number}`, `issue_budget.${repo}#${number}`, `issue_provider.${repo}#${number}`, `issue_agent_models.${repo}#${number}`, `issue_use_fallback.${repo}#${number}`, `issue_workflow.${repo}#${number}`, `issue_model.${repo}#${number}`]) {
+            try { const d = getDb(); if (d) d.prepare("DELETE FROM settings WHERE key = ?").run(key); } catch { /* best effort */ }
+          }
+          clearRateLimited(repo, number);
           recordIssueStatus(repo, number, withStatus("planned"));
           return ok();
         }

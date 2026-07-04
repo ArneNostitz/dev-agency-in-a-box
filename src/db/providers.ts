@@ -226,6 +226,7 @@ export function fallbackFor(providerId: string, model: string): { providerId: st
 // Per-issue: the issue-wide PROVIDER override (the provider whose tiers the agents resolve against).
 export function setIssueProvider(repo: string, number: number, providerId: string): void { setSetting(`issue_provider.${repo}#${number}`, providerId || ""); }
 export function getIssueProvider(repo: string, number: number): string | null { const v = getSetting(`issue_provider.${repo}#${number}`); return v || null; }
+export function clearIssueProvider(repo: string, number: number): void { setSetting(`issue_provider.${repo}#${number}`, ""); }
 
 // Per-issue PER-AGENT override: { "<roleOrHandle>": "providerId/model" }.
 export function setIssueAgentModel(repo: string, number: number, agent: string, ref: string): void {

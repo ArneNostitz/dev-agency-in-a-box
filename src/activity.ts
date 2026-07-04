@@ -72,3 +72,17 @@ export function subscribe(fn: (e: ActivityEvent) => void): () => void {
   subscribers.add(fn);
   return () => subscribers.delete(fn);
 }
+
+/** Wipe all activity for an issue (the buffer + DB rows). Used by the "reset issue" action. */
+export function clearActivity(repo: string, number: number): void {
+  // Drop in-memory buffer entries for this issue.
+  for (let i = buffer.length - 1; i >= 0; i--) {
+    if (buffer[i].repo === repo && buffer[i].number === number) buffer.splice(i, 1);
+  }
+  clearActive(repo, number);
+  try {
+    const { getDb } = require("./store.js");
+    const d = getDb();
+    if (d) d.prepare("DELETE FROM activity WHERE repo = ? AND number = ?").run(repo, number);
+  } catch { /* best effort */ }
+}
