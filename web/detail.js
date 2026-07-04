@@ -318,6 +318,8 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
   moreItems.push({ sep: true });
   // Reset to Planned — discards agency state, keeps the branch/PR.
   if (!done) moreItems.push(html`<button class=${"menu-item" + (bz("cancel") ? " busy" : "")} disabled=${bz("cancel")} onClick=${() => act.cancel(repo, number).then(onClose)}>${bz("cancel") ? html`<${Spinner} size=${15}/>` : html`<${Icon} name="planned" size=${15}/>`}<span class="mi-label">${bz("cancel") ? "Resetting…" : "Reset to Planned"}</span></button>`);
+  // Full reset — wipe ALL progress (activity, plan, session, overrides) back to initial state.
+  if (!done) moreItems.push(html`<button class=${"menu-item" + (bz("reset") ? " busy" : "")} disabled=${bz("reset")} onClick=${() => { if (!window.confirm("Wipe ALL progress for this issue (activity, plan, session, model overrides)? The branch/PR stays on GitHub.")) return; act.resetIssue(repo, number).then(onClose); }}>${bz("reset") ? html`<${Spinner} size=${15}/>` : html`<${Icon} name="refresh" size=${15}/>`}<span class="mi-label">${bz("reset") ? "Resetting…" : "Full reset"}</span></button>`);
   // Close & archive — close the issue (NOT a merge); archive icon makes that clear.
   if (!done) moreItems.push(html`<button class=${"menu-item" + (cb2 ? " busy" : "")} disabled=${cb2} onClick=${() => confirmAct("close", () => act.close(repo, number).then(onClose))}>${cb2 ? html`<${Spinner} size=${15}/>` : html`<${Icon} name="archive" size=${15}/>`}<span class="mi-label">${cb2 ? "Closing…" : ca2 ? "Tap again to close" : "Close & archive"}</span></button>`);
   // Per-issue budget (#67) — ONE control: unlimited / a $ cap / default, set from a single prompt.
