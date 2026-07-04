@@ -21,7 +21,7 @@ import { parsePiLine, ZERO_USAGE, type PiUsage } from "./pi-parse.js";
  * Default pi invocation: json stream, print mode (non-interactive), the run's provider + model + prompt.
  * `{piProvider}` is pi's own provider key (e.g. "zai", "google").
  */
-export const PI_TEMPLATE = "pi --mode json --print --provider {piProvider} --model {model} --system-prompt {systemPrompt} {task}";
+export const PI_TEMPLATE = 'pi --mode json --print --no-approve --provider {piProvider} --model {model} --system-prompt "{systemPrompt}" "{task}"';
 
 /** Mark an Anthropic/Anthropic-compatible base URL so we never point pi (provider-keyed) at it. */
 const ANTHROPIC_HOST = /(^|\/\/)(api\.)?anthropic\.com(\/|$)/i;
@@ -41,17 +41,19 @@ export class PiCliRunner implements AgentRunner {
   readonly kind = "pi-cli";
 
   async run(req: RunRequest, emitAssistant: (message: unknown) => void): Promise<RunResult> {
-    const tokens = splitArgs(req.template ?? PI_TEMPLATE);
+    // Replace placeholders FIRST, then split — so multi-word systemPrompt/task stay as one arg.
+    // Escape any double-quotes in the content so splitArgs' quote tracking doesn't break.
+    const esc = (s: string) => (s || "").replace(/"/g, '\\"');
+    const raw = (req.template ?? PI_TEMPLATE)
+      .replace(/{piProvider}/g, preparePiConfig(req.provider).piProvider || "anthropic")
+      .replace(/{model}/g, req.model)
+      .replace(/{systemPrompt}/g, esc(req.systemPrompt))
+      .replace(/{task}/g, esc(req.task))
+      .replace(/{workdir}/g, req.cwd);
+    const tokens = splitArgs(raw);
     if (tokens.length === 0) throw new Error("pi command template is empty");
     const cmd = tokens[0];
-    const piProvider = preparePiConfig(req.provider).piProvider || "anthropic";
-    const args = tokens.slice(1).map((a) =>
-      a.replace(/{piProvider}/g, piProvider)
-        .replace(/{model}/g, req.model)
-        .replace(/{systemPrompt}/g, req.systemPrompt)
-        .replace(/{task}/g, req.task)
-        .replace(/{workdir}/g, req.cwd),
-    );
+    const args = tokens.slice(1);
     // pi reads the provider key from its real ~/.pi/agent/auth.json (written at save). Build a clean
     // env (string values only) and strip any stray provider creds so they can't shadow the intended
     // provider.
