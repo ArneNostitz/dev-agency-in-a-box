@@ -127,10 +127,13 @@ export function loadConfig(): Config {
   }
   console.log(`[agency] watching ${cfg.targetRepos.length} repo(s): ${cfg.targetRepos.join(", ")}`);
 
-  if (!cfg.owner || !cfg.githubToken) {
+  // Check for a GitHub OAuth token (the dashboard's device-flow login) before warning — the OAuth
+  // path doesn't set GITHUB_OWNER/GITHUB_TOKEN env vars, so the warning would fire spuriously.
+  const hasGitHubOAuth = Boolean(getSecretSetting("github_oauth_token") || process.env.GITHUB_OAUTH_TOKEN?.trim());
+  if (!cfg.owner && !hasGitHubOAuth) {
     console.warn(
-      "[agency] GITHUB_OWNER/GITHUB_TOKEN not set — the dashboard will start, but the agency " +
-        "can't act on GitHub until they're configured (these move to per-user credentials).",
+      "[agency] No GitHub credential configured — connect via the dashboard (Settings → GitHub) " +
+        "or set GITHUB_TOKEN, or the agency can't act on GitHub.",
     );
   }
   // `gh` and `git` authenticate from GH_TOKEN; mirror the configured token into it.
