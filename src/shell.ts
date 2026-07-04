@@ -544,6 +544,7 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .cmt-in table,.cmt__b table,.cmt .b table{display:table;width:100%;max-width:100%;table-layout:fixed;border-collapse:collapse;font-size:12.5px;margin:.4em 0}
 .cmt-in th,.cmt-in td,.cmt__b th,.cmt__b td,.cmt .b th,.cmt .b td{border:1px solid var(--line);padding:4px 8px;text-align:left;white-space:normal;overflow-wrap:anywhere;word-break:break-word;vertical-align:top}
 .cmt-in a,.cmt__b a,.cmt .b a{overflow-wrap:anywhere}
+.b img,.obub-txt img,.cmt-in img,.cmt__b img,.cmt .b img{max-width:100%;height:auto;border-radius:8px;display:block}
 
 .dstream,.stream{background:var(--term-bg);color:var(--term-ink);border-radius:var(--radius);padding:11px 13px;font:12px/1.55 var(--font-mono);white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;max-width:100%;overflow-x:hidden;display:flex;flex-direction:column;gap:2px}
 .stream__h{color:var(--term-muted);margin-bottom:4px;font-size:11px;text-transform:uppercase;letter-spacing:.04em}
