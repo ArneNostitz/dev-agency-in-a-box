@@ -558,6 +558,8 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .dusage{display:flex;align-items:center;gap:14px;padding:9px 12px;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface-2);font-size:12.5px;color:var(--ink-2);flex-wrap:wrap}
 .dusage span{display:inline-flex;align-items:center;gap:5px;font-variant-numeric:tabular-nums}
 
+.dtl-timeline{flex:none;padding:8px 16px 4px;border-top:1px solid var(--line);background:var(--surface)}
+.dtl-timeline .flow{padding:0}
 .dcompose{flex:none;padding:12px 16px;border-top:1px solid var(--line);background:var(--bg)}
 .composer{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-lg);padding:10px 12px;display:flex;flex-direction:column;gap:8px;transition:border-color var(--dur-fast) var(--ease),box-shadow var(--dur-fast) var(--ease)}
 .composer:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--focus-ring)}

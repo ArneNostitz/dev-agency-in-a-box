@@ -18,6 +18,7 @@ import { MarkdownArea } from "../atoms/MarkdownArea.js";
 import { ModelSelect } from "../molecules/ModelSelect.js";
 import { Comment } from "../molecules/Comment.js";
 import { timelineModel } from "../molecules/Timeline.js";
+import { WorkflowTimeline } from "../../table.js";
 import { api, getJSON } from "../../lib/api.js";
 import { ago, cap, fmtTok, tokHeat, usageTitle, shortModel } from "../../lib/format.js";
 import { toast, readAttach } from "../../lib/toast.js";
@@ -444,7 +445,6 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
       </div>
       <button class="iconbtn ghost dclose" aria-label="Close" data-tip="Close" onClick=${onClose}><${Icon} name="x" size=${18}/></button>
     </div>
-    <${DetailTimeline} issue=${issue} data=${data} onOpenModels=${onOpenModels}/>
     <div class="dtoolbar">
       ${wfOpts.length ? (running
         ? html`<span class="wfctl wfctl--running tip" data-tip="Workflow running — stop the issue to switch"><${Icon} name="loader" size=${14} cls="spin"/> <span class="wfctl__name">${activeWfName}</span></span>`
@@ -471,6 +471,7 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
     <div class="dpanes">
       ${isDesktop ? html`${chatPane}${streamPane}` : tab === "chat" ? chatPane : streamPane}
     </div>
+    ${timelineModel(issue).started ? html`<div class="dtl-timeline"><${WorkflowTimeline} i=${issue}/></div>` : null}
     <div class="dcompose">
       <div class="composer">
         ${atts.length ? html`<div class="composer-atts">${atts.map((a, idx) => html`<span class="att" key=${idx}>${a.img ? html`<img src=${a.d}/>` : html`<span><${Icon} name="paperclip" size=${12}/> ${a.name}</span>`}<button class="iconbtn" style="width:18px;height:18px;border:none" onClick=${() => setAtts((x) => x.filter((_, j) => j !== idx))}>×</button></span>`)}</div>` : null}
