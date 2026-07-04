@@ -69,6 +69,7 @@ export class PiCliRunner implements AgentRunner {
         let usage: PiUsage = { ...ZERO_USAGE };
         let stderr = "";
         let stdoutBuf = "";
+        let lastError = ""; // the most recent errorMessage from a pi NDJSON event (e.g. "401 token expired")
 
         proc.stdout.on("data", (chunk: Buffer) => {
           stdoutBuf += chunk.toString();
@@ -78,7 +79,12 @@ export class PiCliRunner implements AgentRunner {
             const line = stdoutBuf.slice(0, nl);
             stdoutBuf = stdoutBuf.slice(nl + 1);
             for (const ev of parsePiLine(line)) {
-              if (ev.textDelta) emitAssistant({ type: "text_delta", delta: ev.textDelta });
+              if (ev.textDelta) {
+                // Error messages are surfaced as textDelta (prefixed with ❌ by parsePiLine).
+                // Track them separately so we can fail the run if pi produced no real output.
+                if (ev.textDelta.startsWith("❌")) lastError = ev.textDelta.slice(2).trim();
+                emitAssistant({ type: "text_delta", delta: ev.textDelta });
+              }
               if (ev.tool) emitAssistant({ type: "tool", summary: ev.tool });
               if (ev.usage) usage = ev.usage; // running total — last wins
               if (ev.turnEnded) turns += 1;
@@ -101,6 +107,16 @@ export class PiCliRunner implements AgentRunner {
             reject(new Error(`pi exited ${code}\n${stderr.slice(-400)}`));
             return;
           }
+          // CRITICAL: pi exits code 0 (success) even when the LLM call errored (e.g. 401 token
+          // expired). The parsePiLine error surfacing emits those as text_delta events, but if the
+          // run produced NO real output (no turns completed, no final text, just errors), that's a
+          // hard failure — NOT "pi run completed." Detect it and throw so the fallback/retry logic
+          // in roleAgent can react (rate-limit detection, graceful fallback, etc.).
+          const errorMsg = lastError || (turns === 0 ? extractErrorFromBuffer(stdoutBuf) : null);
+          if (errorMsg) {
+            reject(new Error(errorMsg));
+            return;
+          }
           resolve({
             text: finalText || "pi run completed.",
             turns: Math.max(1, turns),
@@ -111,6 +127,19 @@ export class PiCliRunner implements AgentRunner {
         });
       });
   }
+}
+
+/**
+ * When pi exits code 0 but produced zero turns (all errors), extract the last errorMessage from
+ * the raw NDJSON buffer as a last resort. Scans for `"errorMessage":"..."` in any line.
+ */
+function extractErrorFromBuffer(buf: string): string | null {
+  const lines = buf.split("\n").filter(Boolean);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const m = /"errorMessage"\s*:\s*"([^"]+)"/.exec(lines[i]);
+    if (m && m[1]) return m[1];
+  }
+  return null;
 }
 
 /** Minimal shell-less argv split (quotes only — pi-parse handles no metacharacters). */
