@@ -141,6 +141,9 @@ export class PiSdkRunner implements AgentRunner {
 
     // 5. Subscribe to the typed event stream → translate to the agency's emitAssistant contract
     //    (the same shapes roleAgent/chat/orchestrator/analyzer already handle for the Claude SDK).
+    //    pi's events are the same normalized AssistantMessageEvent union that streamSimple uses:
+    //    text_delta, thinking_delta, toolcall_*, done, error.
+    const seenTools = new Set<string>(); // dedupe toolcall_end + tool_execution_start (both fire)
     const unsubscribe = session.subscribe((event) => {
       switch (event.type) {
         case "message_update": {
@@ -148,14 +151,21 @@ export class PiSdkRunner implements AgentRunner {
           if (ae.type === "text_delta" && ae.delta) {
             // Live "typing" feed — same shape as Claude SDK's stream_delta (not persisted; final wins).
             emitAssistant({ type: "stream_delta", delta: ae.delta });
+          } else if (ae.type === "thinking_delta" && ae.delta) {
+            // Reasoning/thinking stream — surface as a distinct delta so the UI can show it inline.
+            emitAssistant({ type: "stream_delta", delta: ae.delta });
           } else if (ae.type === "toolcall_end" && ae.toolCall) {
-            // Tool invocation started — surface a one-liner to the activity feed.
-            const summary = summarizeTool(ae.toolCall.name, (ae.toolCall.arguments ?? {}) as Record<string, unknown>);
-            if (summary) emitAssistant({ type: "tool", summary });
+            // The model emitted a tool call. tool_execution_start fires separately with the same
+            // id — emit only once (prefer the execution event which has the resolved args).
+            const id = ae.toolCall.id || ae.toolCall.name;
+            if (id) seenTools.add(id);
           }
           break;
         }
         case "tool_execution_start": {
+          // Tool is about to run — surface a readable one-liner to the activity feed.
+          const id = (event as { toolCallId?: string }).toolCallId || event.toolName;
+          if (id && seenTools.has(id)) break; // already emitted via toolcall_end
           const summary = summarizeTool(event.toolName, (event.args ?? {}) as Record<string, unknown>);
           if (summary) emitAssistant({ type: "tool", summary });
           break;
