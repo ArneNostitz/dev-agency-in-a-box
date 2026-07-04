@@ -1,17 +1,23 @@
-// Dev Agency dashboard — app module (split from app.js; Preact + htm, no build step).
+// Dev Agency dashboard — app module (Preact + htm, no build step).
+// Imports from the atomic-design structure (atoms/molecules/organisms/lib/data).
 import { html, render, useState, useEffect, useRef } from "/web/vendor/standalone.mjs";
-import { Icon, Toasts, api, getJSON, md, setToastFn, toast, useIsDesktop, useViewportWidth } from "./core.js";
+import { Icon } from "./components/atoms/Icon.js";
+import { Toasts } from "./components/molecules/Toasts.js";
 import { Workspace } from "./layout.js";
-import { Board, TabBar, nestedChildKeys } from "./board.js";
-import { Composer, Detail } from "./detail.js";
-import { GithubTokensModal, ModelsModal, Settings } from "./settings.js";
-import { AddRepo, Onboarding } from "./onboarding.js";
-import { SecretBanner, StatusLine, TopBar } from "./topbar.js";
-import { Usage } from "./usage.js";
-import { AgentEditor, SkillEditor } from "./agents.js";
-import { WorkflowBuilder } from "./builder.js";
-import { ProgressTable, StatStrip, STAT_DEFS, statusField } from "./table.js";
-import { Orchestrator } from "./orch.js";
+import { Board, TabBar, nestedChildKeys } from "./components/organisms/Board.js";
+import { Composer, Detail } from "./components/organisms/Detail.js";
+import { GithubTokensModal, ModelsModal, Settings } from "./components/organisms/Settings.js";
+import { AddRepo, Onboarding } from "./components/organisms/Onboarding.js";
+import { SecretBanner, StatusLine, TopBar } from "./components/organisms/TopBar.js";
+import { Usage } from "./components/organisms/Usage.js";
+import { AgentEditor, SkillEditor } from "./components/organisms/AgentEditor.js";
+import { WorkflowBuilder } from "./components/organisms/WorkflowBuilder.js";
+import { ProgressTable, StatStrip, STAT_DEFS, statusField } from "./components/organisms/ProgressTable.js";
+import { Orchestrator } from "./components/organisms/Orchestrator.js";
+import { api, getJSON } from "./lib/api.js";
+import { md } from "./lib/markdown.js";
+import { toast, setToastFn } from "./lib/toast.js";
+import { useIsDesktop, useViewportWidth } from "./lib/hooks.js";
 
 
 // ---------- offline queue ----------

@@ -3,7 +3,7 @@
 import test from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
-import { readFileSync, writeFileSync, mkdtempSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdtempSync, existsSync, readdirSync, statSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -60,9 +60,31 @@ async function mountApp(opts = {}) {
   const webDir = join(HERE, "..", "web");
   const vendorUrl = pathToFileURL(join(webDir, "vendor", "standalone.mjs")).href;
   const tmpDir = mkdtempSync(join(tmpdir(), "daui-"));
+  // Copy the old flat files (still referenced by the new components as temporary re-exports) + the
+  // new atomic-design directory tree (components/atoms, components/molecules, components/organisms,
+  // lib/, data/). Rewrite the absolute vendor import to a file URL in every .js file.
+  const copyDir = (src, dest) => {
+    mkdirSync(dest, { recursive: true });
+    for (const entry of readdirSync(src)) {
+      const srcPath = join(src, entry);
+      const destPath = join(dest, entry);
+      if (statSync(srcPath).isDirectory()) {
+        copyDir(srcPath, destPath);
+      } else if (entry.endsWith(".js")) {
+        const content = readFileSync(srcPath, "utf8").split("/web/vendor/standalone.mjs").join(vendorUrl);
+        writeFileSync(destPath, content);
+      }
+    }
+  };
+  // Copy the old flat .js files (core.js etc. — still needed as temp re-exports).
   for (const f of ["core", "ui", "layout", "board", "detail", "settings", "onboarding", "topbar", "usage", "agents", "workflows", "builder", "table", "orch", "app"]) {
     const src = readFileSync(join(webDir, f + ".js"), "utf8").split("/web/vendor/standalone.mjs").join(vendorUrl);
     writeFileSync(join(tmpDir, f + ".js"), src);
+  }
+  // Copy the new directory tree (components/, lib/, data/).
+  for (const dir of ["components", "lib", "data"]) {
+    const srcDir = join(webDir, dir);
+    if (existsSync(srcDir)) copyDir(srcDir, join(tmpDir, dir));
   }
   const mod = await import(pathToFileURL(join(tmpDir, "app.js")).href);
   mod.mount(window.document.getElementById("root"));
