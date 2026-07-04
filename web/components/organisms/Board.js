@@ -246,8 +246,8 @@ function Card({ i, subs, multi, onOpen, onOpenChild, act, data, onOpenModels, st
 
   // The canonical IssueState enum + BlockedReason drive the quick (CTA) action (ADR-0001).
   let quick = null;
-  if (i.state === "planned" || i.state === "notPlanned" || (!i.state && !done)) quick = { action: "start", cls: "play", icon: "play", label: "Start", fn: () => act.start(i.repo, i.number) };
-  else if (i.blocked === "awaitingApproval") quick = { action: "approve", cls: "", icon: "check", label: "Approve", fn: () => act.approve(i.repo, i.number) };
+  if (i.blocked === "awaitingApproval") quick = { action: "approve", cls: "", icon: "check", label: "Approve", fn: () => act.approve(i.repo, i.number) };
+  else if (i.state === "planned" || i.state === "notPlanned" || (!i.state && !done)) quick = { action: "start", cls: "play", icon: "play", label: "Start", fn: () => act.start(i.repo, i.number) };
   else if (i.state === "review" && i.review === "changes") quick = { action: "fix", cls: "fix", icon: "wrench", label: "Fix", fn: () => act.fix(i.repo, i.number) };
   else if (i.blocked === "needsAttention") quick = { action: "resume", cls: "", icon: "refresh", label: "Resume", fn: () => act.resume(i.repo, i.number) };
   else if (i.active || i.state === "working") quick = { action: "stop", cls: "stop", icon: "stop", label: "Stop", fn: () => act.stop(i.repo, i.number) };
