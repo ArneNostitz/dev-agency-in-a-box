@@ -22,7 +22,8 @@ import { api, getJSON } from "../../lib/api.js";
 import { ago, cap, fmtTok, tokHeat, usageTitle, shortModel } from "../../lib/format.js";
 import { toast, readAttach } from "../../lib/toast.js";
 import { isDone, statusChip } from "../../lib/issue-logic.js";
-import { defaultModelLabel, parseModelRef, providerModelOptions, resolveAgentModel } from "../../lib/model-logic.js";
+import { defaultModelLabel, parseModelRef, providerModelOptions } from "../../lib/model-logic.js";
+import { resolveAgentModel } from "../../lib/agent-options.js";
 import { getSetupProgress } from "../../lib/setup-progress.js";
 import { agentOptions, agentOnlyOptions, workflowOptions } from "../../lib/agent-options.js";
 // ghUrl hasn't been extracted to lib yet — temporarily pulled from the old core.js.

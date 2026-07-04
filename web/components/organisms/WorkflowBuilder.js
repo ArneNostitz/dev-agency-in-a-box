@@ -15,7 +15,7 @@ import { ModelSelect } from "../molecules/ModelSelect.js";
 import { AgentModelPicker } from "../molecules/AgentModelPicker.js";
 import { api } from "../../lib/api.js";
 import { toast, readAttach } from "../../lib/toast.js";
-import { resolveAgentModel } from "../../lib/model-logic.js";
+import { resolveAgentModel } from "../../lib/agent-options.js";
 import { agentOptions } from "../../lib/agent-options.js";
 
 const NODE_W = 220, NODE_BASE = 132, SKILL_H = 28, SLOT_H = 26, SLOT_GAP = 9, BLK_GAP = 48, GMARK_H = 24, GMARK_GAP = 8, PAD = 28, LOOPM = 46;
