@@ -81,9 +81,13 @@ export class PiSdkRunner implements AgentRunner {
       throw new Error("This provider has no pi key — pick a provider from the list in Settings → Models.");
     }
 
-    // 1. Auth + model registry — the SDK reads ~/.pi/agent/auth.json natively (our writePiAuthKey
-    //    populates it at provider-save time, so this is already "logged in").
+    // 1. Auth + model registry. The agency's DB is the source of truth for API keys; auth.json is
+    //    just a cache that may be absent (e.g. fresh container before any Settings save). Inject the
+    //    provider's key directly as a runtime override so the run authenticates regardless of file
+    //    state. (writePiAuthKey also persists it for the CLI / discovery, but that's best-effort.)
     const authStorage = AuthStorage.create();
+    const apiKey = req.provider?.apiKey?.trim();
+    if (apiKey) authStorage.setRuntimeApiKey(piProvider, apiKey);
     const modelRegistry = ModelRegistry.create(authStorage);
     const model = modelRegistry.find(piProvider, req.model);
     if (!model) {

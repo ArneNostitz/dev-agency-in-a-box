@@ -41,6 +41,10 @@ export async function discoverProviderModels(provider: Provider): Promise<Discov
   }
   try {
     const authStorage = AuthStorage.create();
+    // Inject the provider's key from the DB row as a runtime override — auth.json may be absent
+    // (fresh container) or stale. The DB is the source of truth.
+    const apiKey = provider.apiKey?.trim();
+    if (apiKey) authStorage.setRuntimeApiKey(pi, apiKey);
     const registry = ModelRegistry.create(authStorage);
     // getAll() = built-in + custom models. Filter by provider so each row gets only its own catalog.
     const models = registry
