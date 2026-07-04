@@ -148,7 +148,9 @@ const RELEVANT_ACTIONS = new Set(["opened", "reopened", "edited"]);
 const PR_ACTIONS = new Set(["opened", "reopened", "synchronize", "ready_for_review", "edited"]);
 
 // Static assets (PWA shell extras) live in web/ at the repo root; from the compiled dist/ that's ../web.
-const WEB_DIR = fileURLToPath(new URL("../web/", import.meta.url));
+// Ensure trailing slash so new URL(rel, 'file://' + WEB_DIR) treats it as a DIRECTORY, not a file
+// (without it, nested paths like 'data/providers.js' resolve against the parent, not into web/).
+const WEB_DIR = fileURLToPath(new URL("../web/", import.meta.url)).replace(/\/*$/, "/");
 const MIME: Record<string, string> = { ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8", ".css": "text/css", ".json": "application/json", ".webmanifest": "application/manifest+json", ".svg": "image/svg+xml", ".png": "image/png", ".ico": "image/x-icon", ".html": "text/html; charset=utf-8" };
 /** Serve a static file from web/ for the PWA (no auth — these carry no secrets). Returns true if handled. */
 function serveStatic(pathname: string, res: ServerResponse): boolean {
