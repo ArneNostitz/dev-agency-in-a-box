@@ -472,7 +472,7 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
     clearInterval(heartbeat);
     abortRun.release();
     // CLAUDE_CONFIG_DIR isolation now lives in the runner (ClaudeSdkRunner), so there's no cfgDir to
-    // clean up here. pi's temp HOME is cleaned up inside PiCliRunner's own finally.
+    // clean up here. pi runs in-process now (PiSdkRunner via createAgentSession) — no temp dir either.
   }
 
   const { text, turns, costUsd, tokens, stopped } = r;

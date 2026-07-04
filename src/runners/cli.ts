@@ -36,11 +36,12 @@ export function parseCommandLine(cmdLine: string): string[] {
   return args;
 }
 
-/** Default command templates per CLI kind. pi-cli has its own runner (sdk-pi.ts) with {piProvider}. */
+/**
+ * Default command templates per CLI kind. pi-cli now runs in-process via the SDK (sdk-pi.ts); this
+ * entry is only a generic fallback shape for the custom-cli runner, NOT used for real pi runs.
+ */
 export const CLI_TEMPLATES: Record<string, string> = {
   "claude-cli": "claude -p {task}",
-  // Generic CLI fallback shape for custom-cli (the pi-runner-only {piProvider} placeholder is NOT
-  // honored by the generic CliRunner — kept here only as a sensible "any CLI" default template).
   "pi-cli": "pi --mode json --print --model {model} --system-prompt {systemPrompt} {task}",
 };
 

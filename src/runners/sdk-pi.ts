@@ -1,165 +1,233 @@
 /**
- * PiCliRunner — runs pi as a subprocess in `--mode json --print` and parses the NDJSON stream
- * so pi runs are fully accountable: real token + cost accounting (from pi's usage reports),
- * live text/tool streaming to the activity feed, and turn counting.
+ * PiSdkRunner — runs pi IN-PROCESS via the @earendil-works/pi-coding-agent SDK.
  *
- * pi is used AS A TOOL (subprocess); nothing in the agency imports pi's internals. The command
- * is templated so a non-pi CLI in the same JSON schema would work too, but the parser is pi's.
+ * This replaced the old subprocess PiCliRunner (spawn + NDJSON parsing + splitArgs + --no-approve
+ * trust hacks) which hung silently on the deployment. The SDK gives us a typed event stream, native
+ * auth, native model resolution, and native system-prompt injection — no shell, no argv, no trust
+ * prompt. "Use the SDK as-is, do not modify pi."
  *
- * Provider model: pi is provider-keyed (`--provider <piKey> --model <id>`). pi knows every builtin
- * provider's endpoint + catalog. Auth is pi's native store: setProviders writes the user's key
- * (merged) into pi's REAL ~/.pi/agent/auth.json (the login), so a run just needs the provider key.
- * No isolated config dir, no PI_CODING_AGENT_DIR. Sources: docs/providers.md.
+ * Architecture (#136):
+ *   AuthStorage.create()            → reads ~/.pi/agent/auth.json (written at provider-save by setProviders)
+ *   ModelRegistry.create(auth)      → pi's full model catalog; .find(piKey, modelId) resolves the Model
+ *   DefaultResourceLoader({systemPrompt}) → carries OUR system prompt (createAgentSession has no systemPrompt option)
+ *   SessionManager.inMemory(cwd)    → ephemeral; the agency has its own resume store (sessions table)
+ *   createAgentSession({model, tools, ...}) → { session }
+ *   session.subscribe(event → emitAssistant) → typed events: message_update/text_delta, tool_execution_*, turn_end, agent_end
+ *   session.prompt(task)            → resolves when the run completes; session.abort() cancels
+ *
+ * The runner kind stays "pi-cli" for routing compatibility (runnerKindFor routes any provider with a
+ * piKey here). runnerBinary("pi-cli") returns null (in-process, like claude-sdk) so no binary preflight.
+ *
+ * Sources: https://pi.dev/docs/latest/sdk · installed types at @earendil-works/pi-coding-agent v0.79.6
  */
-import { spawn } from "node:child_process";
+import {
+  AuthStorage,
+  DefaultResourceLoader,
+  ModelRegistry,
+  SessionManager,
+  createAgentSession,
+  getAgentDir,
+} from "@earendil-works/pi-coding-agent";
 import type { AgentRunner, RunRequest, RunResult } from "./interface.js";
 import type { Provider } from "../db/providers.js";
 import { inferPiProvider } from "../db/providers.js";
-import { parsePiLine, ZERO_USAGE, type PiUsage } from "./pi-parse.js";
-
-/**
- * Default pi invocation: json stream, print mode (non-interactive), the run's provider + model + prompt.
- * `{piProvider}` is pi's own provider key (e.g. "zai", "google").
- */
-export const PI_TEMPLATE = 'pi --mode json --print --no-approve --provider {piProvider} --model {model} --system-prompt "{systemPrompt}" "{task}"';
-
-/** Mark an Anthropic/Anthropic-compatible base URL so we never point pi (provider-keyed) at it. */
-const ANTHROPIC_HOST = /(^|\/\/)(api\.)?anthropic\.com(\/|$)/i;
+import { summarizeTool } from "./tool-summary.js";
 
 /**
  * Resolve the pi provider key for a run. Primary source is the explicit `piKey` on the row; legacy
- * baseUrl/name inference is a fallback for old rows. Anthropic base URLs map to "anthropic". No
- * isolated agent dir — auth lives in pi's real ~/.pi/agent/auth.json (written at save).
+ * baseUrl/name inference is a fallback for old rows. Auth lives in pi's real ~/.pi/agent/auth.json
+ * (written at save); the SDK reads it natively.
  */
 export function preparePiConfig(provider: Provider | null): { piProvider: string } {
   if (!provider) return { piProvider: "" };
-  if (ANTHROPIC_HOST.test(provider.baseUrl || "")) return { piProvider: "anthropic" };
   return { piProvider: inferPiProvider(provider) };
 }
 
-export class PiCliRunner implements AgentRunner {
+/**
+ * Map the agency's Claude-style tool names to pi's lowercase builtin tool names. Unknown names that
+ * are already lowercase (extension/MCP tools) pass through. Tools with no pi equivalent (TodoWrite,
+ * Task, WebSearch, WebFetch) are dropped — same as a Claude run without them.
+ */
+function mapToolsToPi(allowed: string[] | undefined): string[] | undefined {
+  if (!allowed || allowed.length === 0) return undefined; // undefined = pi's default toolset
+  const known: Record<string, string> = {
+    Read: "read",
+    Write: "write",
+    Edit: "edit",
+    Bash: "bash",
+    Grep: "grep",
+    Glob: "find",
+  };
+  const out = new Set<string>();
+  for (const t of allowed) {
+    if (known[t]) out.add(known[t]);
+    else if (/^[a-z]/.test(t)) out.add(t); // extension/custom tool — pass through verbatim
+    // else: a Claude-only tool (TodoWrite, Task, WebSearch…) with no pi equivalent → drop
+  }
+  return [...out];
+}
+
+/** Sum the billable usage fields (input + output + cache-write; exclude cache-read — see sdk-claude.ts). */
+function billableTokens(u: { input: number; output: number; cacheRead: number; cacheWrite: number }): number {
+  return u.input + u.output + u.cacheWrite;
+}
+
+export class PiSdkRunner implements AgentRunner {
   readonly kind = "pi-cli";
 
   async run(req: RunRequest, emitAssistant: (message: unknown) => void): Promise<RunResult> {
-    // Replace placeholders FIRST, then split — so multi-word systemPrompt/task stay as one arg.
-    // Escape any double-quotes in the content so splitArgs' quote tracking doesn't break.
-    const esc = (s: string) => (s || "").replace(/"/g, '\\"');
-    const raw = (req.template ?? PI_TEMPLATE)
-      .replace(/{piProvider}/g, preparePiConfig(req.provider).piProvider || "anthropic")
-      .replace(/{model}/g, req.model)
-      .replace(/{systemPrompt}/g, esc(req.systemPrompt))
-      .replace(/{task}/g, esc(req.task))
-      .replace(/{workdir}/g, req.cwd);
-    const tokens = splitArgs(raw);
-    if (tokens.length === 0) throw new Error("pi command template is empty");
-    const cmd = tokens[0];
-    const args = tokens.slice(1);
-    // pi reads the provider key from its real ~/.pi/agent/auth.json (written at save). Build a clean
-    // env (string values only) and strip any stray provider creds so they can't shadow the intended
-    // provider.
-    const env: Record<string, string> = {};
-    for (const [k, v] of Object.entries(process.env)) if (typeof v === "string") env[k] = v;
-    for (const [k, v] of Object.entries(req.env ?? {})) if (typeof v === "string") env[k] = v;
-    delete env.ANTHROPIC_BASE_URL;
-    delete env.ANTHROPIC_AUTH_TOKEN;
-    delete env.ANTHROPIC_API_KEY;
+    const piProvider = preparePiConfig(req.provider).piProvider;
+    if (!piProvider) {
+      throw new Error("This provider has no pi key — pick a provider from the list in Settings → Models.");
+    }
 
-    return await new Promise<RunResult>((resolve, reject) => {
-        const proc = spawn(cmd, args, { cwd: req.cwd, shell: false, env });
-        let finalText = "";
-        let turns = 0;
-        let usage: PiUsage = { ...ZERO_USAGE };
-        let stderr = "";
-        let stdoutBuf = "";
-        let lastError = ""; // the most recent errorMessage from a pi NDJSON event (e.g. "401 token expired")
+    // 1. Auth + model registry — the SDK reads ~/.pi/agent/auth.json natively (our writePiAuthKey
+    //    populates it at provider-save time, so this is already "logged in").
+    const authStorage = AuthStorage.create();
+    const modelRegistry = ModelRegistry.create(authStorage);
+    const model = modelRegistry.find(piProvider, req.model);
+    if (!model) {
+      const available = modelRegistry.getAvailable().filter((m) => m.provider === piProvider).map((m) => m.id).slice(0, 10).join(", ");
+      throw new Error(
+        `pi doesn't know model "${req.model}" for provider "${piProvider}".` +
+          (available ? ` Available: ${available}` : ` Run model discovery (Settings → Models → Refresh) for this provider.`),
+      );
+    }
 
-        proc.stdout.on("data", (chunk: Buffer) => {
-          stdoutBuf += chunk.toString();
-          // Process complete lines; keep any trailing partial line in the buffer.
-          let nl: number;
-          while ((nl = stdoutBuf.indexOf("\n")) >= 0) {
-            const line = stdoutBuf.slice(0, nl);
-            stdoutBuf = stdoutBuf.slice(nl + 1);
-            for (const ev of parsePiLine(line)) {
-              if (ev.textDelta) {
-                // Error messages are surfaced as textDelta (prefixed with ❌ by parsePiLine).
-                // Track them separately so we can fail the run if pi produced no real output.
-                if (ev.textDelta.startsWith("❌")) lastError = ev.textDelta.slice(2).trim();
-                emitAssistant({ type: "text_delta", delta: ev.textDelta });
-              }
-              if (ev.tool) emitAssistant({ type: "tool", summary: ev.tool });
-              if (ev.usage) usage = ev.usage; // running total — last wins
-              if (ev.turnEnded) turns += 1;
-              if (ev.finalText) finalText = ev.finalText;
+    // 2. Resource loader carries OUR system prompt. createAgentSession has no systemPrompt option,
+    //    so this is the official path. We disable pi's own context/extension/skill/theme discovery
+    //    (noContextFiles/noExtensions/…) for deterministic autonomous runs — the agency provides the
+    //    full system prompt and tool list. Trust prompts never fire because no extensions load.
+    //    Re-enable extensions here when the agency grows a pi-extension story.
+    const resourceLoader = new DefaultResourceLoader({
+      cwd: req.cwd,
+      agentDir: getAgentDir(),
+      systemPrompt: req.systemPrompt,
+      noContextFiles: true,
+      noExtensions: true,
+      noSkills: true,
+      noPromptTemplates: true,
+      noThemes: true,
+    });
+
+    // 3. In-memory session — the agency persists resume ids itself (sessions table), so pi's own
+    //    session files aren't needed.
+    const sessionManager = SessionManager.inMemory(req.cwd);
+
+    // 4. Build the tools list from the agency's allowedTools (mapped to pi names).
+    const tools = mapToolsToPi(req.allowedTools);
+
+    const { session } = await createAgentSession({
+      cwd: req.cwd,
+      model,
+      tools,
+      resourceLoader,
+      sessionManager,
+      authStorage,
+      modelRegistry,
+    });
+
+    // Running totals updated by the event listener.
+    let text = "";
+    let turns = 0;
+    let tokens = 0;
+    let costUsd = 0;
+    let lastError = "";
+    const sessionId = session.sessionId;
+
+    // 5. Subscribe to the typed event stream → translate to the agency's emitAssistant contract
+    //    (the same shapes roleAgent/chat/orchestrator/analyzer already handle for the Claude SDK).
+    const unsubscribe = session.subscribe((event) => {
+      switch (event.type) {
+        case "message_update": {
+          const ae = event.assistantMessageEvent;
+          if (ae.type === "text_delta" && ae.delta) {
+            // Live "typing" feed — same shape as Claude SDK's stream_delta (not persisted; final wins).
+            emitAssistant({ type: "stream_delta", delta: ae.delta });
+          } else if (ae.type === "toolcall_end" && ae.toolCall) {
+            // Tool invocation started — surface a one-liner to the activity feed.
+            const summary = summarizeTool(ae.toolCall.name, (ae.toolCall.arguments ?? {}) as Record<string, unknown>);
+            if (summary) emitAssistant({ type: "tool", summary });
+          }
+          break;
+        }
+        case "tool_execution_start": {
+          const summary = summarizeTool(event.toolName, (event.args ?? {}) as Record<string, unknown>);
+          if (summary) emitAssistant({ type: "tool", summary });
+          break;
+        }
+        case "message_end": {
+          // The assistant message for this turn is final. Persist it + pull usage.
+          const msg = event.message as {
+            role?: string;
+            content?: Array<{ type?: string; text?: string }>;
+            usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; totalTokens: number; cost?: { total: number } };
+            stopReason?: string;
+            errorMessage?: string;
+          };
+          if (msg?.role === "assistant") {
+            const txt = (msg.content ?? []).filter((c) => c.type === "text").map((c) => c.text || "").join("").trim();
+            if (txt) {
+              text = txt; // last assistant text wins (matches Claude SDK's `result` behavior)
+              emitAssistant({ type: "assistant", message: { content: [{ type: "text", text: txt }] } });
             }
+            if (msg.usage) {
+              tokens += billableTokens(msg.usage);
+              if (typeof msg.usage.cost?.total === "number") costUsd += msg.usage.cost.total;
+            }
+            if (msg.stopReason === "error" && msg.errorMessage) lastError = msg.errorMessage;
           }
-        });
-        proc.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
+          break;
+        }
+        case "turn_end": {
+          turns += 1;
+          break;
+        }
+        default:
+          break;
+      }
+    });
 
-        const onAbort = (): void => { proc.kill("SIGTERM"); };
-        req.abort.signal.addEventListener("abort", onAbort);
+    // 6. Wire the agency's abort signal to pi's session.abort().
+    const onAbort = (): void => {
+      void session.abort();
+    };
+    if (req.abort.signal.aborted) onAbort();
+    else req.abort.signal.addEventListener("abort", onAbort, { once: true });
 
-        proc.on("error", (err) => {
-          req.abort.signal.removeEventListener("abort", onAbort);
-          reject(err);
-        });
-        proc.on("close", (code) => {
-          req.abort.signal.removeEventListener("abort", onAbort);
-          if (code !== 0 && !req.abort.signal.aborted) {
-            reject(new Error(`pi exited ${code}\n${stderr.slice(-400)}`));
-            return;
-          }
-          // CRITICAL: pi exits code 0 (success) even when the LLM call errored (e.g. 401 token
-          // expired). The parsePiLine error surfacing emits those as text_delta events, but if the
-          // run produced NO real output (no turns completed, no final text, just errors), that's a
-          // hard failure — NOT "pi run completed." Detect it and throw so the fallback/retry logic
-          // in roleAgent can react (rate-limit detection, graceful fallback, etc.).
-          const errorMsg = lastError || (turns === 0 ? extractErrorFromBuffer(stdoutBuf) : null);
-          if (errorMsg) {
-            reject(new Error(errorMsg));
-            return;
-          }
-          resolve({
-            text: finalText || "pi run completed.",
-            turns: Math.max(1, turns),
-            tokens: usage.totalTokens,
-            costUsd: usage.costTotal,
-            stopped: "",
-          });
-        });
-      });
+    // 7. Await completion. session.prompt() resolves when the agent finishes all turns; it throws on
+    //    hard errors (auth failure, unreachable endpoint) — those bubble up to roleAgent's retry/
+    //    fallback/rate-limit handling, same as the Claude SDK runner.
+    let stopped = "";
+    try {
+      await session.prompt(req.task);
+    } catch (err) {
+      const msg = (err as Error).message ?? String(err);
+      if (req.abort.signal.aborted) {
+        stopped = "aborted by user";
+      } else {
+        // Hard failure (401, network, rate-limit). Surface the real message so roleAgent's
+        // parseRateLimit / fallback logic can react. Keep partial text + usage if any.
+        unsubscribe();
+        req.abort.signal.removeEventListener("abort", onAbort);
+        try { session.dispose(); } catch { /* noop */ }
+        throw new Error(lastError ? `${lastError} | ${msg}` : msg);
+      }
+    } finally {
+      unsubscribe();
+      req.abort.signal.removeEventListener("abort", onAbort);
+      try { session.dispose(); } catch { /* noop */ }
+    }
+
+    // If the run produced no text and no error was thrown, that's still a real completion (e.g. a
+    // pure tool-only turn). Don't fabricate an error — match the old "pi run completed" fallback.
+    return {
+      text: text || "pi run completed.",
+      turns: Math.max(1, turns),
+      tokens,
+      costUsd,
+      stopped,
+      sessionId: sessionId || undefined,
+    };
   }
-}
-
-/**
- * When pi exits code 0 but produced zero turns (all errors), extract the last errorMessage from
- * the raw NDJSON buffer as a last resort. Scans for `"errorMessage":"..."` in any line.
- */
-function extractErrorFromBuffer(buf: string): string | null {
-  const lines = buf.split("\n").filter(Boolean);
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const m = /"errorMessage"\s*:\s*"([^"]+)"/.exec(lines[i]);
-    if (m && m[1]) return m[1];
-  }
-  return null;
-}
-
-/** Minimal shell-less argv split (quotes only — pi-parse handles no metacharacters). */
-function splitArgs(cmd: string): string[] {
-  const out: string[] = [];
-  let cur = "";
-  let q = "";
-  for (let i = 0; i < cmd.length; i++) {
-    const c = cmd[i];
-    if (q) {
-      if (c === q) q = "";
-      else cur += c;
-    } else if (c === '"' || c === "'") q = c;
-    else if (c === " ") {
-      if (cur) out.push(cur);
-      cur = "";
-    } else cur += c;
-  }
-  if (cur) out.push(cur);
-  return out;
 }

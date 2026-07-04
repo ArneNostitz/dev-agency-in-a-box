@@ -62,12 +62,13 @@ RUN if [ "$WITH_GITNEXUS" = "1" ]; then GITNEXUS_SKIP_OPTIONAL_GRAMMARS=1 npm in
     || echo "gitnexus not installed (optional) — set GITNEXUS=true only if this succeeds"; \
     else echo "skip gitnexus (WITH_GITNEXUS=0) — code-intelligence MCP disabled"; fi
 
-# pi (https://github.com/earendil-works/pi) — the coding-agent CLI used by the `pi-cli` runner so
-# the agency can drive ANY model/provider pi supports (Claude, GLM, DeepSeek, Codex, …). Baked into
-# the image at the default prefix; runtime on-the-fly installs go to the data-volume prefix below.
+# pi (https://github.com/earendil-works/pi) — the `pi-cli` runner now uses pi IN-PROCESS via the
+# @earendil-works/pi-coding-agent SDK (a regular package.json dependency, installed by `npm install`
+# above). This optional global install only provides the `pi` CLI binary for users who want it
+# directly; the runner no longer needs it. WITH_PI=0 skips this (the SDK runner still works).
 RUN if [ "$WITH_PI" = "1" ]; then npm install -g --prefix /usr/local --ignore-scripts @earendil-works/pi-coding-agent \
-    || echo "pi not installed (optional) — the pi-cli runner falls back to the built-in SDK runner"; \
-    else echo "skip pi (WITH_PI=0) — pi-cli runner falls back to the built-in SDK runner"; fi
+    || echo "pi CLI not installed (optional) — the in-process SDK runner works without it"; \
+    else echo "skip pi CLI (WITH_PI=0) — the in-process SDK runner works without it"; fi
 
 # Pre-install LadybugDB's FTS (full-text search) extension at BUILD time. GitNexus runs LadybugDB
 # "load-only" during analyze — it won't download the extension itself — so at runtime full-text

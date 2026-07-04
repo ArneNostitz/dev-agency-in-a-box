@@ -19,7 +19,7 @@ import { parseRateLimit, nextWindowReset, parseResetClock } from "../dist/rateli
 import { pickWebDevScript, isTauriPackage, parseDevPort, parseTunnelUrl, buildLocalCommand } from "../dist/apprun.js";
 import { registerRun, stopRuns, hasActiveRun } from "../dist/abort.js";
 import { parseAuditProposals } from "../dist/auditparse.js";
-import { preparePiConfig, PI_TEMPLATE } from "../dist/runners/sdk-pi.js";
+import { preparePiConfig } from "../dist/runners/sdk-pi.js";
 import { runnerKindFor } from "../dist/runners/exec.js";
 import { readFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -391,24 +391,15 @@ test("stop flag: request → set, clear → unset, isolated per issue", () => {
   assert.equal(isStopRequested("o/r", 1), false);
 });
 
-test("preparePiConfig: resolves a provider to its pi builtin key (auth lives in pi's real auth.json now, no isolated dir)", () => {
+test("preparePiConfig: resolves a provider to its pi builtin key (the SDK runner reads pi's real auth.json)", () => {
   // piKey on the row is the primary source (set when added via the preset dropdown).
   assert.equal(preparePiConfig({ id: "g1", name: "Gemini", piKey: "google", apiKey: "k", models: [] }).piProvider, "google", "explicit piKey wins");
   // Legacy rows without piKey fall back to baseUrl/name inference (GLM → zai).
   const glm = { id: "glm-1", name: "GLM (Zhipu)", baseUrl: "https://open.bigmodel.cn/api/anthropic", apiKey: "zhipu-key", models: ["glm-5.2"] };
   assert.equal(preparePiConfig(glm).piProvider, "zai", "GLM/Zhipu resolves to pi's builtin 'zai'");
-  // No isolated agent dir is returned anymore — auth is in pi's real ~/.pi/agent/auth.json.
-  assert.equal(preparePiConfig(glm).agentDir, undefined, "no isolated agent dir (auth in pi's real store)");
-});
-
-test("preparePiConfig: the pi invocation template uses --provider so pi targets the right builtin", () => {
-  assert.match(PI_TEMPLATE, /--provider \{piProvider\}/);
-  assert.match(PI_TEMPLATE, /--model \{model\}/);
 });
 
 test("preparePiConfig: Claude-native / empty providers resolve safely", () => {
-  // An Anthropic-host base URL is the default endpoint, not a custom pi provider.
-  assert.equal(preparePiConfig({ id: "a", name: "Anthropic", baseUrl: "https://api.anthropic.com", apiKey: "k", models: [] }).piProvider, "anthropic");
   assert.equal(preparePiConfig(null).piProvider, "", "null provider → empty key");
 });
 
