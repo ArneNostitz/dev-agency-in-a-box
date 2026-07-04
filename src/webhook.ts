@@ -53,7 +53,7 @@ import { listRateLimited } from "./store.js";
 import { getConversation, conversationCount, foldInGitHubComment, recordOutgoingComment, setCommentGhId, updateCommentBody } from "./store.js";
 import { recentFailuresSince } from "./store.js";
 import { effectiveRepos } from "./commands.js";
-import { getThreadFull, commentAsHuman, editCommentAsHuman, commentOnIssue, mergePrForBranch, closeIssue, deleteIssueHard, findPrForBranch, prMergeStatus, mergeProbe, branchHeadSha, detectReviewVerdict, createIssue, readRepoFile, putRepoBase64, listUserRepos, fetchNativeSubIssues, type NativeSubIssueData } from "./github.js";
+import { getThreadFull, commentAsHuman, editCommentAsHuman, commentOnIssue, mergePrForBranch, closeIssue, deleteIssueHard, findPrForBranch, prMergeStatus, mergeProbe, branchHeadSha, detectReviewVerdict, createIssue, readRepoFile, putRepoBase64, listUserRepos, fetchNativeSubIssues, deleteAgencyComments, type NativeSubIssueData } from "./github.js";
 import { listAgentFiles, readAgentFile, isSafeAgentPath } from "./memory.js";
 import { startApp, stopApp, getApp, pickWebDevScript, isTauriPackage, buildLocalCommand } from "./apprun.js";
 import { ensureRepoAccess } from "./commands.js";
@@ -1262,9 +1262,9 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           return ok();
         }
         if (path === "/reset-issue") {
-          // FULL reset: wipe all progress (activity stream, plan, session, overrides, rate-limits) and
-          // return the issue to its initial "just created" planned state. Like git revert for an issue:
-          // the branch/PR stays on GitHub but the dashboard starts fresh. Aborts any running agent first.
+          // FULL reset: wipe ALL progress — activity stream, plan, session, overrides, rate-limits,
+          // AND the agency's GitHub comments — returning the issue to its initial post state.
+          // Human comments are preserved. The branch/PR stays on GitHub.
           if (!repo || !number) return res.writeHead(400).end("{}");
           if (stop) await stop(repo, number).catch(() => {});
           clearActivity(repo, number);
@@ -1276,8 +1276,10 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
             try { const d = getDb(); if (d) d.prepare("DELETE FROM settings WHERE key = ?").run(key); } catch { /* best effort */ }
           }
           clearRateLimited(repo, number);
+          // Delete ALL agency comments from the GitHub issue (human comments stay).
+          const deleted = await deleteAgencyComments(repo, number).catch(() => 0);
           recordIssueStatus(repo, number, withStatus("planned"));
-          return ok();
+          return ok(JSON.stringify({ ok: true, deletedComments: deleted }));
         }
         if (path === "/close-not-planned") {
           // Dismiss a Planned issue we won't do: close it on GitHub as "not planned" (informative)

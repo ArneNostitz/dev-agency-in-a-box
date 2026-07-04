@@ -79,6 +79,23 @@ export async function commentOnIssue(repo: string, issue: number, body: string):
   } catch { /* GitHub mirror failed (rate limit / parse) — it's in the DB; reconcile links it later */ }
 }
 
+/**
+ * Delete ALL agency comments (those carrying the AGENCY_MARKER) from an issue on GitHub.
+ * Used by the full-reset action to return the issue to its initial state. Human comments are
+ * preserved. Returns the count of deleted comments.
+ */
+export async function deleteAgencyComments(repo: string, issue: number): Promise<number> {
+  const comments = await ghFetchAll(`repos/${repo}/issues/${issue}/comments`).catch(() => null);
+  if (!comments || !Array.isArray(comments)) return 0;
+  const agencyComments = (comments as Array<{ id: number; body?: string }>).filter((c) => (c.body || "").includes(AGENCY_MARKER));
+  let deleted = 0;
+  for (const c of agencyComments) {
+    await gh(["api", "-X", "DELETE", `repos/${repo}/issues/comments/${c.id}`]).catch(() => {});
+    deleted++;
+  }
+  return deleted;
+}
+
 export async function listComments(repo: string, issue: number): Promise<Array<{ body: string }>> {
   const out = await gh([
     "issue", "view", String(issue), "--repo", repo, "--json", "comments",
