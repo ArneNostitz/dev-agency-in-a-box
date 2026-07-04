@@ -1,7 +1,10 @@
 /**
- * The runner registry + the ONE shared summarizeTool. Picks the backend from a RunnerKind
- * (default claude-sdk), with an optional custom CLI template. Provider.runner overrides per
- * provider; the global agent_runner / agent_cli_command settings are the fallback.
+ * The runner registry. Picks the backend from a RunnerKind (default claude-sdk), with an optional
+ * custom CLI template. Provider.runner overrides per provider; the global agent_runner /
+ * agent_cli_command settings are the fallback.
+ *
+ * summarizeTool is re-exported from ./tool-summary.js (its own module, so runners can import it
+ * without forming a cycle with this registry).
  */
 import { existsSync } from "node:fs";
 import { join } from "node:path";
@@ -9,48 +12,10 @@ import { sStr } from "../settings.js";
 import type { AgentRunner, RunnerKind } from "./interface.js";
 import { ClaudeSdkRunner } from "./sdk-claude.js";
 import { CliRunner, CLI_TEMPLATES } from "./cli.js";
-import { PiCliRunner, PI_TEMPLATE } from "./sdk-pi.js";
+import { PiSdkRunner } from "./sdk-pi.js";
 
-/**
- * The one-liner tool-call summary for the activity stream. Single source (issue #61 dedup) —
- * imported by roleAgent (SDK path) and any runner that wants consistent tool labels.
- */
-export function summarizeTool(name: string, input: Record<string, unknown> = {}): string {
-  const s = (v: unknown) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, 140);
-  switch (name) {
-    case "Bash":
-      return `$ ${s(input.command)}`;
-    case "Write":
-      return `✏️ write ${s(input.file_path)}`;
-    case "Edit":
-      return `✏️ edit ${s(input.file_path)}`;
-    case "Read":
-      return `📖 read ${s(input.file_path)}`;
-    case "Grep":
-      return `🔎 grep ${s(input.pattern)}`;
-    case "Glob":
-      return `🔎 glob ${s(input.pattern)}`;
-    case "WebSearch":
-      return `🌐 search ${s(input.query)}`;
-    case "WebFetch":
-      return `🌐 fetch ${s(input.url)}`;
-    case "TodoWrite":
-      return `📋 plan: ${(Array.isArray(input.todos) ? input.todos : []).map((t: unknown) => (t as { content?: string }).content || "").filter(Boolean).slice(0, 4).join(" · ").slice(0, 160) || "updated the todo list"}`;
-    case "Task":
-      return `🤝 subagent: ${s(input.description || input.prompt)}`;
-    default: {
-      // MCP tools — surface the server + tool + its key argument so GitNexus/recall calls are legible.
-      const mcp = /^mcp__([^_]+)__(.+)$/.exec(name);
-      if (mcp) {
-        const [, server, tool] = mcp;
-        const arg = s(input.symbol || input.query || input.name || input.q || input.path || input.cypher || Object.values(input)[0]);
-        const icon = server === "gitnexus" ? "🧠" : server === "recall" ? "📚" : "🔌";
-        return `${icon} ${server}.${tool}${arg ? `(${arg})` : ""}`;
-      }
-      return `🔧 ${name}${input.description ? `: ${s(input.description)}` : ""}`;
-    }
-  }
-}
+// Re-export for back-compat (roleAgent and others import summarizeTool from "./registry.js").
+export { summarizeTool } from "./tool-summary.js";
 
 /**
  * Runner registry — the single source of truth for backends. To add a runner: add one entry here
@@ -59,10 +24,10 @@ export function summarizeTool(name: string, input: Record<string, unknown> = {})
  */
 const RUNNERS: Record<RunnerKind, (customCliCommand?: string) => AgentRunner> = {
   "claude-sdk": () => new ClaudeSdkRunner(),
-  "pi-cli": () => new PiCliRunner(),
+  "pi-cli": () => new PiSdkRunner(),
   "claude-cli": (cli) => new CliRunner(cli || CLI_TEMPLATES["claude-cli"]),
-  // custom-cli falls back to the pi template if no command is configured (sensible "any CLI" default;
-  // overridden via the agent_cli_command setting).
+  // custom-cli falls back to a generic template if no command is configured (sensible "any CLI"
+  // default; overridden via the agent_cli_command setting).
   "custom-cli": (cli) => new CliRunner(cli || sStr("agent_cli_command", "AGENT_CLI_COMMAND", CLI_TEMPLATES["pi-cli"])),
 };
 
@@ -78,14 +43,14 @@ export function defaultRunnerKind(): RunnerKind {
 }
 
 /**
- * The executable a runner of this kind would spawn, or null for the in-process SDK runner.
+ * The executable a runner of this kind would spawn, or null for an in-process SDK runner (claude-sdk
+ * and pi-cli both run in-process now — pi uses createAgentSession from the SDK, no `pi` binary).
  * Lets the caller preflight that the binary exists before launching (avoids a raw ENOENT).
  */
 export function runnerBinary(kind: RunnerKind | string, customCliCommand?: string): string | null {
-  if (kind === "claude-sdk") return null;
+  if (kind === "claude-sdk" || kind === "pi-cli") return null;
   let template: string;
-  if (kind === "pi-cli") template = customCliCommand || PI_TEMPLATE;
-  else if (kind === "claude-cli") template = customCliCommand || CLI_TEMPLATES["claude-cli"];
+  if (kind === "claude-cli") template = customCliCommand || CLI_TEMPLATES["claude-cli"];
   else template = customCliCommand || sStr("agent_cli_command", "AGENT_CLI_COMMAND", CLI_TEMPLATES["pi-cli"]);
   const first = template.trim().split(/\s+/)[0];
   return first || null;

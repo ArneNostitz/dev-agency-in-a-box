@@ -1,13 +1,12 @@
 // Runner binary preflight: pick the right executable per runner kind, and detect whether it's
-// installed — so a missing CLI (e.g. `pi` absent in the deploy) falls back to the SDK runner
-// instead of a raw spawn ENOENT.
+// installed — so a missing CLI falls back to an SDK runner instead of a raw spawn ENOENT.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { runnerBinary, binaryAvailable } from "../dist/runners/registry.js";
 
-test("runnerBinary: SDK has no binary; CLI kinds resolve their executable", () => {
+test("runnerBinary: SDK runners have no binary (in-process); CLI kinds resolve their executable", () => {
   assert.equal(runnerBinary("claude-sdk"), null);
-  assert.equal(runnerBinary("pi-cli"), "pi");
+  assert.equal(runnerBinary("pi-cli"), null); // pi now runs in-process via createAgentSession (no `pi` binary)
   assert.equal(runnerBinary("custom-cli", "mytool --flag {task}"), "mytool");
 });
 

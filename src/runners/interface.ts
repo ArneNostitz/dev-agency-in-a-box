@@ -1,8 +1,8 @@
 /**
  * The AgentRunner seam (architecture review, Candidate 4 / issue #63) — the single interface
- * every role's execution goes through, so the backend (Claude SDK, pi CLI, gemini CLI, any
- * subprocess) is a swappable adapter instead of a hard-wired call. The agency uses external
- * tools AS TOOLS; it does not assimilate them (pi = the CliRunner subprocess, never in-process).
+ * every role's execution goes through, so the backend (Claude SDK, pi SDK, any CLI) is a swappable
+ * adapter instead of a hard-wired call. The agency uses external agent toolkits via their official
+ * SDKs / CLIs AS TOOLS; it does not assimilate them. pi is now in-process via createAgentSession.
  *
  * Shape: callback-based (emitAssistant), matching the proven roleAgent.runQuery path — a
  * behavior-preserving extraction, not a rewrite. A future deepening could turn this into
@@ -11,9 +11,10 @@
  *
  * Provider model (#108): the resolved Provider row is passed IN (not a pre-baked Claude-shaped
  * env). Each runner TRANSLATES the provider for its own backend — the Claude SDK runner builds
- * ANTHROPIC_* env, the pi runner writes an isolated ~/.pi/agent/auth.json, a future gemini-cli
- * runner would map its flags. This is what makes runners true plugins: add one entry to the
- * registry (src/runners/registry.ts) + implement translate-for-this-backend; nothing else changes.
+ * ANTHROPIC_* env, the pi SDK runner resolves via ModelRegistry/AuthStorage (pi reads its real
+ * ~/.pi/agent/auth.json, written at provider-save). This is what makes runners true plugins:
+ * add one entry to the registry (src/runners/registry.ts) + implement translate-for-this-backend;
+ * nothing else changes.
  */
 // AbortController is a global (lib es2022); no import needed.
 import type { Provider } from "../db/providers.js";
