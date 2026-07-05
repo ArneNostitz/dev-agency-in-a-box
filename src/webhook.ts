@@ -389,7 +389,9 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           for (const a of _recentAct) { if (a && a.role) lastRoleMap[`${a.repo}#${a.number}`] = a.role; }
           const enriched = issues.map((i) => {
             const byParent = epicCache[i.repo] ?? {};
-            const kids = byParent[i.number];
+            // Children carry their own model override + live state so the epic detail can show a
+            // per-sub-issue model picker + play button.
+            const kids = byParent[i.number]?.map((c) => ({ ...c, model: getIssueModelOverride(i.repo, c.child) }));
             const conflictFilesFor = conflictMap[`${i.repo}#${i.number}`];
             const parentNum = (childToParentNum[i.repo] ?? {})[i.number];
             const parentEpic =
@@ -413,6 +415,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               review: reviews[`${i.repo}#${i.number}`] ?? null,
               modelOverride: getIssueModelOverride(i.repo, i.number),
               workflowId: getIssueWorkflow(i.repo, i.number),
+              rolePin: (getSetting(`issue_role_pin.${i.repo}#${i.number}`) || "") || null,
               providerOverride: getIssueProvider(i.repo, i.number),
               agentModels: getIssueAgentModels(i.repo, i.number),
               useFallback: getIssueUseFallback(i.repo, i.number),
@@ -984,9 +987,16 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               clearIssueModelOverride(repo, number);
             }
           }
-          // The chat's agent selection arrives as a STRUCTURED field and is pinned in the DB — the
-          // next run routes to it. Never parsed from the message text (issue #140).
-          if (typeof p.agent === "string" && p.agent.trim()) setSetting(`issue_role_pin.${repo}#${number}`, p.agent.trim());
+          // The chat's agent selection arrives as a STRUCTURED field — never parsed from the
+          // message text (issue #140). On a not-yet-started issue it sets the initial route pin;
+          // on a started/delivered issue it's a ONE-SHOT TAKEOVER: that agent (with the chatbox
+          // model, if picked) handles the next run — e.g. comment at @review with GLM selected and
+          // the reviewer checks the branch — without disturbing the issue's pinned workflow.
+          if (typeof p.agent === "string" && p.agent.trim()) {
+            const st = parseLegacyStatus(getIssueRow(repo, number)?.state ?? "").state;
+            if (st === "planned" || st === "notPlanned") setSetting(`issue_role_pin.${repo}#${number}`, p.agent.trim());
+            else setSetting(`issue_takeover.${repo}#${number}`, p.agent.trim());
+          }
           const text = p.body.trim();
           // DB-first: record the reply locally now (the DB is the conversation's source of truth —
           // the agent reads it from here), then mirror to GitHub in the BACKGROUND. The chat never
@@ -1249,7 +1259,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           clearIssueWorkflow(repo, number);
           clearIssueProvider(repo, number);
           // Wipe per-issue settings (plan, role pins, workflow cursor, approval, dealer, budget, …).
-          for (const key of [`issue_plan.${repo}#${number}`, `issue_role.${repo}#${number}`, `issue_role_pin.${repo}#${number}`, `issue_solo.${repo}#${number}`, `issue_dealer.${repo}#${number}`, `issue_budget.${repo}#${number}`, `issue_provider.${repo}#${number}`, `issue_agent_models.${repo}#${number}`, `issue_use_fallback.${repo}#${number}`, `issue_workflow.${repo}#${number}`, `issue_model.${repo}#${number}`, `wf_step.${repo}#${number}`, `issue_approved.${repo}#${number}`, `epic_auto.${repo}#${number}`, `head:${repo}#${number}`]) {
+          for (const key of [`issue_plan.${repo}#${number}`, `issue_role.${repo}#${number}`, `issue_role_pin.${repo}#${number}`, `issue_solo.${repo}#${number}`, `issue_dealer.${repo}#${number}`, `issue_budget.${repo}#${number}`, `issue_provider.${repo}#${number}`, `issue_agent_models.${repo}#${number}`, `issue_use_fallback.${repo}#${number}`, `issue_workflow.${repo}#${number}`, `issue_model.${repo}#${number}`, `wf_step.${repo}#${number}`, `issue_takeover.${repo}#${number}`, `issue_approved.${repo}#${number}`, `epic_auto.${repo}#${number}`, `head:${repo}#${number}`]) {
             try { const d = getDb(); if (d) d.prepare("DELETE FROM settings WHERE key = ?").run(key); } catch { /* best effort */ }
           }
           clearRateLimited(repo, number);
@@ -1390,10 +1400,20 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           return ok();
         }
         if (path === "/issue-workflow") {
-          // Pin (or clear) the workflow this issue runs — persisted, honored on resume.
+          // Pin the ROUTE this issue runs — a workflow (workflowId) OR a single agent (agent
+          // handle). Mutually exclusive; persisted, honored on resume. Neither → clear (Default).
           if (!repo || !number) return res.writeHead(400).end("{}");
-          if (p.workflowId && typeof p.workflowId === "string") setIssueWorkflow(repo, number, p.workflowId);
-          else clearIssueWorkflow(repo, number);
+          const pinKey = `issue_role_pin.${repo}#${number}`;
+          if (typeof p.agent === "string" && p.agent.trim()) {
+            clearIssueWorkflow(repo, number);
+            setSetting(pinKey, p.agent.trim());
+          } else if (p.workflowId && typeof p.workflowId === "string") {
+            setIssueWorkflow(repo, number, p.workflowId);
+            setSetting(pinKey, "");
+          } else {
+            clearIssueWorkflow(repo, number);
+            setSetting(pinKey, "");
+          }
           return ok();
         }
         if (path === "/issue-budget") {
@@ -1633,10 +1653,10 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           // and presses Start). DB-first markers; GitHub is only the mirror.
           if (!repo) return res.writeHead(400).end(JSON.stringify({ error: "repo required" }));
           if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) return res.writeHead(400).end(JSON.stringify({ error: `Bad repo "${repo}"` }));
-          const ph = p as { workflow?: string; issues?: Array<{ title?: string; scope?: string }> };
+          const ph = p as { workflow?: string; issues?: Array<{ title?: string; scope?: string; route?: string }> };
           const wf = (ph.workflow ?? "full-build");
           const HANDLE: Record<string, string> = { "quick-fix": "@quickfix", "full-build": "@build", "plan-only": "@planonly", "split": "@split" };
-          const handle = HANDLE[wf] ?? "@build";
+          const fallbackRoute = HANDLE[wf] ?? "@build";
           const issues = Array.isArray(ph.issues) ? ph.issues : [];
           if (!issues.length) return res.writeHead(400).end(JSON.stringify({ error: "no issues to create" }));
           const userTok = ghUserToken();
@@ -1648,11 +1668,17 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               const title = (it.title ?? "").trim();
               if (!title) continue;
               const pos = issues.length > 1 ? `\n\n— Part ${n + 1} of ${issues.length}.` : "";
-              const body = `${handle} ${(it.scope ?? "").trim()}${pos}\n\nProposed by the 🧭 Orchestrator from a chat. Review and press ▶ Start when ready.`;
+              const body = `${(it.scope ?? "").trim()}${pos}\n\nProposed by the 🧭 Orchestrator from a chat. Review and press ▶ Start when ready.`;
               const c = await createIssue(repo, title, body, userTok);
               if (!c.number) continue;
               recordIssueStatus(repo, c.number, withStatus("planned"), { title });
               setByAgent(repo, c.number, true);
+              // Route STRUCTURALLY (issue #140): the Orchestrator's per-issue recommendation
+              // (a workflow trigger or a single-agent handle), else the proposal-level workflow.
+              const route = (it.route || fallbackRoute).trim().toLowerCase();
+              const routeWf = resolveWorkflow(route);
+              if (routeWf) setIssueWorkflow(repo, c.number, routeWf.id);
+              else setSetting(`issue_role_pin.${repo}#${c.number}`, route);
               created.push({ number: c.number, title, url: c.url });
             }
             return ok(JSON.stringify({ ok: true, created }));

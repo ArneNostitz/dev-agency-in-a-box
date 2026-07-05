@@ -251,9 +251,15 @@ function workdirFor(repo: string, key: string): string {
 async function processIssue(cfg: Config, repo: string, issue: Issue, opts: { fresh?: boolean } = {}): Promise<void> {
   clearStop(repo, issue.number); // a fresh dispatch clears any prior Stop request
   clearHold(repo, issue.number); // …and any prior Hold (resume/continue)
-  // Chat agents (v3): interactive, non-repo. Routed by the DB role pin (dashboard selection), never
-  // by @-handles in the issue text (issue #140). Skip the clone/branch/PR machinery.
-  const rolePin = (getSetting(`issue_role_pin.${repo}#${issue.number}`) || "").trim();
+  // ONE-SHOT TAKEOVER: the user addressed a specific agent in the chat on a started issue (e.g.
+  // "@review, check this" with GLM picked). That agent handles THIS run — solo, on the existing
+  // branch — without disturbing the pinned workflow. Consumed here; the next run routes normally.
+  const takeoverKey = `issue_takeover.${repo}#${issue.number}`;
+  const takeover = (getSetting(takeoverKey) || "").trim() || null;
+  if (takeover) setSetting(takeoverKey, "");
+  // Chat agents (v3): interactive, non-repo. Routed by the DB role pin / takeover (dashboard
+  // selection), never by @-handles in the issue text (issue #140). Skip the clone/branch/PR machinery.
+  const rolePin = takeover || (getSetting(`issue_role_pin.${repo}#${issue.number}`) || "").trim();
   const chatDef = rolePin
     ? listAgentDefs().find((a) => a.mode === "chat" && ((a.handle || `@${a.name}`).toLowerCase() === rolePin.toLowerCase() || a.name.toLowerCase() === rolePin.replace(/^@/, "").toLowerCase())) ?? null
     : null;
@@ -297,7 +303,7 @@ async function processIssue(cfg: Config, repo: string, issue: Issue, opts: { fre
   // the route ONCE on first start. A workflow pick is pinned; a role pick is stored as the issue's
   // role pin. Everything lives in the DB (issue #140: no @-handle text parsing anywhere).
   const dealerKey = `issue_dealer.${repo}#${issue.number}`;
-  if (!resuming && getSetting(dealerKey) === "1") {
+  if (!resuming && !takeover && getSetting(dealerKey) === "1") {
     const pick = await pickDealerDispatch(repo, issue).catch(() => null);
     setSetting(dealerKey, ""); // consume — one roll per issue, even if the pick was null
     if (pick) {
@@ -307,12 +313,12 @@ async function processIssue(cfg: Config, repo: string, issue: Issue, opts: { fre
     }
   }
   // A persisted per-issue WORKFLOW override (set from the dashboard) wins and is honored even on
-  // resume — so "run this workflow" sticks across runs.
-  const pinnedWf = (() => { const id = getIssueWorkflow(repo, issue.number); return id ? getWorkflow(id) : null; })();
-  // A single-agent pin is the DB role pin the dashboard (or the dealer) stored — never derived from
-  // issue/comment text. Re-read (the dealer may have just stored one). No pin and no workflow → the
-  // global DEFAULT workflow.
-  const pinnedHandle = resuming || pinnedWf ? null : ((getSetting(`issue_role_pin.${repo}#${issue.number}`) || "").trim() || null);
+  // resume — so "run this workflow" sticks across runs. A takeover suspends it for THIS run only.
+  const pinnedWf = takeover ? null : (() => { const id = getIssueWorkflow(repo, issue.number); return id ? getWorkflow(id) : null; })();
+  // A single-agent pin: the takeover handle (one-shot) or the DB role pin the dashboard/dealer
+  // stored — never derived from issue/comment text. Re-read (the dealer may have just stored one).
+  // No pin and no workflow → the global DEFAULT workflow.
+  const pinnedHandle = takeover ?? (resuming || pinnedWf ? null : ((getSetting(`issue_role_pin.${repo}#${issue.number}`) || "").trim() || null));
   let handleRole = pinnedHandle ? roleForHandle(pinnedHandle) : null;
   if (!handleRole && pinnedHandle) {
     // A custom (non-chat) agent pin runs on its base role: repo-writing agents as developer,
@@ -320,20 +326,22 @@ async function processIssue(cfg: Config, repo: string, issue: Issue, opts: { fre
     const def = listAgentDefs().find((d) => (d.handle || `@${d.name}`).toLowerCase() === pinnedHandle.toLowerCase() || d.name.toLowerCase() === pinnedHandle.replace(/^@/, "").toLowerCase());
     if (def) handleRole = def.canWriteCode ? "developer" : "planner";
   }
-  const wf = pinnedWf ?? ((!resuming && handleRole === null) ? getWorkflow(getDefaultWorkflowId()) : null);
+  const wf = pinnedWf ?? ((!resuming && !takeover && handleRole === null) ? getWorkflow(getDefaultWorkflowId()) : null);
   const role: RoleName = wf
     ? workflowLeadRole(wf)
+    : takeover
+    ? handleRole ?? "developer"
     : resuming
     ? ((getIssueRole(repo, issue.number) as RoleName) ?? "developer")
     : handleRole ?? "developer";
   // A single explicit pin (no workflow) runs JUST that one agent — @dev / a code agent = solo
   // developer + PR; @plan/@arch/@review/@test = a single specialist. The multi-step build is the
   // Full build workflow (@build). A bare issue with no recognised handle falls back to Full build.
-  const single = !resuming && !wf && !pinnedWf && handleRole !== null;
+  const single = !!takeover || (!resuming && !wf && !pinnedWf && handleRole !== null);
   // Persist whether this is a SOLO single-role pin (e.g. @dev → just the developer) vs a multi-step
   // workflow, so the dashboard shows the ONE real step instead of defaulting to the full build. Only
   // write on a fresh run (resume forces single=false but the issue is still solo) so it's not wiped.
-  if (!resuming) setSetting(`issue_solo.${repo}#${issue.number}`, single ? role : "");
+  if (!resuming && !takeover) setSetting(`issue_solo.${repo}#${issue.number}`, single ? role : "");
   console.log(`[agency] ${repo} #${issue.number}: ${issue.title} -> role:${role}${resuming ? " (resume)" : ""}`);
   pushActivity(repo, issue.number, role, "start", "▶ starting…"); // instant feedback before the GitHub prep + clone
 
@@ -383,7 +391,7 @@ async function processIssue(cfg: Config, repo: string, issue: Issue, opts: { fre
     // fetches the default branch, so deterministically check out the issue's branch if it was ever
     // pushed (same as processResume/processFix). Without this, every workflow resume silently threw
     // the worked-on code away.
-    if (resuming) await fetchCheckout(workdir, `agency/issue-${issue.number}`).catch(() => {});
+    if (resuming || takeover) await fetchCheckout(workdir, `agency/issue-${issue.number}`).catch(() => {});
     await indexRepo(workdir, repo, (s) => pushActivity(repo, issue.number, role, "tool", s));
     await runFlow();
   } catch (err) {
@@ -556,6 +564,15 @@ export async function forceResume(cfg: Config, repo: string, number: number, add
   if (getSetting(`audit_tracking.${repo}`) === String(number)) {
     console.log(`[agency] resume → re-run audit ${repo} #${number}`);
     return runAuditOn(cfg, repo, number);
+  }
+  // A pending TAKEOVER (the user addressed a specific agent in chat) always runs that agent —
+  // skip the PR short-circuit and the plan-resume path; processIssue consumes the takeover.
+  if ((getSetting(`issue_takeover.${repo}#${number}`) || "").trim()) {
+    clearActive(repo, number);
+    setThreadCursor(repo, number, 0);
+    console.log(`[agency] resume → takeover agent ${repo} #${number}`);
+    dispatch(`${repo}#${number}`, () => processIssue(cfg, repo, issue));
+    return;
   }
   // When the human left a steering comment (addressComment), DON'T short-circuit — re-engage so the
   // agent addresses it, even if a PR exists. Only the plain Resume button / auto-resume short-circuits.

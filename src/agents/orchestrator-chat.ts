@@ -15,12 +15,19 @@ import { runLLM } from "../runners/exec.js";
 import type { Provider } from "../db/providers.js";
 import { recallWiring, RECALL_PROMPT } from "./recall.js";
 
-export interface HandoffIssue { title: string; scope: string }
+export interface HandoffIssue { title: string; scope: string; route?: string }
 export interface HandoffProposal { workflow: string; issues: HandoffIssue[] }
 export interface OrchReply { reply: string; proposal: HandoffProposal | null }
 
 const VALID_WF = new Set(["quick-fix", "full-build", "plan-only", "split"]);
 const ORCH_ROLE = "orchestrator";
+
+/** Pull an optional `{agent: @x}` / `{workflow: @y}` route recommendation off an issue line. */
+function extractRoute(s: string): { scope: string; route?: string } {
+  const m = /\{\s*(agent|workflow)\s*:\s*(@[\w-]+)\s*\}/i.exec(s);
+  if (!m) return { scope: s.trim() };
+  return { scope: s.replace(m[0], "").trim(), route: m[2].toLowerCase() };
+}
 
 /** Parse the trailing ```handoff block (if any) into a structured proposal; tolerant of small drift. */
 export function parseHandoff(text: string): HandoffProposal | null {
@@ -33,9 +40,9 @@ export function parseHandoff(text: string): HandoffProposal | null {
     const wf = line.match(/^workflow\s*:\s*(.+)$/i);
     if (wf) { workflow = wf[1].trim().toLowerCase().replace(/\s+/g, "-"); continue; }
     const it = line.match(/^[-*]\s*\[(.+?)\]\s*(.*)$/);
-    if (it) { issues.push({ title: it[1].trim(), scope: it[2].trim() }); continue; }
+    if (it) { const r = extractRoute(it[2]); issues.push({ title: it[1].trim(), scope: r.scope, ...(r.route ? { route: r.route } : {}) }); continue; }
     const bare = line.match(/^[-*]\s+(.+)$/);
-    if (bare) issues.push({ title: bare[1].trim().slice(0, 80), scope: bare[1].trim() });
+    if (bare) { const r = extractRoute(bare[1]); issues.push({ title: r.scope.slice(0, 80), scope: r.scope, ...(r.route ? { route: r.route } : {}) }); }
   }
   if (!VALID_WF.has(workflow)) workflow = issues.length > 1 ? "split" : "full-build";
   if (!issues.length) return null;
@@ -131,7 +138,8 @@ export async function runOrchestratorChat(repo: string, userText: string): Promi
         task:
           `### Conversation so far\n${history || "(this is the first message)"}\n\n` +
           `The user just said:\n${userText}\n\n` +
-          `Respond as the Orchestrator. Discuss and advise conversationally; only append a \`handoff\` block if the user is ready to create work.`,
+          `Respond as the Orchestrator. Discuss and advise conversationally; only append a \`handoff\` block if the user is ready to create work. ` +
+          `In the handoff block, RECOMMEND the route per issue: end each issue line with \`{workflow: @build}\` (or another workflow trigger) for multi-step work, or \`{agent: @dev}\` / \`{agent: @review}\` / another single agent when one specialist suffices.`,
         cwd: workdir,
         model,
         provider,

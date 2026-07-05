@@ -17,6 +17,7 @@ import { Breadcrumb } from "../atoms/Breadcrumb.js";
 import { MarkdownArea } from "../atoms/MarkdownArea.js";
 import { ModelSelect } from "../molecules/ModelSelect.js";
 import { Comment } from "../molecules/Comment.js";
+import { RunSelector } from "../molecules/RunSelector.js";
 import { timelineModel } from "../molecules/Timeline.js";
 import { WorkflowTimeline } from "./ProgressTable.js";
 import { api, getJSON } from "../../lib/api.js";
@@ -26,7 +27,7 @@ import { isDone, statusChip } from "../../lib/issue-logic.js";
 import { defaultModelLabel, parseModelRef, providerModelOptions } from "../../lib/model-logic.js";
 import { resolveAgentModel } from "../../lib/agent-options.js";
 import { getSetupProgress } from "../../lib/setup-progress.js";
-import { agentOptions, agentOnlyOptions, workflowOptions } from "../../lib/agent-options.js";
+import { agentOptions, agentOnlyOptions } from "../../lib/agent-options.js";
 // ghUrl hasn't been extracted to lib yet — temporarily pulled from the old core.js.
 import { ghUrl } from "../../core.js";
 
@@ -50,23 +51,7 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
     issue.modelOverride ? issue.modelOverride.providerId + "/" + issue.modelOverride.model : ""
   );
   const providers = data?.providers || [];
-  // Per-issue workflow pin (persisted via /issue-workflow; honored on resume). Empty = auto-resolve.
-  const wfOpts = workflowOptions(data && data.workflows);
-  const [issueWf, setIssueWf] = useState(issue.workflowId || "");
-  useEffect(() => { setIssueWf(issue.workflowId || ""); }, [issue.workflowId]);
-  const defWfId = (data && data.defaultWorkflowId) || "full-build";
-  const defWf = wfOpts.find((w) => w.value === defWfId);
-  const wfSelOpts = [{ value: "", label: "Default" + (defWf ? " · " + defWf.label : ""), icon: "sparkles" }].concat(wfOpts.map((w) => ({ value: w.value, label: w.label, avatar: w.avatar, hint: "workflow", hintCls: "b-wf" })));
-  // The workflow name to SHOW while the agency runs (read-only): the pinned one, else — for a solo
-  // single-role pin (e.g. @dev) — that one role, else the default workflow. (Solo runs were wrongly
-  // labelled "Full build" because they have no workflow object and fell through to the default.)
-  const soloRole = issue.soloRole;
-  const activeWfName = (issueWf && (wfOpts.find((w) => w.value === issueWf) || {}).label)
-    || (soloRole ? (soloRole.charAt(0).toUpperCase() + soloRole.slice(1) + " only") : ("Default" + (defWf ? " · " + defWf.label : "")));
-  const pinWorkflow = (id) => { setIssueWf(id); issue.workflowId = id || null; api("/issue-workflow", { repo, number, workflowId: id || "" }).catch((err) => toast("Couldn't set workflow: " + ((err && err.message) || ""), "error")); };
-  // Run a workflow now: pin it, then start (planned) or resume (existing branch).
-  const runWorkflow = (id) => { pinWorkflow(id || ""); const planned = issue.state === "planned" || issue.state === "notPlanned" || !issue.state; (planned ? act.start(repo, number) : act.resume(repo, number)); setRunWfOpen(false); };
-  const [runWfOpen, setRunWfOpen] = useState(false);
+  // The route (workflow OR single agent) + model + play now live in the RunSelector molecule.
   const defModelLabel = defaultModelLabel(data);
   const modelTrigger = (cur) => (cur && cur.logo)
     ? html`<span class="tip" data-tip=${cur.label} style="display:inline-flex"><${ProviderLogo} name=${cur.logo} size=${16}/></span>`
@@ -388,7 +373,7 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
 
   const chatPane = html`<div class="dpane chat" ref=${chatRef} onScroll=${onChatScroll}>
     ${!chatAtTop ? html`<div class="scroll-fab-wrap top"><button class="iconbtn scroll-fab" title="Scroll to top" onClick=${() => { chatRef.current.scrollTop = 0; }}><${Icon} name="chevup" size=${16}/></button></div>` : null}
-    ${issue.epic ? html`<${EpicChecklist} epic=${{ ...issue.epic, parent: number }} repo=${repo} onOpen=${onOpenIssue} onClose=${() => act.close(repo, number).then(onClose)} closing=${act.isBusy("close", repo, number)} act=${act}/>` : null}
+    ${issue.epic ? html`<${EpicChecklist} epic=${{ ...issue.epic, parent: number }} repo=${repo} onOpen=${onOpenIssue} onClose=${() => act.close(repo, number).then(onClose)} closing=${act.isBusy("close", repo, number)} act=${act} data=${data} onOpenModels=${onOpenModels}/>` : null}
     ${conflictBox}
     ${issue.blocked === "held" ? html`<div class="heldbar">
       <span class="heldbar__l"><${Icon} name="clock" size=${15}/> Workflow on hold${(issue.steers && issue.steers.length) ? html` · ${issue.steers.length} steer${issue.steers.length > 1 ? "s" : ""} queued` : ""}</span>
@@ -444,17 +429,11 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
       <button class="iconbtn ghost dclose" aria-label="Close" data-tip="Close" onClick=${onClose}><${Icon} name="x" size=${18}/></button>
     </div>
     <div class="dtoolbar">
-      ${wfOpts.length ? (running
-        ? html`<span class="wfctl wfctl--running tip" data-tip="Workflow running — stop the issue to switch"><${Icon} name="loader" size=${14} cls="spin"/> <span class="wfctl__name">${activeWfName}</span></span>`
-        : html`<span class="wfctl">
-            <button class="wfctl__play tip" data-tip=${"Run " + (issueWf ? "this workflow" : "the default workflow") + " on this issue"} onClick=${() => runWorkflow(issueWf || "")}><${Icon} name="play" size=${15}/></button>
-            <${Select} value=${issueWf} options=${wfSelOpts} onChange=${pinWorkflow} menuAlign="left" btnClass="wfctl__sel" placeholder="Default"/>
-          </span>`) : null}
+      ${html`<${RunSelector} issue=${issue} data=${data} act=${act} running=${running} modelOverride=${modelOverride} onModelChange=${updateModelOverride} onOpenModels=${onOpenModels}/>`}
       <span class="dtoolbar__sep"></span>
       ${tb}
       ${tbLeft}
       <span style="flex:1"></span>
-      ${html`<${ModelSelect} providers=${providers} data=${data} value=${modelOverride} emit="object" onChange=${updateModelOverride} includeDefault=${true} defaultLabel="Default model" defaultHint=${defModelLabel} onSetUp=${onOpenModels} menuAlign="right" btnClass="iconbtn" trigger=${modelTrigger}/>`}
       ${runAppBtns}
       ${tbRight}
       ${moreItems.length ? html`<span class="dropwrap">
@@ -487,23 +466,36 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
   </div>`;
 }
 
-// Epic parent: a checklist of every sub-issue (✓ done-when-merged / ○ open), each a link to its
-// detail page. ▶ Play works ALL sub-issues in order (each merge auto-starts the next); "Start next"
-// runs just one; "Complete & close" appears when every child is done.
-function EpicChecklist({ epic, repo, onOpen, onClose, closing, act }) {
+// Epic parent: a checklist of every sub-issue (✓ done-when-merged / ○ open) — each row links to
+// the child's detail and carries its OWN model picker + play button, so you can route and start
+// any sub-issue individually. ▶ Play works ALL sub-issues in order (each merge auto-starts the
+// next); "Start next" runs just one; "Complete & close" appears when every child is done.
+function EpicChecklist({ epic, repo, onOpen, onClose, closing, act, data, onOpenModels }) {
   const isKidDone = (c) => Boolean(c.closed) || c.state === "done";
   const all = epic.total > 0 && epic.done >= epic.total;
   const kids = (epic.children || []).slice().sort((a, b) => (isKidDone(a) === isKidDone(b) ? a.child - b.child : isKidDone(a) ? 1 : -1));
   const startingKids = act && act.isBusy && act.isBusy("startChildren", repo, epic.parent || 0);
   const playing = act && act.isBusy && act.isBusy("epicPlay", repo, epic.parent || 0);
+  const setKidModel = (c, mo) => {
+    c.model = mo || null; // optimistic
+    api("/model-override", { repo, number: c.child, model: mo || null }).catch((err) => toast("Couldn't set the model: " + ((err && err.message) || ""), "error"));
+  };
+  const kidModelTrigger = (cur) => (cur && cur.logo)
+    ? html`<span class="tip" data-tip=${cur.label} style="display:inline-flex"><${ProviderLogo} name=${cur.logo} size=${14}/></span>`
+    : html`<span class="tip" data-tip="Default model" style="display:inline-flex"><${Icon} name="sparkles" size=${14}/></span>`;
   return html`<div class="epicbox">
     <div class="sec" style="margin:10px 2px 6px">Sub-issues ${epic.done}/${epic.total}${all ? html` · <span class="epicalldone">all done ✓</span>` : null}${epic.auto && !all ? html` · <span class="epicalldone">auto-running ▶</span>` : null}</div>
     <div class="epiclist">
-      ${kids.map((c) => html`<button class="epicrow" key=${c.child} onClick=${() => onOpen(repo, c.child, c.title)} data-tip="Open sub-issue">
-        <span class=${"epicck " + (isKidDone(c) ? "done" : "open")}><${Icon} name=${isKidDone(c) ? "check" : "planned"} size=${14}/></span>
-        <span class="epicnum">#${c.child}</span>
-        <span class="epictitle">${c.title || "#" + c.child}</span>
-      </button>`)}
+      ${kids.map((c) => html`<div key=${c.child} style="display:flex;align-items:center;gap:6px">
+        <button class="epicrow" style="flex:1" onClick=${() => onOpen(repo, c.child, c.title)} data-tip="Open sub-issue">
+          <span class=${"epicck " + (isKidDone(c) ? "done" : "open")}><${Icon} name=${isKidDone(c) ? "check" : "planned"} size=${14}/></span>
+          <span class="epicnum">#${c.child}</span>
+          <span class="epictitle">${c.title || "#" + c.child}</span>
+          <span class="substate" style="margin-left:auto;color:var(--ink-3);font-size:11px">${c.state || (c.closed ? "done" : "open")}</span>
+        </button>
+        ${html`<${ModelSelect} providers=${data && data.providers} data=${data} value=${c.model ? c.model.providerId + "/" + c.model.model : ""} emit="object" onChange=${(mo) => setKidModel(c, mo)} includeDefault=${true} defaultLabel="Default model" onSetUp=${onOpenModels} menuAlign="right" btnClass="iconbtn" trigger=${kidModelTrigger}/>`}
+        ${!isKidDone(c) && act ? html`<button class=${"iconbtn tip" + (act.isBusy("start", repo, c.child) ? " busy" : "")} data-tip=${"Start #" + c.child + " now"} disabled=${act.isBusy("start", repo, c.child) || c.state === "working"} onClick=${() => act.start(repo, c.child)}>${c.state === "working" ? html`<${Spinner} size=${13}/>` : html`<${Icon} name="play" size=${13}/>`}</button>` : null}
+      </div>`)}
     </div>
     ${!all && act ? html`<div style="display:flex;gap:8px;margin-top:9px">
       ${epic.auto
@@ -563,101 +555,6 @@ export function stepModelTargets(wf, agentDefs, data) {
     out.push({ key, label: cap(name), dfltRef: m ? m.ref : "", dflt: dfltLabel, dfltShort: m ? m.short : "", dfltProvider: m ? m.provider : "" });
   }
   return out;
-}
-
-// ---------- Detail timeline (top of detail page) ----------
-// Renders the workflow steps as a .flow (same classes as table.js WorkflowTimeline). For a WORKFLOW
-// issue, each step's avatar is a model-picker Select: the same model dropdown used everywhere else,
-// but positioned on the step's avatar instead of an icon button. Clicking it writes a per-agent model
-// override for THIS issue (/issue-agent-model, keyed by the step's role — priority 1 in the server's
-// resolveAssignment, so it reliably takes effect). Non-workflow / not-started → falls back to the
-// plain WorkflowTimeline (or nothing), so nothing changes for issues without steps.
-export function DetailTimeline({ issue, data, onOpenModels }) {
-  const m = timelineModel(issue);
-  if (m.epic || !m.started) return null; // epic bar or nothing-yet → no interactive timeline
-  // Only a real workflow has steps whose agent we can target. Solo-role / generic issues render the
-  // shared (non-interactive) timeline — there's only one agent, the whole-issue picker already covers it.
-  const wf = (data && data.workflows || []).find((w) => w.id === issue.workflowId);
-  if (!wf || !m.workflow) {
-    return html`<${PlainTimeline} i=${issue}/>`;
-  }
-  const targets = stepModelTargets(wf, data && data.agentDefs, data);
-  // Build {key → step} so a per-agent picker attaches to the matching step (deduped like targets).
-  const agentModels = issue.agentModels || {};
-  const providers = (data && data.providers) || [];
-  const modelOpts = providerModelOptions(providers, { short: true });
-  const live = !!(issue.active || issue.running);
-  // Pair each timeline step with its model target (by role key), preserving timeline order/state.
-  return html`<div class="dtl-flow">
-    ${m.steps.map((s, idx) => {
-      const done = s.st === "done";
-      const current = idx === m.current && !done;
-      const blocked = s.st === "attention";
-      const cls = done ? "done" : current ? (blocked ? "blocked" : "current") : blocked ? "blocked" : "pending";
-      // Match the timeline step to its model target by ROLE KEY (both sides are the lowercased role
-      // name) — more robust than matching display labels, which can differ (ws.name vs agentDef name).
-      const roleKey = String(s.role || s.k || "").toLowerCase();
-      const target = targets.find((t) => t.key === roleKey) || targets.find((t) => (t.label || "").toLowerCase() === roleKey);
-      // The live per-issue override for this step's agent (if any), else its resolved default.
-      const curRef = target ? (agentModels[target.key] || target.dfltRef) : "";
-      const curOpt = curRef ? modelOpts.find((o) => o.value === curRef) : null;
-      const curLabel = curOpt ? curOpt.label : (target && target.dflt ? target.dflt : "");
-      const curLogo = curOpt ? curOpt.logo : (target && target.dfltProvider) || "";
-      const tip = (cap(s.role || s.k)) + (curLabel ? " · " + curLabel : "") + " — click to change model";
-      return html`
-        ${idx ? html`<span class=${"flow__line" + (idx <= m.current ? " on" : "")}></span>` : null}
-        <span class=${"flow__step " + cls}>
-          ${target
-            ? html`<span class="tip" data-tip=${tip}><${ModelSelect}
-                providers=${providers}
-                data=${data}
-                value=${curRef}
-                includeDefault=${true}
-                defaultLabel="Default"
-                defaultHint=${target && target.dflt ? target.dflt : "default"}
-                onSetUp=${onOpenModels}
-                btnClass="flow__pick"
-                menuAlign=${idx >= m.steps.length - 2 ? "right" : "left"}
-                trigger=${() => html`<span class=${"flow__dot flow__dot--face" + (current && live ? " pulse" : "")}><span class="flow__face"><${Avatar} role=${s.role || s.k} size=${26} crop="head"/></span></span>`}
-                onChange=${(v) => setStepModel(issue, target.key, v)}
-              /></span>`
-            : html`<span class=${"flow__dot" + (current && live ? " pulse" : "") + (s.role ? " flow__dot--face" : "")}>${done ? html`<${Icon} name="check" size=${10}/>` : s.role ? html`<span class="flow__face"><${Avatar} role=${s.role} size=${26} crop="head"/></span>` : null}</span>`}
-          <span class="flow__lbl">${(current && live) ? html`<${Icon} name=${(statusChip(issue) || {}).icon || "circle"} size=${11} cls="flow__act"/> ` : null}${s.label}</span>
-        </span>`;
-    })}
-  </div>`;
-}
-
-// Write a per-step model override for this issue (live, via /issue-agent-model). Updates the local
-// issue object optimistically so the timeline reflects it immediately.
-export function setStepModel(issue, key, value) {
-  if (!issue.agentModels) issue.agentModels = {};
-  if (value) issue.agentModels[key] = value; else delete issue.agentModels[key];
-  api("/issue-agent-model", { repo: issue.repo, number: issue.number, agent: key, model: value || "" })
-    .catch((err) => toast("Couldn't set step model: " + ((err && err.message) || ""), "error"));
-}
-
-// Non-interactive timeline for solo-role / generic issues (one agent — whole-issue picker covers it).
-// Mirrors table.js WorkflowTimeline markup without re-importing it (keeps detail.js self-contained).
-export function PlainTimeline({ i }) {
-  const m = timelineModel(i);
-  if (m.epic || !m.started) return null;
-  const live = !!(i.active || i.running);
-  return html`<div class="dtl-flow">
-    ${m.steps.map((s, idx) => {
-      const done = s.st === "done";
-      const current = idx === m.current && !done;
-      const blocked = s.st === "attention";
-      const cls = done ? "done" : current ? (blocked ? "blocked" : "current") : blocked ? "blocked" : "pending";
-      const face = current ? i.role : (s.role || null);
-      return html`
-        ${idx ? html`<span class=${"flow__line" + (idx <= m.current ? " on" : "")}></span>` : null}
-        <span class=${"flow__step " + cls}>
-          <span class=${"flow__dot" + (current && live ? " pulse" : "") + (face ? " flow__dot--face" : "")}>${done && !face ? html`<${Icon} name="check" size=${10}/>` : face ? html`<span class="flow__face"><${Avatar} role=${face} size=${26} crop="head"/></span>` : null}</span>
-          <span class="flow__lbl">${(current && live) ? html`<${Icon} name=${(statusChip(i) || {}).icon || "circle"} size=${11} cls="flow__act"/> ` : null}${s.label}</span>
-        </span>`;
-    })}
-  </div>`;
 }
 
 // ---------- Composer ----------

@@ -281,7 +281,19 @@ function Card({ i, subs, multi, onOpen, onOpenChild, act, data, onOpenModels, st
   const excerpt = stream.length ? stream[stream.length - 1].text : "";
 
   const live = !!(i.active || i.running);
-  return html`<div class=${"bcard" + (tmp ? " busy" : "") + (live ? " live" : "")} onClick=${tmp ? null : () => onOpen(i)}>
+  // Epic parents wear their aggregate state as a colored TOP BORDER: green = all merged, accent =
+  // a sub-issue is running, amber = one needs you, purple = idle/planned. Hover shows n/m done.
+  const epicBar = (() => {
+    if (!i.epic || !i.epic.total) return null;
+    const liveStates = (subs || []).map((c) => c.live).filter(Boolean);
+    const anyWorking = liveStates.some((s) => s.active || s.running || s.state === "working");
+    const anyAttn = liveStates.some((s) => s.blocked);
+    const allDone = i.epic.done >= i.epic.total;
+    const color = allDone ? "var(--green)" : anyAttn ? "var(--amber)" : anyWorking ? "var(--accent)" : "var(--purple)";
+    return { color, tip: `Epic — ${i.epic.done}/${i.epic.total} sub-issues done${i.epic.auto ? " · auto-running ▶" : ""}` };
+  })();
+  return html`<div class=${"bcard" + (tmp ? " busy" : "") + (live ? " live" : "")} style=${epicBar ? "border-top:3px solid " + epicBar.color : ""} onClick=${tmp ? null : () => onOpen(i)}>
+    ${epicBar ? html`<div class="tip" data-tip=${epicBar.tip} style=${"position:absolute;top:-3px;left:0;right:0;height:7px;cursor:help"}></div>` : null}
     <div class="bcard__h">
       <${Breadcrumb} repo=${i.repo} number=${i.number} className="bcard__crumbs"/>${i.workflowId ? html`<span class="wfchip tip" data-tip=${"Workflow: " + i.workflowId}><${Icon} name="sparkles" size=${10}/> ${i.workflowId}</span>` : null}
       <span class=${"statuschip da-status " + st.cls + (live ? " da-status--live" : "")} style="margin-left:auto" data-tip=${tmp ? "creating…" : statusTip(i, st)}><span class="da-status__dot"></span>${tmp ? "creating…" : st.label}</span>

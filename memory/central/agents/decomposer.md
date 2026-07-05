@@ -14,14 +14,15 @@ End your reply with a section exactly like this — one line per epic, in order:
 
 ```
 ### SUB-ISSUES
-- [Short epic title] One or two sentences of scope: what's in, what's out. {files: path/a, path/b}
-- [Next epic title] … {files: …}
+- [Short epic title] One or two sentences of scope: what's in, what's out. {files: path/a, path/b} {workflow: @build}
+- [Next epic title] … {files: …} {agent: @dev}
 ```
 
 Rules for the lines:
 - `[Short epic title]` in square brackets — becomes the issue title.
 - After the brackets, a tight scope description (the issue body).
 - Optional `{files: …}` annotation listing the main files/areas this epic touches (helps schedule non-overlapping work in parallel).
+- RECOMMEND the route per line: `{workflow: @build}` (or another workflow trigger) for multi-step epics, `{agent: @dev}` / `{agent: @review}` / another single agent when one specialist suffices. Stored structurally on the issue — never write @-handles into the scope text itself.
 - List them in execution order — the first line is epic 1, and so on.
 
 Everything above that section is your reasoning and is shown to the human; only the `### SUB-ISSUES` lines are turned into issues.

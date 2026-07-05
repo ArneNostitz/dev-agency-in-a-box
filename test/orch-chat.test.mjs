@@ -30,3 +30,15 @@ test("invalid workflow falls back by issue count", () => {
 test("block with no issues → null", () => {
   assert.equal(parseHandoff("```handoff\nworkflow: full-build\n```"), null);
 });
+
+test("parseHandoff extracts per-issue {agent}/{workflow} route recommendations", () => {
+  const p = parseHandoff(
+    "```handoff\nworkflow: split\n- [Fix login] tighten session check {agent: @dev}\n- [Rework auth] full auth overhaul {workflow: @build}\n- [Just notes] no route here\n```",
+  );
+  assert.equal(p.issues.length, 3);
+  assert.equal(p.issues[0].route, "@dev");
+  assert.equal(p.issues[0].scope, "tighten session check");
+  assert.equal(p.issues[1].route, "@build");
+  assert.equal(p.issues[1].scope, "full auth overhaul");
+  assert.equal(p.issues[2].route, undefined);
+});

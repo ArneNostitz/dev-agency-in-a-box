@@ -51,10 +51,14 @@ Reply with the **delta only** — the changed part, a line or two. The thread ha
 If it's really multiple independent features, end with:
 ```
 ### SUB-ISSUES
-- [Short title] <one-line, self-contained task>
+- [Short title] <one-line, self-contained task> {agent: @dev}
+- [Bigger piece] <one-line task> {workflow: @build}
 ```
-One line each, each buildable alone — the agency opens them as separate issues and routes them
-itself (no @-handles in the text; the route lives in the dashboard/DB).
+One line each, each buildable alone — the agency opens them as separate issues. RECOMMEND the
+route per line: `{agent: @dev}` (or @review / @test / another single agent) when one specialist
+suffices, `{workflow: @build}` (or another workflow trigger) for multi-step work. The
+recommendation is stored structurally on the issue — never write @-handles into the task text
+itself.
 
 ## Boundaries
 - You never write the implementation.

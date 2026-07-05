@@ -120,19 +120,20 @@ function WorkflowTimelineImpl({ i, labels = true }) {
       const current = idx === m.current && !done;
       const blocked = s.st === "attention";
       const cls = done ? "done" : current ? (blocked ? "blocked" : "current") : blocked ? "blocked" : "pending";
-      // Show a face on the current step (live lead) OR on the step the last agent ran (when idle).
-      // Workflow timeline: EVERY step shows its OWN agent's face. Generic timeline: face only on the
-      // current/last-run step (as before).
+      // ONLY the current (working / needs-you) step carries an icon: an animated spinner while the
+      // agent is actually running, its avatar when parked on it. Every other step is a plain dot —
+      // no more row of faces obscuring where the workflow actually is.
       const stepRole = s.role || s.k;
-      const faceRole = m.workflow ? stepRole : ((current && live) ? i.role : (!live && idx === lastIdx && i.lastRole) ? i.lastRole : (current ? i.role : null));
+      const showSpin = current && live;
+      const faceRole = current && !showSpin ? (m.workflow ? stepRole : (i.role || stepRole)) : null;
       const showFace = !!faceRole;
       return html`
         ${idx ? html`<span class=${"flow__line" + (idx <= m.current ? " on" : "")}></span>` : null}
         <span class=${"flow__step " + cls + (idx === lastIdx && !live ? " lastran" : "")} title=${s.label + " — " + s.st + (idx === lastIdx && i.lastRole ? " · last: " + i.lastRole : "")}>
-          <span class=${"flow__dot" + (current && live ? " pulse" : "") + (showFace ? " flow__dot--face" : "")}>
-            ${done && !showFace ? html`<${Icon} name="check" size=${10}/>` : showFace ? html`<span class="flow__face"><${Avatar} role=${faceRole} size=${labels ? 26 : 20} crop="head"/></span>` : null}
+          <span class=${"flow__dot" + (showSpin ? " pulse" : "") + (showFace ? " flow__dot--face" : "")}>
+            ${showSpin ? html`<${Spinner} size=${labels ? 16 : 12}/>` : done ? html`<${Icon} name="check" size=${10}/>` : showFace ? html`<span class="flow__face"><${Avatar} role=${faceRole} size=${labels ? 26 : 20} crop="head"/></span>` : null}
           </span>
-          ${labels ? html`<span class="flow__lbl">${(showFace) ? html`<${Icon} name=${statusField(i).icon} size=${11} cls="flow__act"/> ` : null}${s.label}</span>` : null}
+          ${labels ? html`<span class="flow__lbl">${current && blocked ? html`<${Icon} name=${statusField(i).icon} size=${11} cls="flow__act"/> ` : null}${s.label}</span>` : null}
           ${loops ? html`<span class="flow__loop" title=${loops + " loop" + (loops > 1 ? "s" : "")}>↻${loops}</span>` : null}
         </span>`;
     })}
