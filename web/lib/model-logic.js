@@ -1,6 +1,7 @@
 // Model / provider logic — pure functions. Needs shortModel from format.js.
 
 import { shortModel } from "./format.js";
+import { sortModelsByRecency } from "./model-recency.js";
 
 // A provider counts as "available" (its models show in pickers) only when it's authenticated.
 // The backend annotates each row with auth: "apiKey" | "subscription" | "missing" via providerAuth().
@@ -62,8 +63,9 @@ export function toModelRef(v) {
 export function providerModelOptions(providers, { short = true } = {}) {
   return (providers || [])
     .filter((p) => p.auth === "apiKey" || p.auth === "subscription")
-    // The Settings checkmark list narrows a provider's catalog to an ACTIVE subset; empty = all.
-    .flatMap((p) => ((p.activeModels && p.activeModels.length ? p.activeModels : p.models) || []).map((m) => ({
+    // The Settings checkmark list narrows a provider's catalog to an ACTIVE subset; absent = all,
+    // [] = none ("Untick all" in Settings hides the whole catalog from pickers). Newest first.
+    .flatMap((p) => sortModelsByRecency(p.activeModels || p.models || []).map((m) => ({
       value: p.id + "/" + m,
       label: short ? m : ((p.name || "") + " · " + m),
       logo: p.name,

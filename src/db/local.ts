@@ -7,17 +7,20 @@ export function upsertLocalIssue(i: { repo: string; number: number; title?: stri
   const d = getDb();
   if (!d) return;
   try {
+    // `closed` follows the same partial-update rule as the other fields: omitted → preserved.
+    // (It used to be overwritten with 0 on every upsert, so a body edit re-opened a closed row.)
+    const closed = i.closed == null ? null : i.closed ? 1 : 0;
     d.prepare(
       `INSERT INTO local_issue (repo, number, title, body, state, origin, closed, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, COALESCE(?, 0), ?)
        ON CONFLICT(repo, number) DO UPDATE SET
          title = COALESCE(excluded.title, local_issue.title),
          body  = COALESCE(excluded.body,  local_issue.body),
          state = COALESCE(excluded.state, local_issue.state),
          origin = COALESCE(excluded.origin, local_issue.origin),
-         closed = excluded.closed,
+         closed = COALESCE(?, local_issue.closed),
          updated_at = excluded.updated_at`,
-    ).run(i.repo, i.number, i.title ?? null, i.body ?? null, i.state ?? null, i.origin ?? null, i.closed ? 1 : 0, now());
+    ).run(i.repo, i.number, i.title ?? null, i.body ?? null, i.state ?? null, i.origin ?? null, closed, now(), closed);
   } catch { /* best effort */ }
 }
 
@@ -112,6 +115,13 @@ export function updateCommentBody(ghId: number, body: string): void {
   const d = getDb();
   if (!d || !ghId) return;
   try { d.prepare(`UPDATE local_comment SET body = ? WHERE gh_id = ?`).run(body.trim(), ghId); } catch { /* best effort */ }
+}
+
+/** Drop the local copy of a comment deleted on GitHub (inbound webhook sync). */
+export function deleteLocalCommentByGhId(ghId: number): void {
+  const d = getDb();
+  if (!d || !ghId) return;
+  try { d.prepare(`DELETE FROM local_comment WHERE gh_id = ?`).run(ghId); } catch { /* best effort */ }
 }
 
 export interface ConversationComment { id: number; localId: number; author: string; body: string; createdAt: string; isAgency: boolean; incoming: boolean }

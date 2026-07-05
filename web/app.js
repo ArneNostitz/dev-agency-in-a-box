@@ -10,7 +10,6 @@ import { SettingsShell } from "./components/organisms/Settings.js";
 import { AddRepo, Onboarding } from "./components/organisms/Onboarding.js";
 import { SecretBanner, StatusLine, TopBar } from "./components/organisms/TopBar.js";
 import { Usage } from "./components/organisms/Usage.js";
-import { AgentEditor, SkillEditor } from "./components/organisms/AgentEditor.js";
 import { WorkflowBuilder } from "./components/organisms/WorkflowBuilder.js";
 import { ProgressTable, StatStrip, STAT_DEFS, statusField } from "./components/organisms/ProgressTable.js";
 import { Orchestrator } from "./components/organisms/Orchestrator.js";
@@ -331,12 +330,10 @@ function App() {
       </div>
       ${!isDesktop && view === "board" && html`<${TabBar} issues=${shown} tab=${tab} setTab=${setTab}/>`}
       ${sheet === "composer" && html`<${Composer} repos=${repos} repo=${composerRepo} setRepo=${setComposerRepo} onClose=${() => setSheet(null)} onCreate=${createIssue} data=${data} onOpenModels=${() => setSheet("models")}/>`}
-      ${(sheet === "settings" || sheet === "github" || sheet === "models") && html`<${SettingsShell} data=${data} section=${sheet === "github" ? "github" : sheet === "models" ? "models" : "general"} onClose=${() => setSheet(null)} reload=${load} openAgents=${() => setSheet("agents")} openWorkflows=${() => setSheet("workflows")}/>`}
+      ${(sheet === "settings" || sheet === "github" || sheet === "models") && html`<${SettingsShell} data=${data} section=${sheet === "github" ? "github" : sheet === "models" ? "models" : "general"} onClose=${() => setSheet(null)} reload=${load} openWorkflows=${() => setSheet("workflows")}/>`}
       ${sheet === "addrepo" && html`<${AddRepo} repos=${repos} onClose=${() => setSheet(null)} reload=${load}/>`}
       ${sheet === "usage" && html`<${Usage} onClose=${() => setSheet(null)} onOpenIssue=${openIssue}/>`}
-      ${sheet === "agents" && html`<${AgentEditor} data=${data} onClose=${() => setSheet(null)} onSkills=${() => setSheet("skills")} onOpenModels=${() => setSheet("models")} reload=${load}/>`}
-      ${sheet === "workflows" && html`<${WorkflowBuilder} data=${data} onClose=${() => setSheet(null)} reload=${load} onOpenModels=${() => setSheet("models")} onEditAgent=${(which) => setSheet(which === "skills" ? "skills" : "agents")}/>`}
-      ${sheet === "skills" && html`<${SkillEditor} data=${data} onClose=${() => setSheet("agents")} reload=${load}/>`}
+      ${sheet === "workflows" && html`<${WorkflowBuilder} data=${data} onClose=${() => setSheet(null)} reload=${load} onOpenModels=${() => setSheet("models")}/>`}
       ${data.user && data.onboarded === false && html`<${Onboarding} repos=${repos} github=${data.github} reload=${load}/>`}
       <${StatusLine} working=${working} session=${data.session} spend=${data.spendToday} analyzer=${data.analyzer} reload=${load} offlineQ=${offlineQ} syncing=${syncing}/>
       <${Toasts} toasts=${toasts} onDismiss=${dismissToast}/>

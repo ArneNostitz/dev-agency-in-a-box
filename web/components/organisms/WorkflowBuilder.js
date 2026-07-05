@@ -36,7 +36,7 @@ const agentOf = (s) => (s.agent || "@dev");
 const roleFor = (handle) => STEP_ROLE[(handle || "").toLowerCase()] || (handle || "").replace(/^@/, "") || "agent";
 const labelFor = (handle, opts) => { const o = (opts || []).find((x) => x.value === handle); return o ? o.label : roleFor(handle); };
 
-export function WorkflowBuilder({ data, onClose, reload, onEditAgent, onOpenModels }) {
+export function WorkflowBuilder({ data, onClose, reload, onOpenModels }) {
   const wfs = (data && data.workflows) || [];
   const [sel, setSel] = useState(null);          // workflow id being edited (or "__new__")
   const [form, setForm] = useState(null);        // working copy
@@ -47,6 +47,7 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent, onOpenMode
   const [editHook, setEditHook] = useState(null);
   const canvasRef = useRef(null);
   const flowRef = useRef(null);
+  const origRef = useRef("");                    // pristine JSON of the opened workflow (dirty check)
   const [drag, setDrag] = useState(null);
   const [dropAt, setDropAt] = useState(null);
   const [cw, setCw] = useState(960);
@@ -60,11 +61,20 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent, onOpenMode
   function open(w) {
     if (!w) { // new — restore an in-progress draft so nothing is lost on close
       let draft = null; try { draft = JSON.parse(localStorage.getItem("wf:draft") || "null"); } catch { draft = null; }
-      setForm(draft && draft.form ? draft.form : { id: "", name: "", trigger: "", steps: [blankStep()], gates: [], hooks: [] });
+      const blank = { id: "", name: "", trigger: "", steps: [blankStep()], gates: [], hooks: [] };
+      origRef.current = JSON.stringify(blank);
+      setForm(draft && draft.form ? draft.form : blank);
       setSel("__new__"); setStep(draft && Number.isFinite(draft.step) ? draft.step : 0);
       return;
     }
-    setForm(JSON.parse(JSON.stringify(w))); setSel(w.id); setStep(0);
+    const copy = JSON.parse(JSON.stringify(w));
+    origRef.current = JSON.stringify(copy);
+    setForm(copy); setSel(w.id); setStep(0);
+  }
+  // Cancel discards the working copy — with edits pending, ask first.
+  function cancel() {
+    if (form && JSON.stringify(form) !== origRef.current && !window.confirm("Discard unsaved changes to this workflow?")) return;
+    clearDraft(); setSel(null); setForm(null);
   }
   // Persist the working copy of a NEW workflow so leaving the page never loses it.
   useEffect(() => { if (form && !form.id) { try { localStorage.setItem("wf:draft", JSON.stringify({ form, step })); } catch { /* noop */ } } }, [form, step]);
@@ -114,7 +124,7 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent, onOpenMode
     const trigger = (form.trigger || "@" + id).trim();
     setSaving(true);
     api("/workflow-save", { workflow: { ...form, id, trigger } })
-      .then(() => { toast("Saved"); clearDraft(); setSel(null); reload && reload(); })
+      .then(() => { toast("Saved"); clearDraft(); setSel(null); setForm(null); reload && reload(); }) // setForm(null) closes the editor
       .catch((e) => toast((e && e.message) || "Couldn’t save", "error"))
       .finally(() => setSaving(false));
   }
@@ -138,7 +148,7 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent, onOpenMode
   }
   function del() {
     if (!form.id || !window.confirm("Delete " + (form.name || "workflow") + "?")) return;
-    api("/workflow-delete", { workflowId: form.id }).then(() => { toast("Deleted"); clearDraft(); setSel(null); reload && reload(); });
+    api("/workflow-delete", { workflowId: form.id }).then(() => { toast("Deleted"); clearDraft(); setSel(null); setForm(null); reload && reload(); });
   }
 
   // ---------- workflow list ----------
@@ -238,7 +248,7 @@ export function WorkflowBuilder({ data, onClose, reload, onEditAgent, onOpenMode
       <input class="bld-name" value=${form.name} placeholder="Workflow name" onInput=${(e) => { const name = e.target.value; const trig = "@" + name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "").slice(0, 24); setForm((f) => ({ ...f, name, trigger: trig })); }}/>
       <span class="bld-trig">${form.trigger || "@" + (form.name || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "") || "@new"}</span>
       <div style="flex:1"></div>
-      <button class="btn" onClick=${() => { clearDraft(); setSel(null); setForm(null); }}>Cancel</button>
+      <button class="btn" onClick=${cancel}>Cancel</button>
       <button class="btn primary" disabled=${saving} onClick=${save}>${saving ? html`<${Spinner} size=${14}/>` : html`<${Icon} name="check" size=${15}/>`} Save</button>
     </div>
 
@@ -339,10 +349,19 @@ export function AgentModal({ data, which, onClose, reload, onOpenModels }) {
   const [f, setF] = useState(existing ? Object.assign({ defaultTask: "", avatar: "", interactive: false, canWriteCode: false }, existing) : roleSeed || { name: "", handle: "", model: "", canWriteCode: false, persona: "", defaultTask: "", avatar: "", pushesGithub: true, interactive: false });
   const [busy, setBusy] = useState(false);
   const set = (k, v) => setF((o) => Object.assign({}, o, { [k]: v }));
+  // Dirty-close guard. Refs, not closures: Modal's Esc handler captures the FIRST render's
+  // onClose, so the check must read the current form through a ref to see later edits.
+  const origRef = useRef(null);
+  if (origRef.current == null) origRef.current = JSON.stringify(f);
+  const fRef = useRef(f); fRef.current = f;
+  function requestClose() {
+    if (JSON.stringify(fRef.current) !== origRef.current && !window.confirm("Discard unsaved changes to this agent?")) return;
+    onClose();
+  }
   function pickAvatar(e) { const file = (e.target.files || [])[0]; if (!file) return; readAttach(file, (a) => { api("/upload-file", { repo: "_agents", number: -1, dataUrl: a.d, name: (f.name || "avatar") }).then((j) => { if (j && j.url) set("avatar", j.url); else toast("Upload failed", "error"); }).catch(() => toast("Upload failed", "error")); }); e.target.value = ""; }
   function save() { if (!f.name.trim()) { toast("Name required"); return; } setBusy(true); api("/agent-def-save", { agentDef: { name: f.name.trim(), handle: f.handle || "@" + f.name.trim(), model: f.model, canWriteCode: !!f.canWriteCode, persona: f.persona, defaultTask: f.defaultTask, avatar: f.avatar, pushesGithub: f.pushesGithub !== false, interactive: !!f.interactive } }).then(() => { toast("Agent saved"); reload && reload(); onClose(); }).catch((e) => toast((e && e.message) || "Couldn’t save", "error")).then(() => setBusy(false)); }
-  const footer = html`<button class="btn" onClick=${onClose}>Cancel</button><button class="btn primary" disabled=${busy} onClick=${save}>${busy ? html`<${Spinner} size=${14}/>` : "Save agent"}</button>`;
-  return html`<${Modal} title=${existing ? "Edit agent" : roleSeed ? "Edit " + roleSeed.name : "New agent"} onClose=${onClose} footer=${footer}>
+  const footer = html`<button class="btn" onClick=${requestClose}>Cancel</button><button class="btn primary" disabled=${busy} onClick=${save}>${busy ? html`<${Spinner} size=${14}/>` : "Save agent"}</button>`;
+  return html`<${Modal} title=${existing ? "Edit agent" : roleSeed ? "Edit " + roleSeed.name : "New agent"} onClose=${requestClose} footer=${footer}>
     <div class="agm-top">
       <label class="agm-avatar" title="Upload a custom avatar">
         ${f.avatar ? html`<img src=${f.avatar}/>` : html`<${Avatar} role=${f.name || "agent"} size=${56} crop="head"/>`}

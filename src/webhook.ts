@@ -41,6 +41,7 @@ import { masterKeyConfigured } from "./crypto.js";
 import { ghBotToken, ghUserToken, claudeToken, anthropicApiKey } from "./creds.js";
 import { providerAuth } from "./agents/provider-auth.js";
 import { discoverProviderModels, ensureClaudeProvider } from "./db/discover.js";
+import { newestModels } from "./db/model-recency.js";
 import { testClaudeAuth } from "./agents/roleAgent.js";
 import { ALL_ROLES } from "./agents/roles.js";
 import { resolveWorkflow } from "./workflow.js";
@@ -61,7 +62,7 @@ import { ensureRepoAccess } from "./commands.js";
 import { previewUrlFor, runChecksNow } from "./preview.js";
 import { putAttachment, getAttachment } from "./db/attachments.js";
 import { dispatch } from "./pool.js";
-import { trackerMode, syncInIssue, syncInComment } from "./tracker.js";
+import { trackerMode, syncInIssue, syncInComment, syncInIssueState, syncInCommentEdit, syncInCommentDelete } from "./tracker.js";
 import { ensureRepoIndex } from "./gitnexus.js";
 
 type ProcessAll = (cfg: Config) => Promise<number>;
@@ -1235,6 +1236,11 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
             }
             setSetting(`head:${repo}#${number}`, JSON.stringify({ title: t.title, body: t.body, author: t.author, createdAt: t.createdAt, state: t.state }));
             if (t.title) recordIssueState(repo, number, { title: t.title });
+            // Second-term GitHub reconcile: an issue closed on GitHub is terminal locally too
+            // (webhook normally does this in real time; the manual re-pull is the catch-up path).
+            if ((t.state || "").toLowerCase() === "closed" && getIssueStatus(repo, number).state !== "done") {
+              recordIssueStatus(repo, number, withStatus("done"));
+            }
             return ok();
           } catch (err) {
             return res.writeHead(502).end(JSON.stringify({ error: `Couldn't reach GitHub: ${(err as Error).message.slice(0, 160)}` }));
@@ -1455,7 +1461,14 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           if (!provider) return void res.writeHead(404, { "content-type": "application/json" }).end(JSON.stringify({ error: "Provider not found." }));
           const r = await discoverProviderModels(provider);
           if (r.models.length) {
-            const next = list.map((x) => x.id === id ? { ...x, models: r.models, ...(x.runner ? {} : r.runner ? { runner: r.runner } : {}) } : x);
+            const next = list.map((x) => {
+              if (x.id !== id) return x;
+              // Fresh row (first discovery, no selection yet) → default the 4 newest models active.
+              // Existing selection → keep it, just drop ids that vanished from the catalog.
+              const fresh = !(x.models || []).length && x.activeModels == null;
+              const activeModels = fresh ? newestModels(r.models, 4) : x.activeModels?.filter((m) => r.models.includes(m));
+              return { ...x, models: r.models, ...(activeModels ? { activeModels } : {}), ...(x.runner ? {} : r.runner ? { runner: r.runner } : {}) };
+            });
             setProviders(next);
           }
           return void res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ ok: r.models.length > 0, models: r.models, via: r.via, runner: r.runner, error: r.error }));
@@ -1773,7 +1786,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         action?: string;
         pull_request?: { merged?: boolean; head?: { ref?: string } };
         repository?: { full_name?: string };
-        issue?: { number?: number; title?: string; body?: string };
+        issue?: { number?: number; title?: string; body?: string; state_reason?: string | null };
         comment?: { id?: number; body?: string; created_at?: string; user?: { login?: string } };
         sender?: { type?: string };
       } = {};
@@ -1792,13 +1805,45 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
       if (syncRepo) {
         try {
           // Comments always fold into the DB conversation cache (dashboard = source of truth), so a
-          // comment made directly on GitHub shows up in the dashboard in real time.
-          if (event === "issue_comment" && action === "created" && payload.issue?.number && payload.comment?.id) {
-            const isAgency = (payload.comment.body ?? "").includes("<!-- dev-agency -->");
-            syncInComment(syncRepo, payload.issue.number, payload.comment.id, payload.comment.user?.login ?? "user", payload.comment.body ?? "", isAgency, payload.comment.created_at ?? "");
-          } else if (trackerMode() === "local" && event === "issues" && payload.issue?.number) {
-            // Issue body only adopts into the DB when DB-authoritative tracking is enabled.
-            syncInIssue(syncRepo, payload.issue.number, payload.issue.title ?? "", payload.issue.body ?? "");
+          // comment made/edited/deleted directly on GitHub shows up in the dashboard in real time.
+          if (event === "issue_comment" && payload.issue?.number && payload.comment?.id) {
+            if (action === "created") {
+              const isAgency = (payload.comment.body ?? "").includes("<!-- dev-agency -->");
+              syncInComment(syncRepo, payload.issue.number, payload.comment.id, payload.comment.user?.login ?? "user", payload.comment.body ?? "", isAgency, payload.comment.created_at ?? "");
+            } else if (action === "edited") {
+              syncInCommentEdit(payload.comment.id, payload.comment.body ?? "");
+            } else if (action === "deleted") {
+              syncInCommentDelete(payload.comment.id);
+            }
+          } else if (event === "issues" && payload.issue?.number) {
+            const n = payload.issue.number;
+            if (action === "closed") {
+              // Closed on GitHub directly → done locally too ("not planned" close also archives).
+              syncInIssueState(syncRepo, n, "closed", { stateReason: payload.issue.state_reason ?? "", title: payload.issue.title ?? "" });
+            } else if (action === "reopened") {
+              syncInIssueState(syncRepo, n, "reopened", { title: payload.issue.title ?? "" });
+            } else if (action === "deleted" || action === "transferred") {
+              syncInIssueState(syncRepo, n, "deleted");
+            } else {
+              // opened/edited: keep the board card's title and the thread head cache fresh.
+              if (action === "edited") {
+                if (payload.issue.title) recordIssueState(syncRepo, n, { title: payload.issue.title });
+                const key = `head:${syncRepo}#${n}`;
+                const cur = getSetting(key);
+                if (cur) {
+                  try {
+                    const h = JSON.parse(cur) as Record<string, unknown>;
+                    h.title = payload.issue.title ?? h.title;
+                    h.body = payload.issue.body ?? h.body;
+                    setSetting(key, JSON.stringify(h));
+                  } catch { /* head cache stays stale; /refresh-issue repairs it */ }
+                }
+              }
+              // Issue body only adopts into the DB when DB-authoritative tracking is enabled.
+              if (trackerMode() === "local" && (action === "opened" || action === "edited")) {
+                syncInIssue(syncRepo, n, payload.issue.title ?? "", payload.issue.body ?? "");
+              }
+            }
           }
         } catch { /* best effort */ }
       }

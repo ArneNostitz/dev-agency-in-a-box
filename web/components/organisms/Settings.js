@@ -11,6 +11,7 @@ import { ModelSelect } from "../molecules/ModelSelect.js";
 import { ProviderSearchSelect } from "../molecules/ProviderSearchSelect.js";
 import { SecretField } from "../molecules/SecretField.js";
 import { api, getJSON } from "../../lib/api.js";
+import { sortModelsByRecency } from "../../lib/model-recency.js";
 import { toast } from "../../lib/toast.js";
 import { agentOptions } from "../../lib/agent-options.js";
 import { OB_PROVIDERS } from "../../data/providers.js";
@@ -26,7 +27,7 @@ const saved = () => toast("Saved");
 const failed = (e) => toast((e && e.message) || "Couldn't save", "error");
 
 // ---------- the shell ----------
-export function SettingsShell({ data, onClose, reload, section: initial, openAgents, openWorkflows }) {
+export function SettingsShell({ data, onClose, reload, section: initial, openWorkflows }) {
   const admin = Boolean(data.user && data.user.role === "admin");
   const [section, setSection] = useState(initial || "general");
   const NAV = [
@@ -43,8 +44,7 @@ export function SettingsShell({ data, onClose, reload, section: initial, openAge
         <div class="setshell__title"><${Icon} name="sliders" size=${16}/> Settings</div>
         ${NAV.map((n) => html`<button key=${n.k} class=${"setshell__navitem" + (section === n.k ? " on" : "")} onClick=${() => setSection(n.k)}><${Icon} name=${n.icon} size=${15}/> ${n.label}</button>`)}
         <div class="setshell__navsep"></div>
-        <button class="setshell__navitem" onClick=${() => { onClose(); openAgents && openAgents(); }}><${Icon} name="users" size=${15}/> Agents <${Icon} name="chevron" size=${12} cls="setshell__navgo"/></button>
-        <button class="setshell__navitem" onClick=${() => { onClose(); openWorkflows && openWorkflows(); }}><${Icon} name="layers" size=${15}/> Workflows <${Icon} name="chevron" size=${12} cls="setshell__navgo"/></button>
+        <button class="setshell__navitem" onClick=${() => { onClose(); openWorkflows && openWorkflows(); }}><${Icon} name="layers" size=${15}/> Workflows & agents <${Icon} name="chevron" size=${12} cls="setshell__navgo"/></button>
         <span style="flex:1"></span>
         <div class="setshell__hint">Changes save automatically</div>
       </div>
@@ -150,15 +150,15 @@ function ProviderCard({ p, open, onToggle, onPatch, onRemove, onDiscovered }) {
   const later = useAutoSave();
   const [discovering, setDiscovering] = useState(false);
   const [newModel, setNewModel] = useState("");
-  const models = p.models || [];
-  const active = p.activeModels && p.activeModels.length ? p.activeModels : null; // null = all active
+  const models = sortModelsByRecency(p.models || []); // newest first
+  const active = p.activeModels || null; // null = all active, [] = none ("Untick all")
   const isActive = (m) => !active || active.indexOf(m) >= 0;
   const claudeNative = !p.apiKey && !p.piKey;
   function toggleModel(m) {
     const cur = active || models.slice();
     const next = isActive(m) ? cur.filter((x) => x !== m) : cur.concat(m);
-    // All ticked → store empty (= all), so newly discovered models arrive active by default.
-    onPatch({ activeModels: next.length >= models.length ? [] : next });
+    // All ticked → store nothing (= all), so newly discovered models arrive active by default.
+    onPatch({ activeModels: next.length >= models.length ? undefined : next });
   }
   function addModel() {
     const m = newModel.trim();
@@ -197,8 +197,10 @@ function ProviderCard({ p, open, onToggle, onPatch, onRemove, onDiscovered }) {
           : html`<div><label>API key</label><input type="password" autocomplete="off" placeholder=${p.apiKey ? "•••••• saved — type to replace" : "paste key"} onInput=${(e) => later(() => onPatch({ apiKey: e.target.value }))}/></div>`}
       </div>
       <div class="sec" style="margin-top:14px;display:flex;align-items:center;gap:8px"><span>Models</span>
-        <span class="muted" style="text-transform:none;font-weight:400;font-size:11px">tick = offered in pickers</span>
-        <button class="btn ghost" style="padding:3px 10px;font-size:12px;margin-left:auto" disabled=${discovering} onClick=${discover}>${discovering ? html`<${Spinner} size=${12}/> Discovering…` : html`<${Icon} name="refresh" size=${12}/> Refresh catalog`}</button>
+        <span class="muted" style="text-transform:none;font-weight:400;font-size:11px">tick = offered in pickers · newest first</span>
+        <button class="btn ghost" style="padding:3px 10px;font-size:12px;margin-left:auto" disabled=${!activeCount} onClick=${() => onPatch({ activeModels: [] })}>Untick all</button>
+        <button class="btn ghost" style="padding:3px 10px;font-size:12px" disabled=${activeCount >= models.length} onClick=${() => onPatch({ activeModels: undefined })}>Tick all</button>
+        <button class="btn ghost" style="padding:3px 10px;font-size:12px" disabled=${discovering} onClick=${discover}>${discovering ? html`<${Spinner} size=${12}/> Discovering…` : html`<${Icon} name="refresh" size=${12}/> Refresh catalog`}</button>
       </div>
       <div class="provmodels">
         ${models.map((m) => html`<label key=${m} class=${"ckline provmodel" + (isActive(m) ? "" : " off")}>

@@ -26,7 +26,7 @@ export interface Provider {
   piKey: string;
   apiKey: string;
   models: string[];
-  /** ACTIVE subset of `models` offered in pickers (Settings checkmark list). Empty/absent = all. */
+  /** ACTIVE subset of `models` offered in pickers (Settings checkmark list). Absent = all; [] = none ("Untick all"). */
   activeModels?: string[];
   /** Per-provider High/Medium/Low model slots the per-agent picker offers. */
   tiers?: { high?: TierSlot; medium?: TierSlot; low?: TierSlot };
@@ -40,10 +40,28 @@ export interface Provider {
 
 export function getProviders(): Provider[] {
   try {
-    return JSON.parse(getSetting("providers") ?? "[]") as Provider[];
+    const list = JSON.parse(getSetting("providers") ?? "[]") as Provider[];
+    migrateActiveModels(list);
+    return list;
   } catch {
     return [];
   }
+}
+/**
+ * One-time migration: `activeModels: []` used to mean "all active" (the UI stored [] when every
+ * model was ticked); it now means "none active" ("Untick all"). Normalize legacy [] rows to absent
+ * (= all) exactly once, then stamp a flag so new [] selections are left alone.
+ */
+function migrateActiveModels(list: Provider[]): void {
+  try {
+    if (getSetting("active_models_v2") === "1") return;
+    let changed = false;
+    for (const p of list) {
+      if (Array.isArray(p.activeModels) && !p.activeModels.length) { delete p.activeModels; changed = true; }
+    }
+    if (changed) setSetting("providers", JSON.stringify(list));
+    setSetting("active_models_v2", "1");
+  } catch { /* best effort — retried on the next read */ }
 }
 export function setProviders(list: Provider[]): void {
   const safe = list ?? [];

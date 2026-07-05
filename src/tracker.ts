@@ -15,13 +15,19 @@ import {
 } from "./github.js";
 import {
   recordIssueState,
+  recordIssueStatus,
+  archiveIssue,
+  unarchiveIssue,
   getSetting,
   listLocalOpenIssues,
   getLocalIssue,
   upsertLocalIssue,
   foldInGitHubComment,
+  updateCommentBody,
+  deleteLocalCommentByGhId,
   getLocalComments,
 } from "./store.js";
+import { withStatus } from "./state.js";
 
 export interface TrackerIssue {
   repo: string;
@@ -138,6 +144,40 @@ export function syncInComment(repo: string, number: number, ghId: number, author
 /** Inbound sync: fold a GitHub issue (opened/edited) into the DB as the adopted record. */
 export function syncInIssue(repo: string, number: number, title: string, body: string): void {
   upsertLocalIssue({ repo, number, title, body, origin: "github" });
+}
+
+/**
+ * Inbound sync: a GitHub issue's LIFECYCLE changed on the mirror (closed / reopened / deleted
+ * directly on GitHub). The DB stays authoritative for the work lifecycle — this only folds the
+ * human's terminal/park signal back in, mirroring what the equivalent dashboard action records:
+ *  - closed              → done (a "not planned" close also archives, like the dashboard's dismiss)
+ *  - reopened            → planned, back on the board (unarchived)
+ *  - deleted/transferred → archived (hidden from the board; history is kept)
+ */
+export function syncInIssueState(repo: string, number: number, change: "closed" | "reopened" | "deleted", opts: { stateReason?: string; title?: string } = {}): void {
+  const extra = opts.title ? { title: opts.title } : {};
+  if (change === "closed") {
+    recordIssueStatus(repo, number, withStatus("done"), extra);
+    if ((opts.stateReason || "") === "not_planned") archiveIssue(repo, number);
+    upsertLocalIssue({ repo, number, closed: true, ...extra });
+  } else if (change === "reopened") {
+    recordIssueStatus(repo, number, withStatus("planned"), extra);
+    unarchiveIssue(repo, number);
+    upsertLocalIssue({ repo, number, closed: false, ...extra });
+  } else {
+    archiveIssue(repo, number);
+    upsertLocalIssue({ repo, number, closed: true });
+  }
+}
+
+/** Inbound sync: a comment was edited on GitHub — update the local copy (matched by GitHub id). */
+export function syncInCommentEdit(ghId: number, body: string): void {
+  updateCommentBody(ghId, (body || "").replace(AGENCY_MARKER, "").trim());
+}
+
+/** Inbound sync: a comment was deleted on GitHub — drop the local copy. */
+export function syncInCommentDelete(ghId: number): void {
+  deleteLocalCommentByGhId(ghId);
 }
 
 /** Local-first mode is opt-in (default GitHub) so the inversion can be enabled deliberately. */

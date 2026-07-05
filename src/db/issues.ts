@@ -187,6 +187,17 @@ export function archiveIssue(repo: string, number: number): void {
   }
 }
 
+/** Put an archived issue back on the board (e.g. reopened on GitHub after a not-planned close). */
+export function unarchiveIssue(repo: string, number: number): void {
+  const d = getDb();
+  if (!d) return;
+  try {
+    d.prepare(`DELETE FROM archived WHERE repo = ? AND number = ?`).run(repo, number);
+  } catch {
+    /* best effort */
+  }
+}
+
 /** The role last assigned to an issue (read from the issues row). */
 export function getIssueRole(repo: string, number: number): string | null {
   const d = getDb();

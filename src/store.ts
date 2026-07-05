@@ -25,7 +25,7 @@ export { recentRuns, roleRunsByIssue } from "./db/runs.js";
 export { upsertWorkflow, getWorkflow, listWorkflows, getWorkflowByTrigger, deleteWorkflow, seedWorkflows, getDefaultWorkflowId, setDefaultWorkflowId } from "./db/workflows.js";
 export type { Workflow, WorkflowStep, WorkflowGate } from "./db/workflows.js";
 export type { RunRow } from "./db/runs.js";
-export { upsertLocalIssue, getLocalIssue, listLocalOpenIssues, nextLocalIssueNumber, addLocalComment, getLocalComments, recordOutgoingComment, setCommentGhId, foldInGitHubComment, updateCommentBody, getConversation, conversationCount } from "./db/local.js";
+export { upsertLocalIssue, getLocalIssue, listLocalOpenIssues, nextLocalIssueNumber, addLocalComment, getLocalComments, recordOutgoingComment, setCommentGhId, foldInGitHubComment, updateCommentBody, deleteLocalCommentByGhId, getConversation, conversationCount } from "./db/local.js";
 export type { LocalIssue, LocalComment, ConversationComment } from "./db/local.js";
 export { getAutoRaw, setAuto, autoEnabled, autoAttempts, bumpAutoAttempts, resetAutoAttempts } from "./db/auto.js";
 export type { AutoKind, AutoValue } from "./db/auto.js";
@@ -69,7 +69,7 @@ export { recordRunStep, toolStatsSince, recordIncident, recentFailuresSince, run
 export type { ToolStat, FailureStat } from "./db/telemetry.js";
 export {
   recordIssueFiles, filesFor, addIssueFiles, recordIssueState, recordIssueStatus, getIssueStatus,
-  recordPr, getIssueRow, recentIssues, archiveIssue, getIssueRole, setByAgent, resetIssueData,
+  recordPr, getIssueRow, recentIssues, archiveIssue, unarchiveIssue, getIssueRole, setByAgent, resetIssueData,
 } from "./db/issues.js";
 export type { IssueRow } from "./db/issues.js";
 export { recordLesson, recentLessons, unprocessedLessons, markLessonsProcessed } from "./db/lessons.js";

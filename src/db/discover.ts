@@ -15,6 +15,7 @@
 import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { Provider } from "./providers.js";
 import { inferPiProvider } from "./providers.js";
+import { newestModels, sortModelsByRecency } from "./model-recency.js";
 
 export interface DiscoverResult {
   models: string[];
@@ -46,12 +47,15 @@ export async function discoverProviderModels(provider: Provider): Promise<Discov
     const apiKey = provider.apiKey?.trim();
     if (apiKey) authStorage.setRuntimeApiKey(pi, apiKey);
     const registry = ModelRegistry.create(authStorage);
-    // getAll() = built-in + custom models. Filter by provider so each row gets only its own catalog.
-    const models = registry
-      .getAll()
-      .filter((m) => m.provider === pi)
-      .map((m) => m.id)
-      .filter(Boolean);
+    // getAll() = built-in + custom models. Filter by provider so each row gets only its own
+    // catalog, sorted newest first (the order the Settings list and pickers show).
+    const models = sortModelsByRecency(
+      registry
+        .getAll()
+        .filter((m) => m.provider === pi)
+        .map((m) => m.id)
+        .filter(Boolean),
+    );
     if (!models.length) {
       return {
         models: [],
@@ -82,7 +86,8 @@ export function ensureClaudeProvider(hasClaudeCred: boolean, getProviders: () =>
     const list = getProviders();
     if (list.some((p) => p.id === "claude" || (!p.apiKey && !p.piKey && /^claude$/i.test(p.name || "")))) return;
     const registry = ModelRegistry.create(AuthStorage.create());
-    const models = registry.getAll().filter((m) => m.provider === "anthropic").map((m) => m.id).filter(Boolean);
-    setProviders(list.concat({ id: "claude", name: "Claude", piKey: "", apiKey: "", models }));
+    const models = sortModelsByRecency(registry.getAll().filter((m) => m.provider === "anthropic").map((m) => m.id).filter(Boolean));
+    // Fresh row → only the 4 newest models start active; the rest stay in the list, untickable.
+    setProviders(list.concat({ id: "claude", name: "Claude", piKey: "", apiKey: "", models, activeModels: newestModels(models, 4) }));
   } catch { /* best effort — a missing catalog must never break /models */ }
 }

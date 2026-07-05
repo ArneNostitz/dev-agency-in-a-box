@@ -92,6 +92,8 @@ import {
   filesFor,
   recordIncident,
   getLocalIssue,
+  getIssueRow,
+  archiveIssue,
 } from "./store.js";
 
 /**
@@ -938,16 +940,24 @@ async function scanRepo(cfg: Config, repo: string): Promise<void> {
     // DB truth (ADR-0001/0003): the lifecycle state + blocked reason come from getIssueStatus —
     // GitHub carries no signal of its own (no labels, nothing read back).
     let status = getIssueStatus(repo, t.number);
-    if (status.state === "planned") continue; // parked in Planned — waits for the play button
 
     // Backstop for threads finished on GitHub directly: a closed thread the agency had already
-    // triaged (anything past Inbox) is terminal. One gh read, and only once per thread (state
-    // flips to done, so the next scan skips it).
+    // triaged (anything past Inbox — INCLUDING Planned, which must not survive its issue being
+    // closed on GitHub) is terminal. One gh read, and only once per thread (state flips to done,
+    // so the next scan skips it). The webhook does this in real time; the scan is the catch-up.
     if (t.closed && status.state !== "notPlanned" && status.state !== "done") {
       await prMerged(repo, `agency/issue-${t.number}`).catch(() => false); // best-effort — the change journal records the actual merge
       recordIssueStatus(repo, t.number, withStatus("done"), { title: t.title });
       status = { state: "done", blocked: null };
     }
+    // An Inbox card whose issue was closed on GitHub was dismissed by the human — drop it from
+    // the board (only cards that actually exist; unknown closed threads have nothing to hide).
+    if (t.closed && status.state === "notPlanned" && getIssueRow(repo, t.number)) {
+      archiveIssue(repo, t.number);
+      continue;
+    }
+
+    if (status.state === "planned") continue; // parked in Planned — waits for the play button
 
     if (status.state === "working") continue; // being handled (or swept below if stale)
     if (t.closed && !recentEnough(t.updatedAt)) continue; // ignore stale closed threads
