@@ -13,7 +13,7 @@
  * changes. That is the "runners as plugins" contract.
  */
 import type { AgentRunner, RunRequest, RunResult, RunnerKind } from "./interface.js";
-import { getRunner, runnerBinary, binaryAvailable } from "./registry.js";
+import { getRunner } from "./registry.js";
 import type { Provider } from "../db/providers.js";
 
 export interface LlmRunOptions {
@@ -39,8 +39,6 @@ export interface LlmRunOptions {
   maxTurns: number;
   /** Forward-progress token kill-switch (0 disables). */
   tokenCap: number;
-  /** Optional CLI command template override (Provider.cliCommand is preferred). */
-  cliCommand?: string;
 }
 
 /**
@@ -56,21 +54,11 @@ export function runnerKindFor(provider: Provider | null, authKind?: "subscriptio
 }
 
 /**
- * Resolve + preflight + dispatch one run. The binary preflight FAILS LOUD (never silently swaps the
- * runner) — a selected runner is a deliberate Settings pick; swapping it for claude-sdk would hide a
- * real deploy problem (e.g. `pi` not installed) behind a run that "works" on the wrong backend.
+ * Resolve + dispatch one run. Both runners are in-process SDKs — no binary preflight needed.
  */
 export async function runLLM(opts: LlmRunOptions, emitAssistant: (message: unknown) => void): Promise<RunResult> {
   const kind = runnerKindFor(opts.provider, opts.authKind);
-  const cliCommand = opts.cliCommand || opts.provider?.cliCommand || undefined;
-  const wantBin = runnerBinary(kind, cliCommand);
-  if (wantBin && !binaryAvailable(wantBin)) {
-    throw new Error(
-      `Selected runner "${kind}" can't run — the "${wantBin}" binary isn't installed in this deployment ` +
-        `(or pick a different runner for this provider in Settings → Models & runners).`,
-    );
-  }
-  const runner: AgentRunner = getRunner(kind, cliCommand);
+  const runner: AgentRunner = getRunner(kind);
   const req: RunRequest = {
     task: opts.task,
     cwd: opts.cwd,
@@ -85,7 +73,6 @@ export async function runLLM(opts: LlmRunOptions, emitAssistant: (message: unkno
     resumeId: opts.resumeId,
     maxTurns: opts.maxTurns,
     tokenCap: opts.tokenCap,
-    template: cliCommand,
   };
   return runner.run(req, emitAssistant);
 }

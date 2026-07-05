@@ -50,6 +50,17 @@ export function listEpicChildren(repo: string, parent: number): EpicChild[] {
   }
 }
 
+/** Parents that track `child` as a sub-issue (usually 0 or 1). */
+export function epicParentsOf(repo: string, child: number): number[] {
+  const d = getDb();
+  if (!d) return [];
+  try {
+    return (d.prepare(`SELECT DISTINCT parent FROM epics WHERE repo = ? AND child = ?`).all(repo, child) as Array<{ parent: number }>).map((r) => r.parent);
+  } catch {
+    return [];
+  }
+}
+
 export function listEpicParents(repo: string): number[] {
   const d = getDb();
   if (!d) return [];

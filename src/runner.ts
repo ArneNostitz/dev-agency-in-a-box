@@ -15,20 +15,17 @@ import {
   commentOnIssue,
   cloneRepo,
   commentThread,
-  acknowledge,
   listAgencyPrs,
   listAllOpenIssues,
   listComments,
   AGENCY_MARKER,
   listRecentThreads,
   threadSignals,
-  reopenIssue,
-  getIssue,
+  getIssue as getIssueFromGitHub,
   isNoOpComment,
   findPrForBranch,
   ensureDraftPr,
   createIssue,
-  approveLastProposal,
   commentOnPr,
   prHealth,
   prMergeStatus,
@@ -45,10 +42,10 @@ import { seedAdmin, resetAdminPassword } from "./auth.js";
 import { sNum } from "./settings.js";
 import { githubReady, ghUserToken, ghBotToken } from "./creds.js";
 import { decideThreadAction } from "./route.js";
-import { reconcileEpics } from "./epics.js";
+import { reconcileEpics, onChildMerged } from "./epics.js";
 import { indexRepo } from "./gitnexus.js";
 import { pushActivity } from "./activity.js";
-import { loadHandleRoleMap, roleForText, ALL_ROLES, type RoleName } from "./agents/roles.js";
+import { roleForHandle, ALL_ROLES, type RoleName } from "./agents/roles.js";
 import { resolveWorkflow, workflowLeadRole } from "./workflow.js";
 import { getWorkflow, getDefaultWorkflowId } from "./db/workflows.js";
 import { getIssueWorkflow, setIssueWorkflow } from "./db/providers.js";
@@ -87,14 +84,30 @@ import {
   getAutoSwitchOnLimit,
   setSessionFallback,
   clearSessionFallback,
-  chatAgentForText,
+  listAgentDefs,
   seedChatAgents,
   seedWorkflows,
   seedLibrary,
   clearIssueModelOverride,
   filesFor,
   recordIncident,
+  getLocalIssue,
 } from "./store.js";
+
+/**
+ * Local-first issue lookup (ADR-0001): the DB copy (local_issue, or the head snapshot the dashboard
+ * saved) answers instantly; GitHub is only consulted when the issue was never imported. This is what
+ * removed the ~1-minute "GitHub round-trip" lag from the Approve/Resume/Fix buttons.
+ */
+async function getIssue(repo: string, number: number): Promise<Issue | null> {
+  const li = getLocalIssue(repo, number);
+  if (li && (li.title || li.body)) return { number, title: li.title, body: li.body };
+  try {
+    const head = JSON.parse(getSetting(`head:${repo}#${number}`) || "null") as { title?: string; body?: string } | null;
+    if (head?.title) return { number, title: head.title, body: head.body ?? "" };
+  } catch { /* fall through */ }
+  return getIssueFromGitHub(repo, number);
+}
 import { claimFiles, releaseFiles, claimBarrier } from "./locks.js";
 import { afterMerge } from "./merge_hooks.js";
 import { isStructural, structuralFlagKey } from "./coordination.js";
@@ -238,8 +251,12 @@ function workdirFor(repo: string, key: string): string {
 async function processIssue(cfg: Config, repo: string, issue: Issue, opts: { fresh?: boolean } = {}): Promise<void> {
   clearStop(repo, issue.number); // a fresh dispatch clears any prior Stop request
   clearHold(repo, issue.number); // …and any prior Hold (resume/continue)
-  // Chat agents (v3): interactive, non-repo. Route here and skip the clone/branch/PR machinery.
-  const chatDef = chatAgentForText(`${issue.title}\n${issue.body}`);
+  // Chat agents (v3): interactive, non-repo. Routed by the DB role pin (dashboard selection), never
+  // by @-handles in the issue text (issue #140). Skip the clone/branch/PR machinery.
+  const rolePin = (getSetting(`issue_role_pin.${repo}#${issue.number}`) || "").trim();
+  const chatDef = rolePin
+    ? listAgentDefs().find((a) => a.mode === "chat" && ((a.handle || `@${a.name}`).toLowerCase() === rolePin.toLowerCase() || a.name.toLowerCase() === rolePin.replace(/^@/, "").toLowerCase())) ?? null
+    : null;
   if (chatDef) {
     void cfg;
     recordIssueStatus(repo, issue.number, withStatus("working"), { title: issue.title, role: chatDef.name });
@@ -277,30 +294,33 @@ async function processIssue(cfg: Config, repo: string, issue: Issue, opts: { fre
 
   const resuming = isWaitingOnHuman(getIssueStatus(repo, issue.number));
   // 🎲 Dealer's choice: the issue was created with no concrete agent/workflow — let a small LLM pick
-  // the route ONCE on first start. A workflow pick is pinned (becomes pinnedWf below); a role pick is
-  // prepended to the text roleForText reads. Either way the deterministic resolution below decides the
-  // run; the dealer only chooses WHICH handle. The flag is consumed so resume never re-rolls.
+  // the route ONCE on first start. A workflow pick is pinned; a role pick is stored as the issue's
+  // role pin. Everything lives in the DB (issue #140: no @-handle text parsing anywhere).
   const dealerKey = `issue_dealer.${repo}#${issue.number}`;
-  let dealerText = "";
   if (!resuming && getSetting(dealerKey) === "1") {
     const pick = await pickDealerDispatch(repo, issue).catch(() => null);
     setSetting(dealerKey, ""); // consume — one roll per issue, even if the pick was null
     if (pick) {
       const w = resolveWorkflow(pick);
-      if (w) { setIssueWorkflow(repo, issue.number, w.id); await commentOnIssue(repo, issue.number, `🎲 Dealer's choice → workflow **${w.name}** (${pick}).`).catch(() => {}); }
-      else { dealerText = pick; await commentOnIssue(repo, issue.number, `🎲 Dealer's choice → **${pick}**.`).catch(() => {}); }
+      if (w) { setIssueWorkflow(repo, issue.number, w.id); await commentOnIssue(repo, issue.number, `🎲 Dealer's choice → workflow **${w.name}**.`).catch(() => {}); }
+      else { setSetting(`issue_role_pin.${repo}#${issue.number}`, pick); await commentOnIssue(repo, issue.number, `🎲 Dealer's choice → **${pick}**.`).catch(() => {}); }
     }
   }
-  // A persisted per-issue WORKFLOW override (set from the dashboard) wins over text-trigger
-  // resolution and is honored even on resume — so "run this workflow" sticks across runs.
+  // A persisted per-issue WORKFLOW override (set from the dashboard) wins and is honored even on
+  // resume — so "run this workflow" sticks across runs.
   const pinnedWf = (() => { const id = getIssueWorkflow(repo, issue.number); return id ? getWorkflow(id) : null; })();
-  // Otherwise a workflow trigger (e.g. @build → Full build) resolves to its lead role and drives the
-  // existing flow; failing that, fall back to the role-pin handle map. A dealer's role pick is read
-  // first (prepended) so it beats any stray handle in the issue text.
-  const handleRole = resuming || pinnedWf ? null : roleForText(`${dealerText} ${issue.title}\n${issue.body}`, loadHandleRoleMap());
-  // pinned per-issue > explicit text trigger > a single-agent handle pin > the global DEFAULT workflow.
-  const textWf = resuming ? null : resolveWorkflow(`${issue.title}\n${issue.body}`);
-  const wf = pinnedWf ?? textWf ?? ((!resuming && handleRole === null) ? getWorkflow(getDefaultWorkflowId()) : null);
+  // A single-agent pin is the DB role pin the dashboard (or the dealer) stored — never derived from
+  // issue/comment text. Re-read (the dealer may have just stored one). No pin and no workflow → the
+  // global DEFAULT workflow.
+  const pinnedHandle = resuming || pinnedWf ? null : ((getSetting(`issue_role_pin.${repo}#${issue.number}`) || "").trim() || null);
+  let handleRole = pinnedHandle ? roleForHandle(pinnedHandle) : null;
+  if (!handleRole && pinnedHandle) {
+    // A custom (non-chat) agent pin runs on its base role: repo-writing agents as developer,
+    // docs/planning agents as planner (same defaults the workflow engine uses for custom steps).
+    const def = listAgentDefs().find((d) => (d.handle || `@${d.name}`).toLowerCase() === pinnedHandle.toLowerCase() || d.name.toLowerCase() === pinnedHandle.replace(/^@/, "").toLowerCase());
+    if (def) handleRole = def.canWriteCode ? "developer" : "planner";
+  }
+  const wf = pinnedWf ?? ((!resuming && handleRole === null) ? getWorkflow(getDefaultWorkflowId()) : null);
   const role: RoleName = wf
     ? workflowLeadRole(wf)
     : resuming
@@ -337,7 +357,6 @@ async function processIssue(cfg: Config, repo: string, issue: Issue, opts: { fre
   }
 
   recordIssueStatus(repo, issue.number, withStatus("working"), { title: issue.title, role });
-  void acknowledge(repo, issue.number).catch(() => {}); // 👀 — fire-and-forget, never block the run
   if (!resuming) {
     await commentOnIssue(repo, issue.number, `🏗️ On it (role: **${role}**) — branch \`agency/issue-${issue.number}\`.`);
   }
@@ -360,6 +379,11 @@ async function processIssue(cfg: Config, repo: string, issue: Issue, opts: { fre
     await cloneRepo(repo, workdir, (percent, phase) => {
       pushActivity(repo, issue.number, role, "tool", `📥 cloning ${repo}… ${phase === "cloned" ? "done" : percent + "%"}`);
     });
+    // RESUME must continue the EXISTING work, not restart on a fresh default branch. cloneRepo only
+    // fetches the default branch, so deterministically check out the issue's branch if it was ever
+    // pushed (same as processResume/processFix). Without this, every workflow resume silently threw
+    // the worked-on code away.
+    if (resuming) await fetchCheckout(workdir, `agency/issue-${issue.number}`).catch(() => {});
     await indexRepo(workdir, repo, (s) => pushActivity(repo, issue.number, role, "tool", s));
     await runFlow();
   } catch (err) {
@@ -395,7 +419,6 @@ async function processPrFeedbackOne(
   pr: { number: number; title: string; branch: string; issueNumber: number },
   thread: string,
 ): Promise<void> {
-  await acknowledge(repo, pr.number);
   const workdir = workdirFor(repo, `pr-${pr.number}`);
   await rm(workdir, { recursive: true, force: true });
   await mkdir(join(workdir, ".."), { recursive: true });
@@ -440,7 +463,6 @@ async function processHealOne(
   incAutofix(repo, pr.number);
 
   console.log(`[agency] auto-heal ${repo} PR#${pr.number}: ${health.detail} (attempt ${attempts + 1})`);
-  await acknowledge(repo, pr.number);
   const workdir = workdirFor(repo, `pr-${pr.number}`);
   await rm(workdir, { recursive: true, force: true });
   await mkdir(join(workdir, ".."), { recursive: true });
@@ -481,9 +503,7 @@ async function processHealOne(
 /** Re-engage a thread the agency already delivered (often after a merge): build a fix PR. */
 async function processFollowUp(cfg: Config, repo: string, issue: Issue): Promise<void> {
   console.log(`[agency] ${repo} #${issue.number}: follow-up on a new comment`);
-  await reopenIssue(repo, issue.number); // no-op if already open
   recordIssueStatus(repo, issue.number, withStatus("working"), { title: issue.title, role: "developer" });
-  await acknowledge(repo, issue.number);
 
   const thread = await commentThread(repo, issue.number);
   const workdir = workdirFor(repo, `${issue.number}`);
@@ -555,7 +575,6 @@ export async function forceResume(cfg: Config, repo: string, number: number, add
     console.log(`[agency] resume → existing PR ${existingPr.url}; routed to review (no rerun)`);
     return;
   }
-  await reopenIssue(repo, number).catch(() => {});
   setThreadCursor(repo, number, 0); // let any prior comment count again
   clearActive(repo, number); // drop a zombie "working" entry if a run died
   // If a plan already exists, skip the (Opus) planner and resume the build from the branch —
@@ -575,7 +594,6 @@ async function processResume(cfg: Config, repo: string, issue: Issue): Promise<v
   clearStop(repo, issue.number); // explicit resume clears any prior Stop request
   clearHold(repo, issue.number); // resume also lifts a Hold so the workflow advances
   recordIssueStatus(repo, issue.number, withStatus("working"), { title: issue.title, role: "developer" });
-  await acknowledge(repo, issue.number);
   const thread = await commentThread(repo, issue.number);
   const workdir = workdirFor(repo, `${issue.number}`);
   await rm(workdir, { recursive: true, force: true });
@@ -627,7 +645,6 @@ export async function forceFix(cfg: Config, repo: string, number: number): Promi
 async function processFix(cfg: Config, repo: string, issue: Issue, conflict: boolean): Promise<void> {
   void cfg;
   recordIssueStatus(repo, issue.number, withStatus("working"), { title: issue.title, role: "developer" });
-  await acknowledge(repo, issue.number).catch(() => {});
   const workdir = workdirFor(repo, `${issue.number}`);
   await rm(workdir, { recursive: true, force: true });
   await mkdir(join(workdir, ".."), { recursive: true });
@@ -686,7 +703,8 @@ export async function forceStart(cfg: Config, repo: string, number: number): Pro
 export async function forceApprove(cfg: Config, repo: string, number: number): Promise<void> {
   const issue = await getIssue(repo, number);
   if (!issue) return;
-  await approveLastProposal(repo, number).catch(() => {});
+  // DB-only approval (ADR-0001): the pipeline reads this flag — no GitHub reaction round-trip.
+  setSetting(`issue_approved.${repo}#${number}`, "1");
   // Approving during the usage-limit window: queue the build for auto-resume after the reset
   // (so you can approve anytime, even rate-limited).
   if (agentsArePaused()) {
@@ -1214,6 +1232,8 @@ function startAutoMode(cfg: Config): void {
               recordIssueStatus(repo, n, withStatus("done"));
               clearReview(repo, n);
               resetAutoAttempts(repo, n);
+              // Epic bookkeeping + ▶ Play auto-advance: next sub-issue starts when this one merges.
+              await onChildMerged(repo, n, (rp, num) => forceStart(cfg, rp, num)).catch(() => {});
               console.log(`[agency] auto-merged ${repo} #${n}`);
             }
             continue;

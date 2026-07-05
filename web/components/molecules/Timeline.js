@@ -18,9 +18,9 @@
 import { html } from "/web/vendor/standalone.mjs";
 import { Icon } from "../atoms/Icon.js";
 import { Avatar } from "../atoms/Avatar.js";
-// timelineModel is the canonical step-model builder (from table.js). Re-exported so callers can
-// import both the model builder and the renderer from one place.
-export { timelineModel } from "../../table.js";
+// timelineModel is the canonical step-model builder (lives in the ProgressTable organism).
+// Re-exported so callers can import both the model builder and the renderer from one place.
+export { timelineModel } from "../organisms/ProgressTable.js";
 
 export function Timeline({ steps, current, live = false, statusIcon = null, labels = true, avatarsOn = true, dotSize = 26, onStepClick = null }) {
   if (!steps || !steps.length) return null;

@@ -1,6 +1,5 @@
-// Tests for the runner seam (Candidate 4 / #63) — the pure, testable parts.
-// (ClaudeSdkRunner.run is a verbatim port of the proven loop; agent execution can't be
-//  exercised here — that's verified by construction + a watched first deploy.)
+// Tests for the runner seam — the pure, testable parts. Two in-process SDK runners remain
+// (claude-sdk + pi-cli); the old subprocess CLI runners are gone.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
@@ -10,33 +9,8 @@ import { join } from "node:path";
 process.env.MASTER_KEY = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), "dadb-run-")), "test.db");
 
-const cli = await import("../dist/runners/cli.js");
 const reg = await import("../dist/runners/registry.js");
-
-// ---- parseCommandLine (no shell, no injection) ----
-
-test("parseCommandLine splits on spaces and trims empties", () => {
-  assert.deepEqual(cli.parseCommandLine("pi --mode print  --model  x"), ["pi", "--mode", "print", "--model", "x"]);
-});
-
-test("parseCommandLine honors double quotes", () => {
-  assert.deepEqual(cli.parseCommandLine('echo "hello world" foo'), ["echo", "hello world", "foo"]);
-});
-
-test("parseCommandLine honors single quotes", () => {
-  assert.deepEqual(cli.parseCommandLine("echo 'a b' c"), ["echo", "a b", "c"]);
-});
-
-test("parseCommandLine keeps shell metacharacters as literal args (no injection)", () => {
-  // These are passed as ARGV to spawn(shell:false), so `;` and `$()` are not interpreted.
-  const a = cli.parseCommandLine("pi --task 'x; rm -rf /'");
-  assert.equal(a[0], "pi");
-  assert.equal(a[2], "x; rm -rf /");
-});
-
-test("parseCommandLine handles an empty template", () => {
-  assert.deepEqual(cli.parseCommandLine(""), []);
-});
+const exec = await import("../dist/runners/exec.js");
 
 // ---- summarizeTool (the one shared copy) ----
 
@@ -58,18 +32,16 @@ test("summarizeTool truncates long values", () => {
 
 // ---- getRunner dispatch ----
 
-test("getRunner returns the right adapter per kind", () => {
+test("getRunner returns the right adapter per kind; unknown kinds fall back to claude-sdk", () => {
   assert.equal(reg.getRunner("claude-sdk").kind, "claude-sdk");
   assert.equal(reg.getRunner("pi-cli").kind, "pi-cli");
-  assert.equal(reg.getRunner("claude-cli").kind, "cli");
-  assert.equal(reg.getRunner("custom-cli", "mycli --x {task}").kind, "cli");
+  assert.equal(reg.getRunner("nonsense").kind, "claude-sdk");
 });
 
-test("defaultRunnerKind reads agent_runner, defaults to claude-sdk, rejects garbage", async () => {
-  const { setSetting } = await import("../dist/store.js");
-  setSetting("agent_runner", "pi-cli");
-  assert.equal(reg.defaultRunnerKind(), "pi-cli");
-  setSetting("agent_runner", "nonsense");
-  assert.equal(reg.defaultRunnerKind(), "claude-sdk");
-  setSetting("agent_runner", "");
+// ---- runnerKindFor: the runner is decided by provider identity alone ----
+
+test("runnerKindFor: Claude-native → claude-sdk; provider with a piKey → pi-cli", () => {
+  assert.equal(exec.runnerKindFor(null, "subscription"), "claude-sdk");
+  assert.equal(exec.runnerKindFor({ id: "glm", piKey: "zai" }, "apiKey"), "pi-cli");
+  assert.equal(exec.runnerKindFor({ id: "x" }, "apiKey"), "pi-cli");
 });

@@ -35,12 +35,6 @@ test("interactive flag round-trips (default false)", () => {
   s.deleteAgentDef("talker"); s.deleteAgentDef("quiet");
 });
 
-test("chatAgentForText matches a mentioned handle", () => {
-  s.seedChatAgents();
-  assert.equal(s.chatAgentForText("hey @spec help me scope this")?.name, "spec-creator");
-  assert.equal(s.chatAgentForText("@grill this plan")?.name, "grill-me");
-  assert.equal(s.chatAgentForText("just a normal issue, no handle"), null);
-});
 
 test("canWriteCode gates the derived tool set + plan path", async () => {
   const { toolsFor, planFilePath } = await import("../dist/store.js");

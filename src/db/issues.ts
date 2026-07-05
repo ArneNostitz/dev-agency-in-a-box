@@ -1,6 +1,30 @@
 import { getDb, now } from "./connection.js";
 import { parseLegacyStatus, stateColumnFor, STATUS_NOT_PLANNED, type IssueStatus, type BlockedReason } from "../state.js";
 
+/**
+ * FULL per-issue wipe (the dashboard "Reset" action): every interaction and run artifact for
+ * repo#number goes — conversation (local_comment), run history, plans, tool telemetry, review
+ * verdicts, conflicts, autofix counters, file footprints, thread cursor, resume sessions, activity,
+ * lessons, attachments. Global tables (token_usage accounting, change_journal, archived) stay.
+ * If the issue is an epic PARENT its child links + epic state are dropped; as a CHILD its row in
+ * the parent's checklist resets to open.
+ */
+export function resetIssueData(repo: string, number: number): void {
+  const d = getDb();
+  if (!d) return;
+  const byIssue = [
+    "local_comment", "runs", "plans", "run_step", "activity", "lessons",
+    "issue_files", "thread_cursor", "agent_sessions", "pr_review", "pr_conflict", "attachments",
+  ];
+  for (const t of byIssue) {
+    try { d.prepare(`DELETE FROM ${t} WHERE repo = ? AND number = ?`).run(repo, number); } catch { /* best effort */ }
+  }
+  try { d.prepare(`DELETE FROM pr_autofix WHERE repo = ? AND pr = ?`).run(repo, number); } catch { /* best effort */ }
+  try { d.prepare(`DELETE FROM epics WHERE repo = ? AND parent = ?`).run(repo, number); } catch { /* best effort */ }
+  try { d.prepare(`DELETE FROM epic_state WHERE repo = ? AND parent = ?`).run(repo, number); } catch { /* best effort */ }
+  try { d.prepare(`UPDATE epics SET state = 'open', closed = 0 WHERE repo = ? AND child = ?`).run(repo, number); } catch { /* best effort */ }
+}
+
 export function recordIssueFiles(repo: string, number: number, files: string[]): void {
   const d = getDb();
   if (!d) return;

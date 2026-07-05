@@ -18,7 +18,7 @@ import { MarkdownArea } from "../atoms/MarkdownArea.js";
 import { ModelSelect } from "../molecules/ModelSelect.js";
 import { Comment } from "../molecules/Comment.js";
 import { timelineModel } from "../molecules/Timeline.js";
-import { WorkflowTimeline } from "../../table.js";
+import { WorkflowTimeline } from "./ProgressTable.js";
 import { api, getJSON } from "../../lib/api.js";
 import { ago, cap, fmtTok, tokHeat, usageTitle, shortModel } from "../../lib/format.js";
 import { toast, readAttach } from "../../lib/toast.js";
@@ -166,11 +166,13 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
 
   function send() {
     if (!reply.trim() && !atts.length) return;
-    const textToSend = (replyAgent ? replyAgent + " " : "") + reply;
+    // The chosen agent travels as a STRUCTURED field (the server pins it in the DB) — never as an
+    // "@handle " prefix inside the message text (issue #140: no text-based agent triggering).
+    const textToSend = reply;
     const mo = modelOverride ? (() => { const parts = modelOverride.split("/"); return { providerId: parts[0], model: parts.slice(1).join("/") }; })() : null;
     // If offline, queue without a skeleton (comment appears after flush + thread reload).
     if (!isOnline) {
-      if (onQueueComment) onQueueComment({ type: "comment", repo, number, body: textToSend, model: mo || null });
+      if (onQueueComment) onQueueComment({ type: "comment", repo, number, body: textToSend, agent: replyAgent || null, model: mo || null });
       toast("Queued offline — will send when back online");
       setReply(""); setAtts([]);
       if (taRef.current) taRef.current.style.height = "auto";
@@ -199,7 +201,7 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
           else if (r.md) appended.push(r.md);
         }
         if (appended.length) full = [full].concat(appended).filter(Boolean).join("\n\n");
-        return api("/comment", { repo, number, body: full, ...(mo ? { model: mo } : {}) });
+        return api("/comment", { repo, number, body: full, ...(replyAgent ? { agent: replyAgent } : {}), ...(mo ? { model: mo } : {}) });
       })
       .then(() => {
         setReply(""); setAtts([]);
@@ -485,22 +487,30 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
   </div>`;
 }
 
-// Epic parent: a checklist of every sub-issue (✓ done / ○ open), each a link to its detail page,
-// plus a one-click "Complete & close" once they're all done.
+// Epic parent: a checklist of every sub-issue (✓ done-when-merged / ○ open), each a link to its
+// detail page. ▶ Play works ALL sub-issues in order (each merge auto-starts the next); "Start next"
+// runs just one; "Complete & close" appears when every child is done.
 function EpicChecklist({ epic, repo, onOpen, onClose, closing, act }) {
+  const isKidDone = (c) => Boolean(c.closed) || c.state === "done";
   const all = epic.total > 0 && epic.done >= epic.total;
-  const kids = (epic.children || []).slice().sort((a, b) => (a.closed === b.closed ? a.child - b.child : a.closed ? 1 : -1));
+  const kids = (epic.children || []).slice().sort((a, b) => (isKidDone(a) === isKidDone(b) ? a.child - b.child : isKidDone(a) ? 1 : -1));
   const startingKids = act && act.isBusy && act.isBusy("startChildren", repo, epic.parent || 0);
+  const playing = act && act.isBusy && act.isBusy("epicPlay", repo, epic.parent || 0);
   return html`<div class="epicbox">
-    <div class="sec" style="margin:10px 2px 6px">Sub-issues ${epic.done}/${epic.total}${all ? html` · <span class="epicalldone">all done ✓</span>` : null}</div>
+    <div class="sec" style="margin:10px 2px 6px">Sub-issues ${epic.done}/${epic.total}${all ? html` · <span class="epicalldone">all done ✓</span>` : null}${epic.auto && !all ? html` · <span class="epicalldone">auto-running ▶</span>` : null}</div>
     <div class="epiclist">
       ${kids.map((c) => html`<button class="epicrow" key=${c.child} onClick=${() => onOpen(repo, c.child, c.title)} data-tip="Open sub-issue">
-        <span class=${"epicck " + (c.closed ? "done" : "open")}><${Icon} name=${c.closed ? "check" : "planned"} size=${14}/></span>
+        <span class=${"epicck " + (isKidDone(c) ? "done" : "open")}><${Icon} name=${isKidDone(c) ? "check" : "planned"} size=${14}/></span>
         <span class="epicnum">#${c.child}</span>
         <span class="epictitle">${c.title || "#" + c.child}</span>
       </button>`)}
     </div>
-    ${!all && act ? html`<button class=${"btn primary" + (startingKids ? " busy" : "")} disabled=${startingKids} onClick=${() => act.startChildren(repo, epic.parent || 0)} style="margin-top:9px;width:100%;justify-content:center">${startingKids ? html`<${Spinner} size=${15}/> Starting…` : html`<${Icon} name="play" size=${15}/> Start next sub-issue`}</button>` : null}
+    ${!all && act ? html`<div style="display:flex;gap:8px;margin-top:9px">
+      ${epic.auto
+        ? html`<button class="btn" onClick=${() => act.epicPause(repo, epic.parent || 0)} style="flex:1;justify-content:center"><${Icon} name="planned" size=${15}/> Pause auto-run</button>`
+        : html`<button class=${"btn green" + (playing ? " busy" : "")} disabled=${playing} onClick=${() => act.epicPlay(repo, epic.parent || 0)} data-tip="Work ALL sub-issues in order — each merge starts the next" style="flex:1;justify-content:center">${playing ? html`<${Spinner} size=${15}/> Starting…` : html`<${Icon} name="play" size=${15}/> Play all in order`}</button>`}
+      <button class=${"btn primary" + (startingKids ? " busy" : "")} disabled=${startingKids} onClick=${() => act.startChildren(repo, epic.parent || 0)} style="flex:1;justify-content:center">${startingKids ? html`<${Spinner} size=${15}/> Starting…` : html`<${Icon} name="play" size=${15}/> Start next only`}</button>
+    </div>` : null}
     ${all ? html`<button class="btn green" disabled=${closing} onClick=${onClose} style="margin-top:9px;width:100%;justify-content:center">${closing ? html`<${Spinner} size=${15}/> Closing…` : html`<${Icon} name="check" size=${15}/> Complete & close epic`}</button>` : null}
   </div>`;
 }

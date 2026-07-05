@@ -1,9 +1,8 @@
 /**
- * Workflow resolution (Phase 1b). GitHub inbound still needs an @trigger; the dashboard sends the
- * selected handle as that trigger (see /new-issue). A workflow's trigger resolves to its LEAD role,
- * which drives the existing, proven run flow — the seeded templates' gates already live in the
- * pipeline. The generic step-by-step engine (forcing per-step skills/hooks + custom gates) lands
- * with the Phase-2 builder, once users can create custom workflows that need it.
+ * Workflow resolution. A workflow's trigger handle (e.g. "@build") is a STRUCTURED identifier the
+ * dashboard/dealer passes in — it is never scanned out of issue or comment text (issue #140). The
+ * trigger resolves to the workflow; full-build runs the proven pipeline, everything else runs the
+ * step engine.
  */
 import { listWorkflows, type Workflow } from "./store.js";
 import type { RoleName } from "./agents/roles.js";
@@ -16,11 +15,6 @@ const esc = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 export function workflowLeadRole(wf: Workflow): RoleName {
   if (LEAD_ROLE[wf.id]) return LEAD_ROLE[wf.id];
   return HANDLE_ROLE[(wf.steps[0]?.agent || "").toLowerCase()] || "developer";
-}
-
-/** All workflow trigger handles — added to the GitHub mention scan so they fire. */
-export function workflowTriggers(): string[] {
-  return listWorkflows().map((w) => w.trigger).filter((t): t is string => Boolean(t));
 }
 
 /** Resolve the workflow whose trigger the text mentions (first match), or null. */

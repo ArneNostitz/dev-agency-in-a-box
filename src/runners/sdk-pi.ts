@@ -28,6 +28,8 @@ import {
   createAgentSession,
   getAgentDir,
 } from "@earendil-works/pi-coding-agent";
+import { existsSync, mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { AgentRunner, RunRequest, RunResult } from "./interface.js";
 import type { Provider } from "../db/providers.js";
 import { inferPiProvider } from "../db/providers.js";
@@ -121,9 +123,17 @@ export class PiSdkRunner implements AgentRunner {
       });
       await resourceLoader.reload();
 
-    // 3. In-memory session — the agency persists resume ids itself (sessions table), so pi's own
-    //    session files aren't needed.
-    const sessionManager = SessionManager.inMemory(req.cwd);
+    // 3. PERSISTED session (data/pi-sessions) so a paused/interrupted run can actually resume.
+    //    The agency's sessions table stores the session FILE PATH as the resume id for pi runs
+    //    (Claude runs store the SDK's UUID — the two never collide: one is a path, one isn't).
+    const sessionDir = join(process.env.PI_SESSION_DIR?.trim() || join(process.cwd(), "data", "pi-sessions"));
+    try { mkdirSync(sessionDir, { recursive: true }); } catch { /* best effort */ }
+    let sessionManager: SessionManager;
+    if (req.resumeId && req.resumeId.includes("/") && existsSync(req.resumeId)) {
+      sessionManager = SessionManager.open(req.resumeId, dirname(req.resumeId), req.cwd);
+    } else {
+      sessionManager = SessionManager.create(req.cwd, sessionDir);
+    }
 
     // 4. Build the tools list from the agency's allowedTools (mapped to pi names).
     const tools = mapToolsToPi(req.allowedTools);
@@ -144,7 +154,8 @@ export class PiSdkRunner implements AgentRunner {
     let tokens = 0;
     let costUsd = 0;
     let lastError = "";
-    const sessionId = session.sessionId;
+    // Resume id = the persisted session file (falls back to pi's in-memory id if not persisted).
+    const sessionId = sessionManager.getSessionFile() || session.sessionId;
 
     // 5. Subscribe to the typed event stream → translate to the agency's emitAssistant contract
     //    (the same shapes roleAgent/chat/orchestrator/analyzer already handle for the Claude SDK).
@@ -240,10 +251,17 @@ export class PiSdkRunner implements AgentRunner {
       try { session.dispose(); } catch { /* noop */ }
     }
 
-    // If the run produced no text and no error was thrown, that's still a real completion (e.g. a
-    // pure tool-only turn). Don't fabricate an error — match the old "pi run completed" fallback.
+    // pi can finish "successfully" while every turn actually errored (the LLM failed but the
+    // session loop exited cleanly). If we saw an error and got NO text, that's a failed run —
+    // throw so rate-limit parking / fallback / needs-attention react, instead of the workflow
+    // advancing on a phantom success (the "runs only the first agent" bug).
+    if (!stopped && lastError && !text) {
+      throw new Error(lastError);
+    }
+    // No text + no error = a real tool-only completion. Return the empty text honestly — callers
+    // skip posting empty comments (no more "pi run completed." noise in the timeline).
     return {
-      text: text || "pi run completed.",
+      text,
       turns: Math.max(1, turns),
       tokens,
       costUsd,

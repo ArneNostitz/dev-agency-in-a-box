@@ -205,19 +205,16 @@ export function loadHandleRoleMap(): Record<string, RoleName> {
   return map;
 }
 
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 /**
- * Decide which role an issue is pinning, by the first handle it mentions.
- * Falls back to "developer" if a handle matched but isn't mapped to a specific role.
+ * Resolve an explicit agent handle (a dashboard pick or the dealer's choice — NEVER scanned from
+ * issue/comment text; issue #140 removed @-mention triggering) to its role. Built-ins first, then
+ * the team.txt map, else null (caller falls back to the default workflow).
  */
-export function roleForText(text: string, map: Record<string, RoleName>): RoleName | null {
-  let best: { index: number; role: RoleName } | null = null;
-  for (const [handle, role] of Object.entries(map)) {
-    const m = new RegExp(escapeRegex(handle) + "(?![a-z0-9_-])", "i").exec(text);
-    if (m && (best === null || m.index < best.index)) best = { index: m.index, role };
-  }
-  return best?.role ?? null;
+export function roleForHandle(handle: string): RoleName | null {
+  const h = (handle || "").trim().toLowerCase();
+  if (!h) return null;
+  const builtins: Record<string, RoleName> = { "@dev": "developer", "@plan": "planner", "@split": "decomposer", "@arch": "architect", "@review": "reviewer", "@test": "tester" };
+  if (builtins[h]) return builtins[h];
+  const mapped = loadHandleRoleMap()[h];
+  return mapped ?? null;
 }

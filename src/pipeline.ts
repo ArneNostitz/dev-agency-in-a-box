@@ -16,7 +16,6 @@ import {
   ensureBranchPushed,
   ensureDraftPr,
   createIssue,
-  approvedByReaction,
   commentOnPr,
   upsertTrackerComment,
   mergeBaseInto,
@@ -46,7 +45,7 @@ function held(repo: string, number: number, where: string): boolean {
   return false;
 }
 import type { RoleName } from "./agents/roles.js";
-import { recordRun, workflowStepRunCount, recordPlan, lastPlan, recordIssueStatus, getIssueStatus, recordIssueFiles, recordPr, setByAgent, addEpicChild, listEpicChildren, getSession, issueActivity, recordReview, getReview, recordConflict, clearConflict, getSetting, skillsPrompt, listHooks, listAgentDefs, changesTouchingFiles, type Workflow } from "./store.js";
+import { recordRun, recordPlan, lastPlan, recordIssueStatus, getIssueStatus, recordIssueFiles, recordPr, setByAgent, addEpicChild, listEpicChildren, getSession, issueActivity, recordReview, getReview, recordConflict, clearConflict, getSetting, setSetting, skillsPrompt, listHooks, listAgentDefs, changesTouchingFiles, type Workflow } from "./store.js";
 import { conflictFiles } from "./github.js";
 import { pushActivity, setActive } from "./activity.js";
 import { execSync } from "node:child_process";
@@ -262,11 +261,16 @@ export function isApproval(thread: string): boolean {
   return APPROVAL_RE.test(last.replace(/^\s*\[human\]\s*/, "").trim());
 }
 
-/** Approved either by a 👍 on the proposal comment or a short "ok" reply. */
+/** Approved either by the dashboard Approve button (local flag) or a short "ok" reply.
+ *  The flag is ONE-SHOT: consumed here so a past approval never auto-approves a future proposal. */
 async function approved(repo: string, issue: Issue, thread: string): Promise<boolean> {
   if (stopped(repo, issue.number, "approved")) return false;
   if (held(repo, issue.number, "approved")) return false;
-  return isApproval(thread) || (await approvedByReaction(repo, issue.number));
+  // DB is authoritative (ADR-0001): the Approve button sets a local flag — no GitHub round-trip.
+  const key = `issue_approved.${repo}#${issue.number}`;
+  const flag = getSetting(key) === "1";
+  if (flag) setSetting(key, "");
+  return isApproval(thread) || flag;
 }
 
 /** Pull a declared file list out of agent text: `FILES: a, b` or a `{files: a, b}` annotation. */
@@ -278,7 +282,7 @@ export function parseFileList(s: string): string[] {
   )];
 }
 
-/** Parse a `### SUB-ISSUES` section: `- [Short title] @dev <task> {files: a, b}`. The files annotation
+/** Parse a `### SUB-ISSUES` section: `- [Short title] <task> {files: a, b}`. The files annotation
  *  (optional) declares the footprint so non-overlapping sub-issues can run in parallel. */
 export function parseSubIssues(planText: string): Array<{ title: string; body: string; files: string[] }> {
   const idx = planText.search(/#{0,3}\s*SUB-?ISSUES/i);
@@ -331,9 +335,9 @@ async function maybeDecompose(repo: string, issue: Issue, planText: string): Pro
   if (subs.length === 0) return false;
 
   for (const s of subs) {
-    // Link each sub-issue back to the parent so the relationship is explicit in GitHub.
-    const body = /@\w/.test(s.body) ? s.body : `@dev ${s.body}`;
-    const created = await createIssue(repo, s.title, `${body}\n\nPart of epic #${issue.number}.`);
+    // Link each sub-issue back to the parent. No @-handle in the body — the route lives in the DB
+    // (epics table + per-issue role/workflow settings), not in text (issue #140).
+    const created = await createIssue(repo, s.title, `${s.body}\n\nPart of epic #${issue.number}.`);
     addEpicChild(repo, issue.number, created.number, s.title);
     if (s.files.length) recordIssueFiles(repo, created.number, s.files); // footprint → file-lock scheduling
     recordRun(repo, issue.number, "planner", MODELS_NONE, 0, "create-issue");
@@ -580,7 +584,7 @@ async function runSpecialist(
     if (getIssueStatus(repo, issue.number).blocked === "awaitingApproval" && (await approved(repo, issue, thread))) {
       const planText = lastPlan(repo, issue.number) ?? "";
       if (await maybeDecompose(repo, issue, planText)) return;
-      await commentOnIssue(repo, issue.number, say("planner", "**👍 Plan accepted.** Pin `@dev` to build it."));
+      await commentOnIssue(repo, issue.number, say("planner", "**👍 Plan accepted.** Press **▶ Start** on the dashboard to build it."));
       recordIssueStatus(repo, issue.number, withStatus("review"));
       return;
     }
@@ -963,11 +967,16 @@ export async function runWorkflowEngine(cfg: Config, repo: string, issue: Issue,
   void cfg;
   const branch = `agency/issue-${issue.number}`;
   const loops: Record<number, number> = {};
-  // The step engine has no persisted cursor: on a fresh run no workflow-step runs exist yet (start at
-  // 0); on RESUME (e.g. after an interactive-agent pause) the count of completed step runs tells us
-  // where to continue, so we don't re-run from step 0. Clamp so a loop-back-inflated count can't overrun.
-  let i = resuming ? Math.min(workflowStepRunCount(repo, issue.number), Math.max(0, wf.steps.length - 1)) : 0, guard = 0;
-  await commentOnIssue(repo, issue.number, say("developer", `🧭 Running workflow **${wf.name}** — ${wf.steps.length} step(s).`));
+  // PERSISTED step cursor: `wf_step.<repo>#<n>` holds the index of the NEXT step to run, written
+  // after every completed step. A fresh run resets it to 0; a resume continues exactly where the
+  // engine stopped — including after an error (the failed step re-runs, finished ones never do).
+  const cursorKey = `wf_step.${repo}#${issue.number}`;
+  const savedCursor = Number(getSetting(cursorKey));
+  let i = resuming && Number.isFinite(savedCursor) ? Math.min(Math.max(0, savedCursor), Math.max(0, wf.steps.length - 1)) : 0;
+  let guard = 0;
+  if (!resuming) setSetting(cursorKey, "0");
+  if (!resuming || i === 0) await commentOnIssue(repo, issue.number, say("developer", `🧭 Running workflow **${wf.name}** — ${wf.steps.length} step(s).`));
+  else await commentOnIssue(repo, issue.number, say("developer", `🧭 Resuming workflow **${wf.name}** at step ${i + 1}/${wf.steps.length}.`));
   const wfHookIds = (wf.hooks || []).map(Number).filter((n) => Number.isFinite(n));
   await runStepHooks(wfHookIds, "pre", workdir, repo, issue.number); // workflow-level pre hooks
   while (i < wf.steps.length && guard++ < 30) {
@@ -991,20 +1000,31 @@ ${skillsPrompt(step.skills)}` : "";
     const stepHeader = `▶ **Step ${i + 1}/${wf.steps.length}**`;
     await commentOnIssue(repo, issue.number, stepAuthor ? sayAs(stepAuthor, stepHeader) : say(role, stepHeader));
     await runStepHooks(hookIds, "pre", workdir, repo, issue.number);
-    const out = await runRole(role, {
-      workdir, repo, issueNumber: issue.number,
-      ...(customDef ? { agentDef: { handle: customDef.handle || `@${customDef.name}`, name: customDef.name, persona: customDef.persona, canWriteCode: customDef.canWriteCode } } : {}),
-      task: `${instr}
+    let out: Awaited<ReturnType<typeof runRole>>;
+    try {
+      out = await runRole(role, {
+        workdir, repo, issueNumber: issue.number,
+        ...(customDef ? { agentDef: { handle: customDef.handle || `@${customDef.name}`, name: customDef.name, persona: customDef.persona, canWriteCode: customDef.canWriteCode } } : {}),
+        task: `${instr}
 
 ### ${issueHeader(issue)}${thread ? `
 
 ### Conversation
 ${thread}` : ""}${skills}`,
-      ...((step.model || customDef?.model) ? { model: (step.model || customDef?.model) as string } : {}),
-    });
+        ...((step.model || customDef?.model) ? { model: (step.model || customDef?.model) as string } : {}),
+      });
+    } catch (err) {
+      // Close the step in the timeline (the header was already posted), then rethrow so the
+      // runner's shared handling (rate-limit park, model-switch retry, needs-attention) applies.
+      // The cursor still points at THIS step, so Resume re-runs it — finished steps never re-run.
+      const msg = (err as Error).message ?? String(err);
+      pushActivity(repo, issue.number, role, "done", `❌ Step ${i + 1}/${wf.steps.length} failed: ${msg.slice(0, 300)}`);
+      throw err;
+    }
     if (isStopRequested(repo, issue.number)) { console.log(`[agency] workflow halted mid-step by Stop ${repo} #${issue.number}`); return; }
     recordRun(repo, issue.number, role, out.model, out.turns, "workflow", out.costUsd);
-    await commentOnIssue(repo, issue.number, stepAuthor ? sayAs(stepAuthor, out.text) : say(role, out.text));
+    if (out.text.trim()) await commentOnIssue(repo, issue.number, stepAuthor ? sayAs(stepAuthor, out.text) : say(role, out.text));
+    setSetting(cursorKey, String(i + 1)); // step done — resume continues AFTER it
     await runStepHooks(hookIds, "post", workdir, repo, issue.number);
     if (role === "decomposer") { await splitIntoPlanned(repo, issue, out.text).catch(() => {}); return; } // split → planned epics, end this run
     if (role === "developer") await finalizeWithPr(repo, issue, workdir, branch).catch(() => {});
@@ -1033,10 +1053,12 @@ ${thread}` : ""}${skills}`,
     if (route.startsWith("loop:")) {
       const target = Number(route.slice(5));
       loops[i] = (loops[i] || 0) + 1;
-      if (Number.isFinite(target) && loops[i] <= (gate?.maxLoops ?? 2)) { i = target; continue; }
+      if (Number.isFinite(target) && loops[i] <= (gate?.maxLoops ?? 2)) { i = target; setSetting(cursorKey, String(i)); continue; }
     }
     i++;
+    setSetting(cursorKey, String(i));
   }
+  setSetting(cursorKey, ""); // workflow finished — clear the cursor so a fresh Start begins at step 1
   await runStepHooks(wfHookIds, "post", workdir, repo, issue.number); // workflow-level post hooks
   recordIssueStatus(repo, issue.number, withStatus("review"));
   await commentOnIssue(repo, issue.number, say("developer", `✅ Workflow **${wf.name}** complete — ready for your review.`));

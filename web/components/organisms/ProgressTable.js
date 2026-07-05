@@ -1,11 +1,9 @@
 // Organism — ProgressTable. Extracted from web/table.js; logic unchanged.
 // The List view: dense issue cards with status, agent avatar, heat bar, and a workflow timeline.
 //
-// NOTE on WorkflowTimeline: the molecule ../molecules/Timeline.js exports a unified `Timeline`
-// renderer, which we re-export here under the legacy `WorkflowTimeline` name for external callers.
-// Internally, IssueRow still uses the ORIGINAL local renderer (WorkflowTimelineImpl below) because
-// the molecule version drops two pieces of behavior this view relies on: the epic progress-bar
-// branch and the per-step ↻N loop badges. Keeping the local impl preserves behaviour EXACTLY.
+// NOTE on WorkflowTimeline: the exported WorkflowTimeline is the ORIGINAL {i, labels} renderer
+// (WorkflowTimelineImpl below) — it keeps the epic progress-bar branch and the per-step ↻N loop
+// badges the unified molecule Timeline dropped. Detail imports it from here.
 import { html, useState, useMemo, useRef, useEffect } from "/web/vendor/standalone.mjs";
 import { Avatar } from "../atoms/Avatar.js";
 import { Icon } from "../atoms/Icon.js";
@@ -15,9 +13,8 @@ import { ago, fmtTok, tokHeat, usageTitle } from "../../lib/format.js";
 // ghUrl hasn't been extracted to lib yet — temporarily pulled from the old core.js.
 import { ghUrl } from "../../core.js";
 import { isDone, classify, statusChip, filterByTime } from "../../lib/issue-logic.js";
-import { nestedChildKeys } from "../../board.js";
-// Re-export the unified molecule timeline under the legacy name (see file note above).
-export { Timeline as WorkflowTimeline } from "../molecules/Timeline.js";
+import { nestedChildKeys } from "./Board.js";
+export { WorkflowTimelineImpl as WorkflowTimeline };
 
 // Canonical pipeline steps + the role that owns each (lights the right one from i.role).
 const STEPS = [["plan", "Plan"], ["dev", "Dev"], ["test", "Test"], ["review", "Review"]];

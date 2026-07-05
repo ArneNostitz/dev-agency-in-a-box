@@ -102,15 +102,6 @@ export function deleteAgentDef(name: string): void {
   try { d.prepare(`DELETE FROM agent_def WHERE name = ? AND builtin = 0`).run(name); } catch { /* best effort */ }
 }
 
-export function chatAgentForText(text: string): AgentDef | null {
-  const t = (text || "").toLowerCase();
-  for (const a of listAgentDefs()) {
-    if (a.mode !== "chat") continue;
-    const h = (a.handle || `@${a.name}`).toLowerCase();
-    if (new RegExp(h.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?![a-z0-9_-])").test(t)) return a;
-  }
-  return null;
-}
 
 export function seedChatAgents(): void {
   if (getAgentDef("spec-creator") && getAgentDef("grill-me")) return;

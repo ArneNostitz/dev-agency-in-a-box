@@ -14,14 +14,14 @@ import { getSetting, setSetting, setSecretSetting, getSecretSetting } from "./db
 // Re-export the connection-layer symbols the rest of the app imports from store.ts (back-compat).
 export { getDb, now, migrateIssueStates } from "./db/connection.js";
 export { getSetting, setSetting, setSecretSetting, getSecretSetting } from "./db/settings.js";
-export { addEpicChild, updateEpicChild, listEpicChildren, listEpicParents, epicsByParent, getEpicMeta, setEpicMeta } from "./db/epic_tables.js";
+export { addEpicChild, updateEpicChild, listEpicChildren, listEpicParents, epicParentsOf, epicsByParent, getEpicMeta, setEpicMeta } from "./db/epic_tables.js";
 export type { EpicChild } from "./db/epic_tables.js";
 export { getThreadCursor, setThreadCursor } from "./db/thread_cursor.js";
 export { setSession, getSession } from "./db/agent_sessions.js";
 export { appendOrchMsg, listOrchThread, clearOrchThread, type OrchMsg } from "./db/threads.js";
 export { recordChange, recentChanges, changesTouchingFiles, type ChangeEntry, type ChangedFile } from "./db/journal.js";
 export { getAutofixCount, incAutofix, resetAutofix } from "./db/autofix.js";
-export { recentRuns, roleRunsByIssue, workflowStepRunCount } from "./db/runs.js";
+export { recentRuns, roleRunsByIssue } from "./db/runs.js";
 export { upsertWorkflow, getWorkflow, listWorkflows, getWorkflowByTrigger, deleteWorkflow, seedWorkflows, getDefaultWorkflowId, setDefaultWorkflowId } from "./db/workflows.js";
 export type { Workflow, WorkflowStep, WorkflowGate } from "./db/workflows.js";
 export type { RunRow } from "./db/runs.js";
@@ -40,7 +40,7 @@ export {
   tierModel, fallbackFor, parseModelRef, inferPiProvider, setIssueProvider, getIssueProvider, clearIssueProvider, setIssueAgentModel, getIssueAgentModels, setIssueUseFallback, getIssueUseFallback,
 } from "./db/providers.js";
 export type { Provider, Tier, TierSlot } from "./db/providers.js";
-export { upsertAgentDef, getAgentDef, listAgentDefs, deleteAgentDef, chatAgentForText, seedChatAgents, toolsFor, planFilePath, PLAN_DIR } from "./db/agent_def.js";
+export { upsertAgentDef, getAgentDef, listAgentDefs, deleteAgentDef, seedChatAgents, toolsFor, planFilePath, PLAN_DIR } from "./db/agent_def.js";
 export type { AgentDef } from "./db/agent_def.js";
 export { searchMemory } from "./db/memory.js";
 export type { MemoryHit } from "./db/memory.js";
@@ -69,7 +69,7 @@ export { recordRunStep, toolStatsSince, recordIncident, recentFailuresSince, run
 export type { ToolStat, FailureStat } from "./db/telemetry.js";
 export {
   recordIssueFiles, filesFor, addIssueFiles, recordIssueState, recordIssueStatus, getIssueStatus,
-  recordPr, getIssueRow, recentIssues, archiveIssue, getIssueRole, setByAgent,
+  recordPr, getIssueRow, recentIssues, archiveIssue, getIssueRole, setByAgent, resetIssueData,
 } from "./db/issues.js";
 export type { IssueRow } from "./db/issues.js";
 export { recordLesson, recentLessons, unprocessedLessons, markLessonsProcessed } from "./db/lessons.js";

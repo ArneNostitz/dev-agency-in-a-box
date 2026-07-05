@@ -245,8 +245,12 @@ function Card({ i, subs, multi, onOpen, onOpenChild, act, data, onOpenModels, st
   const providers = data?.providers || [];
 
   // The canonical IssueState enum + BlockedReason drive the quick (CTA) action (ADR-0001).
+  const epicPending = !!(i.epic && i.epic.total && i.epic.done < i.epic.total);
   let quick = null;
   if (i.blocked === "awaitingApproval") quick = { action: "approve", cls: "", icon: "check", label: "Approve", fn: () => act.approve(i.repo, i.number) };
+  // Epic ▶ Play: work ALL sub-issues in order (each merge starts the next) instead of running the
+  // parent itself.
+  else if (epicPending && !i.epic.auto && !(i.active || i.state === "working")) quick = { action: "epicPlay", cls: "play", icon: "play", label: "Play epic", fn: () => act.epicPlay(i.repo, i.number) };
   else if (i.state === "planned" || i.state === "notPlanned" || (!i.state && !done)) quick = { action: "start", cls: "play", icon: "play", label: "Start", fn: () => act.start(i.repo, i.number) };
   else if (i.state === "review" && i.review === "changes") quick = { action: "fix", cls: "fix", icon: "wrench", label: "Fix", fn: () => act.fix(i.repo, i.number) };
   else if (i.blocked === "needsAttention") quick = { action: "resume", cls: "", icon: "refresh", label: "Resume", fn: () => act.resume(i.repo, i.number) };
@@ -356,8 +360,9 @@ const DOT_COLOR = { "s-working": "var(--accent)", "s-ready": "var(--green)", "s-
 // own columns (Board nests them here) so the board isn't cluttered with the whole epic twice.
 const SUB_COLOR = { planned: "var(--ink-3)", working: "var(--accent)", review: "var(--amber)", done: "var(--green)" };
 function SubList({ subs, repo, onOpenChild }) {
-  const col = (s) => (s.live ? classify(s.live) : s.closed ? "done" : "planned");
-  const label = (s) => (s.live ? statusChip(s.live).label : s.closed ? "done" : "open");
+  // done = merged (DB state "done") OR GitHub-closed — closed alone lags behind the merge.
+  const col = (s) => (s.live ? classify(s.live) : (s.closed || s.state === "done") ? "done" : "planned");
+  const label = (s) => (s.live ? statusChip(s.live).label : (s.closed || s.state === "done") ? "done" : "open");
   const done = subs.filter((s) => col(s) === "done").length;
   // Default-open when a sub-issue is waiting on you, so it isn't buried in a collapsed list.
   const needsYou = subs.some((s) => col(s) === "review");

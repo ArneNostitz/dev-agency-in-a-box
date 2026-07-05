@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { sBool } from "./settings.js";
 import { ghBotToken, ghUserToken } from "./creds.js";
-import { recordOutgoingComment, setCommentGhId, recordIncident, getSetting } from "./store.js";
+import { recordOutgoingComment, setCommentGhId, getConversation, recordIncident, getSetting } from "./store.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -66,17 +66,17 @@ export const AGENCY_MARKER = "<!-- dev-agency -->";
 
 export async function commentOnIssue(repo: string, issue: number, body: string): Promise<void> {
   // DB-first: record the agency comment immediately so the dashboard renders it without waiting on
-  // GitHub. Then mirror to GitHub and link the returned comment id back to the local row.
+  // GitHub. The GitHub mirror runs in the BACKGROUND — a run never waits on (or fails because of) a
+  // comment post; a failed mirror is linked later by the reconcile.
   const localId = recordOutgoingComment({ repo, number: issue, author: "dev-agency", body, source: "agency" });
   if (issue <= 0) return; // dashboard-only issue (no GitHub number yet) — DB is enough
-  // Mirror to GitHub best-effort: the comment already lives in the DB (the source of truth), so a
-  // failed post — typically a rate limit — must NOT throw and fail an otherwise-successful run. The
-  // background reconcile mirrors/links it later.
-  try {
-    const out = await gh(["api", "-X", "POST", `repos/${repo}/issues/${issue}/comments`, "-f", `body=${body}\n\n${AGENCY_MARKER}`]);
-    const j = JSON.parse(out);
-    if (j?.id) setCommentGhId(localId, j.id, j.created_at);
-  } catch { /* GitHub mirror failed (rate limit / parse) — it's in the DB; reconcile links it later */ }
+  void (async () => {
+    try {
+      const out = await gh(["api", "-X", "POST", `repos/${repo}/issues/${issue}/comments`, "-f", `body=${body}\n\n${AGENCY_MARKER}`]);
+      const j = JSON.parse(out);
+      if (j?.id) setCommentGhId(localId, j.id, j.created_at);
+    } catch { /* GitHub mirror failed (rate limit / parse) — it's in the DB; reconcile links it later */ }
+  })();
 }
 
 /**
@@ -104,32 +104,7 @@ export async function listComments(repo: string, issue: number): Promise<Array<{
   return data.comments ?? [];
 }
 
-/**
- * Read the latest reviewer verdict straight from the thread — so PRs created before the verdict
- * was recorded in the DB still light up the Fix button. Returns the verdict + the review notes.
- */
-export async function detectReviewVerdict(
-  repo: string,
-  issue: number,
-): Promise<{ verdict: "approved" | "changes"; summary: string } | null> {
-  const comments = await listComments(repo, issue).catch(() => [] as Array<{ body: string }>);
-  // Walk newest→oldest for the most recent agency "Review" comment.
-  for (let i = comments.length - 1; i >= 0; i--) {
-    const b = comments[i].body || "";
-    if (!b.includes(AGENCY_MARKER) || !/\*\*Review/i.test(b)) continue;
-    const verdict = /request\s+changes/i.test(b) ? "changes" : "approved";
-    const summary = b.replace(AGENCY_MARKER, "").trim().slice(0, 4000);
-    return { verdict, summary };
-  }
-  return null;
-}
 
-/** True if the most recent comment was written by a human (not the agency). */
-export async function humanRepliedLast(repo: string, issue: number): Promise<boolean> {
-  const comments = await listComments(repo, issue);
-  if (comments.length === 0) return false;
-  return !comments[comments.length - 1].body.includes(AGENCY_MARKER);
-}
 
 export interface ThreadInspect {
   /** the agency has commented on this thread at least once. */
@@ -153,11 +128,6 @@ export function canTrigger(assoc: string): boolean {
   return TRIGGER_ASSOC.has((assoc || "").trim().toUpperCase());
 }
 
-/** The opening author's association for an issue — used to gate auto-start to repo members. */
-export async function issueAuthorAssoc(repo: string, number: number): Promise<string> {
-  const out = await gh(["api", `repos/${repo}/issues/${number}`, "--jq", ".author_association"]).catch(() => "");
-  return (out || "").trim();
-}
 
 /** One API call that tells us everything the router needs about a thread's comments. */
 // Memoize signals per thread keyed by the issue's updatedAt: if GitHub's updatedAt hasn't advanced,
@@ -291,9 +261,6 @@ export async function prMerged(repo: string, branch: string): Promise<boolean> {
   }
 }
 
-export async function reopenIssue(repo: string, number: number): Promise<void> {
-  await gh(["issue", "reopen", String(number), "--repo", repo]).catch(() => {});
-}
 
 /** Marker on the single epic tracking comment so we update it in place instead of spamming. */
 export const EPIC_MARKER = "<!-- epic-tracker -->";
@@ -428,23 +395,6 @@ export async function editCommentAsHuman(repo: string, commentId: number, body: 
   else await gh(args);
 }
 
-/** 👍 the latest agency comment so approvedByReaction() passes — a direct, reliable approval. */
-export async function approveLastProposal(repo: string, number: number): Promise<void> {
-  const out = await gh([
-    "api", `repos/${repo}/issues/${number}/comments`, "--paginate", "--jq", "[.[]|{id,body}]",
-  ]).catch(() => "[]");
-  try {
-    const arr = JSON.parse(out) as Array<{ id: number; body: string }>;
-    for (let i = arr.length - 1; i >= 0; i--) {
-      if (arr[i].body.includes(AGENCY_MARKER)) {
-        await gh(["api", "-X", "POST", `repos/${repo}/issues/comments/${arr[i].id}/reactions`, "-f", "content=+1"]).catch(() => {});
-        return;
-      }
-    }
-  } catch {
-    /* ignore */
-  }
-}
 
 /** List the repos the given token can access (owner + collaborator + org), newest first. */
 export async function listUserRepos(token: string): Promise<Array<{ full_name: string; private: boolean }>> {
@@ -476,57 +426,7 @@ export async function readRepoFile(repo: string, path: string): Promise<string |
   }
 }
 
-/** Commit already-base64 content (e.g. a pasted image) and return its download URL. */
-export async function putRepoBase64(
-  repo: string,
-  path: string,
-  base64: string,
-  message: string,
-  token: string,
-): Promise<{ ok: boolean; url?: string; msg: string }> {
-  // Send the body via a temp file (`gh api --input`) so large files don't blow the arg limit.
-  const tmp = join(tmpdir(), `dvagency-${Date.now()}-${Math.random().toString(36).slice(2)}.json`);
-  try {
-    const sha = (await ghAs(token, ["api", `repos/${repo}/contents/${path}`, "--jq", ".sha"]).catch(() => "")).trim();
-    writeFileSync(tmp, JSON.stringify({ message, content: base64, ...(sha ? { sha } : {}) }));
-    const out = await ghAs(token, ["api", "-X", "PUT", `repos/${repo}/contents/${path}`, "--input", tmp]);
-    let url: string | undefined;
-    try {
-      url = (JSON.parse(out) as { content?: { download_url?: string } }).content?.download_url;
-    } catch {
-      /* ignore */
-    }
-    return { ok: true, url, msg: "committed" };
-  } catch (err) {
-    return { ok: false, msg: (err as Error).message };
-  } finally {
-    try {
-      unlinkSync(tmp);
-    } catch {
-      /* ignore */
-    }
-  }
-}
 
-/** Commit a file to a repo (create or update) via the contents API, as the given token. */
-export async function putRepoFile(
-  repo: string,
-  path: string,
-  content: string,
-  message: string,
-  token: string,
-): Promise<{ ok: boolean; msg: string }> {
-  try {
-    const sha = (await ghAs(token, ["api", `repos/${repo}/contents/${path}`, "--jq", ".sha"]).catch(() => "")).trim();
-    const b64 = Buffer.from(content, "utf8").toString("base64");
-    const args = ["api", "-X", "PUT", `repos/${repo}/contents/${path}`, "-f", `message=${message}`, "-f", `content=${b64}`];
-    if (sha) args.push("-f", `sha=${sha}`);
-    await ghAs(token, args);
-    return { ok: true, msg: "committed" };
-  } catch (err) {
-    return { ok: false, msg: (err as Error).message };
-  }
-}
 
 /**
  * Permanently delete an issue (owner-only GraphQL mutation, so it needs the admin token).
@@ -553,14 +453,16 @@ export async function deleteIssueHard(
 
 /** The full thread as readable text, each comment tagged [human] or [agency]. */
 /** Recent comment thread, capped so we don't re-feed a snowballing history to every agent every
- *  run. Older context is intentionally dropped — agents can pull it back via the `recall` tool. */
+ *  run. Reads the LOCAL conversation (the DB is the source of truth — every comment lands there
+ *  first; GitHub-side comments fold in via webhook/scan), so building a prompt costs no GitHub
+ *  round-trip. Older context is intentionally dropped — agents pull it back via `recall`. */
 export async function commentThread(repo: string, issue: number, lastN = 8, perComment = 1500): Promise<string> {
-  const comments = await listComments(repo, issue);
+  const comments = getConversation(repo, issue);
   const recent = comments.slice(-lastN);
   const dropped = comments.length - recent.length;
   const body = recent
     .map((c) => {
-      const who = c.body.includes(AGENCY_MARKER) ? "[agency]" : "[human]";
+      const who = c.isAgency ? "[agency]" : "[human]";
       const text = c.body.replace(AGENCY_MARKER, "").trim().slice(0, perComment);
       return `${who} ${text}`;
     })
@@ -633,53 +535,8 @@ export async function cloneRepo(repo: string, dest: string, onProgress?: (percen
   }
 }
 
-/** Add a reaction to an issue (allowed: +1,-1,laugh,hooray,confused,heart,rocket,eyes). */
-export async function reactToIssue(repo: string, issue: number, content: string): Promise<void> {
-  await gh(["api", "-X", "POST", `repos/${repo}/issues/${issue}/reactions`, "-f", `content=${content}`]).catch(
-    () => {},
-  );
-}
 
-/**
- * Acknowledge a request with 👀 — on the latest HUMAN comment if there is one (so it's clear
- * which comment was seen), otherwise on the issue/PR itself.
- */
-export async function acknowledge(repo: string, number: number): Promise<void> {
-  const out = await gh([
-    "api", `repos/${repo}/issues/${number}/comments`, "--paginate", "--jq", "[.[]|{id,body}]",
-  ]).catch(() => "[]");
-  try {
-    const arr = JSON.parse(out) as Array<{ id: number; body: string }>;
-    for (let i = arr.length - 1; i >= 0; i--) {
-      if (!arr[i].body.includes(AGENCY_MARKER)) {
-        await gh([
-          "api", "-X", "POST", `repos/${repo}/issues/comments/${arr[i].id}/reactions`, "-f", "content=eyes",
-        ]).catch(() => {});
-        return;
-      }
-    }
-  } catch {
-    /* fall through */
-  }
-  await reactToIssue(repo, number, "eyes");
-}
 
-/** True if the latest agency comment on the issue has a 👍 reaction (approval by emoji). */
-export async function approvedByReaction(repo: string, issue: number): Promise<boolean> {
-  const out = await gh([
-    "api", `repos/${repo}/issues/${issue}/comments`, "--paginate",
-    "--jq", '[.[] | {body: .body, plus: .reactions["+1"]}]',
-  ]).catch(() => "[]");
-  try {
-    const arr = JSON.parse(out) as Array<{ body: string; plus: number }>;
-    for (let i = arr.length - 1; i >= 0; i--) {
-      if (arr[i].body.includes(AGENCY_MARKER)) return (arr[i].plus ?? 0) > 0;
-    }
-  } catch {
-    /* ignore */
-  }
-  return false;
-}
 
 /** Mark the issue's PR ready (if draft) and squash-merge it. */
 export async function mergePrForBranch(
@@ -769,24 +626,6 @@ export async function prHealth(
   return { status: "ok", detail: "" };
 }
 
-/** Comments on an issue OR PR (REST works for both), tagged [human]/[agency]. */
-export async function commentThreadByNumber(repo: string, number: number): Promise<{ thread: string; lastHumanBody: string }> {
-  const out = await gh([
-    "api", `repos/${repo}/issues/${number}/comments`, "--paginate", "--jq", "[.[]|{body:.body}]",
-  ]).catch(() => "[]");
-  let comments: Array<{ body: string }> = [];
-  try {
-    comments = JSON.parse(out);
-  } catch {
-    /* ignore */
-  }
-  const thread = comments
-    .map((c) => `${c.body.includes(AGENCY_MARKER) ? "[agency]" : "[human]"} ${c.body.replace(AGENCY_MARKER, "").trim()}`)
-    .join("\n\n---\n\n");
-  const last = comments[comments.length - 1];
-  const lastHumanBody = last && !last.body.includes(AGENCY_MARKER) ? last.body : "";
-  return { thread, lastHumanBody };
-}
 
 /** Comment on a PR (issue-comment endpoint works, but gh pr comment is clearer). */
 export async function commentOnPr(repo: string, pr: number, body: string): Promise<void> {
@@ -1191,68 +1030,5 @@ export async function prMergeStatus(repo: string, branch: string): Promise<Merge
   return { prNumber: p.number, state, mergeable, merged: state === "MERGED" };
 }
 
-// ---- GitHub-native sub-issue relationships ----
 
-export interface NativeSubIssueData {
-  /** parent issue number → its sub-issues */
-  parentToChildren: Record<number, Array<{ number: number; title: string; closed: boolean }>>;
-  /** child issue number → its parent issue (number + title) */
-  childToParent: Record<number, { number: number; title: string }>;
-}
 
-/**
- * Pure: build NativeSubIssueData from already-fetched (parent, children[]) pairs.
- * Exported for unit testing.
- */
-export function buildNativeSubIssueData(
-  pairs: Array<{
-    parent: { number: number; title: string };
-    children: Array<{ number: number; title: string; state: string }>;
-  }>,
-): NativeSubIssueData {
-  const parentToChildren: Record<number, Array<{ number: number; title: string; closed: boolean }>> = {};
-  const childToParent: Record<number, { number: number; title: string }> = {};
-  for (const { parent, children } of pairs) {
-    if (!children.length) continue;
-    parentToChildren[parent.number] = children.map((c) => ({
-      number: c.number,
-      title: c.title,
-      closed: (c.state ?? "").toLowerCase() === "closed",
-    }));
-    for (const c of children) {
-      childToParent[c.number] = { number: parent.number, title: parent.title };
-    }
-  }
-  return { parentToChildren, childToParent };
-}
-
-/**
- * Fetch GitHub-native parent/sub-issue links for a repo.
- * 1. Lists issues via REST to find those with sub_issues_summary.total > 0.
- * 2. For each parent, calls /sub_issues to get the child issue list.
- * Returns empty maps gracefully if the endpoint is unavailable or there are no sub-issues.
- */
-export async function fetchNativeSubIssues(repo: string): Promise<NativeSubIssueData> {
-  const listRaw = await gh(["api", `repos/${repo}/issues`, "--paginate"]).catch(() => "[]");
-  let allIssues: Array<{ number: number; title: string; sub_issues_summary?: { total?: number } }> = [];
-  try {
-    const s = listRaw.trim();
-    allIssues = JSON.parse(s.replace(/\]\s*\[/g, ","));
-  } catch {
-    return { parentToChildren: {}, childToParent: {} };
-  }
-  const parentIssues = allIssues.filter((i) => (i.sub_issues_summary?.total ?? 0) > 0);
-  if (!parentIssues.length) return { parentToChildren: {}, childToParent: {} };
-
-  const pairs: Array<{
-    parent: { number: number; title: string };
-    children: Array<{ number: number; title: string; state: string }>;
-  }> = [];
-  for (const p of parentIssues) {
-    const subRaw = await gh(["api", `repos/${repo}/issues/${p.number}/sub_issues`]).catch(() => "[]");
-    let children: Array<{ number: number; title: string; state: string }> = [];
-    try { children = JSON.parse(subRaw); } catch { /* skip */ }
-    if (children.length) pairs.push({ parent: { number: p.number, title: p.title }, children });
-  }
-  return buildNativeSubIssueData(pairs);
-}

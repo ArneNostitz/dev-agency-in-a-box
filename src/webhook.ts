@@ -12,15 +12,16 @@
  * still runs occasionally so nothing is missed if a webhook delivery is dropped.
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac, createHash, timingSafeEqual } from "node:crypto";
 import { readFileSync, existsSync, statSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import type { Config } from "./config.js";
-import { recentRuns, roleRunsByIssue, filesFor, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordIssueStatus, getIssueStatus, listEpicChildren, recordPr, tokensSince, tokensByModelSince, tokensByRoleSince, tokensByDaySince, topIssuesByTokensSince, tokensByIssueAll, toolStatsSince, runStepCountSince, recentLessons, recordConflict, getConflict, clearConflict, listConflicts, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getGlobalModel, setGlobalModel, getFallbackChain, setFallbackChain, getAutoSwitchOnLimit, setIssueModelOverride, getIssueModelOverride, clearIssueModelOverride, setIssueWorkflow, getIssueWorkflow, clearIssueWorkflow, getWorkflow, getIssueProvider, setIssueProvider, clearIssueProvider, getIssueAgentModels, setIssueAgentModel, getIssueUseFallback, setIssueUseFallback, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, getIssueRow, clearRateLimited, getDb, listAgentDefs, upsertAgentDef, deleteAgentDef, listWorkflows, upsertWorkflow, deleteWorkflow, getDefaultWorkflowId, setDefaultWorkflowId, listSkills, upsertSkill, deleteSkill, listHooks, upsertHook, deleteHook, type AutoKind, type Provider, type AgentDef, type Skill, type Hook } from "./store.js";
-import { mergeEpic, isEpic } from "./epics.js";
+import { recentRuns, roleRunsByIssue, filesFor, recentIssues, recentActivity, archiveIssue, spendSince, recordIssueState, recordIssueStatus, getIssueStatus, resetIssueData, listEpicChildren, recordPr, tokensSince, tokensByModelSince, tokensByRoleSince, tokensByDaySince, topIssuesByTokensSince, tokensByIssueAll, toolStatsSince, runStepCountSince, recentLessons, recordConflict, getConflict, clearConflict, listConflicts, epicsByParent, getSetting, setSetting, setAgentOverride, deleteAgentOverride, listAgentRevisions, getAgentRevision, addWatchedRepo, removeWatchedRepo, getProviders, setProviders, getRoleModels, setRoleModels, getGlobalModel, setGlobalModel, getFallbackChain, setFallbackChain, getAutoSwitchOnLimit, setIssueModelOverride, getIssueModelOverride, clearIssueModelOverride, setIssueWorkflow, getIssueWorkflow, clearIssueWorkflow, getWorkflow, getIssueProvider, setIssueProvider, clearIssueProvider, getIssueAgentModels, setIssueAgentModel, getIssueUseFallback, setIssueUseFallback, getReview, recordReview, listReviews, getAutoRaw, setAuto, autoEnabled, getIssueRow, clearRateLimited, getDb, listAgentDefs, upsertAgentDef, deleteAgentDef, listWorkflows, upsertWorkflow, deleteWorkflow, getDefaultWorkflowId, setDefaultWorkflowId, listSkills, upsertSkill, deleteSkill, listHooks, upsertHook, deleteHook, type AutoKind, type Provider, type AgentDef, type Skill, type Hook } from "./store.js";
+import { mergeEpic, isEpic, playEpic, onChildMerged, nextEpicChild } from "./epics.js";
 import { versionInfo } from "./version.js";
 import { startDeviceFlow, pollDeviceToken, fetchGitHubUser } from "./github-oauth.js";
 import { githubOAuthClientId, githubOAuthToken, githubIdentity } from "./creds.js";
@@ -41,7 +42,7 @@ import { ghBotToken, ghUserToken, claudeToken, anthropicApiKey } from "./creds.j
 import { providerAuth } from "./agents/provider-auth.js";
 import { discoverProviderModels } from "./db/discover.js";
 import { testClaudeAuth } from "./agents/roleAgent.js";
-import { ALL_ROLES, roleForText, loadHandleRoleMap } from "./agents/roles.js";
+import { ALL_ROLES } from "./agents/roles.js";
 import { resolveWorkflow } from "./workflow.js";
 import { hasActiveRun, requestHold, queueSteer, peekSteer, isHoldRequested } from "./abort.js";
 import { renderLogin, renderInvite, renderSetup, renderForgot, renderReset } from "./authpages.js";
@@ -53,7 +54,7 @@ import { listRateLimited } from "./store.js";
 import { getConversation, conversationCount, foldInGitHubComment, recordOutgoingComment, setCommentGhId, updateCommentBody } from "./store.js";
 import { recentFailuresSince } from "./store.js";
 import { effectiveRepos } from "./commands.js";
-import { getThreadFull, commentAsHuman, editCommentAsHuman, commentOnIssue, mergePrForBranch, closeIssue, deleteIssueHard, findPrForBranch, prMergeStatus, mergeProbe, branchHeadSha, detectReviewVerdict, createIssue, readRepoFile, putRepoBase64, listUserRepos, fetchNativeSubIssues, deleteAgencyComments, type NativeSubIssueData } from "./github.js";
+import { getThreadFull, commentAsHuman, editCommentAsHuman, commentOnIssue, mergePrForBranch, closeIssue, deleteIssueHard, findPrForBranch, prMergeStatus, mergeProbe, branchHeadSha, createIssue, readRepoFile, listUserRepos, deleteAgencyComments } from "./github.js";
 import { listAgentFiles, readAgentFile, isSafeAgentPath } from "./memory.js";
 import { startApp, stopApp, getApp, pickWebDevScript, isTauriPackage, buildLocalCommand } from "./apprun.js";
 import { ensureRepoAccess } from "./commands.js";
@@ -74,18 +75,6 @@ type Resume = (repo: string, number: number) => Promise<void>;
 function annotateProviders(list: Provider[]): (Provider & { auth: "apiKey" | "subscription" | "missing" })[] {
   const hasClaudeCred = Boolean(claudeToken() || anthropicApiKey());
   return (list || []).map((p) => ({ ...p, auth: providerAuth(p, hasClaudeCred) }));
-}
-
-// Cache native sub-issue relationships per repo (TTL: 60s) so the 5s poll doesn't hammer GitHub.
-const _nativeSubIssueCache = new Map<string, { ts: number; data: NativeSubIssueData }>();
-const NATIVE_SUB_TTL = 60_000;
-async function getNativeSubIssues(repo: string): Promise<NativeSubIssueData> {
-  const now = Date.now();
-  const cached = _nativeSubIssueCache.get(repo);
-  if (cached && now - cached.ts < NATIVE_SUB_TTL) return cached.data;
-  const data = await fetchNativeSubIssues(repo).catch(() => ({ parentToChildren: {}, childToParent: {} } as NativeSubIssueData));
-  _nativeSubIssueCache.set(repo, { ts: now, data });
-  return data;
 }
 
 /** Session window/budget come from dashboard settings first, then env, then defaults. */
@@ -387,21 +376,8 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
             }
             epicTitleMap[repo] = titles;
           }
-          // Fetch GitHub-native parent/sub-issue links and merge with DB-backed maps so issues
-          // created as sub-issues directly in GitHub (not via the agency planner) are included.
-          const nativeByRepo: Record<string, NativeSubIssueData> = {};
-          {
-            const repos = [...new Set(issues.map((i) => i.repo))];
-            await Promise.all(repos.map(async (r) => { nativeByRepo[r] = await getNativeSubIssues(r); }));
-            // Fold native child→parent into childToParentNum (DB wins on conflict).
-            for (const [repo, native] of Object.entries(nativeByRepo)) {
-              const cm = (childToParentNum[repo] ??= {});
-              for (const [childStr, p] of Object.entries(native.childToParent)) {
-                const c = Number(childStr);
-                if (!(c in cm)) cm[c] = p.number;
-              }
-            }
-          }
+          // Epics are DB-only (ADR-0001): the epics table is the single source of truth. GitHub's
+          // native sub-issue API round-trip (unstable, hammered every poll) is gone.
           const reviews = listReviews(); // verdict per "repo#number" — cheap, for the card badge
           const tokenMap = tokensByIssueAll(); // lifetime tokens/cost/model per "repo#number"
           const conflictMap = listConflicts(); // conflicting files per "repo#number"
@@ -411,26 +387,16 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           const _recentAct = recentActivity(300);
           const lastRoleMap: Record<string, string> = {};
           for (const a of _recentAct) { if (a && a.role) lastRoleMap[`${a.repo}#${a.number}`] = a.role; }
-          const handleRoleMap = loadHandleRoleMap(); // load once, not per-issue (reads a file)
           const enriched = issues.map((i) => {
             const byParent = epicCache[i.repo] ?? {};
-            const dbKids = byParent[i.number];
-            const rawNativeKids = (nativeByRepo[i.repo]?.parentToChildren ?? {})[i.number];
-            const nativeKids = rawNativeKids?.map((c) => ({
-              child: c.number, title: c.title,
-              state: c.closed ? "done" : "open",
-              closed: c.closed ? 1 : 0,
-            }));
-            // DB takes precedence; fall back to native children
-            const kids = dbKids ?? nativeKids;
+            const kids = byParent[i.number];
             const conflictFilesFor = conflictMap[`${i.repo}#${i.number}`];
             const parentNum = (childToParentNum[i.repo] ?? {})[i.number];
-            const nativeParent = (nativeByRepo[i.repo]?.childToParent ?? {})[i.number];
             const parentEpic =
               parentNum != null
                 ? {
                     number: parentNum,
-                    title: (epicTitleMap[i.repo] ?? {})[parentNum] ?? nativeParent?.title ?? `#${parentNum}`,
+                    title: (epicTitleMap[i.repo] ?? {})[parentNum] ?? `#${parentNum}`,
                   }
                 : null;
             return {
@@ -439,7 +405,9 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               conflict: conflictFilesFor ? { files: conflictFilesFor } : null,
               previewUrl: i.pr_number ? previewUrlFor(i.repo, i.pr_number, `agency/issue-${i.number}`) : null,
               epic: kids
-                ? { total: kids.length, done: kids.filter((c) => c.closed).length, children: kids }
+                // done = merged: the DB flips a child's state to "done" at merge time; GitHub close
+                // (closed) may lag or never fire — counting only `closed` left the counter stuck.
+                ? { total: kids.length, done: kids.filter((c) => c.closed || c.state === "done").length, children: kids, auto: getSetting(`epic_auto.${i.repo}#${i.number}`) === "1" }
                 : null,
               app: getApp(i.repo, i.number),
               review: reviews[`${i.repo}#${i.number}`] ?? null,
@@ -543,8 +511,6 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
                 maxReviseRounds: getSetting("max_revise_rounds") !== null ? Number(getSetting("max_revise_rounds")) : (Number(process.env.MAX_REVISE_ROUNDS?.trim()) || 1),
                 auditThreshold: Number(getSetting("audit_threshold")) || Number(process.env.AUDIT_THRESHOLD?.trim()) || 10,
                 avatars: getSetting("avatars") === "off" ? "off" : "on",
-                agentRunner: (getSetting("agent_runner") ?? process.env.AGENT_RUNNER?.trim() ?? "claude-sdk"),
-                agentCliCommand: (getSetting("agent_cli_command") ?? process.env.AGENT_CLI_COMMAND?.trim() ?? ""),
                 tracker: (getSetting("tracker") ?? process.env.TRACKER?.trim() ?? "local"),
                 newIssueDefault: (getSetting("new_issue_default") || "@dev"),
               },
@@ -701,16 +667,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         const repo = q.get("repo") ?? "";
         const number = Number(q.get("number"));
         void (async () => {
-          let review = repo && number ? getReview(repo, number) : null;
-          // Retroactive: PRs reviewed before verdict-capture have no DB row — read the verdict
-          // from the thread once and persist it, so the Fix button + card badge light up.
-          if (!review && repo && number) {
-            const d = await detectReviewVerdict(repo, number).catch(() => null);
-            if (d) {
-              recordReview(repo, number, d.verdict, d.summary);
-              review = { verdict: d.verdict, summary: d.summary };
-            }
-          }
+          const review = repo && number ? getReview(repo, number) : null; // DB is the verdict source (ADR-0001)
           const branch = `agency/issue-${number}`;
           const merge = repo && number ? await prMergeStatus(repo, branch).catch(() => null) : null;
           let conflict: { files: string[] } | null = null;
@@ -966,7 +923,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
       const actor = userFromReq(req);
       if (!actor) return void res.writeHead(401, { "content-type": "application/json" }).end('{"error":"auth required"}');
       void readBody(req).then(async (body) => {
-        let p: { repo?: string; number?: number; commentId?: number; body?: string; title?: string; role?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; pctNow?: number; tracker?: string; agentDef?: Partial<AgentDef> & { name: string }; agentName?: string; workflow?: { id: string; name: string; trigger?: string; steps?: unknown[]; gates?: unknown[]; hooks?: unknown[] }; workflowId?: string; skill?: Partial<Skill> & { name: string }; skillName?: string; hook?: { id?: number; target: string; phase: "pre" | "post"; command: string; enabled?: boolean }; hookId?: number; dataUrl?: string; name?: string; providers?: Provider[]; roleModels?: Record<string, { providerId: string; model: string }>; globalModel?: { providerId: string; model: string } | null; fallbackChain?: Array<{ providerId: string; model: string }>; autoSwitchOnLimit?: boolean; model?: { providerId: string; model: string } | null; agentModels?: Record<string, string>; newIssueDefault?: string; kind?: string; value?: string; skipArchitect?: string; gitnexus?: string; maxTokensPerRun?: number; maxReviseRounds?: number; auditThreshold?: number; start?: boolean; email?: string; key?: string; ops?: Record<string, string | number | boolean>; agentRunner?: string; agentCliCommand?: string; webhookSecret?: string; analyzerUrl?: string; avatars?: string; source?: string; id?: string; discover?: boolean } = {};
+        let p: { repo?: string; number?: number; commentId?: number; body?: string; title?: string; role?: string; agent?: string; path?: string; content?: string; windowHours?: number; budget?: number; anchorNow?: boolean; anchor?: string; pctNow?: number; tracker?: string; agentDef?: Partial<AgentDef> & { name: string }; agentName?: string; workflow?: { id: string; name: string; trigger?: string; steps?: unknown[]; gates?: unknown[]; hooks?: unknown[] }; workflowId?: string; skill?: Partial<Skill> & { name: string }; skillName?: string; hook?: { id?: number; target: string; phase: "pre" | "post"; command: string; enabled?: boolean }; hookId?: number; dataUrl?: string; name?: string; providers?: Provider[]; roleModels?: Record<string, { providerId: string; model: string }>; globalModel?: { providerId: string; model: string } | null; fallbackChain?: Array<{ providerId: string; model: string }>; autoSwitchOnLimit?: boolean; model?: { providerId: string; model: string } | null; agentModels?: Record<string, string>; newIssueDefault?: string; kind?: string; value?: string; skipArchitect?: string; gitnexus?: string; maxTokensPerRun?: number; maxReviseRounds?: number; auditThreshold?: number; start?: boolean; email?: string; key?: string; ops?: Record<string, string | number | boolean>; agentRunner?: string; agentCliCommand?: string; webhookSecret?: string; analyzerUrl?: string; avatars?: string; source?: string; id?: string; discover?: boolean } = {};
         try {
           p = JSON.parse(body.toString("utf8"));
         } catch {
@@ -1027,40 +984,31 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               clearIssueModelOverride(repo, number);
             }
           }
+          // The chat's agent selection arrives as a STRUCTURED field and is pinned in the DB — the
+          // next run routes to it. Never parsed from the message text (issue #140).
+          if (typeof p.agent === "string" && p.agent.trim()) setSetting(`issue_role_pin.${repo}#${number}`, p.agent.trim());
           const text = p.body.trim();
-          // DB-first: record the reply locally now so the dashboard shows it instantly, then mirror.
+          // DB-first: record the reply locally now (the DB is the conversation's source of truth —
+          // the agent reads it from here), then mirror to GitHub in the BACKGROUND. The chat never
+          // waits on — or fails because of — a GitHub round-trip.
           const localId = recordOutgoingComment({ repo, number, author: actor?.username || "you", body: text, source: "human" });
-          try {
-            // Post under the owner's account (your token) so it shows your name, not the bot's.
-            const res = await commentAsHuman(repo, number, text, ownerToken);
-            if (res?.id) setCommentGhId(localId, res.id, res.created_at);
-          } catch (errOwner) {
-            // The "acts as you" token often lacks Issues:write on this repo (or isn't scoped to it).
-            // Rather than fail, fall back to the bot identity (which already works the repo).
-            const bot = ghBotToken();
-            if (bot && bot !== ownerToken) {
+          void (async () => {
+            try {
+              // Post under the owner's account (your token) so it shows your name, not the bot's.
+              const r = await commentAsHuman(repo, number, text, ownerToken);
+              if (r?.id) setCommentGhId(localId, r.id, r.created_at);
+            } catch {
+              // The "acts as you" token often lacks Issues:write on this repo — fall back to the bot.
+              const bot = ghBotToken();
+              if (!bot || bot === ownerToken) return;
               try {
-                const res = await commentAsHuman(repo, number, text, bot);
-                if (res?.id) setCommentGhId(localId, res.id, res.created_at);
+                const r = await commentAsHuman(repo, number, text, bot);
+                if (r?.id) setCommentGhId(localId, r.id, r.created_at);
               } catch (errBot) {
-                return res.writeHead(500).end(
-                  JSON.stringify({
-                    error:
-                      `GitHub rejected the comment on ${repo}. Check the token has **Issues: Read & write** on this repo ` +
-                      `(and the bot account is a collaborator). Details: ${(errBot as Error).message.slice(0, 200)}`,
-                  }),
-                );
+                console.warn(`[agency] GitHub comment mirror failed ${repo}#${number}: ${(errBot as Error).message.slice(0, 160)}`);
               }
-            } else {
-              return res.writeHead(500).end(
-                JSON.stringify({
-                  error:
-                    `GitHub rejected the comment on ${repo}. The GitHub token needs **Issues: Read & write** on this repo. ` +
-                    `Details: ${(errOwner as Error).message.slice(0, 200)}`,
-                }),
-              );
             }
-          }
+          })();
           // Make the agent act on the reply. onComment re-engages to ADDRESS the message even if a
           // PR exists (unlike plain Resume, which just offers the merge).
           // Exception: planned / awaiting-approval issues have no branch yet — posting a comment should
@@ -1139,9 +1087,8 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           if (p.maxReviseRounds !== undefined && p.maxReviseRounds >= 0) setSetting("max_revise_rounds", String(Math.round(p.maxReviseRounds)));
           if (p.auditThreshold !== undefined && p.auditThreshold >= 1) setSetting("audit_threshold", String(Math.round(p.auditThreshold)));
           if (p.avatars === "on" || p.avatars === "off") setSetting("avatars", p.avatars);
-          // Default runner backend (#63): claude-sdk (default) | claude-cli | pi-cli | custom-cli.
-          if (p.agentRunner === "claude-sdk" || p.agentRunner === "claude-cli" || p.agentRunner === "pi-cli" || p.agentRunner === "custom-cli") setSetting("agent_runner", p.agentRunner);
-          if (typeof p.agentCliCommand === "string") setSetting("agent_cli_command", p.agentCliCommand);
+          // (The old global agent_runner / agent_cli_command settings are gone — the runner is
+          // decided by the provider's identity alone; see runnerKindFor.)
           // Operations panel (global, admin-only when multi-user is on).
           if (p.ops && typeof p.ops === "object" && actor.role === "admin") {
             for (const [k, v] of Object.entries(p.ops)) {
@@ -1197,20 +1144,31 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
             await closeIssue(repo, number, `🚀 Merged ${r.msg} from the dashboard.`).catch(() => {});
             recordIssueStatus(repo, number, withStatus("done"));
             clearConflict(repo, number);
+            // Epic bookkeeping: mark this child done on its parent's checklist and — when the
+            // parent's ▶ Play is on — start the next sub-issue in order.
+            void onChildMerged(repo, number, start ?? undefined).catch(() => {});
             return ok();
           }
           return res.writeHead(409).end(JSON.stringify({ error: r.msg }));
         }
-        if (path === "/start-children") {
-          // Epic "Start sub-issues": find the first child that isn't done/working and start it.
+        if (path === "/epic-play") {
+          // Epic ▶ Play: work ALL sub-issues in the recorded order — starts the first pending one
+          // now, and each merge auto-starts the next (see onChildMerged).
+          if (!repo || !number || !start) return res.writeHead(400).end("{}");
+          const r = await playEpic(repo, number, start).catch((e) => ({ ok: false, msg: (e as Error).message }));
+          return r.ok ? ok(JSON.stringify(r)) : res.writeHead(409).end(JSON.stringify({ error: r.msg }));
+        }
+        if (path === "/epic-pause") {
+          // Turn the auto-advance train off (running sub-issue finishes; nothing new starts).
           if (!repo || !number) return res.writeHead(400).end("{}");
-          const kids = listEpicChildren(repo, number);
-          if (!kids.length) return res.writeHead(404).end(JSON.stringify({ error: "Not an epic (no sub-issues)." }));
-          // Pick the next child to start: skip done + already-working ones, prefer the first open one.
-          const next = kids.find((c) => {
-            const st = getIssueStatus(repo, c.child);
-            return st.state !== "done" && st.state !== "working" && !c.closed;
-          });
+          setSetting(`epic_auto.${repo}#${number}`, "");
+          return ok();
+        }
+        if (path === "/start-children") {
+          // Epic "Start next sub-issue": start just the first pending child (no auto-advance).
+          if (!repo || !number) return res.writeHead(400).end("{}");
+          if (!listEpicChildren(repo, number).length) return res.writeHead(404).end(JSON.stringify({ error: "Not an epic (no sub-issues)." }));
+          const next = nextEpicChild(repo, number);
           if (!next) return res.writeHead(409).end(JSON.stringify({ error: "All sub-issues are already done or in progress." }));
           if (!start) return res.writeHead(500).end(JSON.stringify({ error: "Start handler unavailable." }));
           await start(repo, next.child).catch((e) => {
@@ -1279,20 +1237,28 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           return ok();
         }
         if (path === "/reset-issue") {
-          // FULL reset: wipe ALL progress — activity stream, plan, session, overrides, rate-limits,
-          // AND the agency's GitHub comments — returning the issue to its initial post state.
-          // Human comments are preserved. The branch/PR stays on GitHub.
+          // FULL reset: wipe ALL interaction and code — conversation/chat (local_comment), runs,
+          // plans, telemetry, sessions, activity, overrides, rate-limits, the local workdir + agent
+          // session/config caches, AND the agency's GitHub comments — returning the issue to its
+          // initial post state. Human comments are preserved. The branch/PR stays on GitHub.
           if (!repo || !number) return res.writeHead(400).end("{}");
           if (stop) await stop(repo, number).catch(() => {});
           clearActivity(repo, number);
+          resetIssueData(repo, number); // conversation, runs, plans, sessions, reviews, telemetry, …
           clearIssueModelOverride(repo, number);
           clearIssueWorkflow(repo, number);
           clearIssueProvider(repo, number);
-          // Wipe per-issue settings (plan, role, solo, dealer, budget, agent models).
-          for (const key of [`issue_plan.${repo}#${number}`, `issue_role.${repo}#${number}`, `issue_solo.${repo}#${number}`, `issue_dealer.${repo}#${number}`, `issue_budget.${repo}#${number}`, `issue_provider.${repo}#${number}`, `issue_agent_models.${repo}#${number}`, `issue_use_fallback.${repo}#${number}`, `issue_workflow.${repo}#${number}`, `issue_model.${repo}#${number}`]) {
+          // Wipe per-issue settings (plan, role pins, workflow cursor, approval, dealer, budget, …).
+          for (const key of [`issue_plan.${repo}#${number}`, `issue_role.${repo}#${number}`, `issue_role_pin.${repo}#${number}`, `issue_solo.${repo}#${number}`, `issue_dealer.${repo}#${number}`, `issue_budget.${repo}#${number}`, `issue_provider.${repo}#${number}`, `issue_agent_models.${repo}#${number}`, `issue_use_fallback.${repo}#${number}`, `issue_workflow.${repo}#${number}`, `issue_model.${repo}#${number}`, `wf_step.${repo}#${number}`, `issue_approved.${repo}#${number}`, `epic_auto.${repo}#${number}`, `head:${repo}#${number}`]) {
             try { const d = getDb(); if (d) d.prepare("DELETE FROM settings WHERE key = ?").run(key); } catch { /* best effort */ }
           }
           clearRateLimited(repo, number);
+          // Delete the local code + per-issue agent caches (workdir clone, Claude config/session
+          // dir, pi session files) so a re-start is truly from scratch.
+          const workdir = join(process.cwd(), ".work", repo.replace("/", "__"), String(number));
+          await rm(workdir, { recursive: true, force: true }).catch(() => {});
+          const cfgDir = join(process.cwd(), "data", "claude-cfg", createHash("sha1").update(workdir).digest("hex").slice(0, 16));
+          await rm(cfgDir, { recursive: true, force: true }).catch(() => {});
           // Delete ALL agency comments from the GitHub issue (human comments stay).
           const deleted = await deleteAgencyComments(repo, number).catch(() => 0);
           recordIssueStatus(repo, number, withStatus("planned"));
@@ -1703,10 +1669,11 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           const userTok = ghUserToken();
           if (!userTok) return res.writeHead(409).end(JSON.stringify({ error: "Add your GitHub token in Settings → credentials to create issues under your name." }));
           const handle = (p.role ?? "@dev").trim();
-          // 🎲 Dealer's choice: no concrete handle prepended — the dispatcher rolls the route on start
-          // (see runner). A real handle is prepended so text resolution + the GitHub mirror agree.
+          // 🎲 Dealer's choice: the dispatcher rolls the route on start (see runner). The route is
+          // stored STRUCTURALLY below (workflow pin or role pin) — never as an @-handle in the body
+          // (issue #140: no text-based agent triggering, GitHub is a mirror only).
           const dealer = handle.toLowerCase() === "@auto";
-          const issueBody = (dealer ? (p.body ?? "") : `${handle} ${p.body ?? ""}`).trim();
+          const issueBody = (p.body ?? "").trim();
           try {
             const created = await createIssue(repo, p.title.trim(), issueBody, userTok);
             if (!created.number) throw new Error("couldn't read the new issue number");
@@ -1721,14 +1688,15 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               }
             }
             // Persist the dropdown selection STRUCTURALLY so it's authoritative on instant-start,
-            // planned-start, AND resume — not re-derived from body text (which a later comment can
-            // shadow, silently falling back to the default full build). If the chosen handle is a
-            // workflow trigger, pin that workflow; a single agent/role keeps resolving from the
-            // prepended handle (and processIssue persists its role on first run). Dealer's choice
-            // pins nothing — it flags the issue so the dispatcher picks the route on start.
+            // planned-start, AND resume. A workflow trigger pins that workflow; any other handle is
+            // stored as the issue's role pin (single-agent run). Dealer's choice pins nothing — it
+            // flags the issue so the dispatcher picks the route on start.
             if (dealer) setSetting(`issue_dealer.${repo}#${created.number}`, "1");
-            const selWf = dealer ? null : resolveWorkflow(handle);
-            if (selWf) setIssueWorkflow(repo, created.number, selWf.id);
+            else {
+              const selWf = resolveWorkflow(handle);
+              if (selWf) setIssueWorkflow(repo, created.number, selWf.id);
+              else setSetting(`issue_role_pin.${repo}#${created.number}`, handle);
+            }
             if (p.start) {
               recordIssueStatus(repo, created.number, withStatus("working"), { title: p.title.trim() });
               // Dashboard-first INSTANT start: dispatch from the title/body we already have — no GitHub

@@ -51,9 +51,10 @@ Reply with the **delta only** — the changed part, a line or two. The thread ha
 If it's really multiple independent features, end with:
 ```
 ### SUB-ISSUES
-- [Short title] @dev <one-line, self-contained task>
+- [Short title] <one-line, self-contained task>
 ```
-One line each, each buildable alone — the agency opens them as separate issues.
+One line each, each buildable alone — the agency opens them as separate issues and routes them
+itself (no @-handles in the text; the route lives in the dashboard/DB).
 
 ## Boundaries
 - You never write the implementation.

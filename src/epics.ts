@@ -23,11 +23,14 @@ import {
   listEpicParents,
   listEpicChildren,
   updateEpicChild,
+  epicParentsOf,
   getEpicMeta,
   setEpicMeta,
   recordIssueStatus,
   getIssueStatus,
   recordRun,
+  getSetting,
+  setSetting,
   type EpicChild,
 } from "./store.js";
 import { runRole } from "./agents/roleAgent.js";
@@ -48,10 +51,13 @@ export function childStatus(repo: string, t: RecentThread): string {
   return "open";
 }
 
+/** A child counts as done when its PR merged (DB state "done") — GitHub close may lag or never fire. */
+const childDone = (c: EpicChild): boolean => Boolean(c.closed) || c.state === "done";
+
 /** The checklist markdown for the parent's tracking comment. */
 export function renderEpicTracker(children: EpicChild[]): string {
-  const done = children.filter((c) => c.closed).length;
-  const lines = children.map((c) => `- [${c.closed ? "x" : " "}] #${c.child} — ${c.title} _(${c.state})_`);
+  const done = children.filter(childDone).length;
+  const lines = children.map((c) => `- [${childDone(c) ? "x" : " "}] #${c.child} — ${c.title} _(${c.state})_`);
   return [
     `### 🧩 Sub-issues — ${done}/${children.length} done`,
     "",
@@ -88,7 +94,7 @@ export async function reconcileEpics(repo: string, threads: Map<number, RecentTh
       }
     }
     const fresh = listEpicChildren(repo, parent);
-    const done = fresh.filter((c) => c.closed).length;
+    const done = fresh.filter(childDone).length;
 
     const body = renderEpicTracker(fresh);
     const meta = getEpicMeta(repo, parent);
@@ -148,9 +154,14 @@ export async function mergeEpic(repo: string, parent: number): Promise<{ ok: boo
   const merged: number[] = [];
   const failed: string[] = [];
   for (const c of children) {
-    if (c.closed) continue;
+    if (childDone(c)) continue;
     const r = await mergePrForBranch(repo, `agency/issue-${c.child}`);
-    if (r.ok) { afterMerge(repo, c.child, r.files); merged.push(c.child); }
+    if (r.ok) {
+      afterMerge(repo, c.child, r.files);
+      updateEpicChild(repo, parent, c.child, "done", true);
+      recordIssueStatus(repo, c.child, withStatus("done"));
+      merged.push(c.child);
+    }
     else failed.push(`#${c.child}: ${r.msg}`);
   }
   if (failed.length) return { ok: false, msg: `merged ${merged.length}; could not merge ${failed.join("; ")}` };
@@ -162,4 +173,52 @@ export async function mergeEpic(repo: string, parent: number): Promise<{ ok: boo
 /** Is this issue an epic parent? (has recorded children) */
 export function isEpic(repo: string, parent: number): boolean {
   return listEpicChildren(repo, parent).length > 0;
+}
+
+/** The next sub-issue to work on: the first (by number = creation order) that isn't done or already working. */
+export function nextEpicChild(repo: string, parent: number): EpicChild | null {
+  for (const c of listEpicChildren(repo, parent)) {
+    if (childDone(c)) continue;
+    const st = getIssueStatus(repo, c.child);
+    if (st.state === "done" || st.state === "working") continue;
+    return c;
+  }
+  return null;
+}
+
+/**
+ * Epic ▶ Play: work ALL sub-issues in order. Sets the per-epic auto flag and starts the first
+ * pending child; every later child starts automatically when the previous one MERGES (see
+ * onChildMerged). Stop/park a child (or clear the flag) to pause the train.
+ */
+export async function playEpic(repo: string, parent: number, start: (repo: string, number: number) => Promise<void>): Promise<{ ok: boolean; msg: string; started?: number }> {
+  const kids = listEpicChildren(repo, parent);
+  if (!kids.length) return { ok: false, msg: "not an epic" };
+  setSetting(`epic_auto.${repo}#${parent}`, "1");
+  const next = nextEpicChild(repo, parent);
+  if (!next) return { ok: true, msg: "all sub-issues are already done or in progress" };
+  await start(repo, next.child);
+  return { ok: true, msg: `started #${next.child}`, started: next.child };
+}
+
+/**
+ * Called after a sub-issue's PR merges (from the dashboard /merge or auto-merge): flip the child to
+ * done in every parent checklist, and — when the parent's Play flag is on — start the next child.
+ * DB-only bookkeeping; the tracking comment refreshes on the next reconcile.
+ */
+export async function onChildMerged(repo: string, child: number, start?: (repo: string, number: number) => Promise<void>): Promise<void> {
+  for (const parent of epicParentsOf(repo, child)) {
+    updateEpicChild(repo, parent, child, "done", true);
+    if (start && getSetting(`epic_auto.${repo}#${parent}`) === "1") {
+      const next = nextEpicChild(repo, parent);
+      if (next) {
+        await commentOnIssue(repo, parent, `▶ Sub-issue #${child} merged — starting the next sub-issue #${next.child}.`).catch(() => {});
+        await start(repo, next.child).catch((err) =>
+          console.error(`[agency] epic auto-start failed ${repo} #${next.child}:`, (err as Error).message),
+        );
+      } else {
+        setSetting(`epic_auto.${repo}#${parent}`, ""); // train finished — reviewEpics picks it up from here
+      }
+    }
+  }
 }

@@ -11,8 +11,8 @@
  * never see these env vars. One source of truth (the Provider row + creds); per-backend translation.
  */
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { createHash } from "node:crypto";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentRunner, RunRequest, RunResult } from "./interface.js";
 import { claudeToken, anthropicApiKey } from "../creds.js";
@@ -60,10 +60,14 @@ export class ClaudeSdkRunner implements AgentRunner {
   readonly kind = "claude-sdk";
 
   async run(req: RunRequest, emitAssistant: (message: unknown) => void): Promise<RunResult> {
-    // Translate the provider into the env this backend wants — isolated config dir per run so the
-    // SDK authenticates with THIS credential only (never a stale ~/.claude cache on a shared volume).
+    // Translate the provider into the env this backend wants — isolated config dir per WORKDIR so
+    // the SDK authenticates with THIS credential only (never a stale ~/.claude cache on a shared
+    // volume). Stable (not a throwaway temp dir): the SDK stores session transcripts under the
+    // config dir, so deleting it after every run made `resume: <sessionId>` always fail — that was
+    // the "resume starts fresh every time" bug. Reset wipes it via data/claude-cfg.
     const env = claudeRunEnv(req.env ?? {}, req.provider, req.authKind);
-    const cfgDir = mkdtempSync(join(tmpdir(), "claude-run-"));
+    const cfgDir = join(process.cwd(), "data", "claude-cfg", createHash("sha1").update(req.cwd).digest("hex").slice(0, 16));
+    try { mkdirSync(cfgDir, { recursive: true }); } catch { /* best effort */ }
     env.CLAUDE_CONFIG_DIR = cfgDir;
 
     let sessionId = "";
@@ -159,8 +163,6 @@ export class ClaudeSdkRunner implements AgentRunner {
       }
       const detail = stderrBuf.trim().split("\n").slice(-3).join(" ").slice(-400);
       throw new Error(`${msg}${detail ? ` | ${detail}` : ""}`);
-    } finally {
-      try { rmSync(cfgDir, { recursive: true, force: true }); } catch { /* noop */ }
     }
 
     return { text, turns, costUsd, tokens, stopped, sessionId: sessionId || undefined };

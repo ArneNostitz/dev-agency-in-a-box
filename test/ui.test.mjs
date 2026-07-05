@@ -76,8 +76,9 @@ async function mountApp(opts = {}) {
       }
     }
   };
-  // Copy the old flat .js files (core.js etc. — still needed as temp re-exports).
-  for (const f of ["core", "ui", "layout", "board", "detail", "settings", "onboarding", "topbar", "usage", "agents", "workflows", "builder", "table", "orch", "app"]) {
+  // Copy the remaining flat .js files (core.js is still a shared-helper bridge; the rest of the UI
+  // lives in components/, lib/, data/ — the pre-atomic duplicates were deleted).
+  for (const f of ["core", "layout", "app"]) {
     const src = readFileSync(join(webDir, f + ".js"), "utf8").split("/web/vendor/standalone.mjs").join(vendorUrl);
     writeFileSync(join(tmpDir, f + ".js"), src);
   }
@@ -535,11 +536,25 @@ test("epic card nests its sub-issues and hides their standalone cards", async ()
   const webDir = join(HERE, "..", "web");
   const vendorUrl = pathToFileURL(join(webDir, "vendor", "standalone.mjs")).href;
   const tmpDir = mkdtempSync(join(tmpdir(), "dagrp-"));
-  for (const f of ["core", "ui", "board"]) {
+  for (const f of ["core", "layout"]) {
     const src = readFileSync(join(webDir, f + ".js"), "utf8").split("/web/vendor/standalone.mjs").join(vendorUrl);
     writeFileSync(join(tmpDir, f + ".js"), src);
   }
-  const { Board, nestedChildKeys } = await import(pathToFileURL(join(tmpDir, "board.js")).href);
+  for (const dir of ["components", "lib", "data"]) {
+    const srcDir = join(webDir, dir);
+    if (existsSync(srcDir)) {
+      const copyDir = (src, dest) => {
+        mkdirSync(dest, { recursive: true });
+        for (const entry of readdirSync(src)) {
+          const srcPath = join(src, entry), destPath = join(dest, entry);
+          if (statSync(srcPath).isDirectory()) copyDir(srcPath, destPath);
+          else if (entry.endsWith(".js")) writeFileSync(destPath, readFileSync(srcPath, "utf8").split("/web/vendor/standalone.mjs").join(vendorUrl));
+        }
+      };
+      copyDir(srcDir, join(tmpDir, dir));
+    }
+  }
+  const { Board, nestedChildKeys } = await import(pathToFileURL(join(tmpDir, "components", "organisms", "Board.js")).href);
   const { html, render } = await import(vendorUrl);
 
   const issues = [
