@@ -1721,6 +1721,8 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
             else {
               const selWf = resolveWorkflow(handle);
               if (selWf) setIssueWorkflow(repo, created.number, selWf.id);
+              // Single-agent pick (not a workflow, not dealer): pin the handle as the issue's role
+              // pin in the DB so dispatch runs that agent without needing an @command in the body.
               else setSetting(`issue_role_pin.${repo}#${created.number}`, handle);
             }
             if (p.start) {

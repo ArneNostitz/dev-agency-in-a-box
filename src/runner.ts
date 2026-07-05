@@ -316,8 +316,8 @@ async function processIssue(cfg: Config, repo: string, issue: Issue, opts: { fre
   // resume — so "run this workflow" sticks across runs. A takeover suspends it for THIS run only.
   const pinnedWf = takeover ? null : (() => { const id = getIssueWorkflow(repo, issue.number); return id ? getWorkflow(id) : null; })();
   // A single-agent pin: the takeover handle (one-shot) or the DB role pin the dashboard/dealer
-  // stored — never derived from issue/comment text. Re-read (the dealer may have just stored one).
-  // No pin and no workflow → the global DEFAULT workflow.
+  // stored — never derived from issue/comment text (#140: DB-only, no @command triggering). Re-read
+  // (the dealer may have just stored one). No pin and no workflow → the global DEFAULT workflow.
   const pinnedHandle = takeover ?? (resuming || pinnedWf ? null : ((getSetting(`issue_role_pin.${repo}#${issue.number}`) || "").trim() || null));
   let handleRole = pinnedHandle ? roleForHandle(pinnedHandle) : null;
   if (!handleRole && pinnedHandle) {
