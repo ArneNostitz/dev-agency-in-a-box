@@ -45,7 +45,7 @@ function held(repo: string, number: number, where: string): boolean {
   return false;
 }
 import type { RoleName } from "./agents/roles.js";
-import { recordRun, recordPlan, lastPlan, recordIssueStatus, getIssueStatus, recordIssueFiles, recordPr, setByAgent, addEpicChild, listEpicChildren, getSession, issueActivity, recordReview, getReview, recordConflict, clearConflict, getSetting, setSetting, skillsPrompt, listHooks, listAgentDefs, changesTouchingFiles, type Workflow } from "./store.js";
+import { recordRun, recordPlan, lastPlan, recordIssueStatus, getIssueStatus, recordIssueFiles, recordPr, setByAgent, addEpicChild, listEpicChildren, getSession, issueActivity, recordReview, getReview, recordConflict, clearConflict, getSetting, setSetting, skillsPrompt, listHooks, listAgentDefs, changesTouchingFiles, getWorkflowByTrigger, setIssueWorkflow, type Workflow } from "./store.js";
 import { conflictFiles } from "./github.js";
 import { pushActivity, setActive } from "./activity.js";
 import { execSync } from "node:child_process";
@@ -282,21 +282,34 @@ export function parseFileList(s: string): string[] {
   )];
 }
 
-/** Parse a `### SUB-ISSUES` section: `- [Short title] <task> {files: a, b}`. The files annotation
- *  (optional) declares the footprint so non-overlapping sub-issues can run in parallel. */
-export function parseSubIssues(planText: string): Array<{ title: string; body: string; files: string[] }> {
+/** Parse a `### SUB-ISSUES` section: `- [Short title] <task> {files: a, b} {agent: @dev}`.
+ *  `{files:}` (optional) declares the footprint so non-overlapping sub-issues can run in parallel;
+ *  `{agent: @x}` / `{workflow: @y}` (optional) is the planner's ROUTE recommendation — stored as a
+ *  structural pin on the created sub-issue (never as text in the body; issue #140). */
+export function parseSubIssues(planText: string): Array<{ title: string; body: string; files: string[]; route?: string }> {
   const idx = planText.search(/#{0,3}\s*SUB-?ISSUES/i);
   if (idx < 0) return [];
-  const out: Array<{ title: string; body: string; files: string[] }> = [];
+  const out: Array<{ title: string; body: string; files: string[]; route?: string }> = [];
   for (const line of planText.slice(idx).split("\n")) {
     const m = /^\s*[-*]\s*\[(.+?)\]\s*(.+)$/.exec(line);
     if (m) {
       const files = parseFileList(m[2]);
-      const body = m[2].replace(/\{?\s*files?\s*:[^}\n]+\}?/i, "").trim();
-      out.push({ title: m[1].trim(), body, files });
+      const rm = /\{\s*(?:agent|workflow)\s*:\s*(@[\w-]+)\s*\}/i.exec(m[2]);
+      const body = m[2].replace(/\{?\s*files?\s*:[^}\n]+\}?/i, "").replace(rm ? rm[0] : "", "").trim();
+      out.push({ title: m[1].trim(), body, files, ...(rm ? { route: rm[1].toLowerCase() } : {}) });
     }
   }
   return out;
+}
+
+/** Apply a recommended route to a freshly created issue: workflow trigger → workflow pin; anything
+ *  else → single-agent role pin. No-op when the planner didn't recommend one. */
+function applyRoute(repo: string, number: number, route?: string): void {
+  const r = (route || "").trim().toLowerCase();
+  if (!r) return;
+  const wf = getWorkflowByTrigger(r);
+  if (wf) setIssueWorkflow(repo, number, wf.id);
+  else setSetting(`issue_role_pin.${repo}#${number}`, r);
 }
 
 /**
@@ -320,6 +333,7 @@ async function splitIntoPlanned(repo: string, issue: Issue, text: string): Promi
     if (!created.number) continue;
     addEpicChild(repo, issue.number, created.number, it.title);
     if (it.files.length) recordIssueFiles(repo, created.number, it.files);
+    applyRoute(repo, created.number, it.route); // decomposer's recommended workflow/agent
     recordIssueStatus(repo, created.number, withStatus("planned"), { title: it.title });
     setByAgent(repo, created.number, true); // DB-first marker — the dashboard reads this, not a GitHub label
     recordRun(repo, issue.number, "decomposer", MODELS_NONE, 0, "create-issue");
@@ -340,6 +354,7 @@ async function maybeDecompose(repo: string, issue: Issue, planText: string): Pro
     const created = await createIssue(repo, s.title, `${s.body}\n\nPart of epic #${issue.number}.`);
     addEpicChild(repo, issue.number, created.number, s.title);
     if (s.files.length) recordIssueFiles(repo, created.number, s.files); // footprint → file-lock scheduling
+    applyRoute(repo, created.number, s.route); // planner's recommended workflow/agent
     recordRun(repo, issue.number, "planner", MODELS_NONE, 0, "create-issue");
   }
   await commentOnIssue(

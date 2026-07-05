@@ -30,3 +30,19 @@ test("sub-issues carry per-child file footprints, stripped from the body", () =>
   assert.deepEqual(subs[1].files, ["src/store.ts", "src/webhook.ts"]);
   assert.deepEqual(subs[2].files, []);
 });
+
+test("parseSubIssues extracts the optional {agent}/{workflow} route recommendation", () => {
+  const plan = [
+    "### SUB-ISSUES",
+    "- [API] Build the endpoint {files: src/api.ts} {agent: @dev}",
+    "- [Big piece] Multi-step feature {workflow: @build}",
+    "- [Plain] No route recommended",
+  ].join("\n");
+  const subs = parseSubIssues(plan);
+  assert.equal(subs.length, 3);
+  assert.equal(subs[0].route, "@dev");
+  assert.deepEqual(subs[0].files, ["src/api.ts"]);
+  assert.ok(!subs[0].body.includes("{agent"), "route annotation stripped from the body");
+  assert.equal(subs[1].route, "@build");
+  assert.equal(subs[2].route, undefined);
+});
