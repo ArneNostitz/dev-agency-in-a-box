@@ -68,3 +68,21 @@ export async function discoverProviderModels(provider: Provider): Promise<Discov
     };
   }
 }
+
+/**
+ * Ensure the Claude-NATIVE provider row exists whenever a Claude credential is saved, seeded with
+ * pi's full anthropic catalog — so Claude's model list is complete, visible, and editable exactly
+ * like every pi provider (issue #139). The row is keyless (piKey "" / apiKey "") → providerAuth
+ * classifies it "subscription" and runnerKindFor keeps it on the Claude SDK. Model refresh works
+ * via the normal /discover-models path (inferPiProvider maps the "Claude" name → "anthropic").
+ */
+export function ensureClaudeProvider(hasClaudeCred: boolean, getProviders: () => Provider[], setProviders: (l: Provider[]) => void): void {
+  try {
+    if (!hasClaudeCred) return;
+    const list = getProviders();
+    if (list.some((p) => p.id === "claude" || (!p.apiKey && !p.piKey && /^claude$/i.test(p.name || "")))) return;
+    const registry = ModelRegistry.create(AuthStorage.create());
+    const models = registry.getAll().filter((m) => m.provider === "anthropic").map((m) => m.id).filter(Boolean);
+    setProviders(list.concat({ id: "claude", name: "Claude", piKey: "", apiKey: "", models }));
+  } catch { /* best effort — a missing catalog must never break /models */ }
+}

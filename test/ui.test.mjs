@@ -199,44 +199,32 @@ test("preact dashboard mounts and renders the board frame + data", async () => {
   click(q(".modal-scrim")); // close via backdrop
   await tick(40);
 
-  // Settings (uses hooks).
+  // Settings shell (#139): left nav / right detail, auto-save, single ✕.
   click(q('[aria-label="Settings"]'));
   await tick(40);
-  assert.match(root.innerHTML, /Settings/, "settings opens");
-  assert.match(root.innerHTML, /Run defaults/, "settings shows the run-defaults section");
-  assert.match(root.innerHTML, /Connections/, "connections section renders for a signed-in user");
-  assert.match(root.innerHTML, /Show agent avatars/, "appearance section has the avatars toggle");
-  assert.match(root.innerHTML, /Team \(admin\)/, "admin team section renders");
-  assert.match(root.innerHTML, /Automation/, "automation panel renders");
-  assert.doesNotMatch(root.innerHTML, /Agent runner/, "runner picker removed (runner is auto-decided: Claude→claude-sdk, else pi)");
-  assert.match(root.innerHTML, /arne/, "signed-in user shown");
-  // Models & runners modal (redesigned picker): list of added models + per-row runner + Add.
-  const modelsBtn = Array.from(window.document.querySelectorAll(".btn")).find((b) => /Models & API keys/.test(b.textContent));
-  if (modelsBtn) {
-    click(modelsBtn); await tick(60);
-    assert.match(root.innerHTML, /Models.{1,8}runners/, "redesigned models modal renders");
-    assert.match(root.innerHTML, /GLM \(Zhipu\)/, "an added provider is listed");
-    assert.match(root.innerHTML, /Add provider/, "has the Add provider button");
-    assert.ok(window.document.querySelector(".modal"), "uses the atomic Modal");
-    assert.match(root.innerHTML, /Global default.{1,12}rate limit/, "global default + fallback section renders (per-agent now lives in the Agents page)");
-    assert.match(root.innerHTML, /Save settings/, "Save lives in the modal footer");
-    assert.doesNotMatch(root.innerHTML, /Per-agent model/, "per-agent model section moved OUT of the Models modal");
-    assert.ok(Array.from(window.document.querySelectorAll(".tip")).some((t) => /Edit provider/.test(t.getAttribute("data-tip") || "")), "each provider row has an Edit button");
-    const closeBtn = Array.from(window.document.querySelectorAll(".modal-f .btn")).find((b) => /Close/.test(b.textContent));
-    if (closeBtn) { click(closeBtn); await tick(40); }
-  }
-
-  // GitHub tokens modal → the one-click device-flow connect (replaces bot+owner PATs).
-  const ghBtn = Array.from(window.document.querySelectorAll(".btn")).find((b) => /GitHub tokens/.test(b.textContent));
-  if (ghBtn) {
-    click(ghBtn); await tick(60);
-    assert.match(root.innerHTML, /Connect GitHub/, "device-flow connect button renders");
-    assert.match(root.innerHTML, /OAuth App client ID/, "prompts for client ID when unset");
-    const cb = window.document.querySelectorAll(".sheet .sh .iconbtn");
-    click(cb[cb.length - 1]); await tick(40);
-  }
-
-  click(q(".sheet .sh .iconbtn"));
+  assert.ok(window.document.querySelector(".setshell"), "settings shell opens");
+  assert.match(root.innerHTML, /Run defaults/, "General shows the run-defaults section");
+  assert.match(root.innerHTML, /Show agent avatars/, "appearance toggle renders");
+  assert.match(root.innerHTML, /Changes save automatically/, "auto-save hint (no Save button)");
+  assert.doesNotMatch(root.innerHTML, /Agent runner/, "runner picker removed (runner is auto-decided)");
+  // Models section: provider cards with the activate/deactivate checkmark list.
+  const modelsNav = Array.from(window.document.querySelectorAll(".setshell__navitem")).find((b) => /Models/.test(b.textContent));
+  assert.ok(modelsNav, "left nav has a Models section");
+  click(modelsNav); await tick(80);
+  assert.match(root.innerHTML, /Providers/, "providers list renders");
+  assert.match(root.innerHTML, /Add provider/, "has the Add provider button");
+  assert.match(root.innerHTML, /Global default.{1,12}rate limit/, "global default + fallback section renders");
+  assert.doesNotMatch(root.innerHTML, /Save settings/, "no Save button — everything auto-saves");
+  // GitHub section: one-click device-flow connect.
+  const ghNav = Array.from(window.document.querySelectorAll(".setshell__navitem")).find((b) => /GitHub/.test(b.textContent));
+  click(ghNav); await tick(60);
+  assert.match(root.innerHTML, /Connect GitHub/, "device-flow connect button renders");
+  // Team section (admin).
+  const teamNav = Array.from(window.document.querySelectorAll(".setshell__navitem")).find((b) => /Team/.test(b.textContent));
+  assert.ok(teamNav, "admin sees the Team section");
+  click(teamNav); await tick(40);
+  assert.match(root.innerHTML, /Invite a teammate/, "team section renders");
+  click(q(".setshell__x"));
   await tick(40);
 
   // The topbar "Agents" button opens the Agents & Workflow builder, which now owns the per-agent

@@ -17,6 +17,7 @@ import { Breadcrumb } from "../atoms/Breadcrumb.js";
 import { MarkdownArea } from "../atoms/MarkdownArea.js";
 import { ModelSelect } from "../molecules/ModelSelect.js";
 import { Comment } from "../molecules/Comment.js";
+import { ChatComposer } from "../molecules/ChatComposer.js";
 import { RunSelector } from "../molecules/RunSelector.js";
 import { timelineModel } from "../molecules/Timeline.js";
 import { WorkflowTimeline } from "./ProgressTable.js";
@@ -43,7 +44,6 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
   // Map a role to its @-handle. Used only for the dropdown's OPTIONS (the user picks explicitly —
   // no auto-preselection, which was silently prepending "@dev " to every chat message the user typed).
   const roleHandle = (role) => role ? ("@" + String(role).toLowerCase().replace("developer","dev").replace("planner","plan").replace("reviewer","review").replace("tester","test").replace("architect","arch")) : "";
-  const [atts, setAtts] = useState([]);
   const [busy, setBusy] = useState(false);
   const [armed, setArmed] = useState(""); // two-tap confirm: which destructive action is armed
   const [moreOpen, setMoreOpen] = useState(false); // toolbar "More" overflow menu
@@ -116,7 +116,7 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
     setModelOverride(issue.modelOverride ? issue.modelOverride.providerId + "/" + issue.modelOverride.model : "");
   }, [issue.modelOverride?.providerId, issue.modelOverride?.model]);
   useEffect(() => {
-    setThread(null); setPr(null); setAppInfo(null); setAtts([]); setPendingComments([]); stickRef.current = true;
+    setThread(null); setPr(null); setAppInfo(null); setPendingComments([]); stickRef.current = true;
     if (issue._audit) return; // the audit has no GitHub thread/PR — stream-only view below
     loadThread();
     if (issue.pr_number) getJSON("/pr-status?repo=" + encodeURIComponent(repo) + "&number=" + number).then(setPr).catch(() => {});
@@ -149,55 +149,29 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
   const st = issue.state || "";
   const running = !!(issue.running || issue.active || issue.queued); // a Claude run is executing right now
 
-  function send() {
-    if (!reply.trim() && !atts.length) return;
-    // The chosen agent travels as a STRUCTURED field (the server pins it in the DB) — never as an
-    // "@handle " prefix inside the message text (issue #140: no text-based agent triggering).
-    const textToSend = reply;
+  // Send the composed reply (the shared ChatComposer already folded attachment markdown into
+  // `full`). The chosen agent travels as a STRUCTURED field — never an "@handle " text prefix.
+  function sendFull(full) {
     const mo = modelOverride ? (() => { const parts = modelOverride.split("/"); return { providerId: parts[0], model: parts.slice(1).join("/") }; })() : null;
-    // If offline, queue without a skeleton (comment appears after flush + thread reload).
     if (!isOnline) {
-      if (onQueueComment) onQueueComment({ type: "comment", repo, number, body: textToSend, agent: replyAgent || null, model: mo || null });
+      if (onQueueComment) onQueueComment({ type: "comment", repo, number, body: full, agent: replyAgent || null, model: mo || null });
       toast("Queued offline — will send when back online");
-      setReply(""); setAtts([]);
-      if (taRef.current) taRef.current.style.height = "auto";
-      return;
+      setReply("");
+      return Promise.resolve();
     }
     setBusy(true);
-    // Optimistic skeleton: show the comment immediately before the server confirms
     const skelId = Date.now();
-    setPendingComments((ps) => ps.concat({ _skel: true, id: skelId, author: "you", createdAt: new Date().toISOString(), body: textToSend }));
-    // Scroll to bottom so the skeleton is visible
+    setPendingComments((ps) => ps.concat({ _skel: true, id: skelId, author: "you", createdAt: new Date().toISOString(), body: full }));
     requestAnimationFrame(() => { if (chatRef.current) chatRef.current.scrollTop = chatRef.current.scrollHeight; });
-    // Upload attachments SEQUENTIALLY — each one commits to the repo via the GitHub Contents API,
-    // and concurrent commits to the same branch collide (non-fast-forward), so a parallel upload
-    // silently drops all but one. One at a time, each commit builds on the last.
-    atts.reduce((chain, a) => chain.then(async (acc) => {
-      const j = await api("/upload-file", { repo, number, dataUrl: a.d, name: a.name }).catch(() => null);
-      acc.push(j && j.md ? { md: j.md, refId: a.refId } : null);
-      return acc;
-    }), Promise.resolve([]))
-      .then((results) => {
-        // Replace inline [image N] references with their uploaded markdown
-        let full = textToSend;
-        const appended = [];
-        for (const r of results.filter(Boolean)) {
-          if (r.refId && r.md) full = full.split("[" + r.refId + "]").join(r.md);
-          else if (r.md) appended.push(r.md);
-        }
-        if (appended.length) full = [full].concat(appended).filter(Boolean).join("\n\n");
-        return api("/comment", { repo, number, body: full, ...(replyAgent ? { agent: replyAgent } : {}), ...(mo ? { model: mo } : {}) });
-      })
+    return api("/comment", { repo, number, body: full, ...(replyAgent ? { agent: replyAgent } : {}), ...(mo ? { model: mo } : {}) })
       .then(() => {
-        setReply(""); setAtts([]);
-        if (taRef.current) taRef.current.style.height = "auto";
+        setReply("");
         toast(running ? "Queued — the agent will pick it up when the run finishes" : "Sent");
         setTimeout(() => { setPendingComments((ps) => ps.filter((p) => p.id !== skelId)); loadThread(); }, 800);
       })
       .catch((e) => {
         if (e instanceof TypeError) {
-          // Network error mid-flight — queue the comment and clear the skeleton
-          if (onQueueComment) onQueueComment({ type: "comment", repo, number, body: textToSend, model: mo || null });
+          if (onQueueComment) onQueueComment({ type: "comment", repo, number, body: full, model: mo || null });
           toast("Network error — comment queued offline");
         } else {
           toast((e && e.message) || "Couldn’t send", "error");
@@ -209,34 +183,6 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
   function editComment(id, body) {
     return api("/comment-edit", { repo, number, commentId: id, body })
       .then(() => { toast("Comment updated"); setTimeout(loadThread, 400); });
-  }
-  function pickFiles(e) { const fs = e.target.files || []; for (let i = 0; i < fs.length; i++) readAttach(fs[i], (a) => setAtts((x) => x.concat(a))); e.target.value = ""; }
-  function onPaste(e) {
-    const items = (e.clipboardData || {}).items || [];
-    const files = [];
-    for (let i = 0; i < items.length; i++) if (items[i].kind === "file") { const f = items[i].getAsFile(); if (f) files.push(f); }
-    if (!files.length) return; // plain text paste — let the browser handle it
-    // We handle the file(s) ourselves; stop the browser ALSO pasting the clipboard's text/plain
-    // (e.g. Clop drops the local file PATH), which raced our token and corrupted the caret.
-    e.preventDefault();
-    for (const file of files) {
-      if (/^image\//.test(file.type)) {
-        // Inline image: insert a reference token at the caret so the image lands in context
-        const imgNum = atts.filter((a) => a.img).length + 1;
-        const refId = "image " + imgNum;
-        const ta = taRef.current;
-        if (ta) {
-          const start = ta.selectionStart || 0, end = ta.selectionEnd || 0;
-          const token = "[" + refId + "]";
-          setReply((prev) => prev.slice(0, start) + token + prev.slice(end));
-          // Restore caret after the inserted token
-          requestAnimationFrame(() => { if (ta) { const pos = start + token.length; ta.selectionStart = ta.selectionEnd = pos; ta.focus(); } });
-        }
-        readAttach(file, (a) => setAtts((x) => x.concat(Object.assign({}, a, { name: refId, refId }))));
-      } else {
-        readAttach(file, (a) => setAtts((x) => x.concat(a)));
-      }
-    }
   }
 
   // toolbar actions. Text labels show on desktop (and on a confirm-armed destructive button).
@@ -450,18 +396,17 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
     </div>
     ${timelineModel(issue).started ? html`<div class="dtl-timeline"><${WorkflowTimeline} i=${issue}/></div>` : null}
     <div class="dcompose">
-      <div class="composer">
-        ${atts.length ? html`<div class="composer-atts">${atts.map((a, idx) => html`<span class="att" key=${idx}>${a.img ? html`<img src=${a.d}/>` : html`<span><${Icon} name="paperclip" size=${12}/> ${a.name}</span>`}<button class="iconbtn" style="width:18px;height:18px;border:none" onClick=${() => setAtts((x) => x.filter((_, j) => j !== idx))}>×</button></span>`)}</div>` : null}
-        <${MarkdownArea} value=${reply} taRef=${taRef} placeholder=${running ? "Message the agent…  (queued until the run finishes)" : "Reply…  (Cmd+Enter sends, paste image to embed)"} onInput=${(v) => setReply(v)} onPaste=${onPaste} onKeyDown=${(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); send(); } }}/>
-        <div class="composer-row">
-          <label class="composer-icon tip" data-tip="Attach a file"><${Icon} name="paperclip" size=${18}/><input type="file" multiple style="display:none" onChange=${pickFiles}/></label>
-          <${Select} value=${replyAgent} options=${agentSelOpts} onChange=${setReplyAgent} placeholder="Just comment"/>
-          ${html`<${ModelSelect} providers=${providers} data=${data} value=${modelOverride} emit="object" onChange=${updateModelOverride} includeDefault=${true} defaultLabel="Default model" defaultHint=${defModelLabel} onSetUp=${onOpenModels} btnClass="iconbtn" trigger=${modelTrigger}/>`}
-          <span class="spacer"></span>
-          ${running ? html`<button class=${"btn tip" + (bz("hold") ? " busy" : "")} data-tip="Interrupt & steer — pauses the workflow at the next safe break and folds your message into the next step" disabled=${bz("hold")} onClick=${() => { const t = reply.trim(); act.hold(repo, number, t); if (t) setReply(""); }}>${bz("hold") ? html`<${Spinner} size=${15}/>` : html`<${Icon} name="stop" size=${15}/>`} Interrupt</button>` : null}
-          <button class=${"btn primary" + (busy ? " busy" : "")} disabled=${busy} title=${running ? "Send a nudge to the running agent (no interruption)" : "Send"} onClick=${send}>${busy ? html`<${Spinner} size=${15}/>` : running ? html`<${Icon} name="messages" size=${15}/>` : html`<${Icon} name="send" size=${15}/>`} ${running ? "Nudge" : "Send"}</button>
-        </div>
-      </div>
+      <${ChatComposer}
+        value=${reply} onInput=${setReply} taRef=${taRef}
+        uploadCtx=${{ repo, number }}
+        placeholder=${running ? "Message the agent…  (queued until the run finishes)" : "Reply…  (Cmd+Enter sends, paste image to embed)"}
+        busy=${busy}
+        sendLabel=${running ? "Nudge" : "Send"} sendIcon=${running ? "messages" : "send"}
+        onSend=${sendFull}
+        extras=${html`<${Select} value=${replyAgent} options=${agentSelOpts} onChange=${setReplyAgent} placeholder="Just comment"/>
+          <${ModelSelect} providers=${providers} data=${data} value=${modelOverride} emit="object" onChange=${updateModelOverride} includeDefault=${true} defaultLabel="Default model" defaultHint=${defModelLabel} onSetUp=${onOpenModels} btnClass="iconbtn" trigger=${modelTrigger}/>`}
+        actions=${running ? html`<button class=${"btn tip" + (bz("hold") ? " busy" : "")} data-tip="Interrupt & steer — pauses the workflow at the next safe break and folds your message into the next step" disabled=${bz("hold")} onClick=${() => { const t = reply.trim(); act.hold(repo, number, t); if (t) setReply(""); }}>${bz("hold") ? html`<${Spinner} size=${15}/>` : html`<${Icon} name="stop" size=${15}/>`} Interrupt</button>` : null}
+      />
     </div>
   </div>`;
 }

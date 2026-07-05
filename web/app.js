@@ -6,7 +6,7 @@ import { Toasts } from "./components/molecules/Toasts.js";
 import { Workspace } from "./layout.js";
 import { Board, TabBar, nestedChildKeys } from "./components/organisms/Board.js";
 import { Composer, Detail } from "./components/organisms/Detail.js";
-import { GithubTokensModal, ModelsModal, Settings } from "./components/organisms/Settings.js";
+import { SettingsShell } from "./components/organisms/Settings.js";
 import { AddRepo, Onboarding } from "./components/organisms/Onboarding.js";
 import { SecretBanner, StatusLine, TopBar } from "./components/organisms/TopBar.js";
 import { Usage } from "./components/organisms/Usage.js";
@@ -331,9 +331,7 @@ function App() {
       </div>
       ${!isDesktop && view === "board" && html`<${TabBar} issues=${shown} tab=${tab} setTab=${setTab}/>`}
       ${sheet === "composer" && html`<${Composer} repos=${repos} repo=${composerRepo} setRepo=${setComposerRepo} onClose=${() => setSheet(null)} onCreate=${createIssue} data=${data} onOpenModels=${() => setSheet("models")}/>`}
-      ${sheet === "settings" && html`<${Settings} data=${data} onClose=${() => setSheet(null)} reload=${load} openGithubTokens=${() => setSheet("github")} openModels=${() => setSheet("models")} openAgents=${() => setSheet("agents")} openWorkflows=${() => setSheet("workflows")}/>`}
-      ${sheet === "github" && html`<${GithubTokensModal} secretKeys=${data.secretKeys || []} github=${data.github} onClose=${() => setSheet("settings")} reload=${load}/>`}
-      ${sheet === "models" && html`<${ModelsModal} onClose=${() => setSheet("settings")} reload=${load}/>`}
+      ${(sheet === "settings" || sheet === "github" || sheet === "models") && html`<${SettingsShell} data=${data} section=${sheet === "github" ? "github" : sheet === "models" ? "models" : "general"} onClose=${() => setSheet(null)} reload=${load} openAgents=${() => setSheet("agents")} openWorkflows=${() => setSheet("workflows")}/>`}
       ${sheet === "addrepo" && html`<${AddRepo} repos=${repos} onClose=${() => setSheet(null)} reload=${load}/>`}
       ${sheet === "usage" && html`<${Usage} onClose=${() => setSheet(null)} onOpenIssue=${openIssue}/>`}
       ${sheet === "agents" && html`<${AgentEditor} data=${data} onClose=${() => setSheet(null)} onSkills=${() => setSheet("skills")} onOpenModels=${() => setSheet("models")} reload=${load}/>`}
@@ -346,4 +344,29 @@ function App() {
     </div>`;
 }
 
-export function mount(root) { root.removeAttribute("aria-busy"); render(html`<${App}/>`, root); }
+// Full-page image viewer (#104): clicking ANY image inside a rendered message opens a plain
+// full-viewport overlay (no modal chrome, no size cutoff). Click / Esc closes. One delegated
+// listener covers every chat, comment, and markdown surface — including future ones.
+function openImageOverlay(src) {
+  const ov = document.createElement("div");
+  ov.className = "imgoverlay";
+  const img = document.createElement("img");
+  img.src = src;
+  ov.appendChild(img);
+  const close = () => { ov.remove(); document.removeEventListener("keydown", onKey); };
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  ov.addEventListener("click", close);
+  document.addEventListener("keydown", onKey);
+  document.body.appendChild(ov);
+}
+function installImageViewer() {
+  document.addEventListener("click", (e) => {
+    const img = e.target && e.target.closest && e.target.closest(".b img, .obub-txt img, .cmt-in img, .cmt__b img, .cmt .b img, .mdarea-preview img");
+    if (!img || !img.src) return;
+    if (img.closest("a")) return; // linked images keep their link behaviour
+    e.preventDefault(); e.stopPropagation();
+    openImageOverlay(img.src);
+  }, true);
+}
+
+export function mount(root) { root.removeAttribute("aria-busy"); installImageViewer(); render(html`<${App}/>`, root); }

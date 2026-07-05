@@ -40,7 +40,7 @@ import { getSecretSetting, setSecretSetting, getUserSecretStatus } from "./store
 import { masterKeyConfigured } from "./crypto.js";
 import { ghBotToken, ghUserToken, claudeToken, anthropicApiKey } from "./creds.js";
 import { providerAuth } from "./agents/provider-auth.js";
-import { discoverProviderModels } from "./db/discover.js";
+import { discoverProviderModels, ensureClaudeProvider } from "./db/discover.js";
 import { testClaudeAuth } from "./agents/roleAgent.js";
 import { ALL_ROLES } from "./agents/roles.js";
 import { resolveWorkflow } from "./workflow.js";
@@ -499,7 +499,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               github: { connected: Boolean(githubOAuthToken()), user: githubIdentity(), clientIdSet: Boolean(githubOAuthClientId()) },
               ops: opsSettingsValues(),
               opsMeta: OPS_SETTINGS,
-              providers: annotateProviders(getProviders()),
+              providers: (ensureClaudeProvider(Boolean(claudeToken() || anthropicApiKey()), getProviders, setProviders), annotateProviders(getProviders())),
               roleModels: getRoleModels(),
               globalModel: getGlobalModel(),
               agentDefs: listAgentDefs(),
@@ -593,6 +593,8 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
 
       // Models panel: providers, per-role assignments, fallback chain, and quick presets.
       if (url === "/models") {
+        // Claude gets a real, editable provider row (full anthropic catalog) once a credential exists.
+        ensureClaudeProvider(Boolean(claudeToken() || anthropicApiKey()), getProviders, setProviders);
         res.writeHead(200, { "content-type": "application/json" }).end(
           JSON.stringify({
             providers: annotateProviders(getProviders()),

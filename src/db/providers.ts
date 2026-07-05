@@ -26,6 +26,8 @@ export interface Provider {
   piKey: string;
   apiKey: string;
   models: string[];
+  /** ACTIVE subset of `models` offered in pickers (Settings checkmark list). Empty/absent = all. */
+  activeModels?: string[];
   /** Per-provider High/Medium/Low model slots the per-agent picker offers. */
   tiers?: { high?: TierSlot; medium?: TierSlot; low?: TierSlot };
   /** Legacy fields kept for backward-compat with old rows; not user-facing anymore. */

@@ -62,7 +62,8 @@ export function toModelRef(v) {
 export function providerModelOptions(providers, { short = true } = {}) {
   return (providers || [])
     .filter((p) => p.auth === "apiKey" || p.auth === "subscription")
-    .flatMap((p) => (p.models || []).map((m) => ({
+    // The Settings checkmark list narrows a provider's catalog to an ACTIVE subset; empty = all.
+    .flatMap((p) => ((p.activeModels && p.activeModels.length ? p.activeModels : p.models) || []).map((m) => ({
       value: p.id + "/" + m,
       label: short ? m : ((p.name || "") + " · " + m),
       logo: p.name,

@@ -6,6 +6,7 @@ import { html, useState, useEffect, useRef } from "/web/vendor/standalone.mjs";
 import { Avatar } from "../atoms/Avatar.js";
 import { Icon } from "../atoms/Icon.js";
 import { Spinner } from "../atoms/Spinner.js";
+import { ChatComposer } from "../molecules/ChatComposer.js";
 import { api, getJSON } from "../../lib/api.js";
 import { md } from "../../lib/markdown.js";
 import { toast } from "../../lib/toast.js";
@@ -60,7 +61,7 @@ function Bubble({ m, repo, reload, onOpenIssue }) {
   return html`<div class=${"obub " + (isUser ? "obub-user" : "obub-orch")}>
     ${isUser ? null : html`<span class="obub-av"><${Avatar} role="auditor" size=${26} crop="head"/></span>`}
     <div class="obub-body">
-      <div class="obub-txt" dangerouslySetInnerHTML=${isUser ? undefined : { __html: md(m.text || "") }}>${isUser ? m.text : null}</div>
+      <div class="obub-txt" dangerouslySetInnerHTML=${{ __html: md(m.text || "") }}></div>
       ${proposal ? html`<${ProposalCard} repo=${repo} proposal=${proposal} reload=${reload} onOpenIssue=${onOpenIssue}/>` : null}
     </div>
   </div>`;
@@ -84,14 +85,13 @@ export function Orchestrator({ repos, repoFilter, setRepoFilter, reload, onOpenI
   }, [repo]);
   useEffect(() => { const el = scrollRef.current; if (el) el.scrollTop = el.scrollHeight; }, [thread, busy]);
 
-  function send() {
-    const text = draft.trim();
-    if (!text || busy || !repo) return;
+  // The shared ChatComposer handled uploads and folded attachment markdown into `full`.
+  function sendFull(full) {
+    if (!full.trim() || busy || !repo) return Promise.resolve();
     setDraft("");
-    if (taRef.current) taRef.current.style.height = "auto";
-    setThread((t) => t.concat({ id: "tmp-" + Date.now(), role: "user", text }));
+    setThread((t) => t.concat({ id: "tmp-" + Date.now(), role: "user", text: full }));
     setBusy(true);
-    api("/orch-chat", { repo, body: text })
+    return api("/orch-chat", { repo, body: full })
       .then((r) => setThread(r.thread || []))
       .catch((e) => { toast((e && e.message) || "Orchestrator failed", "error"); setThread((t) => t.concat({ id: "err" + Date.now(), role: "orchestrator", text: "⚠ " + ((e && e.message) || "Something went wrong.") })); })
       .finally(() => setBusy(false));
@@ -100,7 +100,6 @@ export function Orchestrator({ repos, repoFilter, setRepoFilter, reload, onOpenI
     if (!repo || !window.confirm("Start a new conversation? This clears the current chat.")) return;
     api("/orch-clear", { repo }).then(() => setThread([])).catch(() => toast("Couldn't clear", "error"));
   }
-  function onKey(e) { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); } }
 
   // Live run-state for this repo — so the chat reflects where things are (a handoff's issues, once
   // started, and anything needing you), refreshed by the dashboard poll.
@@ -133,9 +132,14 @@ export function Orchestrator({ repos, repoFilter, setRepoFilter, reload, onOpenI
           </div>`}
       ${busy ? html`<div class="obub obub-orch"><span class="obub-av"><${Avatar} role="auditor" size=${26} crop="head"/></span><div class="obub-body"><div class="obub-txt obub-think"><${Spinner} size=${13}/> thinking…</div></div></div>` : null}
     </div>
-    <div class="orch-compose">
-      <textarea ref=${taRef} placeholder=${"Message the " + repoLabel + " orchestrator…  (⌘/Ctrl+Enter to send)"} value=${draft} onInput=${(e) => { setDraft(e.target.value); e.target.style.height = "auto"; e.target.style.height = Math.min(160, e.target.scrollHeight) + "px"; }} onKeyDown=${onKey} rows=${1}></textarea>
-      <button class="btn primary orch-send" disabled=${busy || !draft.trim()} onClick=${send}>${busy ? html`<${Spinner} size=${15}/>` : html`<${Icon} name="send" size=${15}/>`}</button>
+    <div class="orch-compose orch-compose--rich">
+      <${ChatComposer}
+        value=${draft} onInput=${setDraft} taRef=${taRef}
+        uploadCtx=${{ repo, number: 0 }}
+        placeholder=${"Message the " + repoLabel + " orchestrator…  (⌘/Ctrl+Enter sends, paste image to embed)"}
+        busy=${busy}
+        onSend=${sendFull}
+      />
     </div>
   </div>`;
 }

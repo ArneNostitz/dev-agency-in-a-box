@@ -484,6 +484,32 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .wfctl--running{align-items:center;gap:7px;padding:0 12px;height:38px;color:var(--ink-2);background:var(--surface-2);cursor:default}
 .wfctl__name{font-weight:500;color:var(--ink-1);white-space:nowrap}
 .dtoolbar__sep{width:1px;align-self:stretch;background:var(--line);margin:4px 4px}
+/* Settings shell (#139): full overlay, left nav / right detail, auto-save (no Save button). */
+.setshell{position:fixed;inset:0;z-index:600;background:rgba(15,18,25,.45);display:flex;align-items:center;justify-content:center;padding:4vh 3vw}
+.setshell__panel{position:relative;display:flex;width:min(980px,100%);height:min(760px,100%);background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow-lg,0 18px 60px rgba(0,0,0,.25));overflow:hidden}
+.setshell__x{position:absolute;top:10px;right:10px;z-index:2}
+.setshell__nav{display:flex;flex-direction:column;gap:2px;width:218px;flex:none;padding:16px 10px 12px;background:var(--surface-2);border-right:1px solid var(--line)}
+.setshell__title{display:flex;align-items:center;gap:7px;font-weight:600;padding:2px 8px 12px;color:var(--ink-1)}
+.setshell__navitem{display:flex;align-items:center;gap:8px;padding:8px 10px;border:none;background:none;border-radius:8px;color:var(--ink-2);font-size:13.5px;cursor:pointer;text-align:left}
+.setshell__navitem:hover{background:var(--surface);color:var(--ink-1)}
+.setshell__navitem.on{background:var(--surface);color:var(--ink-1);font-weight:600;box-shadow:var(--shadow-xs)}
+.setshell__navgo{margin-left:auto;opacity:.5}
+.setshell__navsep{height:1px;background:var(--line);margin:8px 6px}
+.setshell__hint{font-size:11px;color:var(--ink-3);padding:8px 10px}
+.setshell__body{flex:1;min-width:0;overflow:auto;padding:22px 26px 30px}
+@media (max-width:760px){.setshell{padding:0}.setshell__panel{flex-direction:column;height:100%;border-radius:0}.setshell__nav{width:100%;flex-direction:row;flex-wrap:wrap;padding:12px 44px 8px 10px;border-right:none;border-bottom:1px solid var(--line)}.setshell__title{display:none}.setshell__hint{display:none}.setshell__navsep{display:none}}
+/* Provider cards + model checkmark list */
+.provcard{border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--surface);margin-bottom:8px}
+.provcard__h{display:flex;align-items:center;gap:8px;width:100%;padding:10px 12px;border:none;background:none;cursor:pointer;font-size:13.5px;color:var(--ink-1)}
+.provcard__body{padding:2px 12px 14px;border-top:1px solid var(--line)}
+.provmodels{display:flex;flex-direction:column;gap:2px;max-height:260px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:6px 8px;background:var(--surface-2)}
+.provmodel{display:flex;align-items:center;gap:8px;margin:0;padding:3px 2px;border-radius:6px}
+.provmodel:hover{background:var(--surface)}
+.provmodel.off .provmodel__id{color:var(--ink-3)}
+.provmodel__id{font-family:var(--mono,ui-monospace,monospace);font-size:12px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.provmodel__del{width:22px;height:22px;border:none;opacity:0;flex:none}
+.provmodel:hover .provmodel__del{opacity:.7}
+.rot180{transform:rotate(180deg)}
 .dtoolbar{flex:none;display:flex;align-items:center;gap:6px;padding:9px 16px;background:var(--surface);border-bottom:1px solid var(--line);flex-wrap:nowrap;position:relative;z-index:20}
 
 .dtoolbar .tbtn{width:auto;min-width:38px;height:38px;padding:0 12px;gap:6px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--surface)}
@@ -550,7 +576,12 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .cmt-in table,.cmt__b table,.cmt .b table{display:table;width:100%;max-width:100%;table-layout:fixed;border-collapse:collapse;font-size:12.5px;margin:.4em 0}
 .cmt-in th,.cmt-in td,.cmt__b th,.cmt__b td,.cmt .b th,.cmt .b td{border:1px solid var(--line);padding:4px 8px;text-align:left;white-space:normal;overflow-wrap:anywhere;word-break:break-word;vertical-align:top}
 .cmt-in a,.cmt__b a,.cmt .b a{overflow-wrap:anywhere}
-.b img,.obub-txt img,.cmt-in img,.cmt__b img,.cmt .b img{max-width:100%;height:auto;border-radius:8px;display:block}
+/* Images in rendered messages SCALE to the available space (never full-size inline) and open a
+   full-page overlay on click — no modal cropping (see the delegated viewer in app.js). */
+.b img,.obub-txt img,.cmt-in img,.cmt__b img,.cmt .b img{max-width:100%;max-height:360px;width:auto;height:auto;object-fit:contain;border-radius:8px;display:block;cursor:zoom-in}
+.imgoverlay{position:fixed;inset:0;z-index:9999;background:rgba(8,10,16,.93);display:flex;align-items:center;justify-content:center;cursor:zoom-out;animation:fadein .12s ease}
+.imgoverlay img{max-width:98vw;max-height:98vh;width:auto;height:auto;object-fit:contain;border-radius:4px;box-shadow:0 8px 60px rgba(0,0,0,.5)}
+@keyframes fadein{from{opacity:0}to{opacity:1}}
 
 .dstream,.stream{background:var(--term-bg);color:var(--term-ink);border-radius:var(--radius);padding:11px 13px;font:12px/1.55 var(--font-mono);white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;max-width:100%;overflow-x:hidden;display:flex;flex-direction:column;gap:2px}
 .stream__h{color:var(--term-muted);margin-bottom:4px;font-size:11px;text-transform:uppercase;letter-spacing:.04em}
