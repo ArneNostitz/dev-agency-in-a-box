@@ -471,10 +471,16 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .dh__num{font-family:var(--font-mono)}
 .dclose{margin-left:auto}
 /* ── Workflow control: play + select joined (left of the toolbar) ── */
-.wfctl{display:inline-flex;align-items:stretch;flex:0 0 auto;border:1px solid var(--line);border-radius:var(--radius-sm);overflow:hidden;background:var(--surface)}
-.wfctl__play{display:inline-flex;align-items:center;justify-content:center;width:34px;border:none;border-right:1px solid var(--line);background:var(--accent);color:#fff;cursor:pointer}
+.wfctl{display:inline-flex;align-items:stretch;flex:0 1 auto;min-width:0;border:1px solid var(--line);border-radius:var(--radius-sm);overflow:hidden;background:var(--surface)}
+.wfctl__play{display:inline-flex;align-items:center;justify-content:center;width:36px;border:none;border-left:1px solid var(--line);background:var(--accent);color:#fff;cursor:pointer;flex:none}
 .wfctl__play:hover{background:var(--accent-hover)}
 .wfctl .sel,.wfctl__sel{border:none!important;border-radius:0!important;background:transparent!important;height:38px}
+.wfctl .sel{min-width:0}
+.wfctl__div{width:1px;background:var(--line);flex:none}
+.wfctl__sel:hover{background:var(--surface-2)!important}
+.wfctl__route .sel-cur{max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.wfctl__model .sel-cur{max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2)}
+@media (max-width:900px){.wfctl__route .sel-cur{max-width:110px}.wfctl__model .sel-cur{max-width:84px}}
 .wfctl--running{align-items:center;gap:7px;padding:0 12px;height:38px;color:var(--ink-2);background:var(--surface-2);cursor:default}
 .wfctl__name{font-weight:500;color:var(--ink-1);white-space:nowrap}
 .dtoolbar__sep{width:1px;align-self:stretch;background:var(--line);margin:4px 4px}

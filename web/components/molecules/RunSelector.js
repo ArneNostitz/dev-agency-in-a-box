@@ -7,7 +7,6 @@
 import { html, useState, useEffect } from "/web/vendor/standalone.mjs";
 import { Select } from "../atoms/Select.js";
 import { Icon } from "../atoms/Icon.js";
-import { ProviderLogo } from "../atoms/ProviderLogo.js";
 import { ModelSelect } from "./ModelSelect.js";
 import { api } from "../../lib/api.js";
 import { toast } from "../../lib/toast.js";
@@ -44,18 +43,18 @@ export function RunSelector({ issue, data, act, running, modelOverride, onModelC
   };
 
   const defModelLabel = defaultModelLabel(data);
-  const modelTrigger = (cur) => (cur && cur.logo)
-    ? html`<span class="tip" data-tip=${cur.label} style="display:inline-flex"><${ProviderLogo} name=${cur.logo} size=${16}/></span>`
-    : html`<span class="tip" data-tip=${"Default model · " + defModelLabel} style="display:inline-flex"><${Icon} name="sparkles" size=${16}/></span>`;
 
   if (running) {
     return html`<span class="wfctl wfctl--running tip" data-tip="Running — stop the issue to switch route or model">
       <${Icon} name="loader" size=${14} cls="spin"/> <span class="wfctl__name">${routeName}</span>
     </span>`;
   }
+  // One enclosure, three flat segments: [route field ▾] [model field ▾] [▶]. Both dropdowns are
+  // plain fields (label + chevron, model name visible) — no nested icon-buttons.
   return html`<span class="wfctl">
-    <${Select} value=${sel} options=${routeOpts} onChange=${pinRoute} menuAlign="left" btnClass="wfctl__sel" placeholder="Default"/>
-    <${ModelSelect} providers=${data && data.providers} data=${data} value=${modelOverride} emit="object" onChange=${onModelChange} includeDefault=${true} defaultLabel="Default model" defaultHint=${defModelLabel} onSetUp=${onOpenModels} menuAlign="left" btnClass="iconbtn" trigger=${modelTrigger}/>
-    <button class="wfctl__play tip" data-tip=${"Run " + (sel ? (sel.indexOf("wf:") === 0 ? "this workflow" : "this agent") : "the default workflow") + " on this issue"} onClick=${play}><${Icon} name="play" size=${15}/></button>
+    <${Select} value=${sel} options=${routeOpts} onChange=${pinRoute} menuAlign="left" btnClass="wfctl__sel wfctl__route" placeholder="Default"/>
+    <span class="wfctl__div"></span>
+    <${ModelSelect} providers=${data && data.providers} data=${data} value=${modelOverride} emit="object" onChange=${onModelChange} includeDefault=${true} defaultLabel="Default model" defaultHint=${defModelLabel} onSetUp=${onOpenModels} menuAlign="left" btnClass="wfctl__sel wfctl__model"/>
+    <button class="wfctl__play tip" data-tip=${"Run " + (sel ? (sel.indexOf("wf:") === 0 ? "this workflow" : "this agent") : "the default workflow") + " on this issue" + (modelOverride ? "" : " · default model")} onClick=${play}><${Icon} name="play" size=${15}/></button>
   </span>`;
 }
