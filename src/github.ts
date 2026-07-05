@@ -233,6 +233,8 @@ export async function listRecentThreads(repo: string, limit = 60): Promise<Recen
       .filter((i) => !i.pull_request)
       .map((i) => ({ number: i.number as number, title: (i.title as string) ?? "", body: (i.body as string) ?? "", state: (i.state as string) ?? "open", comments: (i.comments as number) ?? 0, updatedAt: (i.updated_at as string) ?? "" }));
   } else {
+    // `gh issue list` never returns PRs (the CLI separates issues from PRs), so this fallback
+    // needs no pull_request filter of its own.
     const out = await gh([
       "issue", "list", "--repo", repo, "--state", "all",
       "--json", "number,title,body,state,comments,updatedAt", "--limit", String(limit),
@@ -639,14 +641,18 @@ export async function closeIssue(repo: string, issue: number, comment?: string, 
   await gh(args).catch(() => {});
 }
 
-/** Fetch a single issue (any state) as an Issue, or null if it can't be read. */
+/** Fetch a single issue (any state) as an Issue, or null if it can't be read — or if the number
+ *  is actually a PR. `gh issue view` resolves PR numbers too (GitHub's API treats PRs as issues),
+ *  and this is the funnel every force* dispatch reads through, so rejecting PRs here keeps
+ *  Play/Resume/Approve from ever running the pipeline on a PR-numbered card (#150). */
 export async function getIssue(repo: string, number: number): Promise<Issue | null> {
   const out = await gh([
-    "issue", "view", String(number), "--repo", repo, "--json", "number,title,body",
+    "issue", "view", String(number), "--repo", repo, "--json", "number,title,body,url",
   ]).catch(() => "");
   if (!out) return null;
   try {
-    const i = JSON.parse(out) as { number: number; title: string; body: string | null };
+    const i = JSON.parse(out) as { number: number; title: string; body: string | null; url?: string };
+    if (typeof i.url === "string" && i.url.includes("/pull/")) return null; // a PR, not an issue
     return { number: i.number, title: i.title, body: i.body ?? "" };
   } catch {
     return null;

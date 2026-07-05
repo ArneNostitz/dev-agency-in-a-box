@@ -19,6 +19,7 @@ import {
   archiveIssue,
   unarchiveIssue,
   getSetting,
+  setSetting,
   listLocalOpenIssues,
   getLocalIssue,
   upsertLocalIssue,
@@ -131,6 +132,67 @@ export class LocalTracker implements Tracker {
     const r = await createIssue(repo, title, body);
     upsertLocalIssue({ repo, number: r.number, title, body, state: "planned", origin: "dashboard" });
     return { number: r.number };
+  }
+}
+
+/** The webhook payload fields the inbound sync consumes (subset of GitHub's issues/issue_comment events). */
+export interface InboundEvent {
+  action?: string;
+  issue?: { number?: number; title?: string; body?: string; state_reason?: string | null; pull_request?: unknown };
+  comment?: { id?: number; body?: string; created_at?: string; user?: { login?: string } };
+}
+
+/**
+ * Inbound sync for one GitHub webhook delivery (issue_comment / issues): fold GitHub activity into
+ * the DB so the dashboard's local source of truth stays current. No-op for other events.
+ *
+ * GitHub's API treats every PR as an issue: `issues` and `issue_comment` events fire for PRs too,
+ * carrying `issue.pull_request`. Those deliveries must NEVER adopt a card — unguarded, the agency
+ * ingested its own epic full-build PR as an issue and ran the planner on it (#150).
+ */
+export function syncInEvent(repo: string, event: string, payload: InboundEvent): void {
+  if (payload.issue?.pull_request) return; // a PR, not an issue — never adopt into the board
+  const action = payload.action ?? "";
+  // Comments always fold into the DB conversation cache (dashboard = source of truth), so a
+  // comment made/edited/deleted directly on GitHub shows up in the dashboard in real time.
+  if (event === "issue_comment" && payload.issue?.number && payload.comment?.id) {
+    if (action === "created") {
+      const isAgency = (payload.comment.body ?? "").includes(AGENCY_MARKER);
+      syncInComment(repo, payload.issue.number, payload.comment.id, payload.comment.user?.login ?? "user", payload.comment.body ?? "", isAgency, payload.comment.created_at ?? "");
+    } else if (action === "edited") {
+      syncInCommentEdit(payload.comment.id, payload.comment.body ?? "");
+    } else if (action === "deleted") {
+      syncInCommentDelete(payload.comment.id);
+    }
+  } else if (event === "issues" && payload.issue?.number) {
+    const n = payload.issue.number;
+    if (action === "closed") {
+      // Closed on GitHub directly → done locally too ("not planned" close also archives).
+      syncInIssueState(repo, n, "closed", { stateReason: payload.issue.state_reason ?? "", title: payload.issue.title ?? "" });
+    } else if (action === "reopened") {
+      syncInIssueState(repo, n, "reopened", { title: payload.issue.title ?? "" });
+    } else if (action === "deleted" || action === "transferred") {
+      syncInIssueState(repo, n, "deleted");
+    } else {
+      // opened/edited: keep the board card's title and the thread head cache fresh.
+      if (action === "edited") {
+        if (payload.issue.title) recordIssueState(repo, n, { title: payload.issue.title });
+        const key = `head:${repo}#${n}`;
+        const cur = getSetting(key);
+        if (cur) {
+          try {
+            const h = JSON.parse(cur) as Record<string, unknown>;
+            h.title = payload.issue.title ?? h.title;
+            h.body = payload.issue.body ?? h.body;
+            setSetting(key, JSON.stringify(h));
+          } catch { /* head cache stays stale; /refresh-issue repairs it */ }
+        }
+      }
+      // Issue body only adopts into the DB when DB-authoritative tracking is enabled.
+      if (trackerMode() === "local" && (action === "opened" || action === "edited")) {
+        syncInIssue(repo, n, payload.issue.title ?? "", payload.issue.body ?? "");
+      }
+    }
   }
 }
 

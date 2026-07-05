@@ -62,7 +62,7 @@ import { ensureRepoAccess } from "./commands.js";
 import { previewUrlFor, runChecksNow } from "./preview.js";
 import { putAttachment, getAttachment } from "./db/attachments.js";
 import { dispatch } from "./pool.js";
-import { trackerMode, syncInIssue, syncInComment, syncInIssueState, syncInCommentEdit, syncInCommentDelete } from "./tracker.js";
+import { syncInEvent } from "./tracker.js";
 import { ensureRepoIndex } from "./gitnexus.js";
 
 type ProcessAll = (cfg: Config) => Promise<number>;
@@ -1786,7 +1786,10 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         action?: string;
         pull_request?: { merged?: boolean; head?: { ref?: string } };
         repository?: { full_name?: string };
-        issue?: { number?: number; title?: string; body?: string; state_reason?: string | null };
+        // issue.pull_request is set when the "issue" is actually a PR (GitHub's API treats PRs as
+        // issues; `issues` and `issue_comment` events fire for PRs too). Guarded below — a PR must
+        // never be adopted as a board card (#150).
+        issue?: { number?: number; title?: string; body?: string; state_reason?: string | null; pull_request?: unknown };
         comment?: { id?: number; body?: string; created_at?: string; user?: { login?: string } };
         sender?: { type?: string };
       } = {};
@@ -1801,61 +1804,26 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
 
       // Inbound sync (Phase 4): when DB-authoritative tracking is on, fold GitHub activity into the
       // DB in real time so the dashboard's local source of truth stays current. No-op in github mode.
+      // PR-flagged deliveries (issue.pull_request set) are dropped inside syncInEvent (#150).
       const syncRepo = payload.repository?.full_name ?? "";
       if (syncRepo) {
         try {
-          // Comments always fold into the DB conversation cache (dashboard = source of truth), so a
-          // comment made/edited/deleted directly on GitHub shows up in the dashboard in real time.
-          if (event === "issue_comment" && payload.issue?.number && payload.comment?.id) {
-            if (action === "created") {
-              const isAgency = (payload.comment.body ?? "").includes("<!-- dev-agency -->");
-              syncInComment(syncRepo, payload.issue.number, payload.comment.id, payload.comment.user?.login ?? "user", payload.comment.body ?? "", isAgency, payload.comment.created_at ?? "");
-            } else if (action === "edited") {
-              syncInCommentEdit(payload.comment.id, payload.comment.body ?? "");
-            } else if (action === "deleted") {
-              syncInCommentDelete(payload.comment.id);
-            }
-          } else if (event === "issues" && payload.issue?.number) {
-            const n = payload.issue.number;
-            if (action === "closed") {
-              // Closed on GitHub directly → done locally too ("not planned" close also archives).
-              syncInIssueState(syncRepo, n, "closed", { stateReason: payload.issue.state_reason ?? "", title: payload.issue.title ?? "" });
-            } else if (action === "reopened") {
-              syncInIssueState(syncRepo, n, "reopened", { title: payload.issue.title ?? "" });
-            } else if (action === "deleted" || action === "transferred") {
-              syncInIssueState(syncRepo, n, "deleted");
-            } else {
-              // opened/edited: keep the board card's title and the thread head cache fresh.
-              if (action === "edited") {
-                if (payload.issue.title) recordIssueState(syncRepo, n, { title: payload.issue.title });
-                const key = `head:${syncRepo}#${n}`;
-                const cur = getSetting(key);
-                if (cur) {
-                  try {
-                    const h = JSON.parse(cur) as Record<string, unknown>;
-                    h.title = payload.issue.title ?? h.title;
-                    h.body = payload.issue.body ?? h.body;
-                    setSetting(key, JSON.stringify(h));
-                  } catch { /* head cache stays stale; /refresh-issue repairs it */ }
-                }
-              }
-              // Issue body only adopts into the DB when DB-authoritative tracking is enabled.
-              if (trackerMode() === "local" && (action === "opened" || action === "edited")) {
-                syncInIssue(syncRepo, n, payload.issue.title ?? "", payload.issue.body ?? "");
-              }
-            }
-          }
+          syncInEvent(syncRepo, event, payload);
         } catch { /* best effort */ }
       }
 
+      // GitHub fires `issues`/`issue_comment` events for PRs too (issue.pull_request set). A PR
+      // must never be routed through the issue paths (#150). PR comments still get a scan kick —
+      // Pass 2 (open agency PRs) is what reacts to them, and the scan itself never adopts PRs.
+      const prThread = Boolean(payload.issue?.pull_request);
       if (event === "ping") {
         console.log("[agency] webhook ping ok");
-      } else if (event === "issues" && RELEVANT_ACTIONS.has(action)) {
+      } else if (event === "issues" && RELEVANT_ACTIONS.has(action) && !prThread) {
         void trigger(`issues.${action}`);
       } else if (event === "issue_comment" && action === "created") {
         // A new comment may be an answer/approval to resume a paused issue. (The agency's own
         // comments are ignored downstream — they don't count as a human reply.)
-        void trigger("issue_comment");
+        void trigger(prThread ? "issue_comment(pr)" : "issue_comment");
       } else if ((event === "check_suite" || event === "workflow_run") && action === "completed") {
         // CI finished — react instantly to fix failures.
         void trigger(`${event}.completed`);

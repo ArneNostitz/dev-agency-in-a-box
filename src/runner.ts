@@ -59,6 +59,7 @@ import {
   recordIssueStatus,
   getIssueStatus,
   recordPr,
+  isArchived,
   getIssueRole,
   getAutofixCount,
   incAutofix,
@@ -1052,8 +1053,20 @@ async function scanRepo(cfg: Config, repo: string): Promise<void> {
     }
   }
 
+  const agencyPrs = await listAgencyPrs(repo);
+
+  // Sweep mis-adopted PR cards: issue and PR numbers share one sequence, so an issues row keyed
+  // by a PR number is always a PR that leaked onto the board (e.g. the agency's own epic PR
+  // ingested via an unguarded webhook event, #150). Archive it — it's not workable as an issue.
+  for (const pr of agencyPrs) {
+    if (getIssueRow(repo, pr.number) && !isArchived(repo, pr.number)) {
+      archiveIssue(repo, pr.number);
+      console.log(`[agency] archived board card ${repo} #${pr.number} — it's a PR, not an issue`);
+    }
+  }
+
   // Pass 2 — open agency PRs: comments on the PR's own thread, then auto-heal.
-  for (const pr of await listAgencyPrs(repo)) {
+  for (const pr of agencyPrs) {
     if (paused) break; // usage-limit wall — skip PR agent work until reset
     const sig = await threadSignals(repo, pr.number);
     const newComment = sig.lastIsHuman && sig.lastCommentId > getThreadCursor(repo, pr.number);

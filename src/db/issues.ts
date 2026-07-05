@@ -177,6 +177,17 @@ export function recentIssues(limit = 40): IssueRow[] {
   }
 }
 
+/** True when the issue is hidden from the board (archived table). */
+export function isArchived(repo: string, number: number): boolean {
+  const d = getDb();
+  if (!d) return false;
+  try {
+    return Boolean(d.prepare(`SELECT 1 FROM archived WHERE repo = ? AND number = ?`).get(repo, number));
+  } catch {
+    return false;
+  }
+}
+
 export function archiveIssue(repo: string, number: number): void {
   const d = getDb();
   if (!d) return;
