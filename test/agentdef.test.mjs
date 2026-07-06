@@ -9,6 +9,38 @@ process.env.MASTER_KEY = "0123456789abcdef0123456789abcdef0123456789abcdef012345
 process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), "dadb-agentdef-")), "test.db");
 const s = await import("../dist/store.js");
 
+test("seedBaseAgents registers all 6 workflow-referenceable roles as builtin, editable rows", () => {
+  // Fresh install bug (#152-adjacent): only spec-creator/grill-me were ever seeded, so "developer"
+  // (used by the default Full-build workflow) had no agent_def row at all — invisible on the Agents
+  // page, and any workflow step referencing an unrecognized/deleted agent silently misrouted instead
+  // of failing clearly.
+  s.seedBaseAgents();
+  const names = ["planner", "architect", "developer", "reviewer", "tester", "decomposer"];
+  const handles = { planner: "@plan", architect: "@arch", developer: "@dev", reviewer: "@review", tester: "@test", decomposer: "@split" };
+  for (const name of names) {
+    const d = s.getAgentDef(name);
+    assert.ok(d, `${name} seeded`);
+    assert.equal(d.handle, handles[name]);
+    assert.equal(d.builtin, true, `${name} is builtin (protected from delete)`);
+    assert.ok(d.defaultTask.length > 0, `${name} has a default task`);
+  }
+  assert.equal(s.getAgentDef("developer").canWriteCode, true);
+  assert.equal(s.getAgentDef("planner").canWriteCode, false);
+});
+
+test("seedBaseAgents is idempotent — a user's edit to a base role survives re-seeding", () => {
+  s.seedBaseAgents();
+  s.upsertAgentDef({ name: "developer", handle: "@dev", canWriteCode: true, defaultTask: "Custom instructions the user wrote." });
+  s.seedBaseAgents(); // simulates a restart
+  assert.equal(s.getAgentDef("developer").defaultTask, "Custom instructions the user wrote.", "re-seed must not clobber an existing row");
+});
+
+test("deleteAgentDef refuses to delete a builtin base role", () => {
+  s.seedBaseAgents();
+  s.deleteAgentDef("developer");
+  assert.ok(s.getAgentDef("developer"), "builtin row survives a delete attempt");
+});
+
 test("seedChatAgents registers spec-creator + grill-me as chat agents", () => {
   s.seedChatAgents();
   const spec = s.getAgentDef("spec-creator");

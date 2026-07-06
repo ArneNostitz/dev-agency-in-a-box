@@ -6,8 +6,13 @@ import { cap, shortModel } from "./format.js";
 // Single-agent pins (a workflow is the multi-step path; these run ONE specialist). All single
 // agents — built-in roles AND custom agents — carry the same "single" badge; the old chat/code
 // distinction was dropped (it confused more than it helped).
+// NOTE: this list must stay in sync with the 6 base roles seedBaseAgents() seeds server-side
+// (src/db/agent_def.ts) — @dev/Developer was missing here entirely (#152-adjacent bug report:
+// "the developer agent is missing"), so any picker built from this list (reply composer, new-issue
+// agent picker) had no way to select Developer by name, even though it's the most-used role.
 const ROLE_PINS = [
   { value: "@plan", label: "Plan", avatar: "planner", hint: "single", hintCls: "b-role" },
+  { value: "@dev", label: "Developer", avatar: "developer", hint: "single", hintCls: "b-role" },
   { value: "@split", label: "Split", avatar: "auditor", hint: "single", hintCls: "b-role" },
   { value: "@arch", label: "Architect", avatar: "architect", hint: "single", hintCls: "b-role" },
   { value: "@review", label: "Review", avatar: "reviewer", hint: "single", hintCls: "b-role" },
@@ -16,7 +21,7 @@ const ROLE_PINS = [
 const WF_AVATAR = { "full-build": "developer", "quick-fix": "developer", "plan-only": "planner", "review-only": "reviewer" };
 // Which canonical role each static pin stands for — so a pin is hidden when an editable agentDef
 // already covers that role (the def is richer: persona, model, avatar). @split has no default def.
-const PIN_ROLE = { "@plan": "planner", "@split": "decomposer", "@arch": "architect", "@review": "reviewer", "@test": "tester" };
+const PIN_ROLE = { "@plan": "planner", "@dev": "developer", "@split": "decomposer", "@arch": "architect", "@review": "reviewer", "@test": "tester" };
 
 // 🎲 Dealer's choice — hand the issue to the dispatcher, which picks the agent/workflow on start.
 // Sentinel handle "@auto"; the backend rolls the route once (see src/agents/dealer.ts).

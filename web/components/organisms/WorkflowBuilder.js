@@ -19,8 +19,8 @@ import { resolveAgentModel } from "../../lib/agent-options.js";
 import { agentOptions } from "../../lib/agent-options.js";
 
 const NODE_W = 220, NODE_BASE = 132, SKILL_H = 28, SLOT_H = 26, SLOT_GAP = 9, BLK_GAP = 48, GMARK_H = 24, GMARK_GAP = 8, PAD = 28, LOOPM = 46;
-const STEP_ROLE = { "@plan": "planner", "@arch": "architect", "@dev": "developer", "@review": "reviewer", "@test": "tester" };
-const DEFAULT_TASK = { "@plan": "Produce a concrete build plan for this issue.", "@arch": "Turn the plan into a concrete technical design (no code).", "@dev": "Implement the plan; commit and open a PR.", "@review": "Review the PR against the plan and the codebase.", "@test": "Run the project\u2019s checks and fix any failures." };
+const STEP_ROLE = { "@plan": "planner", "@arch": "architect", "@dev": "developer", "@review": "reviewer", "@test": "tester", "@split": "decomposer" };
+const DEFAULT_TASK = { "@plan": "Produce a concrete build plan for this issue.", "@arch": "Turn the plan into a concrete technical design (no code).", "@dev": "Implement the plan; commit and open a PR.", "@review": "Review the PR against the plan and the codebase.", "@test": "Run the project\u2019s checks and fix any failures.", "@split": "Split this issue into well-scoped, parallelizable sub-issues." };
 const ROUTES = [
   { value: "continue", label: "Continue →" },
   { value: "stop", label: "Stop here" },
@@ -180,9 +180,9 @@ export function WorkflowBuilder({ data, onClose, reload, onOpenModels }) {
         <div class="bld-grid">
           ${(data && data.agentDefs || []).length === 0 ? html`<div class="bld-empty sm">No custom agents yet. The built-in roles (planner/developer/…) are always available.</div>` : null}
           ${(data && data.agentDefs || []).map((a) => html`<div class="bld-card agent" key=${a.name} onClick=${() => setEditAgent(a.handle || "@" + a.name)}>
-            <div class="bld-card-h"><${Avatar} role=${a.name} src=${a.avatar} size=${30} crop="head"/><span class="bld-card-acts" onClick=${(e) => e.stopPropagation()}>
+            <div class="bld-card-h"><${Avatar} role=${a.name} src=${a.avatar} size=${30} crop="head"/>${a.builtin ? html`<span class="bld-builtin">built-in</span>` : null}<span class="bld-card-acts" onClick=${(e) => e.stopPropagation()}>
               <button class="iconbtn-sm tip" data-tip="Duplicate" onClick=${() => duplicateAgent(a)}><${Icon} name="copy" size=${14}/></button>
-              <button class="iconbtn-sm tip danger" data-tip="Delete" onClick=${() => delAgent(a)}><${Icon} name="trash" size=${14}/></button>
+              ${a.builtin ? null : html`<button class="iconbtn-sm tip danger" data-tip="Delete" onClick=${() => delAgent(a)}><${Icon} name="trash" size=${14}/></button>`}
             </span></div>
             <div class="bld-card-name">${a.name}</div>
             <div class="bld-card-meta">${a.handle || "@" + a.name} · ${a.mode || "repo"}</div>
@@ -344,8 +344,18 @@ export function WorkflowBuilder({ data, onClose, reload, onOpenModels }) {
 export function AgentModal({ data, which, onClose, reload, onOpenModels }) {
   const defs = (data && data.agentDefs) || [];
   const existing = which === "__new__" ? null : defs.find((d) => (d.handle || ("@" + d.name)) === which || ("@" + d.name) === which || d.name === String(which).replace(/^@/, ""));
-  const ROLE_NAMES = { "@plan": "planner", "@arch": "architect", "@dev": "developer", "@review": "reviewer", "@test": "tester" };
-  const roleSeed = !existing && ROLE_NAMES[which] ? { name: ROLE_NAMES[which], handle: which, model: "", canWriteCode: which === "@dev" || which === "@test", persona: "", defaultTask: DEFAULT_TASK[which] || "", avatar: "", pushesGithub: true, interactive: false } : null;
+  const ROLE_NAMES = { "@plan": "planner", "@arch": "architect", "@dev": "developer", "@review": "reviewer", "@test": "tester", "@split": "decomposer" };
+  // Dead in practice now that seedBaseAgents() (src/db/agent_def.ts) always creates a real row for
+  // every one of these handles at startup — `existing` will be found first — but kept as a fallback
+  // for the brief pre-seed window / a fresh DB that hasn't restarted yet.
+  const roleSeed = !existing && ROLE_NAMES[which] ? { name: ROLE_NAMES[which], handle: which, model: "", canWriteCode: which === "@dev", persona: "", defaultTask: DEFAULT_TASK[which] || "", avatar: "", pushesGithub: true, interactive: false } : null;
+  // A base role (planner/architect/developer/reviewer/tester/decomposer): its role, tools, and
+  // persona come from roles.ts + memory/central/agents/<role>.md and its model from Settings →
+  // Models — NOT from this row's model/canWriteCode/persona/interactive fields (those only take
+  // effect for a CUSTOM agent's own workflow step; a built-in handle always resolves straight to
+  // its hardcoded role — see STEP_ROLE in pipeline.ts). Editing those fields here would silently do
+  // nothing, so they're replaced with a note instead of a misleadingly-live control.
+  const isBase = !!(existing && existing.builtin) || !!roleSeed;
   const [f, setF] = useState(existing ? Object.assign({ defaultTask: "", avatar: "", interactive: false, canWriteCode: false }, existing) : roleSeed || { name: "", handle: "", model: "", canWriteCode: false, persona: "", defaultTask: "", avatar: "", pushesGithub: true, interactive: false });
   const [busy, setBusy] = useState(false);
   const set = (k, v) => setF((o) => Object.assign({}, o, { [k]: v }));
@@ -372,19 +382,23 @@ export function AgentModal({ data, which, onClose, reload, onOpenModels }) {
         <label class="bld-lbl">Name</label>
         <input class="bld-num" value=${f.name} disabled=${!!existing || !!roleSeed} placeholder="e.g. spec-creator" onInput=${(e) => set("name", e.target.value.replace(/[^\w-]/g, ""))}/>
         <label class="bld-lbl">Handle</label>
-        <input class="bld-num" value=${f.handle} placeholder=${"@" + (f.name || "agent")} onInput=${(e) => set("handle", e.target.value)}/>
+        <input class="bld-num" value=${f.handle} disabled=${isBase} placeholder=${"@" + (f.name || "agent")} onInput=${(e) => set("handle", e.target.value)}/>
       </div>
     </div>
-    <label class="bld-lbl">Model <span class="bld-hint">(blank = default)</span></label>
-    <${AgentModelPicker} data=${data} value=${f.model || ""} onSetUp=${onOpenModels} onChange=${(v) => set("model", v)}/>
     <label class="bld-lbl">Default task <span class="bld-hint">— pre-fills a workflow step</span></label>
     <textarea class="bld-ta" rows="2" value=${f.defaultTask} placeholder="e.g. Implement the plan and open a PR." onInput=${(e) => set("defaultTask", e.target.value)}></textarea>
-    <label class="bld-lbl">Can write code <span class="bld-hint">${f.canWriteCode ? "— edits source files & runs commands" : "— reads anywhere, writes only to _plan/ (specs, notes)"}</span></label>
-    <div class="agm-tools"><label class=${"agm-tool" + (f.canWriteCode ? " on" : "")}><input type="checkbox" checked=${!!f.canWriteCode} onChange=${() => set("canWriteCode", !f.canWriteCode)}/> Can write code</label></div>
-    <label class="bld-lbl">Interactive chat <span class="bld-hint">(pauses to talk it through with you instead of running ahead)</span></label>
-    <div class="agm-tools"><label class=${"agm-tool" + (f.interactive ? " on" : "")}><input type="checkbox" checked=${!!f.interactive} onChange=${() => set("interactive", !f.interactive)}/> Interactive chat</label></div>
-    <label class="bld-lbl">Persona <span class="bld-hint">(markdown)</span></label>
-    <textarea class="bld-ta" rows="6" value=${f.persona} placeholder="How this agent thinks and behaves…" onInput=${(e) => set("persona", e.target.value)}></textarea>
+    ${isBase
+      ? html`<div class="bld-hint" style="margin-top:6px">This is a base role — its tools and persona are fixed (roles.ts + memory/central/agents/${f.name}.md); its model comes from <b>Settings → Models</b>, not this form. Only the avatar and default task above are editable here.</div>`
+      : html`
+        <label class="bld-lbl">Model <span class="bld-hint">(blank = default)</span></label>
+        <${AgentModelPicker} data=${data} value=${f.model || ""} onSetUp=${onOpenModels} onChange=${(v) => set("model", v)}/>
+        <label class="bld-lbl">Can write code <span class="bld-hint">${f.canWriteCode ? "— edits source files & runs commands" : "— reads anywhere, writes only to _plan/ (specs, notes)"}</span></label>
+        <div class="agm-tools"><label class=${"agm-tool" + (f.canWriteCode ? " on" : "")}><input type="checkbox" checked=${!!f.canWriteCode} onChange=${() => set("canWriteCode", !f.canWriteCode)}/> Can write code</label></div>
+        <label class="bld-lbl">Interactive chat <span class="bld-hint">(pauses to talk it through with you instead of running ahead)</span></label>
+        <div class="agm-tools"><label class=${"agm-tool" + (f.interactive ? " on" : "")}><input type="checkbox" checked=${!!f.interactive} onChange=${() => set("interactive", !f.interactive)}/> Interactive chat</label></div>
+        <label class="bld-lbl">Persona <span class="bld-hint">(markdown)</span></label>
+        <textarea class="bld-ta" rows="6" value=${f.persona} placeholder="How this agent thinks and behaves…" onInput=${(e) => set("persona", e.target.value)}></textarea>
+      `}
   <//>`;
 }
 

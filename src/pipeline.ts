@@ -1013,7 +1013,14 @@ export async function runWorkflowEngine(cfg: Config, repo: string, issue: Issue,
     // A built-in handle maps to its role; a CUSTOM agent (e.g. @grill) keeps its own persona/model
     // and runs on a sensible base role (its mode → developer for repo work, planner for chat).
     const customDef = STEP_ROLE[handle] ? null : listAgentDefs().find((d) => (d.handle || `@${d.name}`).toLowerCase() === handle || d.name.toLowerCase() === handle.replace(/^@/, ""));
-    const role: RoleName = STEP_ROLE[handle] ?? (customDef ? (customDef.canWriteCode ? "developer" : "planner") : "developer");
+    // Neither a built-in handle NOR a matching agent_def row: this step's agent doesn't exist. Used
+    // to fall through and silently run as a generic "developer" — a workflow whose author picked a
+    // since-deleted (or never-created) custom agent would quietly misrun forever instead of failing
+    // loud (#152-adjacent: "no agent can be used in a workflow that is not in the agents list").
+    if (!STEP_ROLE[handle] && !customDef) {
+      throw new Error(`Workflow step ${i + 1} references agent "${step.agent}", which isn't a built-in role or an agent in the Agents list. Edit the workflow (or re-add the agent) and resume.`);
+    }
+    const role: RoleName = STEP_ROLE[handle] ?? (customDef!.canWriteCode ? "developer" : "planner");
     const hookIds = (step.hooks || []).map(Number).filter((n) => Number.isFinite(n));
     const skills = step.skills && step.skills.length ? `
 

@@ -88,6 +88,7 @@ import {
   clearSessionFallback,
   listAgentDefs,
   seedChatAgents,
+  seedBaseAgents,
   seedWorkflows,
   seedLibrary,
   clearIssueModelOverride,
@@ -1340,6 +1341,10 @@ async function backgroundInit(cfg: Config): Promise<void> {
 async function main(): Promise<void> {
   const cfg = loadConfig();
   seedAdmin(); // multi-user: create the admin from env on first boot (no-op if MASTER_KEY unset)
+  seedBaseAgents(); // the 6 base roles (planner/architect/developer/reviewer/tester/decomposer) as
+  // real, editable agent_def rows — every handle a workflow step can reference, always visible on
+  // the Agents page (was previously invisible/uneditable on a fresh install — only spec-creator and
+  // grill-me were seeded).
   seedChatAgents(); // v3: register the starter chat agents (spec-creator, grill-me) once
   seedWorkflows(); // workflows: seed the built-in templates (full-build / quick-fix / plan-only / review-only)
   seedLibrary(); // skills + hooks: seed the baseline library (idempotent — only when empty)

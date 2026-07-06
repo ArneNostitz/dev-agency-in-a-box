@@ -40,7 +40,7 @@ export {
   tierModel, fallbackFor, parseModelRef, inferPiProvider, setIssueProvider, getIssueProvider, clearIssueProvider, setIssueAgentModel, getIssueAgentModels, setIssueUseFallback, getIssueUseFallback,
 } from "./db/providers.js";
 export type { Provider, Tier, TierSlot } from "./db/providers.js";
-export { upsertAgentDef, getAgentDef, listAgentDefs, deleteAgentDef, seedChatAgents, toolsFor, planFilePath, PLAN_DIR } from "./db/agent_def.js";
+export { upsertAgentDef, getAgentDef, listAgentDefs, deleteAgentDef, seedChatAgents, seedBaseAgents, toolsFor, planFilePath, PLAN_DIR } from "./db/agent_def.js";
 export type { AgentDef } from "./db/agent_def.js";
 export { searchMemory } from "./db/memory.js";
 export type { MemoryHit } from "./db/memory.js";

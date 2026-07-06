@@ -103,6 +103,36 @@ export function deleteAgentDef(name: string): void {
 }
 
 
+// The 6 base roles a workflow step or single-role pin can reference (STEP_ROLE in pipeline.ts /
+// HANDLE_ROLE in workflow.ts) — every one of these handles must resolve to something visible on
+// the Agents page, or a step referencing it silently misroutes (or, before the pipeline.ts guard,
+// crashed deep in model resolution instead of failing with a clear message). On a fresh install
+// none of these existed as agent_def rows at all — only spec-creator/grill-me were seeded — so
+// "developer" (used by the default Full-build workflow) was invisible/uneditable on the Agents page.
+const BASE_ROLES: Array<{ name: string; handle: string; canWriteCode: boolean; defaultTask: string }> = [
+  { name: "planner", handle: "@plan", canWriteCode: false, defaultTask: "Produce a concrete build plan for this issue." },
+  { name: "architect", handle: "@arch", canWriteCode: false, defaultTask: "Turn the plan into a concrete technical design (no code)." },
+  { name: "developer", handle: "@dev", canWriteCode: true, defaultTask: "Implement the plan; commit and open a PR." },
+  { name: "reviewer", handle: "@review", canWriteCode: false, defaultTask: "Review the PR against the plan and the codebase." },
+  { name: "tester", handle: "@test", canWriteCode: false, defaultTask: "Run the project's checks and fix any failures." },
+  { name: "decomposer", handle: "@split", canWriteCode: false, defaultTask: "Split this issue into well-scoped, parallelizable sub-issues." },
+];
+
+/** Seed the base roles as real agent_def rows — idempotent (only inserts a row that doesn't already
+ *  exist), so any edits a user makes to these afterward (persona/model/defaultTask) survive every
+ *  restart. persona/model are left blank on seed: execution for these built-in handles is governed
+ *  by roles.ts + memory/central/agents/<role>.md, not this row — the row exists so the role is
+ *  DISCOVERABLE and editable on the Agents page, matching every custom agent's presentation there. */
+export function seedBaseAgents(): void {
+  for (const r of BASE_ROLES) {
+    if (getAgentDef(r.name)) continue;
+    upsertAgentDef({
+      name: r.name, handle: r.handle, mode: "repo", canWriteCode: r.canWriteCode, pushesGithub: true,
+      defaultTask: r.defaultTask, builtin: true, persona: "", model: "", skills: [], interactive: false, avatar: "",
+    });
+  }
+}
+
 export function seedChatAgents(): void {
   if (getAgentDef("spec-creator") && getAgentDef("grill-me")) return;
   if (!getAgentDef("spec-creator")) {
