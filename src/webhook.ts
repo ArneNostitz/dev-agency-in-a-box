@@ -123,6 +123,24 @@ function estimateCost(footprint: number, epicTotal: number, titleLen: number): {
   const usd = Math.round((tokens / 1e6) * 5 * 100) / 100;
   return { tokens, usd };
 }
+// The analyzer service has sent the same boilerplate title on every report for months (one every
+// ~6h), so a repo's issue list fills with identically-titled, unopenable-without-reading entries.
+// We don't own that service's source (it's deployed separately — see ADR history), so make its
+// title specific HERE instead: pull the report date + its lead finding out of the body it already
+// sends. Only overrides an actually-generic title — a future analyzer version sending its own
+// specific title is left alone.
+const GENERIC_ANALYZER_TITLE_RE = /^process analyzer:?\s*(improvement )?proposals?$/i;
+export function analyzerIssueTitle(provided: string, body: string): string {
+  const trimmed = (provided || "").trim();
+  if (trimmed && !GENERIC_ANALYZER_TITLE_RE.test(trimmed)) return trimmed.slice(0, 200);
+  const date = /##\s*Process Analysis Report\s*—\s*([\d-]+)/i.exec(body)?.[1] ?? "";
+  const critical = /###\s*🚨\s*Critical Finding:\s*(.+)/.exec(body)?.[1];
+  const firstProposal = /###\s*1\.\s*(?:\S+\s+)?(.+)/.exec(body)?.[1];
+  const headline = (critical ?? firstProposal ?? "").replace(/`/g, "").trim();
+  const base = headline ? `Process Analyzer: ${headline}` : "Process Analyzer: improvement proposals";
+  return (date ? `${base} (${date})` : base).slice(0, 200);
+}
+
 // Throttle the /data PR-number backfill: at most one `gh` lookup per issue per 60s (was per 5s poll).
 const prBackfillChecked = new Map<string, number>();
 function readBody(req: IncomingMessage): Promise<Buffer> {
@@ -241,11 +259,16 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         void (async () => {
           let pp: { title?: string; body?: string } = {};
           try { pp = JSON.parse((await readBody(req)).toString("utf8")); } catch { /* ignore */ }
-          const title = (pp.title || "Process Analyzer: proposals").slice(0, 200);
           const ibody = (pp.body || "").slice(0, 60000);
           if (!ibody.trim()) return void res.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({ error: "empty body" }));
-          const repoT = (getSetting("analyzer_repo") || effectiveRepos(cfg)[0] || "").trim();
-          if (!repoT) return void res.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({ error: "no analyzer_repo / watched repo configured" }));
+          const title = analyzerIssueTitle(pp.title || "", ibody);
+          // These are reports on the AGENCY'S OWN operational health (rate limits, loop failures,
+          // token waste) — not about any one watched product repo, so they belong on the agency's
+          // own repo by default. An explicit analyzer_repo setting still wins if you want them
+          // somewhere else. Previously fell back to effectiveRepos(cfg)[0] — whichever repo happened
+          // to be watched first — landing every advisory issue on an unrelated product repo.
+          const repoT = (getSetting("analyzer_repo") || cfg.agencyRepo || effectiveRepos(cfg)[0] || "").trim();
+          if (!repoT) return void res.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({ error: "no analyzer_repo / agency repo configured" }));
           const r = await createIssue(repoT, title, ibody).catch(() => ({ number: 0 }));
           // Advisory only — no DB status set, so it surfaces in Inbox like any other untouched issue.
           if (r.number) setSetting("analyzer_last_issue_ts", new Date().toISOString());
