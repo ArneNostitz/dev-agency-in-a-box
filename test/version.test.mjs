@@ -36,3 +36,15 @@ test("versionInfo without SOURCE_COMMIT still returns a usable label", () => {
     if (prev !== undefined) process.env.SOURCE_COMMIT = prev;
   }
 });
+
+test("version is CalVer (YY.M.commits) — never a manually-bumped number that can go stale", () => {
+  // A manually-maintained major.minor in package.json (e.g. "1.23") sat unbumped for 92 commits /
+  // 10 days and looked frozen even though the patch (commit count) kept climbing underneath it.
+  // scripts/version.mjs now derives the whole thing from the build itself — this asserts the real,
+  // just-built web/version.json (npm test runs `npm run build` first) actually follows that scheme.
+  const v = versionInfo();
+  assert.match(v.version, /^\d{2}\.\d{1,2}\.\d+$/, v.version);
+  const now = new Date();
+  const expectedPrefix = `${now.getFullYear() % 100}.${now.getMonth() + 1}.`;
+  assert.ok(v.version.startsWith(expectedPrefix), `${v.version} should start with ${expectedPrefix} (built this month)`);
+});

@@ -2,16 +2,16 @@
 // Regenerates web/version.json at build time so the dashboard always shows the current
 // build's commit + timestamp. Run automatically by `npm run build` (and thus `npm test`).
 //
-// Version scheme: the patch number IS the git commit count (monotonic, no manual bumping).
-// So v1.23.549 = the 549th commit on the 1.23 line. Every deploy/merge → a new version,
-// derived from the build at deploy time. major.minor comes from package.json.
+// Version scheme: CalVer — YY.M.commits, fully derived from the build, zero manual bumping.
+// So v26.7.568 = built in 2026-07, the 568th commit overall. Every deploy/merge → a new
+// version. This replaced a manually-bumped major.minor in package.json (e.g. "1.23") that
+// went stale for 92 commits / 10 days because nobody remembered to bump it — the number
+// looked frozen even though the patch (commit count) kept climbing underneath it.
 //
 // Requires .git/ in the build context (Coolify git-pull provides this). Falls back to
 // SOURCE_COMMIT (a SHA, no count) when .git/ is absent — in that case the patch stays at 0.
-import { readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
-
-const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 
 const run = (cmd) => {
   try { return execSync(cmd, { stdio: ["ignore", "pipe", "ignore"] }).toString().trim(); }
@@ -21,15 +21,14 @@ const sha = run("git rev-parse --short HEAD") || (process.env.SOURCE_COMMIT || "
 const commitCount = Number(run("git rev-list --count HEAD")) || 0;
 const builtAt = new Date().toISOString();
 
-// Version: major.minor from package.json, patch = commit count. e.g. "1.23" + 549 → "1.23.549"
-const baseVersion = pkg.version || "0.0";
-const majorMinor = baseVersion.replace(/\.\d+$/, ""); // strip any existing patch → "1.23"
+// Version: YY.M (two-digit year, unpadded month) + patch = commit count. e.g. 2026-07 + 568 → "26.7.568"
+const d = new Date(builtAt);
+const majorMinor = `${d.getFullYear() % 100}.${d.getMonth() + 1}`;
 const version = `${majorMinor}.${commitCount}`;
 
-// Human label: "v1.23.549 · abc1234 · 2026-07-05 00:28"
+// Human label: "v26.7.568 · abc1234 · 2026-07-05 00:28"
 // (commit count is baked into the version, so no separate "build N" needed)
 const pad = (n) => String(n).padStart(2, "0");
-const d = new Date(builtAt);
 const stamp = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 const label = `v${version}${sha ? ` · ${sha}` : ""} · ${stamp}`;
 

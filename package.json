@@ -1,7 +1,7 @@
 {
   "name": "dev-agency",
-  "version": "1.23.0",
-  "description": "A self-contained, self-evolving developer agency of AI agents driven by GitHub issues.",
+  "version": "0.0.0",
+  "description": "A self-contained, self-evolving developer agency of AI agents driven by GitHub issues. The displayed version is CalVer (YY.M.commits), computed at build time by scripts/version.mjs — this field is unused (npm requires one; nothing reads it) and should stay untouched.",
   "type": "module",
   "private": true,
   "engines": {
