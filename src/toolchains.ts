@@ -64,7 +64,9 @@ export const TOOLCHAINS: Record<string, Toolchain> = {
     note: "Runs `cargo test` for the Rust backend of Tauri apps (src-tauri/) and Rust crates.",
     install: [
       "set -e",
-      "command -v cargo >/dev/null 2>&1 || curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal",
+      // --no-modify-path: PATH is managed by the container ENV; installs into CARGO_HOME/RUSTUP_HOME
+      // (~/.cargo & ~/.rustup, symlinked onto the data volume) so it survives a redeploy.
+      "command -v cargo >/dev/null 2>&1 || curl --proto '=https' --tlsv1.2 -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --no-modify-path",
       `"${CARGO_BIN}/cargo" --version`,
     ].join("\n"),
   },

@@ -13,7 +13,7 @@ ARG WITH_PI=1
 
 # git (for branches/commits) and gh (GitHub CLI used by the agency and the agents).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl git gnupg \
+    && apt-get install -y --no-install-recommends ca-certificates curl git gnupg unzip xz-utils \
     && mkdir -p -m 755 /etc/apt/keyrings \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
         | gpg --dearmor -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
@@ -124,6 +124,12 @@ ENV RUN_MODE=watch \
 # precedence over the baked-in copies.
 ENV NPM_CONFIG_PREFIX=/app/data/npm-global \
     PATH=/app/data/npm-global/bin:$PATH
+# Language toolchains installed from Settings → Environments (Flutter, Rust) live on the SAME data
+# volume so they survive a redeploy — no separate volume needed. Flutter clones into
+# $TOOLCHAINS_DIR/flutter; rustup's CARGO_HOME/RUSTUP_HOME are symlinked onto the volume below (the
+# same trick used for ~/.claude). Their bin dirs go on PATH so `flutter`/`cargo` resolve everywhere.
+ENV TOOLCHAINS_DIR=/app/data/toolchains \
+    PATH=/app/data/toolchains/flutter/bin:/home/node/.cargo/bin:/app/data/npm-global/bin:$PATH
 ENV SOURCE_COMMIT=$SOURCE_COMMIT
 
 # Run as a NON-root user: Claude Code refuses --dangerously-skip-permissions (bypassPermissions)
@@ -143,8 +149,13 @@ ENV SOURCE_COMMIT=$SOURCE_COMMIT
 RUN set -eux; mkdir -p /app/data /app/.work /app/data/claude
 RUN set -eux; mkdir -p /app/data/npm-global
 RUN set -eux; rm -rf /home/node/.claude; ln -sfn /app/data/claude /home/node/.claude
-RUN set -eux; chown node:node /app; chown -R node:node /app/data /app/.work /app/data/npm-global
-RUN set -eux; chown -h node:node /home/node/.claude
+# Toolchains on the data volume: Flutter under /app/data/toolchains; Rust via ~/.cargo & ~/.rustup
+# symlinked onto the volume (rustup writes there, cargo reads there — no env plumbing in checks.ts).
+RUN set -eux; mkdir -p /app/data/toolchains /app/data/cargo /app/data/rustup
+RUN set -eux; rm -rf /home/node/.cargo /home/node/.rustup; \
+    ln -sfn /app/data/cargo /home/node/.cargo; ln -sfn /app/data/rustup /home/node/.rustup
+RUN set -eux; chown node:node /app; chown -R node:node /app/data /app/.work /app/data/npm-global /app/data/toolchains /app/data/cargo /app/data/rustup
+RUN set -eux; chown -h node:node /home/node/.claude /home/node/.cargo /home/node/.rustup
 USER node
 
 # Stable git identity for the agency's commits (written to the node user's home).

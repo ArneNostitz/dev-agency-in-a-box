@@ -40,7 +40,10 @@ services:
       # RUN_MODE: ${RUN_MODE:-watch}      # watch (default) | webhook | once
       # AGENCY_ENV: ${AGENCY_ENV:-}       # "development" shows a DEV badge on staging
     volumes:
-      - agency-data:/app/data          # SQLite DB + the persisted MASTER_KEY live here — keep it!
+      # SQLite DB, the persisted MASTER_KEY, ~/.claude sessions, runtime-installed CLIs, AND the
+      # language toolchains installed from Settings → Environments (Flutter, Rust) all live here —
+      # keep it! One volume = everything survives a redeploy. No separate toolchain volume needed.
+      - agency-data:/app/data
 
   analyzer:
     build: ./analyzer
