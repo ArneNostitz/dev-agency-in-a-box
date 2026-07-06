@@ -27,7 +27,7 @@ import { startDeviceFlow, pollDeviceToken, fetchGitHubUser } from "./github-oaut
 import { githubOAuthClientId, githubOAuthToken, githubIdentity } from "./creds.js";
 import { binaryAvailable } from "./runners/registry.js";
 import { installSpec, installCli, RUNNER_PACKAGES } from "./runners/install.js";
-import { TOOLCHAINS, toolchainStatus, isInstalling, listToolchainRequests, installToolchain, toolchainsDir } from "./toolchains.js";
+import { TOOLCHAINS, toolchainStatus, isInstalling, listToolchainRequests, installToolchain, toolchainsDir, toolchainProgress, subscribeToolchains } from "./toolchains.js";
 import { parseLegacyStatus, withStatus, setBlocked } from "./state.js";
 import { runOrchestratorChat } from "./agents/orchestrator-chat.js";
 import { listOrchThread, clearOrchThread, setByAgent } from "./store.js";
@@ -674,13 +674,27 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         const requests = listToolchainRequests();
         const toolchains = Object.values(TOOLCHAINS).map((t) => {
           const st = toolchainStatus(t.id);
+          const prog = toolchainProgress(t.id);
           return {
             id: t.id, label: t.label, binary: t.binary, note: t.note,
             status: isInstalling(t.id) ? "installing" : st.status, version: st.version, error: st.error,
             requestedBy: requests.filter((r) => r.id === t.id).map((r) => ({ repo: r.repo, number: r.number })),
+            // Live snapshot so a tab opened mid-install shows the bar + tail immediately; /toolchain-events streams deltas.
+            progress: prog ? { pct: prog.pct, phase: prog.phase, log: prog.log.slice(-12) } : undefined,
           };
         });
         res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ toolchains, dir: toolchainsDir() }));
+        return;
+      }
+
+      // Live install stream for the Environments tab (progress % + log lines), separate from /events
+      // so a long SDK clone doesn't spam the agent activity feed.
+      if (url === "/toolchain-events") {
+        res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
+        res.write(": connected\n\n");
+        const unsub = subscribeToolchains((e) => { try { res.write(`data: ${JSON.stringify(e)}\n\n`); } catch { /* client gone */ } });
+        const keepalive = setInterval(() => { try { res.write(": ping\n\n"); } catch { /* ignore */ } }, 25000);
+        req.on("close", () => { clearInterval(keepalive); unsub(); });
         return;
       }
 

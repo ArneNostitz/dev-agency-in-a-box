@@ -4,7 +4,7 @@
    cache-first for rarely-changing static assets (icons, manifest). */
 const CACHE = "devagency-v2";
 const PRECACHE = ["/web/vendor/standalone.mjs", "/web/app.js", "/web/icons/icon.svg", "/manifest.webmanifest"];
-const NEVER_CACHE = ["/data", "/events", "/thread", "/pr-status", "/app-info", "/agents", "/agent", "/models", "/repos-available"];
+const NEVER_CACHE = ["/data", "/events", "/toolchain-events", "/toolchains", "/thread", "/pr-status", "/app-info", "/agents", "/agent", "/models", "/repos-available"];
 
 self.addEventListener("install", (e) => {
   self.skipWaiting();

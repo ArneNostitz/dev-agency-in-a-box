@@ -4,6 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   TOOLCHAINS,
+  parseProgress,
   toolchainForBinary,
   toolchainStatus,
   isToolchainReady,
@@ -43,6 +44,15 @@ test("an uninstalled toolchain reads as absent / not ready", () => {
   assert.ok(["absent", "installing", "failed", "ready"].includes(st.status));
   // In CI the SDK isn't on disk, so readiness is false unless a real install happened.
   if (!isToolchainReady("flutter")) assert.notEqual(st.status, "ready");
+});
+
+test("parseProgress reads git/flutter percentages + a human phase, null when none", () => {
+  assert.deepEqual(parseProgress("Receiving objects:  45% (123/273)"), { pct: 45, phase: "Downloading…" });
+  assert.deepEqual(parseProgress("Resolving deltas: 100% (500/500), done."), { pct: 100, phase: "Resolving…" });
+  assert.equal(parseProgress("Checking out files: 12%").phase, "Checking out…");
+  assert.equal(parseProgress("Cloning into '/home/x/.devagency-toolchains/flutter'..."), null);
+  assert.equal(parseProgress("just a plain line"), null);
+  assert.equal(parseProgress("Receiving objects: 250%").pct, 100, "clamped to 100");
 });
 
 test("requests: record → list → clear, deduped, ignores unknown ids", () => {

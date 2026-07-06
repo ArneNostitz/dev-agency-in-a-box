@@ -127,6 +127,44 @@ export function clearToolchainRequests(id: string): void {
   writeRequests(readRequests().filter((r) => r.id !== id));
 }
 
+// ---- live install stream (a dedicated channel, kept off the agent board) --
+
+export interface TcEvent {
+  id: string;
+  kind: "progress" | "log" | "status";
+  pct?: number;
+  phase?: string;
+  line?: string;
+  status?: ToolchainStatus;
+  version?: string;
+  error?: string;
+}
+const tcSubs = new Set<(e: TcEvent) => void>();
+/** Subscribe to live install events (progress %, log lines, status). Returns an unsubscribe fn. */
+export function subscribeToolchains(fn: (e: TcEvent) => void): () => void { tcSubs.add(fn); return () => { tcSubs.delete(fn); }; }
+function emit(e: TcEvent): void { for (const fn of tcSubs) { try { fn(e); } catch { /* bad subscriber */ } } }
+
+// Latest progress per install, so a tab opened mid-install renders the bar + tail immediately.
+const progress = new Map<string, { pct: number; phase: string; log: string[] }>();
+export function toolchainProgress(id: string): { pct: number; phase: string; log: string[] } | undefined {
+  return progress.get(id);
+}
+
+/** Turn a git/rustup/flutter output line into a { pct, phase }, or null if it carries no percentage. */
+export function parseProgress(line: string): { pct: number; phase: string } | null {
+  const m = /(\d{1,3})%/.exec(line);
+  if (!m) return null;
+  const pct = Math.max(0, Math.min(100, Number(m[1])));
+  let phase = "Working…";
+  if (/receiving objects/i.test(line)) phase = "Downloading…";
+  else if (/resolving deltas/i.test(line)) phase = "Resolving…";
+  else if (/updating files|checking out/i.test(line)) phase = "Checking out…";
+  else if (/counting|compressing/i.test(line)) phase = "Preparing…";
+  else if (/precache|download|fetch/i.test(line)) phase = "Fetching SDK…";
+  else if (/install/i.test(line)) phase = "Installing…";
+  return { pct, phase };
+}
+
 // ---- install runner (background, host-affecting) --------------------------
 
 const installing = new Set<string>();
@@ -145,9 +183,20 @@ export async function installToolchain(id: string): Promise<void> {
   if (installing.has(id)) return;
   installing.add(id);
   writeState(id, { status: "installing", at: Date.now(), error: undefined });
+  progress.set(id, { pct: 0, phase: "Starting…", log: [] });
+  emit({ id, kind: "status", status: "installing" });
+  emit({ id, kind: "progress", pct: 0, phase: "Starting…" });
   try {
     mkdirSync(toolchainsDir(), { recursive: true });
-    const r = await sh(tc.install, toolchainsDir(), 1_800_000); // up to 30 min
+    const r = await runStreaming(tc.install, toolchainsDir(), 1_800_000, (line) => {
+      const p = progress.get(id);
+      if (!p) return;
+      p.log.push(line);
+      if (p.log.length > 300) p.log.shift();
+      emit({ id, kind: "log", line });
+      const parsed = parseProgress(line);
+      if (parsed) { p.pct = parsed.pct; p.phase = parsed.phase; emit({ id, kind: "progress", pct: parsed.pct, phase: parsed.phase }); }
+    });
     if (r.code === 0 && existsSync(join(tc.binDir, tc.binary))) {
       let version = "";
       try {
@@ -156,11 +205,18 @@ export async function installToolchain(id: string): Promise<void> {
       } catch { /* version is best-effort */ }
       writeState(id, { status: "ready", version, at: Date.now(), error: undefined });
       clearToolchainRequests(id);
+      const p = progress.get(id); if (p) { p.pct = 100; p.phase = "Ready"; }
+      emit({ id, kind: "progress", pct: 100, phase: "Ready" });
+      emit({ id, kind: "status", status: "ready", version });
     } else {
-      writeState(id, { status: "failed", error: lastLine(r.out) || "install failed", at: Date.now() });
+      const error = lastLine(r.out) || "install failed";
+      writeState(id, { status: "failed", error, at: Date.now() });
+      emit({ id, kind: "status", status: "failed", error });
     }
   } catch (e) {
-    writeState(id, { status: "failed", error: String(e).slice(0, 300), at: Date.now() });
+    const error = String(e).slice(0, 300);
+    writeState(id, { status: "failed", error, at: Date.now() });
+    emit({ id, kind: "status", status: "failed", error });
   } finally {
     installing.delete(id);
   }
@@ -181,6 +237,30 @@ function sh(cmd: string, cwd: string, timeoutMs: number): Promise<{ code: number
     child.stderr.on("data", cap);
     const timer = setTimeout(() => { try { child.kill("SIGKILL"); } catch { /* noop */ } resolve({ code: 124, out: out + "\n[timed out]" }); }, timeoutMs);
     child.on("close", (code) => { clearTimeout(timer); resolve({ code: code ?? 1, out }); });
+    child.on("error", (e) => { clearTimeout(timer); resolve({ code: 1, out: out + "\n" + String(e) }); });
+  });
+}
+
+/**
+ * Like `sh` but streams each output line to `onLine` as it arrives. Splits on BOTH \r and \n because
+ * git writes its progress meter with carriage returns (one "Receiving objects: NN%" line, rewritten).
+ */
+function runStreaming(cmd: string, cwd: string, timeoutMs: number, onLine: (line: string) => void): Promise<{ code: number; out: string }> {
+  return new Promise((resolve) => {
+    const child = spawn("bash", ["-lc", cmd], { cwd, env: { ...process.env } });
+    let out = "", buf = "";
+    const feed = (d: Buffer) => {
+      const s = d.toString();
+      out += s; if (out.length > 200_000) out = out.slice(-200_000);
+      buf += s;
+      const parts = buf.split(/[\r\n]+/);
+      buf = parts.pop() ?? "";
+      for (const ln of parts) { const t = ln.trim(); if (t) onLine(t); }
+    };
+    child.stdout.on("data", feed);
+    child.stderr.on("data", feed);
+    const timer = setTimeout(() => { try { child.kill("SIGKILL"); } catch { /* noop */ } resolve({ code: 124, out: out + "\n[timed out]" }); }, timeoutMs);
+    child.on("close", (code) => { clearTimeout(timer); const t = buf.trim(); if (t) onLine(t); resolve({ code: code ?? 1, out }); });
     child.on("error", (e) => { clearTimeout(timer); resolve({ code: 1, out: out + "\n" + String(e) }); });
   });
 }

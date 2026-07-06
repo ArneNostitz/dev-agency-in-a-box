@@ -352,16 +352,37 @@ export function GitHubConnect({ github, reload }) {
 function EnvironmentsSection({ admin }) {
   const [tc, setTc] = useState(null);
   const [busy, setBusy] = useState({});
-  const load = () => getJSON("/toolchains").then(setTc).catch(() => setTc({ toolchains: [], dir: "" }));
+  const [live, setLive] = useState({}); // id -> { pct, phase, log:[] } from the SSE stream
+  const load = () => getJSON("/toolchains").then((d) => {
+    setTc(d);
+    // Seed the bar from the snapshot so opening the tab mid-install shows progress at once.
+    setLive((prev) => {
+      const next = { ...prev };
+      (d.toolchains || []).forEach((t) => { if (t.progress && !next[t.id]) next[t.id] = { pct: t.progress.pct, phase: t.progress.phase, log: t.progress.log || [] }; });
+      return next;
+    });
+  }).catch(() => setTc({ toolchains: [], dir: "" }));
   useEffect(() => { load(); }, []);
-  // While anything is installing, poll so the row flips to ready/failed on its own.
+  // Live install stream: progress %, log lines, and the terminal status (→ reload for version).
   useEffect(() => {
-    if (!tc || !(tc.toolchains || []).some((t) => t.status === "installing")) return;
-    const h = setInterval(load, 3000);
-    return () => clearInterval(h);
-  }, [tc]);
+    let es;
+    try {
+      es = new EventSource("/toolchain-events");
+      es.onmessage = (ev) => {
+        try {
+          const e = JSON.parse(ev.data);
+          if (!e || !e.id) return;
+          if (e.kind === "progress") setLive((p) => ({ ...p, [e.id]: { ...(p[e.id] || { log: [] }), pct: e.pct, phase: e.phase } }));
+          else if (e.kind === "log") setLive((p) => { const cur = p[e.id] || { pct: 0, phase: "", log: [] }; return { ...p, [e.id]: { ...cur, log: cur.log.concat(e.line).slice(-120) } }; });
+          else if (e.kind === "status" && (e.status === "ready" || e.status === "failed")) { if (e.status === "ready") toast(e.id + " installed"); load(); }
+        } catch (err) {}
+      };
+    } catch (err) {}
+    return () => { try { es && es.close(); } catch (err) {} };
+  }, []);
   const install = (id) => {
     setBusy((b) => ({ ...b, [id]: true }));
+    setLive((p) => ({ ...p, [id]: { pct: 0, phase: "Starting…", log: [] } }));
     api("/install-toolchain", { id })
       .then(() => toast("Installing " + id + "…"))
       .then(load)
@@ -372,13 +393,13 @@ function EnvironmentsSection({ admin }) {
   return html`<div>
     <div class="sec">Toolchains</div>
     <div class="muted" style="font-size:12px;margin-bottom:12px">Install language SDKs so agents can run checks for these app types in-agency. When a run needs one that isn't here, it pauses the issue and asks — no PR until the checks actually run. Installed to <code>${tc.dir}</code>; point <code>TOOLCHAINS_DIR</code> at a mounted volume to survive redeploys.</div>
-    ${(tc.toolchains || []).map((t) => TcRow({ t, admin, busy: busy[t.id], onInstall: () => install(t.id) }))}
+    ${(tc.toolchains || []).map((t) => TcRow({ t, admin, busy: busy[t.id], live: live[t.id], onInstall: () => install(t.id) }))}
     ${!admin ? html`<div class="muted" style="font-size:12px;margin-top:10px">Only an admin can install toolchains.</div>` : null}
   </div>`;
 }
-function TcRow({ t, admin, busy, onInstall }) {
+function TcRow({ t, admin, busy, live, onInstall }) {
   const ready = t.status === "ready", installing = t.status === "installing", failed = t.status === "failed";
-  const reqs = t.requestedBy || [];
+  const prog = installing ? (live || t.progress) : null;
   const chip = ready
     ? html`<span class="statuschip s-ready"><${Icon} name="check" size=${12}/> ready</span>`
     : installing
@@ -386,6 +407,7 @@ function TcRow({ t, admin, busy, onInstall }) {
     : failed
     ? html`<span class="statuschip s-changes"><${Icon} name="alert" size=${12}/> failed</span>`
     : html`<span class="statuschip s-attn">not installed</span>`;
+  const reqs = t.requestedBy || [];
   return html`<div key=${t.id} style="display:flex;align-items:flex-start;gap:10px;padding:11px 0;border-top:1px solid var(--line,rgba(128,128,128,.18))">
     <div style="flex:1;min-width:0">
       <div style="display:flex;align-items:center;gap:8px;font-weight:600">${t.label} ${chip}</div>
@@ -393,6 +415,11 @@ function TcRow({ t, admin, busy, onInstall }) {
       ${ready && t.version ? html`<div class="muted" style="font-size:11px;margin-top:2px">${t.version}</div>` : null}
       ${failed && t.error ? html`<div style="font-size:11px;margin-top:3px;color:var(--bad,#c33)">${t.error}</div>` : null}
       ${reqs.length ? html`<div style="font-size:11.5px;margin-top:5px">⏸ Requested by ${reqs.map((r) => (r.repo.split("/").pop()) + " #" + r.number).join(", ")}</div>` : null}
+      ${prog ? html`<div style="margin-top:8px">
+        <div class="muted" style="display:flex;justify-content:space-between;font-size:11px"><span>${prog.phase || "Working…"}</span><span>${prog.pct || 0}%</span></div>
+        <div style="height:5px;border-radius:3px;background:var(--line,rgba(128,128,128,.2));overflow:hidden;margin-top:3px"><div style=${"height:100%;width:" + (prog.pct || 0) + "%;background:var(--accent,#3b82f6);transition:width .3s"}></div></div>
+        ${prog.log && prog.log.length ? html`<pre style="margin:6px 0 0;max-height:110px;overflow:auto;font-size:10.5px;line-height:1.45;background:var(--code-bg,rgba(128,128,128,.08));border-radius:5px;padding:6px 8px;white-space:pre-wrap;word-break:break-all">${prog.log.slice(-8).join("\n")}</pre>` : null}
+      </div>` : null}
     </div>
     ${admin ? html`<button class=${"btn" + (ready ? " ghost" : " primary")} style="padding:4px 12px;font-size:12px;white-space:nowrap" disabled=${busy || installing} onClick=${onInstall}>${installing ? "Installing…" : ready ? "Reinstall" : reqs.length ? "Install now" : "Install"}</button>` : null}
   </div>`;
