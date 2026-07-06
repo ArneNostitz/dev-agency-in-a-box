@@ -445,9 +445,25 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
                   const role = ROLE_OF[h] || name.toLowerCase();
                   return { agent: st.agent || "", name, role };
                 });
-                const wfRuns = (runMap[`${i.repo}#${i.number}`] || {}) as Record<string, number>;
-                const done = Object.values(wfRuns).reduce((a, b) => a + (b || 0), 0);
-                return { wfSteps: steps, wfStep: Math.min(done, steps.length) };
+                // The current step: NOT a count of runs recorded so far — any retry/loop-back (a
+                // revise round, a re-review, the approve-loop bug's leftover planner runs) inflates
+                // that sum past the step actually running and drifts the highlighted dot forward
+                // (#152). Two real signals instead:
+                //   - a custom workflow (runs through the step engine) persists an exact cursor
+                //     (wf_step.<repo>#<n>, the index of the step in progress) — use it when set.
+                //   - full-build (runs the proven pipeline, never the engine — no cursor exists)
+                //     falls back to the most recent role to log ANY activity for this issue
+                //     (lastRoleMap, already computed above from the live stream) — fine-grained
+                //     enough to track dev → test → review as they actually happen.
+                const liveRole = (lastRoleMap[`${i.repo}#${i.number}`] || "").toLowerCase();
+                const roleIdx = liveRole ? steps.findIndex((s) => s.role === liveRole) : -1;
+                const terminalIdx = (i.state === "review" || i.state === "done") ? steps.length : -1;
+                const cursorRaw = wf.id !== "full-build" ? getSetting(`wf_step.${i.repo}#${i.number}`) : null;
+                const cursor = cursorRaw ? Number(cursorRaw) : NaN;
+                const wfStep = cursorRaw && Number.isFinite(cursor)
+                  ? Math.min(cursor, steps.length)
+                  : (terminalIdx >= 0 ? terminalIdx : (roleIdx >= 0 ? roleIdx : 0));
+                return { wfSteps: steps, wfStep };
               })()),
               held: isHoldRequested(i.repo, i.number) || undefined,
               steers: peekSteer(i.repo, i.number),

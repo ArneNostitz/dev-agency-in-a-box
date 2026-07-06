@@ -81,9 +81,24 @@ export function deleteWorkflow(id: string): void {
 export function seedWorkflows(): void {
   const existing = getWorkflow("full-build");
   if (existing) {
+    let trigger = existing.trigger;
+    let steps = existing.steps;
+    let gates = existing.gates;
+    let changed = false;
     // Migration: the old @dev trigger collided with the developer/code agent (which should run a
     // SOLO developer, not the full build). Move Full build onto @build.
-    if (existing.trigger === "@dev") upsertWorkflow({ ...existing, trigger: "@build" });
+    if (trigger === "@dev") { trigger = "@build"; changed = true; }
+    // Migration: this metadata never drove full-build's actual execution (it runs the proven
+    // pipeline, never the step engine — see runner.ts), but it DOES drive the dashboard timeline's
+    // step order/labels. The original seed listed @review before @test while the pipeline (build()
+    // in pipeline.ts) always runs the tester, then the reviewer — so every full-build card showed
+    // Review and Test swapped (#152). Reorder existing rows to match reality.
+    if (steps.length === 4 && (steps[2]?.agent || "").toLowerCase() === "@review" && (steps[3]?.agent || "").toLowerCase() === "@test") {
+      steps = [steps[0], steps[1], steps[3], steps[2]];
+      gates = gates.map((g) => (g.after === 2 ? { ...g, after: 3 } : g.after === 3 ? { ...g, after: 2 } : g));
+      changed = true;
+    }
+    if (changed) upsertWorkflow({ ...existing, trigger, steps, gates });
     return;
   }
   const S = (agent: string, instruction: string, extra: Partial<WorkflowStep> = {}): WorkflowStep => ({ agent, instruction, skills: [], hooks: [], ...extra });
@@ -92,12 +107,12 @@ export function seedWorkflows(): void {
     steps: [
       S("@plan", "Produce a concrete build plan for this issue."),
       S("@dev", "Implement the plan; commit and open a PR."),
-      S("@review", "Review the PR against the plan and the codebase."),
       S("@test", "Run the project's checks and fix any failures."),
+      S("@review", "Review the PR against the plan and the codebase."),
     ],
     gates: [
-      { after: 2, condition: "review:changes", route: "loop:1", maxLoops: 2 },
-      { after: 3, condition: "tests:fail", route: "loop:1", maxLoops: 2 },
+      { after: 2, condition: "tests:fail", route: "loop:1", maxLoops: 2 },
+      { after: 3, condition: "review:changes", route: "loop:1", maxLoops: 2 },
     ],
   });
   upsertWorkflow({

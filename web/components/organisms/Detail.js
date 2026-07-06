@@ -505,10 +505,13 @@ export function stepModelTargets(wf, agentDefs, data) {
 }
 
 // ---------- Detail timeline (bottom of the drawer) ----------
-// Every step wears its agent's face; on a WORKFLOW issue each face is the trigger of a model picker:
-// clicking it writes a per-agent model override for THIS issue (/issue-agent-model — priority 1 in
-// the server's resolveAssignment). The list rows keep their minimal dot timeline; this interactive
-// variant was lost in the 41d0f88/28055d3 refactors and is restored here (#152).
+// Same status convention as the List/Board timeline (WorkflowTimelineImpl): only the step actually
+// running or parked shows a face — a live spinner while the agent works, its avatar while blocked on
+// it. Every other dot is a plain status icon (check = done, alert = attention, empty = pending), not
+// a wall of avatars (#152: the first restore showed every step's face always, since `s.role` is set
+// on every step regardless of state). On a WORKFLOW issue every dot is STILL the trigger of a model
+// picker — including pending steps — so you can pre-set a future step's model before it runs; that
+// interactive variant was lost in the 41d0f88/28055d3 refactors and is restored here.
 function DetailTimeline({ issue, data, onOpenModels }) {
   const m = timelineModel(issue);
   if (m.epic || !m.started || !m.steps) return null;
@@ -533,8 +536,18 @@ function DetailTimeline({ issue, data, onOpenModels }) {
       const curOpt = curRef ? modelOpts.find((o) => o.value === curRef) : null;
       const curLabel = curOpt ? curOpt.label : (target && target.dflt ? target.dflt : "");
       const tip = cap(s.role || s.k) + (curLabel ? " · " + curLabel : "") + (target ? " — click to change model" : "");
-      const face = s.role || (current ? issue.role : null);
-      const dot = html`<span class=${"flow__dot" + (current && live ? " pulse" : "") + (face ? " flow__dot--face" : "")}>${face ? html`<span class="flow__face"><${Avatar} role=${face} size=${26} crop="head"/></span>` : done ? html`<${Icon} name="check" size=${10}/>` : null}</span>`;
+      const showSpin = current && live; // actually running right now
+      const showFace = current && !showSpin; // parked/blocked ON this step — show who
+      const icon = showSpin
+        ? html`<${Spinner} size=${16}/>`
+        : showFace
+          ? html`<span class="flow__face"><${Avatar} role=${s.role || issue.role} size=${20} crop="head"/></span>`
+          : done
+            ? html`<${Icon} name="check" size=${11}/>`
+            : blocked
+              ? html`<${Icon} name="alert" size=${11}/>`
+              : null;
+      const dot = html`<span class=${"flow__dot" + (showSpin ? " pulse" : "") + (showFace ? " flow__dot--face" : "")}>${icon}</span>`;
       return html`
         ${idx ? html`<span class=${"flow__line" + (idx <= m.current ? " on" : "")}></span>` : null}
         <span class=${"flow__step " + cls}>
@@ -553,7 +566,7 @@ function DetailTimeline({ issue, data, onOpenModels }) {
                 onChange=${(v) => setStepModel(issue, target.key, v)}
               /></span>`
             : dot}
-          <span class="flow__lbl">${(current && live) ? html`<${Icon} name=${(statusChip(issue) || {}).icon || "circle"} size=${11} cls="flow__act"/> ` : null}${s.label}</span>
+          <span class="flow__lbl">${s.label}</span>
         </span>`;
     })}
   </div>`;
