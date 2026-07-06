@@ -15,16 +15,46 @@ import { recordOutgoingComment, setCommentGhId, getConversation, recordIncident,
 
 const execFileAsync = promisify(execFile);
 
-/** Note operational problems (rate limits, secondary limits) so the Process Analyzer can propose a fix. */
-function noteGhFailure(args: string[], err: unknown): void {
+// Circuit breaker (Process Analyzer findings, dev-agency-analyzer#156-199): `gh` had zero retry/
+// back-off logic — once GitHub rate-limits a repo, every scan tick re-hits the SAME failing call
+// (issue-comments fetch was the observed hot path) with no delay and no exit condition. One 6h
+// telemetry window recorded 180,071 failed calls to a single endpoint before the analyzer flagged
+// it — pure log noise burning CPU, not real work. Trip the circuit on the FIRST rate-limit error and
+// short-circuit every `gh`/`ghAs` call (fail fast, no exec) until the cooldown elapses: one real
+// failure logged instead of thousands, and GitHub's actual quota gets a chance to recover instead of
+// being hammered while already exhausted.
+export const PRIMARY_RATE_LIMIT_COOLDOWN_MS = 10 * 60_000; // GitHub's primary limit resets hourly;
+// a conservative partial wait — short enough that legitimate work resumes well within the hour,
+// long enough that a scan loop (30s+ cadence) can't retrigger the same failure many times over.
+export const SECONDARY_RATE_LIMIT_COOLDOWN_MS = 60_000; // secondary/abuse-detection limits are
+// short-lived (seconds, per GitHub's own docs) — a full 10-minute pause would be needlessly
+// conservative here.
+let circuitOpenUntil = 0;
+let circuitReason = "";
+function circuitOpen(): boolean {
+  return Date.now() < circuitOpenUntil;
+}
+/** Test/inspection hook — the internal circuit state, without exposing the trip/gh internals. */
+export function circuitStatus(): { open: boolean; until: number; reason: string } {
+  return { open: circuitOpen(), until: circuitOpenUntil, reason: circuitReason };
+}
+export function maybeTripCircuit(args: string[], err: unknown): void {
   const msg = (err as Error)?.message || "";
-  if (/rate limit|secondary rate|abuse detection|was submitted too quickly/i.test(msg)) {
-    recordIncident("github-rate-limit", `${args.slice(0, 2).join(" ")}: ${msg.slice(0, 160)}`);
-  }
+  if (!/rate limit|secondary rate|abuse detection|was submitted too quickly/i.test(msg)) return;
+  recordIncident("github-rate-limit", `${args.slice(0, 2).join(" ")}: ${msg.slice(0, 160)}`);
+  if (circuitOpen()) return; // already open — this is exactly the retry storm we're preventing
+  const secondary = /secondary rate|abuse detection|was submitted too quickly/i.test(msg);
+  circuitOpenUntil = Date.now() + (secondary ? SECONDARY_RATE_LIMIT_COOLDOWN_MS : PRIMARY_RATE_LIMIT_COOLDOWN_MS);
+  circuitReason = msg.slice(0, 200);
+  console.warn(`[agency] gh circuit OPEN (${secondary ? "secondary" : "primary"} rate limit) — pausing all gh calls until ${new Date(circuitOpenUntil).toISOString()}`);
+}
+function circuitError(): Error {
+  return new Error(`gh circuit open (${circuitReason || "GitHub rate limit"}) — retry after ${new Date(circuitOpenUntil).toISOString()}`);
 }
 
 /** Run gh as the human owner ("acts as you"); empty token falls back to the stored owner/bot token. */
 async function ghAs(token: string, args: string[]): Promise<string> {
+  if (circuitOpen()) throw circuitError();
   const t = token || ghUserToken() || ghBotToken();
   try {
     const { stdout } = await execFileAsync("gh", args, {
@@ -33,13 +63,14 @@ async function ghAs(token: string, args: string[]): Promise<string> {
     });
     return stdout.trim();
   } catch (err) {
-    noteGhFailure(args, err);
+    maybeTripCircuit(args, err);
     throw err;
   }
 }
 
 /** Run gh as the agency bot, using the dashboard-stored bot token (or GITHUB_TOKEN env). */
 async function gh(args: string[]): Promise<string> {
+  if (circuitOpen()) throw circuitError();
   const token = ghBotToken();
   try {
     const { stdout } = await execFileAsync("gh", args, {
@@ -48,7 +79,7 @@ async function gh(args: string[]): Promise<string> {
     });
     return stdout.trim();
   } catch (err) {
-    noteGhFailure(args, err);
+    maybeTripCircuit(args, err);
     throw err;
   }
 }

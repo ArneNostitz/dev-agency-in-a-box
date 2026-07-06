@@ -175,6 +175,7 @@ export function IssueRow({ i, multi, onOpen, act, avatarsOn, excerpt, open = fal
         <${Breadcrumb} repo=${i.repo} number=${i.number} parent=${i.parentNum ? { number: i.parentNum } : null} dot=${multi}/>
         ${i.workflowId ? html`<span class="wfchip tip" data-tip=${"Workflow: " + i.workflowId}><${Icon} name="sparkles" size=${10}/> ${i.workflowId}</span>` : null}
         ${i.byAgent ? html`<span class="irow__byagent tip" data-tip="Proposed by an agent — review & start"><${Icon} name="rocket" size=${10}/> agent</span>` : null}
+        ${i.analyzerProposal ? html`<span class="irow__analyzer tip" data-tip="Process Analyzer — a self-improvement proposal about the agency's own operational health"><${Icon} name="flask" size=${10}/> analyzer</span>` : null}
         ${i.editing && i.editing.length ? html`<span class="irow__lock tip" data-tip=${"Editing now: " + i.editing.join(", ")}><${Icon} name="lock" size=${10}/> ${i.editing.length}</span>` : null}
       </div>
       <div class="irow__headr">
@@ -228,14 +229,19 @@ const KIND_LABEL = { attention: "Needs you", ready: "Ready to merge", running: "
 const KIND_ICON = { attention: "alert", ready: "merge", running: "loader", queued: "clock", planned: "planned", inbox: "inbox", done: "check" };
 
 // Overview stats: data drives the UI — surface "what needs me?" before any row is read.
+// Most stats bucket by lifecycle `kind`; `analyzer` is orthogonal (a Process Analyzer proposal is
+// usually ALSO sitting in Inbox) so it carries its own `match` predicate instead of `kinds`.
 export const STAT_DEFS = [
   { k: "needs", label: "Needs you", kinds: ["attention", "ready"], cls: "attention", icon: "alert" },
+  { k: "analyzer", label: "Analyzer", kinds: [], cls: "analyzer", icon: "flask", match: (i) => !!i.analyzerProposal },
   { k: "running", label: "Working", kinds: ["running"], cls: "running", icon: "loader" },
   { k: "queued", label: "Queued", kinds: ["queued"], cls: "queued", icon: "clock" },
   { k: "inbox", label: "Inbox", kinds: ["inbox"], cls: "inbox", icon: "inbox" },
   { k: "planned", label: "Planned", kinds: ["planned"], cls: "planned", icon: "planned" },
   { k: "done", label: "Done", kinds: ["done"], cls: "done", icon: "check" },
 ];
+// Shared predicate: a def's own `match` when present, else its lifecycle-kind membership.
+export const statMatches = (d, i, kind) => (d.match ? d.match(i) : d.kinds.includes(kind ?? statusField(i).kind));
 
 // At-a-glance status counts + one-click filter. Lives in the view bar.
 export function StatStrip({ counts, statFilter, setStatFilter, spend, compact = false }) {
@@ -316,10 +322,10 @@ export function ProgressTable({ issues, repos, repoFilter, onOpen, onAddIssue, o
     base = filterByTime(base, time === "all" ? "any" : time);
     const cmp = sort === "smart" ? smartCmp : sort === "created" ? (a, b) => (b.number || 0) - (a.number || 0) : (a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0);
     const cnt = {}; STAT_DEFS.forEach((d) => (cnt[d.k] = 0));
-    for (const i of base) { const k = statusField(i).kind; for (const d of STAT_DEFS) if (d.kinds.includes(k)) cnt[d.k]++; }
+    for (const i of base) { const k = statusField(i).kind; for (const d of STAT_DEFS) if (statMatches(d, i, k)) cnt[d.k]++; }
     const need = cnt.needs;
     const fdef = statFilter && STAT_DEFS.find((d) => d.k === statFilter);
-    if (fdef) base = base.filter((i) => fdef.kinds.includes(statusField(i).kind));
+    if (fdef) base = base.filter((i) => statMatches(fdef, i));
     let secs;
     if (group === "repo") {
       const m = new Map();

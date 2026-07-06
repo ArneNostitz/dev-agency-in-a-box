@@ -271,7 +271,9 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           if (!repoT) return void res.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({ error: "no analyzer_repo / agency repo configured" }));
           const r = await createIssue(repoT, title, ibody).catch(() => ({ number: 0 }));
           // Advisory only — no DB status set, so it surfaces in Inbox like any other untouched issue.
-          if (r.number) setSetting("analyzer_last_issue_ts", new Date().toISOString());
+          // DB-first origin flag (ADR-0001: no GitHub label) so the dashboard can give these their own
+          // visible place instead of blending into ordinary Inbox noise — see /data's `analyzerProposal`.
+          if (r.number) { setSetting("analyzer_last_issue_ts", new Date().toISOString()); setSetting(`analyzer_issue.${repoT}#${r.number}`, "1"); }
           res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ number: r.number }));
         })();
         return;
@@ -440,6 +442,10 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
               modelOverride: getIssueModelOverride(i.repo, i.number),
               workflowId: getIssueWorkflow(i.repo, i.number),
               rolePin: (getSetting(`issue_role_pin.${i.repo}#${i.number}`) || "") || null,
+              // Opened by the Process Analyzer (self-improvement proposal about the AGENCY'S OWN
+              // operational health) — flagged so the dashboard can give these their own visible
+              // place instead of blending into ordinary Inbox noise.
+              analyzerProposal: getSetting(`analyzer_issue.${i.repo}#${i.number}`) === "1",
               providerOverride: getIssueProvider(i.repo, i.number),
               agentModels: getIssueAgentModels(i.repo, i.number),
               useFallback: getIssueUseFallback(i.repo, i.number),

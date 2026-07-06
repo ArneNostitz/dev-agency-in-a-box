@@ -11,7 +11,7 @@ import { AddRepo, Onboarding } from "./components/organisms/Onboarding.js";
 import { SecretBanner, StatusLine, TopBar } from "./components/organisms/TopBar.js";
 import { Usage } from "./components/organisms/Usage.js";
 import { WorkflowBuilder } from "./components/organisms/WorkflowBuilder.js";
-import { ProgressTable, StatStrip, STAT_DEFS, statusField } from "./components/organisms/ProgressTable.js";
+import { ProgressTable, StatStrip, STAT_DEFS, statusField, statMatches } from "./components/organisms/ProgressTable.js";
 import { Orchestrator } from "./components/organisms/Orchestrator.js";
 import { api, getJSON } from "./lib/api.js";
 import { md } from "./lib/markdown.js";
@@ -179,7 +179,7 @@ function App() {
   const auditRepos = (data.active || []).filter((a) => a.role === "auditor").map((a) => a.repo);
   const shown = issues.filter((i) => !repoFilter || i.repo === repoFilter);
   const statNested = nestedChildKeys(shown);
-  const statCounts = (() => { const c = {}; STAT_DEFS.forEach((d) => (c[d.k] = 0)); for (const i of shown) { if (i.archived || statNested.has(i.repo + "#" + i.number)) continue; const k = statusField(i).kind; for (const d of STAT_DEFS) if (d.kinds.includes(k)) c[d.k]++; } return c; })();
+  const statCounts = (() => { const c = {}; STAT_DEFS.forEach((d) => (c[d.k] = 0)); for (const i of shown) { if (i.archived || statNested.has(i.repo + "#" + i.number)) continue; const k = statusField(i).kind; for (const d of STAT_DEFS) if (statMatches(d, i, k)) c[d.k]++; } return c; })();
   const activity = (data.activity || []).concat(liveRef.current);
 
   function override(repo, number, patch) { ov[repo + "#" + number] = { patch, t: Date.now() }; forceTick((x) => x + 1); }

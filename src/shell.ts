@@ -270,6 +270,7 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .pt-stat-attention .pt-stat-n{color:var(--amber)}
 .pt-stat-running .pt-stat-n,.pt-stat-running .pt-stat-ic{color:var(--accent)}
 .pt-stat-done .pt-stat-n{color:var(--ink-3)}
+.pt-stat-analyzer.on,.pt-stat-analyzer .pt-stat-n,.pt-stat-analyzer .pt-stat-ic{color:var(--purple)}
 .pt-stat-spend{cursor:default;margin-left:auto}
 .pt-stat-spend .pt-stat-n{font-family:var(--font-mono);color:var(--green)}
 
@@ -364,6 +365,7 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .irow__flow{max-height:0;overflow:hidden;opacity:0;margin-top:0;padding-left:30px;padding-top:0;transition:max-height var(--dur) var(--ease),opacity var(--dur) var(--ease),margin var(--dur) var(--ease)}
 .irow:hover .irow__flow{max-height:58px;opacity:1;margin-top:8px;padding-top:9px}
 .irow__byagent{display:inline-flex;align-items:center;gap:3px;font-size:10px;color:var(--purple);background:var(--purple-weak);border-radius:var(--radius-pill);padding:1px 7px}
+.irow__analyzer{display:inline-flex;align-items:center;gap:3px;font-size:10px;color:var(--purple);background:var(--purple-weak);border-radius:var(--radius-pill);padding:1px 7px}
 .irow__lock{display:inline-flex;align-items:center;gap:3px;font-size:10px;color:var(--amber)}
 /* ── Shared: bare head, heat bar, workflow timeline ────────────── */
 .barehead{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;line-height:0}
