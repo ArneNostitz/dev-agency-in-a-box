@@ -5,6 +5,7 @@
 import { html, useState, useEffect } from "/web/vendor/standalone.mjs";
 import { Icon } from "../atoms/Icon.js";
 import { Spinner } from "../atoms/Spinner.js";
+import { RepoPicker } from "../molecules/RepoPicker.js";
 import { api, getJSON } from "../../lib/api.js";
 import { ago, fmtTok, hm } from "../../lib/format.js";
 import { toast } from "../../lib/toast.js";
@@ -61,27 +62,10 @@ export function TopBar({ working, scanning, env, theme, setTheme, onSettings, on
 // Centered repo selector that doubles as repo add/remove (replaces the pill row + Add modal).
 function RepoDropdown({ repos, repoFilter, setRepoFilter, reload, auto, autoRepos, setAuto }) {
   const [open, setOpen] = useState(false);
-  const [avail, setAvail] = useState(null);
-  const [manual, setManual] = useState("");
-  const [busy, setBusy] = useState(false);
-  useEffect(() => { if (open && avail === null) getJSON("/repos-available").then((d) => setAvail(d.repos || [])).catch(() => setAvail([])); }, [open]);
-  function add(full) {
-    if (!full || busy) return;
-    if (!/^[\w.-]+\/[\w.-]+$/.test(full)) { toast("Use owner/name, e.g. acme/app"); return; }
-    setBusy(true);
-    api("/add-repo", { repo: full }).then(() => { toast("Added " + full); setManual(""); setRepoFilter(full); reload(); }).catch(() => toast("Couldn’t add — use owner/name")).then(() => setBusy(false));
-  }
-  function remove(full) {
-    if (busy) return; setBusy(true);
-    api("/remove-repo", { repo: full }).then(() => { toast("Removed " + full); if (repoFilter === full) setRepoFilter(null); reload(); }).catch(() => toast("Couldn’t remove")).then(() => setBusy(false));
-  }
 
   // Simple on/off toggle (default = off). Green = auto-on, muted = off.
   const gpill = (kind) => { const on = (auto[kind] || "") === "on"; const tip = "Auto-" + kind + " for all repos — " + (on ? "ON" : "OFF"); return html`<button class=${"apill " + (on ? "on" : "off")} aria-label=${tip} data-tip=${tip} onClick=${(e) => { e.stopPropagation(); setAuto(kind, on ? "off" : "on"); }}><${Icon} name=${kind === "resume" ? "refresh" : "merge"} size=${12}/> <span class="apill-label">${kind}</span></button>`; };
-  const rpill = (repo, kind) => { const on = ((autoRepos[repo] || {})[kind] || "") === "on"; const tip = "Auto-" + kind + " — " + (on ? "ON" : "OFF"); return html`<button class=${"apill " + (on ? "on" : "off")} aria-label=${tip} data-tip=${tip} onClick=${(e) => { e.stopPropagation(); setAuto(kind, on ? "off" : "on", repo); }}><${Icon} name=${kind === "resume" ? "refresh" : "merge"} size=${12}/> <span class="apill-label">${kind}</span></button>`; };
 
-  const watching = repos || [];
-  const addable = (avail || []).filter((r) => !watching.includes(r.full_name));
   const title = repoFilter ? repoFilter.split("/").pop() : "All";
   return html`<div class="dropwrap repodrop">
     <button class="repodrop-btn" data-tip="Switch repo · add / remove repos" onClick=${() => setOpen((o) => !o)}>
@@ -95,22 +79,8 @@ function RepoDropdown({ repos, repoFilter, setRepoFilter, reload, auto, autoRepo
           <div style="flex:1;display:flex;align-items:center"><${Icon} name="layers" size=${14}/> All repos</div>
           <div class="autorow" style="margin:0">${gpill("resume")}${gpill("merge")}</div>
         </button>
-        ${watching.length ? html`<div class="dropmenu-h">Watching</div>` : null}
-        ${watching.map((r) => html`<div class=${"repodrop-row" + (repoFilter === r ? " sel" : "")} key=${r}>
-          <button class="repodrop-pick" onClick=${() => { setRepoFilter(r); setOpen(false); }}><${Icon} name="pr" size=${13}/> <span class="repodrop-rowner">${r.split("/")[0]}/</span><span class="repodrop-rname">${r.split("/").pop()}</span></button>
-          <div class="repodrop-ctl">
-            <div class="autorow" style="margin:0">${rpill(r, "resume")}${rpill(r, "merge")}</div>
-            <button class="repodrop-x" disabled=${busy} aria-label=${"Remove " + r} data-tip="Stop watching" onClick=${() => remove(r)}><${Icon} name="trash" size=${14}/></button>
-          </div>
-        </div>`)}
-        <div class="dropmenu-h">Add a repo</div>
-        <div class="repodrop-add">
-          <input placeholder="owner/name" value=${manual} onInput=${(e) => setManual(e.target.value)} onKeyDown=${(e) => { if (e.key === "Enter") add(manual.trim()); }}/>
-          <button class="btn primary" disabled=${busy} onClick=${() => add(manual.trim())}>Add</button>
-        </div>
-        ${avail === null ? html`<div class="dropmenu-empty">Loading your repos…</div>`
-          : addable.length ? html`<div class="repodrop-avail">${addable.slice(0, 30).map((r) => html`<button class="dropmenu-item" key=${r.full_name} disabled=${busy} onClick=${() => add(r.full_name)}><${Icon} name="plus" size=${13}/> ${r.full_name}</button>`)}</div>`
-          : null}
+        <${RepoPicker} repos=${repos} reload=${reload} showAuto=${true} autoRepos=${autoRepos} setAuto=${setAuto}
+          repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} onPick=${(r) => { setRepoFilter(r); setOpen(false); }}/>
       </div>` : null}
   </div>`;
 }

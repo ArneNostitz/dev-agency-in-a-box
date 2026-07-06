@@ -665,21 +665,22 @@ html[data-theme="dark"] .gtip{background:#000;color:#fff}
 .repodrop-btn:hover{border-color:var(--line-2)}
 .repodrop-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .repodrop-sub{color:var(--ink-3);font-weight:400;font-size:12.5px}
-.repodrop-menu{left:50%;right:auto;transform:translateX(-50%);min-width:380px;max-width:min(94vw,460px)}
+.repodrop-menu{left:50%;right:auto;transform:translateX(-50%);min-width:420px;max-width:min(96vw,560px)}
 .repodrop-head{display:none}
 @media(max-width:560px){.repodrop-head{display:flex;align-items:center;justify-content:space-between;font-weight:600;font-size:15px;padding:4px 4px 10px;border-bottom:1px solid var(--line);margin-bottom:6px;position:sticky;top:0;background:var(--surface)}}
-@media(max-width:560px){.repodrop-menu{position:fixed;inset:0;transform:none;width:auto;min-width:0;max-width:none;max-height:none;border:none;border-radius:0;padding:10px 12px calc(12px + var(--safe-b))}.repodrop-ctl{position:static;opacity:1;pointer-events:auto;background:none;padding-left:0;margin-left:auto}.repodrop-row{flex-wrap:wrap}}
-.repodrop-row{position:relative;display:flex;align-items:center;border-radius:8px}
+@media(max-width:560px){.repodrop-menu{position:fixed;inset:0;transform:none;width:auto;min-width:0;max-width:none;max-height:none;border:none;border-radius:0;padding:10px 12px calc(12px + var(--safe-b))}}
+/* Row = name (flex, ellipsises) + controls (never shrink, always visible) side by side, so the
+   controls can never overlap a long repo name. On narrow screens the pill labels drop to icons
+   (see .apill @560) freeing room for the name. */
+.repodrop-row{display:flex;align-items:center;gap:6px;border-radius:8px}
 .repodrop-row.sel{background:var(--accent-weak)}
 .repodrop-row:hover{background:var(--surface-2)}
-.repodrop-pick{flex:1;display:flex;align-items:baseline;gap:6px;min-width:0;text-align:left;border:none;background:transparent;color:var(--ink);padding:9px 10px;border-radius:8px;cursor:pointer;font-size:14px;overflow:hidden;white-space:nowrap}
+.repodrop-pick{flex:1 1 auto;display:flex;align-items:baseline;gap:6px;min-width:0;text-align:left;border:none;background:transparent;color:var(--ink);padding:9px 10px;border-radius:8px;cursor:pointer;font-size:14px;overflow:hidden;white-space:nowrap}
+.repodrop-pick:disabled{cursor:default}
 .repodrop-rowner{color:var(--ink-3);font-size:12px;flex:0 0 auto}
 .repodrop-rname{font-weight:600;overflow:hidden;text-overflow:ellipsis}
 .repodrop-row.sel .repodrop-pick .repodrop-rname{color:var(--accent)}
-/* per-repo controls overlay on the right; revealed on hover (desktop) or when selected (tap = mobile) */
-.repodrop-ctl{position:absolute;right:6px;top:50%;transform:translateY(-50%);display:flex;align-items:center;gap:4px;padding-left:14px;opacity:0;pointer-events:none;transition:opacity .12s;background:linear-gradient(90deg,transparent,var(--surface) 14px)}
-.repodrop-row:hover .repodrop-ctl{opacity:1;pointer-events:auto;background:linear-gradient(90deg,transparent,var(--surface-2) 14px)}
-.repodrop-row.sel .repodrop-ctl{opacity:1;pointer-events:auto;background:linear-gradient(90deg,transparent,var(--accent-weak) 14px)}
+.repodrop-ctl{flex:0 0 auto;display:flex;align-items:center;gap:4px;padding-right:6px}
 .repodrop-x{border:none;background:transparent;color:var(--ink-3);cursor:pointer;display:flex;padding:6px;border-radius:8px}
 .repodrop-x:hover{background:var(--red-weak);color:var(--red)}
 .dropmenu-item.sel{color:var(--accent);font-weight:600;background:var(--accent-weak)}
@@ -1142,6 +1143,9 @@ textarea{resize:vertical;min-height:64px}
 .oblink{display:inline-flex;align-items:center;gap:6px;margin:2px 0 8px;font-weight:540}
 .obnav{display:flex;gap:8px;margin-top:20px}
 .obnav .btn{flex:1}
+/* onboarding embeds the shared RepoPicker; cap its height so the list scrolls inside the card */
+.obrepos{margin:10px 0 4px;max-height:44vh;overflow:auto;text-align:left}
+.obrepos .repodrop-avail{max-height:none}
 .obpick{display:flex;flex-direction:column;gap:8px;margin:14px 0}
 .obchip{border:1px solid var(--line);background:var(--surface);border-radius:12px;padding:12px 14px;cursor:pointer;font-size:15px;display:flex;align-items:center;gap:10px;font-weight:540}
 .obchip .lic{color:var(--ink-3)}

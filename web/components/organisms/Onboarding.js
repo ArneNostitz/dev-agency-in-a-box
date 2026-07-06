@@ -10,6 +10,7 @@ import { Spinner } from "../atoms/Spinner.js";
 import { Sheet } from "../atoms/Sheet.js";
 import { ProviderLogo } from "../atoms/ProviderLogo.js";
 import { ProviderSearchSelect } from "../molecules/ProviderSearchSelect.js";
+import { RepoPicker } from "../molecules/RepoPicker.js";
 import { api, getJSON } from "../../lib/api.js";
 import { toast } from "../../lib/toast.js";
 import { OB_PROVIDERS } from "../../data/providers.js";
@@ -127,16 +128,11 @@ export function ObAddModels({ onNext, onBack }) {
 
 export function Onboarding({ repos, github, reload }) {
   const [i, setI] = useState(0);
-  const [repo, setRepo] = useState("");
   const steps = ["welcome", "models", "github", "repo", "done"];
   const step = steps[Math.min(i, steps.length - 1)];
   const next = () => setI((x) => Math.min(steps.length - 1, x + 1));
   const back = () => setI((x) => Math.max(0, x - 1));
   const finish = () => api("/onboarded", { value: "1" }).then(() => { toast("You're all set!"); reload(); });
-  function addRepo() {
-    if (!/^[\w.-]+\/[\w.-]+$/.test(repo.trim())) { toast("Use owner/name"); return; }
-    api("/add-repo", { repo: repo.trim() }).then(() => { toast("Repo added"); setRepo(""); reload(); next(); }).catch(() => toast("Couldn’t add"));
-  }
   const dots = steps.map((_, idx) => html`<div class=${"obdot " + (idx === i ? "on" : idx < i ? "done" : "")}></div>`);
 
   let body;
@@ -155,10 +151,9 @@ export function Onboarding({ repos, github, reload }) {
   else if (step === "repo") body = html`
     <div class="obki"><${Icon} name="pr" size=${26}/></div>
     <div class="obh">Add your first repo</div>
-    <div class="obsub">The repository the agency will work in. Use <code>owner/name</code>. You can add more anytime from the repo bar.</div>
-    <label>Repository</label>
-    <div style="display:flex;gap:8px"><input placeholder="owner/name" value=${repo} onInput=${(e) => setRepo(e.target.value)} onKeyDown=${(e) => { if (e.key === "Enter") addRepo(); }}/><button class="btn primary" onClick=${addRepo}>Add</button></div>
-    <div class="obnav"><button class="btn" onClick=${back}>Back</button><button class="btn ghost" onClick=${next}>Skip for now</button></div>`;
+    <div class="obsub">Pick one of your GitHub repos below, or type <code>owner/name</code>. You can add more anytime from the repo bar.</div>
+    <div class="obrepos"><${RepoPicker} repos=${repos} reload=${reload} showAuto=${false} filterable=${true}/></div>
+    <div class="obnav"><button class="btn" onClick=${back}>Back</button><button class="btn primary" onClick=${next}>${(repos || []).length ? "Continue" : "Skip for now"}</button></div>`;
   else body = html`
     <div class="obki" style="background:var(--green-weak);color:var(--green)"><${Icon} name="check" size=${28}/></div>
     <div class="obh">You're all set${(repos || []).length ? "" : " — almost"}</div>
