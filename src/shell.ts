@@ -730,6 +730,12 @@ html[data-theme="dark"] .gtip{background:#000;color:#fff}
 .setupbar-track{height:6px;border-radius:999px;background:var(--surface-2);overflow:hidden}
 .setupbar-fill{height:100%;background:var(--accent);border-radius:999px;transition:width .25s ease}
 .setupbar-lbl{display:inline-flex;align-items:center;gap:4px;margin-top:3px;font-size:11px;color:var(--ink-3)}
+/* live-stream inline progress row (kind "progress" — one self-updating meter, not a line per tick) */
+.lprog{display:flex;align-items:center;gap:6px}
+.lprog-lbl{flex:none;white-space:nowrap}
+.lprog-track{flex:1;min-width:60px;max-width:220px;height:5px;border-radius:999px;background:var(--surface-2);overflow:hidden}
+.lprog-fill{display:block;height:100%;background:var(--accent);border-radius:999px;transition:width .25s ease}
+.lprog-pct{flex:none;font-size:11px;color:var(--ink-3);min-width:32px;text-align:right}
 .subtoggle{display:flex;align-items:center;gap:6px;width:100%;text-align:left;border:none;background:transparent;color:var(--ink-2);font-size:12px;font-weight:560;cursor:pointer;padding:2px}
 .subtoggle .chev{display:inline-flex;color:var(--ink-3);transition:transform .15s}
 .subtoggle.open .chev{transform:rotate(90deg)}

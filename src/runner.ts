@@ -14,6 +14,7 @@ import { loadConfig, type Config } from "./config.js";
 import {
   commentOnIssue,
   cloneRepo,
+  syncRepo,
   commentThread,
   listAgencyPrs,
   listAllOpenIssues,
@@ -251,7 +252,7 @@ function workdirFor(repo: string, key: string): string {
 // ---- workers (run inside the pool) ----
 
 /** Process one actionable issue end to end. */
-async function processIssue(cfg: Config, repo: string, issue: Issue, opts: { fresh?: boolean } = {}): Promise<void> {
+async function processIssue(cfg: Config, repo: string, issue: Issue, opts: { fresh?: boolean; resume?: boolean } = {}): Promise<void> {
   clearStop(repo, issue.number); // a fresh dispatch clears any prior Stop request
   clearHold(repo, issue.number); // …and any prior Hold (resume/continue)
   // ONE-SHOT TAKEOVER: the user addressed a specific agent in the chat on a started issue (e.g.
@@ -301,7 +302,10 @@ async function processIssue(cfg: Config, repo: string, issue: Issue, opts: { fre
     return;
   }
 
-  const resuming = isWaitingOnHuman(getIssueStatus(repo, issue.number));
+  // opts.resume: the dispatcher KNOWS this continues a paused conversation (dashboard Approve) —
+  // it can't be read back from the status because Approve moves the card to "working" (instant UI)
+  // before this run starts, which erases the awaiting* blocked reason (#152).
+  const resuming = !!opts.resume || isWaitingOnHuman(getIssueStatus(repo, issue.number));
   // 🎲 Dealer's choice: the issue was created with no concrete agent/workflow — let a small LLM pick
   // the route ONCE on first start. A workflow pick is pinned; a role pick is stored as the issue's
   // role pin. Everything lives in the DB (issue #140: no @-handle text parsing anywhere).
@@ -384,12 +388,16 @@ async function processIssue(cfg: Config, repo: string, issue: Issue, opts: { fre
     : runPipeline(cfg, repo, issue, role, workdir, thread);
   setActive(repo, issue.number, "issue", role, issue.title);
   try {
-    pushActivity(repo, issue.number, role, "tool", `📥 cloning ${repo}… 0%`);
-    await rm(workdir, { recursive: true, force: true });
+    // Live "progress" events (SSE-only, not persisted): the dashboard renders ONE updating
+    // progress bar instead of a stream of "NN%" lines. One "tool" line lands when it's done.
+    const onSync = (percent: number, phase: string): void => {
+      pushActivity(repo, issue.number, role, "progress", `📥 preparing ${repo}`, phase === "cloned" ? 100 : Math.round(percent));
+    };
     await mkdir(join(workdir, ".."), { recursive: true });
-    await cloneRepo(repo, workdir, (percent, phase) => {
-      pushActivity(repo, issue.number, role, "tool", `📥 cloning ${repo}… ${phase === "cloned" ? "done" : percent + "%"}`);
-    });
+    // Reuse the existing checkout when there is one (fetch + hard reset — seconds, keeps
+    // node_modules for the tester) instead of a full re-clone on every agent run.
+    const reused = await syncRepo(repo, workdir, onSync);
+    pushActivity(repo, issue.number, role, "tool", `📥 ${reused ? "workdir refreshed (reused clone)" : "cloned"} ${repo}`);
     // RESUME must continue the EXISTING work, not restart on a fresh default branch. cloneRepo only
     // fetches the default branch, so deterministically check out the issue's branch if it was ever
     // pushed (same as processResume/processFix). Without this, every workflow resume silently threw
@@ -431,9 +439,8 @@ async function processPrFeedbackOne(
   thread: string,
 ): Promise<void> {
   const workdir = workdirFor(repo, `pr-${pr.number}`);
-  await rm(workdir, { recursive: true, force: true });
   await mkdir(join(workdir, ".."), { recursive: true });
-  await cloneRepo(repo, workdir);
+  await syncRepo(repo, workdir); // reuse the existing clone when present (fresh reset), full clone otherwise
   await indexRepo(workdir, repo, (s) => pushActivity(repo, pr.number, "developer", "tool", s));
   setActive(repo, pr.number, "pr", "developer", pr.title);
   try {
@@ -475,9 +482,8 @@ async function processHealOne(
 
   console.log(`[agency] auto-heal ${repo} PR#${pr.number}: ${health.detail} (attempt ${attempts + 1})`);
   const workdir = workdirFor(repo, `pr-${pr.number}`);
-  await rm(workdir, { recursive: true, force: true });
   await mkdir(join(workdir, ".."), { recursive: true });
-  await cloneRepo(repo, workdir);
+  await syncRepo(repo, workdir); // reuse the existing clone when present (fresh reset), full clone otherwise
 
   // For conflicts, do the base merge deterministically (the shallow clone + a weak model can't be
   // trusted to run the right git commands) and hand the agent only the conflicted files to resolve.
@@ -518,9 +524,8 @@ async function processFollowUp(cfg: Config, repo: string, issue: Issue): Promise
 
   const thread = await commentThread(repo, issue.number);
   const workdir = workdirFor(repo, `${issue.number}`);
-  await rm(workdir, { recursive: true, force: true });
   await mkdir(join(workdir, ".."), { recursive: true });
-  await cloneRepo(repo, workdir);
+  await syncRepo(repo, workdir); // reuse the existing clone when present (fresh reset), full clone otherwise
   await indexRepo(workdir, repo, (s) => pushActivity(repo, issue.number, "developer", "tool", s));
 
   setActive(repo, issue.number, "issue", "developer", issue.title);
@@ -616,9 +621,8 @@ async function processResume(cfg: Config, repo: string, issue: Issue): Promise<v
   recordIssueStatus(repo, issue.number, withStatus("working"), { title: issue.title, role: "developer" });
   const thread = await commentThread(repo, issue.number);
   const workdir = workdirFor(repo, `${issue.number}`);
-  await rm(workdir, { recursive: true, force: true });
   await mkdir(join(workdir, ".."), { recursive: true });
-  await cloneRepo(repo, workdir);
+  await syncRepo(repo, workdir); // reuse the existing clone when present (fresh reset), full clone otherwise
   // Resume must continue the EXISTING work, not start over on a fresh `main`. cloneRepo only fetches
   // the default branch (shallow), so check out the issue's branch deterministically here — mirroring
   // processFix — instead of relying on the agent prompt to `git fetch` it (best-effort, often missed →
@@ -666,9 +670,8 @@ async function processFix(cfg: Config, repo: string, issue: Issue, conflict: boo
   void cfg;
   recordIssueStatus(repo, issue.number, withStatus("working"), { title: issue.title, role: "developer" });
   const workdir = workdirFor(repo, `${issue.number}`);
-  await rm(workdir, { recursive: true, force: true });
   await mkdir(join(workdir, ".."), { recursive: true });
-  await cloneRepo(repo, workdir);
+  await syncRepo(repo, workdir); // reuse the existing clone when present (fresh reset), full clone otherwise
   await fetchCheckout(workdir, `agency/issue-${issue.number}`); // put the work back, then fix on top
   await indexRepo(workdir, repo, (s) => pushActivity(repo, issue.number, "developer", "tool", s));
   setActive(repo, issue.number, "issue", "developer", issue.title);
@@ -741,7 +744,9 @@ export async function forceApprove(cfg: Config, repo: string, number: number): P
   // Instant UI: show it as working even if the pool is at capacity (it'll be queued).
   recordIssueStatus(repo, number, withStatus("working"));
   console.log(`[agency] approve+build ${repo} #${number}`);
-  dispatch(`${repo}#${number}`, () => processIssue(cfg, repo, issue));
+  // resume:true — that status write just erased the awaitingApproval blocked reason, so the
+  // dispatcher must be told explicitly that this continues the paused proposal (#152).
+  dispatch(`${repo}#${number}`, () => processIssue(cfg, repo, issue, { resume: true }));
 }
 
 /**

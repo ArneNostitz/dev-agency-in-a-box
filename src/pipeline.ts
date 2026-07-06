@@ -515,8 +515,12 @@ async function runDeveloperPipeline(
 ): Promise<void> {
   if (stopped(repo, issue.number, "runDeveloperPipeline")) return;
   if (held(repo, issue.number, "runDeveloperPipeline")) return;
-  // Resuming a proposal that the human approved (by 👍 or "ok")?
-  if (getIssueStatus(repo, issue.number).blocked === "awaitingApproval" && (await approved(repo, issue, thread))) {
+  // Resuming a proposal that the human approved (by 👍 or "ok")? The dashboard Approve button moves
+  // the status to "working" BEFORE this run starts (instant UI), which erases the awaitingApproval
+  // blocked reason — so the one-shot approval flag must count on its own, or every Approve just
+  // re-planned and re-parked (#152).
+  const dashApproved = getSetting(`issue_approved.${repo}#${issue.number}`) === "1";
+  if ((getIssueStatus(repo, issue.number).blocked === "awaitingApproval" || dashApproved) && (await approved(repo, issue, thread))) {
     const planText = lastPlan(repo, issue.number);
     if (planText) {
       // If the plan was a decomposition, open the sub-issues instead of building this one.
@@ -595,8 +599,10 @@ async function runSpecialist(
 
   if (role === "planner") {
     // Conversational: if you approved the last proposal (👍 or "ok"), decompose it (if it
-    // proposed sub-issues) or accept it.
-    if (getIssueStatus(repo, issue.number).blocked === "awaitingApproval" && (await approved(repo, issue, thread))) {
+    // proposed sub-issues) or accept it. Same as runDeveloperPipeline: the dashboard Approve
+    // clobbers the blocked reason before this run, so the one-shot flag counts on its own (#152).
+    const planApproved = getSetting(`issue_approved.${repo}#${issue.number}`) === "1";
+    if ((getIssueStatus(repo, issue.number).blocked === "awaitingApproval" || planApproved) && (await approved(repo, issue, thread))) {
       const planText = lastPlan(repo, issue.number) ?? "";
       if (await maybeDecompose(repo, issue, planText)) return;
       await commentOnIssue(repo, issue.number, say("planner", "**👍 Plan accepted.** Press **▶ Start** on the dashboard to build it."));
@@ -933,7 +939,13 @@ async function evalGate(cond: string, repo: string, issue: Issue, workdir: strin
     case "tests:pass": return (await runTests(repo, issue.number, workdir, branch)).pass;
     case "tests:fail": return !(await runTests(repo, issue.number, workdir, branch)).pass;
     case "conflict": return (await conflictFiles(repo, branch).catch(() => [])).length > 0;
-    case "humanApproval": return true;
+    case "humanApproval": {
+      // Consume a pending dashboard approval — the gate parks only while approval is still missing.
+      // Without this, a restarted engine re-evaluated the gate and re-parked after every Approve (#152).
+      const k = `issue_approved.${repo}#${issue.number}`;
+      if (getSetting(k) === "1") { setSetting(k, ""); return false; }
+      return true;
+    }
     default: return false;
   }
 }

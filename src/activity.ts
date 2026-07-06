@@ -12,8 +12,12 @@ export interface ActivityEvent {
   role: string;
   // "delta" = a live partial-text fragment for the streaming UI. Broadcast to SSE subscribers
   // for the "typing" feel, but NOT persisted — the authoritative record is the final "text" event.
-  kind: "start" | "text" | "tool" | "done" | "delta";
+  // "progress" = a live updating meter (e.g. clone %): same-text events REPLACE each other in the
+  // UI (one progress bar, not a line per tick) and are NOT persisted — the caller records one
+  // final "tool" line when the work completes.
+  kind: "start" | "text" | "tool" | "done" | "delta" | "progress";
   text: string;
+  pct?: number; // 0–100, only on kind "progress"
 }
 
 // Units of work currently running (concurrent → can be several at once).
@@ -51,10 +55,11 @@ export function pushActivity(
   role: string,
   kind: ActivityEvent["kind"],
   text: string,
+  pct?: number,
 ): void {
   if (kind === "start") updateActiveRole(repo, number, role);
-  const event: ActivityEvent = { ts: Date.now(), repo, number, role, kind, text };
-  if (kind !== "delta") {
+  const event: ActivityEvent = { ts: Date.now(), repo, number, role, kind, text, ...(pct != null ? { pct } : {}) };
+  if (kind !== "delta" && kind !== "progress") {
     buffer.push(event);
     if (buffer.length > MAX) buffer.shift();
     recordActivity(repo, number, role, kind, text);

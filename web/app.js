@@ -109,7 +109,16 @@ function App() {
     return () => { clearInterval(t); document.removeEventListener("visibilitychange", onVis); };
   }, []);
   useEffect(() => {
-    let es; try { es = new EventSource("/events"); es.onmessage = (ev) => { try { const a = JSON.parse(ev.data); liveRef.current = liveRef.current.concat(a).slice(-200);
+    let es; try { es = new EventSource("/events"); es.onmessage = (ev) => { try { const a = JSON.parse(ev.data);
+      if (a && a.kind === "progress") {
+        // One updating meter per (issue, label): REPLACE the previous tick instead of appending —
+        // otherwise a clone streamed a line per percent (#152).
+        const pk = a.repo + "#" + a.number + "|" + a.text;
+        const cur = liveRef.current.filter((x) => !(x.kind === "progress" && x.repo + "#" + x.number + "|" + x.text === pk));
+        liveRef.current = cur.concat(a).slice(-200);
+      } else {
+        liveRef.current = liveRef.current.concat(a).slice(-200);
+      }
       // Surface run failures the user would otherwise only see on GitHub: an agent error is pushed
       // as a "done" line starting with ❌ (e.g. a misconfigured model or a real rate-limit).
       (Array.isArray(a) ? a : [a]).forEach((x) => { if (x && (x.kind === "error" || (x.kind === "done" && typeof x.text === "string" && x.text.trim().startsWith("❌")))) toast(String(x.text || "Run failed").replace(/^❌\s*/, ""), "error"); });

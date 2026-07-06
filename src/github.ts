@@ -485,17 +485,27 @@ export async function cloneRepo(repo: string, dest: string, onProgress?: (percen
     const url = `https://github.com/${repo}.git`;
     const p = spawn("git", ["clone", "--progress", "--depth", "50", url, dest], { env });
     let stderr = "";
+    // Emit only when the mapped percentage CHANGES — git repeats the same percentage across many
+    // progress lines (especially "Resolving deltas"), which flooded the live stream with
+    // identical "95%" events.
+    let lastPct = -1;
+    const send = (pct: number, phase: string): void => {
+      const rounded = Math.round(pct);
+      if (rounded === lastPct) return;
+      lastPct = rounded;
+      onProgress?.(rounded, phase);
+    };
     const emit = (line: string) => {
       if (!onProgress) return;
       // git progress lines, e.g.: "Receiving objects:  42% (d/n)" or "Resolving deltas: 80%"
       let m = line.match(/Receiving objects:\s+(\d+)%/);
-      if (m) { onProgress(Math.min(95, Number(m[1])), "cloning"); return; }
+      if (m) { send(Math.min(95, Number(m[1])), "cloning"); return; }
       m = line.match(/Resolving deltas:\s+(\d+)%/);
-      if (m) { onProgress(95, "resolving"); return; }
+      if (m) { send(95, "resolving"); return; }
       m = line.match(/Compressing objects:\s+(\d+)%/);
-      if (m) { onProgress(Math.min(20, Number(m[1]) / 5), "compressing"); return; }
+      if (m) { send(Math.min(20, Number(m[1]) / 5), "compressing"); return; }
       m = line.match(/Counting objects:\s+(\d+)%/);
-      if (m) { onProgress(Math.min(5, Number(m[1]) / 20), "counting"); return; }
+      if (m) { send(Math.min(5, Number(m[1]) / 20), "counting"); return; }
     };
     p.stderr.on("data", (chunk: Buffer) => {
       const s = chunk.toString();
@@ -535,6 +545,39 @@ export async function cloneRepo(repo: string, dest: string, onProgress?: (percen
       /* non-fatal */
     }
   }
+}
+
+/**
+ * Bring `dest` to a fresh, up-to-date checkout of the repo's default branch. Reuses an existing
+ * clone when present (fetch + hard reset + clean — seconds instead of a full clone, and ignored
+ * artifacts like node_modules survive for the tester); clones from scratch only the first time or
+ * when the reuse fails. Returns true when the existing clone was reused.
+ */
+export async function syncRepo(repo: string, dest: string, onProgress?: (percent: number, phase: string) => void): Promise<boolean> {
+  if (existsSync(join(dest, ".git"))) {
+    try {
+      await gh(["auth", "setup-git"]); // keep git's credential helper current (token rotation)
+      onProgress?.(10, "fetching");
+      await runGit(dest, ["fetch", "--depth", "50", "origin"]);
+      onProgress?.(70, "fetching");
+      // origin/HEAD is set by the original clone; re-resolve it if it's ever missing.
+      let head = await runGit(dest, ["rev-parse", "--abbrev-ref", "origin/HEAD"]).catch(() => "");
+      if (!head) {
+        await runGit(dest, ["remote", "set-head", "origin", "--auto"]);
+        head = await runGit(dest, ["rev-parse", "--abbrev-ref", "origin/HEAD"]);
+      }
+      await runGit(dest, ["checkout", "-f", head.replace(/^origin\//, "")]);
+      await runGit(dest, ["reset", "--hard", head]);
+      await runGit(dest, ["clean", "-fd"]); // drop untracked leftovers; ignored files (node_modules, dist) stay
+      onProgress?.(100, "cloned");
+      return true;
+    } catch (err) {
+      console.warn(`[agency] workdir reuse failed for ${repo} — recloning (${(err as Error).message.slice(0, 140)})`);
+    }
+  }
+  await rm(dest, { recursive: true, force: true });
+  await cloneRepo(repo, dest, onProgress);
+  return false;
 }
 
 

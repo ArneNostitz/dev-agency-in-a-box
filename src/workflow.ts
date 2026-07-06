@@ -7,7 +7,10 @@
 import { listWorkflows, type Workflow } from "./store.js";
 import type { RoleName } from "./agents/roles.js";
 
-const LEAD_ROLE: Record<string, RoleName> = { "full-build": "planner", "quick-fix": "developer", "plan-only": "planner", "review-only": "reviewer" };
+// full-build leads as DEVELOPER: that routes runPipeline into runDeveloperPipeline — the proven
+// plan → approve → build → test/review chain. "planner" here sent it into the solo-planner
+// conversational flow instead, which re-planned + re-parked on every Approve and never built (#152).
+const LEAD_ROLE: Record<string, RoleName> = { "full-build": "developer", "quick-fix": "developer", "plan-only": "planner", "review-only": "reviewer" };
 const HANDLE_ROLE: Record<string, RoleName> = { "@dev": "developer", "@plan": "planner", "@split": "decomposer", "@arch": "architect", "@review": "reviewer", "@test": "tester" };
 const esc = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 

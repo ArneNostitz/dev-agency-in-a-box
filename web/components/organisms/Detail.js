@@ -20,7 +20,6 @@ import { Comment } from "../molecules/Comment.js";
 import { ChatComposer } from "../molecules/ChatComposer.js";
 import { RunSelector } from "../molecules/RunSelector.js";
 import { timelineModel } from "../molecules/Timeline.js";
-import { WorkflowTimeline } from "./ProgressTable.js";
 import { api, getJSON } from "../../lib/api.js";
 import { ago, cap, fmtTok, tokHeat, usageTitle, shortModel } from "../../lib/format.js";
 import { toast, readAttach } from "../../lib/toast.js";
@@ -294,7 +293,10 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
     ${startError ? html`<div class="secbanner">⚠ ${startError}</div>` : null}
     ${(() => { const sp = getSetupProgress(stream); if (!sp) return null; const pct = sp.percent == null ? null : sp.percent; return html`<div class="setupbar" title=${sp.phase}><div class="setupbar-track"><div class="setupbar-fill" style=${pct == null ? "width:100%" : "width:" + pct + "%"}></div></div><span class="setupbar-lbl">${pct == null ? html`<${Spinner} size=${11}/> ` : pct + "% · "}${sp.phase}</span></div>`; })()}
     <div class="dstream" ref=${streamRef} onScroll=${(e) => { const el = e.target; const atB = el.scrollHeight - el.scrollTop - el.clientHeight < 50; stickRef.current = atB; setStreamAtBottom(atB); }}>
-      ${stream.length ? stream.map((a, idx) => { const ts = a.ts || (a.created_at ? new Date(a.created_at).getTime() : 0); const tstr = ts ? new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }) : ""; return html`<div key=${idx} class=${"l " + (a.kind === "tool" ? "tool" : a.kind === "start" || a.kind === "done" ? "muted" : a.kind === "delta" ? "delta" : "")}>${tstr ? html`<span class="l-ts">${tstr}</span> ` : null}${a.text}</div>`; }) : html`<div class="l muted">${startError ? "Failed to start." : "No live activity yet."}</div>`}
+      ${stream.length ? stream.map((a, idx) => { const ts = a.ts || (a.created_at ? new Date(a.created_at).getTime() : 0); const tstr = ts ? new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }) : "";
+        // "progress" = a single self-updating meter row (SSE replaces same-label ticks upstream).
+        if (a.kind === "progress") return html`<div key=${idx} class="l tool lprog">${tstr ? html`<span class="l-ts">${tstr}</span> ` : null}<span class="lprog-lbl">${a.text}</span><span class="lprog-track"><span class="lprog-fill" style=${"width:" + (a.pct || 0) + "%"}></span></span><span class="lprog-pct">${a.pct != null ? a.pct + "%" : ""}</span></div>`;
+        return html`<div key=${idx} class=${"l " + (a.kind === "tool" ? "tool" : a.kind === "start" || a.kind === "done" ? "muted" : a.kind === "delta" ? "delta" : "")}>${tstr ? html`<span class="l-ts">${tstr}</span> ` : null}${a.text}</div>`; }) : html`<div class="l muted">${startError ? "Failed to start." : "No live activity yet."}</div>`}
       ${!streamAtBottom ? html`<div class="scroll-fab-wrap"><button class="iconbtn scroll-fab" title="Scroll to bottom" onClick=${() => { const el = streamRef.current; if (el) el.scrollTop = el.scrollHeight; }}><${Icon} name="chevdown" size=${14}/></button></div>` : null}
     </div>
   </div>`;
@@ -394,7 +396,7 @@ export function Detail({ issue, activity, act, isDesktop, startError, onClose, o
     <div class="dpanes">
       ${isDesktop ? html`${chatPane}${streamPane}` : tab === "chat" ? chatPane : streamPane}
     </div>
-    ${timelineModel(issue).started ? html`<div class="dtl-timeline"><${WorkflowTimeline} i=${issue}/></div>` : null}
+    ${timelineModel(issue).started ? html`<div class="dtl-timeline"><${DetailTimeline} issue=${issue} data=${data} onOpenModels=${onOpenModels}/></div>` : null}
     <div class="dcompose">
       <${ChatComposer}
         value=${reply} onInput=${setReply} taRef=${taRef}
@@ -500,6 +502,70 @@ export function stepModelTargets(wf, agentDefs, data) {
     out.push({ key, label: cap(name), dfltRef: m ? m.ref : "", dflt: dfltLabel, dfltShort: m ? m.short : "", dfltProvider: m ? m.provider : "" });
   }
   return out;
+}
+
+// ---------- Detail timeline (bottom of the drawer) ----------
+// Every step wears its agent's face; on a WORKFLOW issue each face is the trigger of a model picker:
+// clicking it writes a per-agent model override for THIS issue (/issue-agent-model — priority 1 in
+// the server's resolveAssignment). The list rows keep their minimal dot timeline; this interactive
+// variant was lost in the 41d0f88/28055d3 refactors and is restored here (#152).
+function DetailTimeline({ issue, data, onOpenModels }) {
+  const m = timelineModel(issue);
+  if (m.epic || !m.started || !m.steps) return null;
+  const wf = ((data && data.workflows) || []).find((w) => w.id === issue.workflowId);
+  const targets = wf && m.workflow ? stepModelTargets(wf, data && data.agentDefs, data) : [];
+  const agentModels = issue.agentModels || {};
+  const providers = (data && data.providers) || [];
+  const modelOpts = providerModelOptions(providers, { short: true });
+  const live = !!(issue.active || issue.running);
+  return html`<div class="flow">
+    ${m.steps.map((s, idx) => {
+      const done = s.st === "done";
+      const current = idx === m.current && !done;
+      const blocked = s.st === "attention";
+      const cls = done ? "done" : current ? (blocked ? "blocked" : "current") : blocked ? "blocked" : "pending";
+      // Match the timeline step to its model target by ROLE KEY (both sides are the lowercased role
+      // name) — more robust than matching display labels, which can differ (ws.name vs agentDef name).
+      const roleKey = String(s.role || s.k || "").toLowerCase();
+      const target = targets.find((t) => t.key === roleKey) || targets.find((t) => (t.label || "").toLowerCase() === roleKey);
+      // The live per-issue override for this step's agent (if any), else its resolved default.
+      const curRef = target ? (agentModels[target.key] || target.dfltRef) : "";
+      const curOpt = curRef ? modelOpts.find((o) => o.value === curRef) : null;
+      const curLabel = curOpt ? curOpt.label : (target && target.dflt ? target.dflt : "");
+      const tip = cap(s.role || s.k) + (curLabel ? " · " + curLabel : "") + (target ? " — click to change model" : "");
+      const face = s.role || (current ? issue.role : null);
+      const dot = html`<span class=${"flow__dot" + (current && live ? " pulse" : "") + (face ? " flow__dot--face" : "")}>${face ? html`<span class="flow__face"><${Avatar} role=${face} size=${26} crop="head"/></span>` : done ? html`<${Icon} name="check" size=${10}/>` : null}</span>`;
+      return html`
+        ${idx ? html`<span class=${"flow__line" + (idx <= m.current ? " on" : "")}></span>` : null}
+        <span class=${"flow__step " + cls}>
+          ${target
+            ? html`<span class="tip" data-tip=${tip}><${ModelSelect}
+                providers=${providers}
+                data=${data}
+                value=${curRef}
+                includeDefault=${true}
+                defaultLabel="Default"
+                defaultHint=${target.dflt || "default"}
+                onSetUp=${onOpenModels}
+                btnClass="flow__pick"
+                menuAlign=${idx >= m.steps.length - 2 ? "right" : "left"}
+                trigger=${() => dot}
+                onChange=${(v) => setStepModel(issue, target.key, v)}
+              /></span>`
+            : dot}
+          <span class="flow__lbl">${(current && live) ? html`<${Icon} name=${(statusChip(issue) || {}).icon || "circle"} size=${11} cls="flow__act"/> ` : null}${s.label}</span>
+        </span>`;
+    })}
+  </div>`;
+}
+
+// Write a per-step model override for this issue (live, via /issue-agent-model). Updates the local
+// issue object optimistically so the timeline reflects it immediately.
+function setStepModel(issue, key, value) {
+  if (!issue.agentModels) issue.agentModels = {};
+  if (value) issue.agentModels[key] = value; else delete issue.agentModels[key];
+  api("/issue-agent-model", { repo: issue.repo, number: issue.number, agent: key, model: value || "" })
+    .catch((err) => toast("Couldn't set step model: " + ((err && err.message) || ""), "error"));
 }
 
 // ---------- Composer ----------
