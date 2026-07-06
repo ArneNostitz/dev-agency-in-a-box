@@ -37,3 +37,12 @@ test("per-issue provider + per-agent + useFallback round-trip", () => {
   setIssueUseFallback(repo, n, false);
   assert.equal(getIssueUseFallback(repo, n), false);
 });
+
+test("tierModel unset-tier fallback honors the active subset", () => {
+  // no tiers → picks the first ACTIVE model, not the (deactivated) newest catalog entry
+  setProviders([{ id: "p", name: "P", apiKey: "k", models: ["m-new", "m-old"], activeModels: ["m-old"] }]);
+  assert.deepEqual(tierModel("p", "high"), { providerId: "p", model: "m-old" });
+  // "Untick all" ([]) → fall back to the full catalog so a run still resolves
+  setProviders([{ id: "p", name: "P", apiKey: "k", models: ["m-new", "m-old"], activeModels: [] }]);
+  assert.deepEqual(tierModel("p", "high"), { providerId: "p", model: "m-new" });
+});

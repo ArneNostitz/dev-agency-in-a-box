@@ -199,7 +199,10 @@ export function tierModel(providerId: string, tier: Tier): { providerId: string;
   const p = getProviders().find((x) => x.id === providerId);
   if (!p) return null;
   const slot = p.tiers?.[tier];
-  const model = slot?.model || p.models[0] || "";
+  // Unset tier → first model, but honor the Settings active subset so the runner never defaults to a
+  // deactivated model (activeModels absent = all; [] "Untick all" → fall back to the full catalog).
+  const pool = p.activeModels && p.activeModels.length ? p.activeModels : p.models;
+  const model = slot?.model || pool[0] || "";
   return model ? { providerId, model } : null;
 }
 /** Parse a "providerId/model" ModelRef string into parts. */
