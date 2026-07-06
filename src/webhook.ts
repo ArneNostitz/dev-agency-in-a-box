@@ -27,6 +27,7 @@ import { startDeviceFlow, pollDeviceToken, fetchGitHubUser } from "./github-oaut
 import { githubOAuthClientId, githubOAuthToken, githubIdentity } from "./creds.js";
 import { binaryAvailable } from "./runners/registry.js";
 import { installSpec, installCli, RUNNER_PACKAGES } from "./runners/install.js";
+import { TOOLCHAINS, toolchainStatus, isInstalling, listToolchainRequests, installToolchain, toolchainsDir } from "./toolchains.js";
 import { parseLegacyStatus, withStatus, setBlocked } from "./state.js";
 import { runOrchestratorChat } from "./agents/orchestrator-chat.js";
 import { listOrchThread, clearOrchThread, setByAgent } from "./store.js";
@@ -663,6 +664,23 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
           runners: [{ kind: "claude-sdk", label: "Claude Agent SDK (built-in)", binary: null, available: true }, ...cli],
         }));
+        return;
+      }
+
+      // Language toolchains (Flutter, Rust…) the user can install persistently so agents verify
+      // those apps in-agency — plus any pending "install requests" agents raised. Drives Settings →
+      // Environments.
+      if (url === "/toolchains") {
+        const requests = listToolchainRequests();
+        const toolchains = Object.values(TOOLCHAINS).map((t) => {
+          const st = toolchainStatus(t.id);
+          return {
+            id: t.id, label: t.label, binary: t.binary, note: t.note,
+            status: isInstalling(t.id) ? "installing" : st.status, version: st.version, error: st.error,
+            requestedBy: requests.filter((r) => r.id === t.id).map((r) => ({ repo: r.repo, number: r.number })),
+          };
+        });
+        res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ toolchains, dir: toolchainsDir() }));
         return;
       }
 
@@ -1517,6 +1535,15 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
             setProviders(next);
           }
           return void res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ ok: r.models.length > 0, models: r.models, via: r.via, runner: r.runner, error: r.error }));
+        }
+        if (path === "/install-toolchain") {
+          // Host-affecting (clones an SDK / runs rustup) → admin only. Fire-and-forget: the install
+          // can take many minutes; state flips to "installing" and the UI polls /toolchains.
+          if (!actor || actor.role !== "admin") return void res.writeHead(403, { "content-type": "application/json" }).end('{"error":"admin only"}');
+          const id = String(p.id ?? "");
+          if (!TOOLCHAINS[id]) return void res.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({ error: "Unknown toolchain." }));
+          void installToolchain(id);
+          return ok();
         }
         if (path === "/install-cli") {
           if (!actor || actor.role !== "admin") return void res.writeHead(403, { "content-type": "application/json" }).end('{"error":"admin only"}');

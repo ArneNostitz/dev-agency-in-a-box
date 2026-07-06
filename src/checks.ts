@@ -9,10 +9,10 @@
  */
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { getSetting, setSetting } from "./store.js";
 import { ghBotToken } from "./creds.js";
+import { TOOLCHAINS } from "./toolchains.js";
 
 export interface CheckResult { name: string; cmd: string; ok: boolean; firstError: string; env?: boolean }
 /**
@@ -20,20 +20,27 @@ export interface CheckResult { name: string; cmd: string; ok: boolean; firstErro
  * here. Toolchain-missing (even after a provision attempt) and env-blocked runs are `verified:false`
  * so the caller never presents an unrun suite as "green" and silently merges broken code.
  */
-export interface ChecksOutcome { ran: boolean; pass: boolean; verified: boolean; summary: string; results: CheckResult[]; envBlocked?: boolean; blockReason?: string }
+export interface ChecksOutcome {
+  ran: boolean;
+  pass: boolean;
+  verified: boolean;
+  summary: string;
+  results: CheckResult[];
+  envBlocked?: boolean;
+  blockReason?: string;
+  /** A managed toolchain (catalog id) is required but not installed → the caller pauses + asks. */
+  neededToolchain?: string;
+}
 
 interface CommandSet {
   /** Binary that must exist on PATH for these checks to run here (e.g. "swift", "go", "cargo", "flutter"). */
   requires?: string;
   install?: string;
   checks: Array<{ name: string; cmd: string }>;
-  /**
-   * Best-effort shell command to install the toolchain in-sandbox when `requires` is missing, so we
-   * can actually verify instead of deferring. Runs in bash (so `$HOME` etc. expand). Idempotent.
-   */
-  provision?: string;
-  /** Absolute dir to prepend to PATH for provision + checks (where `provision` installs the binary). */
+  /** Absolute dir to prepend to PATH for the checks (where a managed toolchain installs its binary). */
   binDir?: string;
+  /** Catalog toolchain id (see toolchains.ts) this stack needs — surfaced when `requires` is absent. */
+  toolchain?: string;
 }
 
 /** Run a shell command in `cwd`, capturing combined output; resolves with code + tail of output. */
@@ -143,30 +150,26 @@ function tauriCommands(workdir: string): CommandSet | null {
     requires: "cargo",
     install: node?.install,
     checks,
-    provision: `command -v cargo >/dev/null 2>&1 || curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal`,
-    binDir: join(homedir(), ".cargo", "bin"),
+    binDir: TOOLCHAINS.rust.binDir,
+    toolchain: "rust", // installed on demand via Settings → Environments
   };
 }
 
 /**
  * Flutter / Dart (pubspec.yaml). `flutter analyze` is the gate that catches compile-level defects
- * (missing imports, type errors) that a plain `flutter test` on a subset would miss. When the SDK
- * isn't here we clone it (best-effort) so we can actually verify rather than defer-and-merge.
+ * (missing imports, type errors) that a plain `flutter test` on a subset would miss. The SDK is
+ * installed once from Settings → Environments; until then a run pauses and asks for it.
  */
 function flutterCommands(workdir: string): CommandSet | null {
   if (!existsSync(join(workdir, "pubspec.yaml"))) return null;
-  const sdk = join(homedir(), ".devagency-toolchains", "flutter");
   return {
     requires: "flutter",
     checks: [
       { name: "analyze", cmd: "flutter analyze" },
       { name: "test", cmd: "flutter test" },
     ],
-    // Clone stable Flutter (bundles Dart) once, then warm it so `analyze`/`test` are ready.
-    provision:
-      `test -x "${sdk}/bin/flutter" || { mkdir -p "$(dirname "${sdk}")" && git clone --depth 1 -b stable https://github.com/flutter/flutter.git "${sdk}"; } ; ` +
-      `"${sdk}/bin/flutter" --version >/dev/null 2>&1 || true`,
-    binDir: join(sdk, "bin"),
+    binDir: TOOLCHAINS.flutter.binDir,
+    toolchain: "flutter",
   };
 }
 
@@ -237,14 +240,12 @@ export async function runChecks(workdir: string, repo: string): Promise<ChecksOu
   const set = detectCommands(workdir, repo);
   if (!set) return { ran: false, pass: false, verified: false, summary: "", results: [] };
   const extraPath = set.binDir;
-  // If the language's toolchain isn't here, first TRY to provision it in-sandbox (Part B) so we can
-  // actually verify. If it's still missing after that, don't false-fail — return unverified so the
-  // caller defers to the LLM tester / a local run WITHOUT treating it as green.
+  // Toolchain missing. If it's one we manage (Flutter, Rust), DON'T clone it inline — signal
+  // `neededToolchain` so the pipeline pauses the issue and asks the user to install it once from
+  // Settings → Environments (persistent). Otherwise defer to the LLM tester / a local run. Either
+  // way we never treat an unrun suite as green.
   if (set.requires && !(await hasTool(set.requires, extraPath))) {
-    if (set.provision) await run(set.provision, workdir, 900_000, extraPath);
-    if (!(await hasTool(set.requires, extraPath))) {
-      return { ran: false, pass: false, verified: false, summary: "", results: [] };
-    }
+    return { ran: false, pass: false, verified: false, neededToolchain: set.toolchain, summary: "", results: [] };
   }
 
   if (set.install) {

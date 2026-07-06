@@ -42,9 +42,9 @@ test("detectCommands: Flutter (pubspec.yaml) → analyze+test, requires flutter,
   const set = detectCommands(wd, fresh());
   assert.ok(set, "detected");
   assert.equal(set.requires, "flutter");
+  assert.equal(set.toolchain, "flutter", "maps to the managed catalog toolchain (install via Environments)");
   assert.deepEqual(set.checks.map((c) => c.name), ["analyze", "test"]);
   assert.match(set.checks[0].cmd, /flutter analyze/);
-  assert.ok(set.provision && /git clone .*flutter/.test(set.provision), "clones the SDK when missing");
   assert.ok(set.binDir && set.binDir.endsWith("/bin"), "binDir points at the SDK bin");
 });
 
@@ -68,7 +68,7 @@ test("detectCommands: a plain Node repo is unaffected (no false Tauri/Flutter ma
   const set = detectCommands(wd, fresh());
   assert.ok(set);
   assert.equal(set.requires, "node");
-  assert.ok(!set.provision, "no toolchain provisioning for a normal Node repo");
+  assert.ok(!set.toolchain, "a normal Node repo needs no managed toolchain");
 });
 
 test("isEnvError: pytest collection/no-test + cmd-not-found are env, real failures are not", () => {

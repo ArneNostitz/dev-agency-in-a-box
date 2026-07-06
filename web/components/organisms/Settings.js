@@ -34,6 +34,7 @@ export function SettingsShell({ data, onClose, reload, section: initial, openWor
     { k: "general", label: "General", icon: "sliders" },
     { k: "models", label: "Models & providers", icon: "flask" },
     { k: "github", label: "GitHub", icon: "link" },
+    { k: "environments", label: "Environments", icon: "laptop" },
     ...(admin ? [{ k: "team", label: "Team", icon: "users" }] : []),
     { k: "account", label: "Account", icon: "lock" },
   ];
@@ -52,6 +53,7 @@ export function SettingsShell({ data, onClose, reload, section: initial, openWor
         ${section === "general" ? html`<${GeneralSection} data=${data} reload=${reload} admin=${admin}/>` : null}
         ${section === "models" ? html`<${ModelsSection} reload=${reload} secretKeys=${data.secretKeys || []}/>` : null}
         ${section === "github" ? html`<${GithubSection} secretKeys=${data.secretKeys || []} github=${data.github} reload=${reload}/>` : null}
+        ${section === "environments" ? html`<${EnvironmentsSection} admin=${admin}/>` : null}
         ${section === "team" && admin ? html`<${TeamSection} users=${data.users || []} webhookSecretSet=${data.webhookSecretSet} reload=${reload}/>` : null}
         ${section === "account" ? html`<${AccountSection} data=${data} reload=${reload} onClose=${onClose}/>` : null}
       </div>
@@ -341,6 +343,58 @@ export function GitHubConnect({ github, reload }) {
       <div class="muted" style="font-size:11px;display:flex;align-items:center;gap:6px"><${Spinner} size=${12}/> waiting for you to authorize…</div>
     </div>` : html`<button class="btn primary" style="width:100%;justify-content:center" disabled=${busy || (needClientId && !clientId.trim())} onClick=${connect}>${busy ? html`<${Spinner} size=${15}/>` : html`<${Icon} name="link" size=${15}/>`} Connect GitHub</button>`}
     ${err ? html`<div class="testres bad" style="margin-top:6px">✗ ${err}</div>` : null}
+  </div>`;
+}
+
+// ---------- Environments (language toolchains) ----------
+// Install SDKs (Flutter, Rust…) persistently so agents can verify those app types in-agency. Agents
+// that hit a missing toolchain pause their issue and raise a request that shows up here.
+function EnvironmentsSection({ admin }) {
+  const [tc, setTc] = useState(null);
+  const [busy, setBusy] = useState({});
+  const load = () => getJSON("/toolchains").then(setTc).catch(() => setTc({ toolchains: [], dir: "" }));
+  useEffect(() => { load(); }, []);
+  // While anything is installing, poll so the row flips to ready/failed on its own.
+  useEffect(() => {
+    if (!tc || !(tc.toolchains || []).some((t) => t.status === "installing")) return;
+    const h = setInterval(load, 3000);
+    return () => clearInterval(h);
+  }, [tc]);
+  const install = (id) => {
+    setBusy((b) => ({ ...b, [id]: true }));
+    api("/install-toolchain", { id })
+      .then(() => toast("Installing " + id + "…"))
+      .then(load)
+      .catch(failed)
+      .finally(() => setBusy((b) => ({ ...b, [id]: false })));
+  };
+  if (!tc) return html`<div class="muted" style="display:flex;align-items:center;gap:6px"><${Spinner} size=${12}/> Loading…</div>`;
+  return html`<div>
+    <div class="sec">Toolchains</div>
+    <div class="muted" style="font-size:12px;margin-bottom:12px">Install language SDKs so agents can run checks for these app types in-agency. When a run needs one that isn't here, it pauses the issue and asks — no PR until the checks actually run. Installed to <code>${tc.dir}</code>; point <code>TOOLCHAINS_DIR</code> at a mounted volume to survive redeploys.</div>
+    ${(tc.toolchains || []).map((t) => TcRow({ t, admin, busy: busy[t.id], onInstall: () => install(t.id) }))}
+    ${!admin ? html`<div class="muted" style="font-size:12px;margin-top:10px">Only an admin can install toolchains.</div>` : null}
+  </div>`;
+}
+function TcRow({ t, admin, busy, onInstall }) {
+  const ready = t.status === "ready", installing = t.status === "installing", failed = t.status === "failed";
+  const reqs = t.requestedBy || [];
+  const chip = ready
+    ? html`<span class="statuschip s-ready"><${Icon} name="check" size=${12}/> ready</span>`
+    : installing
+    ? html`<span class="statuschip" style="display:inline-flex;align-items:center;gap:5px"><${Spinner} size=${12}/> installing…</span>`
+    : failed
+    ? html`<span class="statuschip s-changes"><${Icon} name="alert" size=${12}/> failed</span>`
+    : html`<span class="statuschip s-attn">not installed</span>`;
+  return html`<div key=${t.id} style="display:flex;align-items:flex-start;gap:10px;padding:11px 0;border-top:1px solid var(--line,rgba(128,128,128,.18))">
+    <div style="flex:1;min-width:0">
+      <div style="display:flex;align-items:center;gap:8px;font-weight:600">${t.label} ${chip}</div>
+      <div class="muted" style="font-size:12px;margin-top:2px">${t.note}</div>
+      ${ready && t.version ? html`<div class="muted" style="font-size:11px;margin-top:2px">${t.version}</div>` : null}
+      ${failed && t.error ? html`<div style="font-size:11px;margin-top:3px;color:var(--bad,#c33)">${t.error}</div>` : null}
+      ${reqs.length ? html`<div style="font-size:11.5px;margin-top:5px">⏸ Requested by ${reqs.map((r) => (r.repo.split("/").pop()) + " #" + r.number).join(", ")}</div>` : null}
+    </div>
+    ${admin ? html`<button class=${"btn" + (ready ? " ghost" : " primary")} style="padding:4px 12px;font-size:12px;white-space:nowrap" disabled=${busy || installing} onClick=${onInstall}>${installing ? "Installing…" : ready ? "Reinstall" : reqs.length ? "Install now" : "Install"}</button>` : null}
   </div>`;
 }
 

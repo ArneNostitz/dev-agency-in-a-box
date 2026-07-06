@@ -53,6 +53,7 @@ import { runReflection } from "./reflect.js";
 import { runChecks, baselineFailures, parseDiscoveredChecks, rememberChecks } from "./checks.js";
 import { decideNext } from "./orchestrator.js";
 import { withStatus, setBlocked, type BlockedReason } from "./state.js";
+import { TOOLCHAINS, recordToolchainRequest } from "./toolchains.js";
 
 /**
  * Run the project's checks the cheap way: deterministic command runner first (zero tokens), and only
@@ -65,8 +66,20 @@ async function runTests(
   issueNumber: number,
   workdir: string,
   branch: string,
-): Promise<{ text: string; pass: boolean; verified: boolean }> {
+): Promise<{ text: string; pass: boolean; verified: boolean; neededToolchain?: string }> {
   const checks = await runChecks(workdir, repo);
+  // A managed toolchain (Flutter, Rust) is missing. Don't spend an LLM tester and don't call it
+  // green — signal it so the caller pauses the issue and asks the user to install it (Environments).
+  if (checks.neededToolchain) {
+    const tc = TOOLCHAINS[checks.neededToolchain];
+    recordRun(repo, issueNumber, "tester", "code", 0, "test", 0);
+    return {
+      text: `⏸ **Can't verify here — needs the ${tc?.label ?? checks.neededToolchain} toolchain**, which isn't installed on the agency yet.`,
+      pass: true,
+      verified: false,
+      neededToolchain: checks.neededToolchain,
+    };
+  }
   if (checks.ran) {
     recordRun(repo, issueNumber, "tester", "code", 0, "test", 0); // deterministic, token-free
     // The sandbox couldn't actually run the checks (deps wouldn't install, pytest collection error,
@@ -217,16 +230,19 @@ async function plan(repo: string, issue: Issue, workdir: string, thread: string)
  * (looped / interrupted) still lands a PR instead of bouncing to needs-attention. Returns true
  * if a PR now exists.
  */
-async function finalizeWithPr(repo: string, issue: Issue, workdir: string, branch: string, changesRequested = false, unverified = false): Promise<boolean> {
+async function finalizeWithPr(repo: string, issue: Issue, workdir: string, branch: string, changesRequested = false, unverified = false, neededToolchain?: string): Promise<boolean> {
   if (stopped(repo, issue.number, "finalizeWithPr")) return false;
   if (held(repo, issue.number, "finalizeWithPr")) return false;
   const hasCommits = await ensureBranchPushed(workdir, branch);
+  // Fail-closed, no-PR: a tester/review run that never actually verified does NOT open a PR. Preserve
+  // the work (branch is pushed above), park the issue, and — if a managed toolchain is the blocker —
+  // ask for it so the user can install it and Resume. No unrun suite is ever presented as a ready PR.
+  if (unverified && hasCommits) {
+    return parkUnverified(repo, issue, branch, neededToolchain);
+  }
   const pr = hasCommits ? await ensureDraftPr(repo, issue.number, branch, issue.title) : await findPrForBranch(repo, branch);
   if (pr) {
-    // Fail-closed: if the checks never actually ran here, park the PR as `unverified` so the card
-    // shows "green-light needed" instead of a clean pass — a human/CI must confirm before merge.
-    // (A reviewer "changes requested" verdict takes precedence — that's the more urgent flag.)
-    recordIssueStatus(repo, issue.number, unverified && !changesRequested ? setBlocked(withStatus("review"), "unverified") : withStatus("review"));
+    recordIssueStatus(repo, issue.number, withStatus("review"));
     recordPr(repo, issue.number, pr.number, pr.url);
     // Reconcile the conflict box against reality — a normal finalize (not just the conflict-only Fix
     // path) can make a branch mergeable, and a stale "resolve first" must not stick on the card/PR bar.
@@ -234,8 +250,6 @@ async function finalizeWithPr(repo: string, issue: Issue, workdir: string, branc
     if (cf.ok) { if (cf.files.length) recordConflict(repo, issue.number, "", cf.files); else clearConflict(repo, issue.number); }
     const head = changesRequested
       ? `**⚠️ PR opened, but the reviewer still wants changes.** ${pr.url}\n\nPress **Fix** on the card to address them, or **Merge anyway** to ship as-is.`
-      : unverified
-      ? `**⚠️ PR opened — but the checks could NOT be verified in the sandbox.** ${pr.url}\n\nThe toolchain to run this project's tests isn't available here, so this is **unrun, not green**. A human or CI must green-light before merge — don't merge on a pass that never happened.`
       : `**✅ Work complete.** Opened ${pr.isDraft ? "draft " : ""}PR ${pr.url}`;
     await commentOnIssue(
       repo,
@@ -261,6 +275,23 @@ async function finalizeWithPr(repo: string, issue: Issue, workdir: string, branc
     console.log(`[agency] ${repo} #${issue.number} -> needs-attention (no commits).`);
     return false;
   }
+}
+
+/**
+ * Park an issue whose checks never actually ran (no PR). Records a toolchain install request when a
+ * managed toolchain is the blocker, so the user sees it on Settings → Environments; the work is
+ * already pushed to `branch`. Blocked reason `unverified` → the card shows "Recheck" (Resume).
+ */
+async function parkUnverified(repo: string, issue: Issue, branch: string, neededToolchain?: string): Promise<boolean> {
+  recordIssueStatus(repo, issue.number, setBlocked(withStatus("working"), "unverified"));
+  const tc = neededToolchain ? TOOLCHAINS[neededToolchain] : undefined;
+  if (tc) recordToolchainRequest(tc.id, repo, issue.number);
+  const ask = tc
+    ? `This project needs the **${tc.label}** toolchain to run its checks, and it isn't installed on the agency yet.\n\n➡️ Install it under **Settings → Environments**, then press **Recheck** on the card. No PR is opened until the checks actually run.`
+    : `The checks couldn't run in the sandbox (missing toolchain / environment), so the change is **unverified** — not green. No PR is opened. Verify locally or in CI, or press **Recheck** once the environment can run it.`;
+  await commentOnIssue(repo, issue.number, say("tester", `⏸ **Paused — can't verify here.**\n\n${ask}\n\nYour work is safe on \`${branch}\`.`));
+  console.log(`[agency] ${repo} #${issue.number} -> paused (unverified${tc ? `, needs ${tc.id}` : ""}).`);
+  return false;
 }
 
 /** Approval words that mean "go build it" — the whole comment must be (essentially) just this. */
@@ -435,6 +466,14 @@ async function build(
 
   const test = await runTests(repo, issue.number, workdir, branch);
   await commentOnIssue(repo, issue.number, say("tester", `**Test results**\n\n${test.text}`));
+
+  // Ask-first: a managed toolchain is missing → pause NOW (before spending a review) and ask the
+  // user to install it. No PR until the checks actually run. Work is pushed by parkUnverified.
+  if (test.neededToolchain) {
+    await ensureBranchPushed(workdir, branch).catch(() => {});
+    await parkUnverified(repo, issue, branch, test.neededToolchain);
+    return;
+  }
 
   // Orchestrated loop (decideNext is the single source of "what next"): keep tests green BEFORE
   // reviewing broken code, re-test after every revise, and warm the reviewer across its own rounds.
@@ -895,7 +934,7 @@ export async function runReviewFix(repo: string, issue: Issue, workdir: string, 
 
   const stillChanges = changesRequested(review2.text);
   recordReview(repo, issue.number, stillChanges ? "changes" : "approved", review2.text);
-  await finalizeWithPr(repo, issue, workdir, branch, stillChanges, !test.verified);
+  await finalizeWithPr(repo, issue, workdir, branch, stillChanges, !test.verified, test.neededToolchain);
 }
 
 /** Park an unresolved-conflict PR at needs-attention with a clear note (and keep the conflict box). */
