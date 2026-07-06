@@ -43,7 +43,7 @@ import { ghBotToken, ghUserToken, claudeToken, anthropicApiKey } from "./creds.j
 import { providerAuth } from "./agents/provider-auth.js";
 import { discoverProviderModels, ensureClaudeProvider } from "./db/discover.js";
 import { newestModels } from "./db/model-recency.js";
-import { testClaudeAuth } from "./agents/roleAgent.js";
+import { testClaudeAuth, runAnalyzerPrompt } from "./agents/roleAgent.js";
 import { ALL_ROLES } from "./agents/roles.js";
 import { resolveWorkflow } from "./workflow.js";
 import { hasActiveRun, requestHold, queueSteer, peekSteer, isHoldRequested } from "./abort.js";
@@ -231,7 +231,7 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
     // agency never acts on without approval. Disabled (503) unless a strong key is set.
     {
       const aurl = (req.url ?? "/").split("?")[0];
-      if (aurl === "/telemetry" || aurl === "/analyzer-issue") {
+      if (aurl === "/telemetry" || aurl === "/analyzer-issue" || aurl === "/analyzer-run") {
         const key = (process.env.ANALYZER_API_KEY || getSetting("analyzer_api_key") || "").trim();
         if (!key || key.length < 16) return void res.writeHead(503, { "content-type": "application/json" }).end(JSON.stringify({ error: "analyzer API disabled (set a strong ANALYZER_API_KEY)" }));
         const hdr = (req.headers["authorization"] || "").toString();
@@ -252,6 +252,26 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
             lessons: recentLessons(10),
             config: { minSteps: Number(getSetting("analyzer_min_steps")) || 15, intervalHours: Number(getSetting("analyzer_interval_hours")) || 1 },
           }));
+        }
+        // POST /analyzer-run — run the analyzer's own LLM pass IN the agency, using whatever
+        // provider/model is assigned to the "Analyzer" role in Settings → Models (same per-role/
+        // global resolution every other agent uses). The analyzer sends its telemetry-digest prompt
+        // and gets back plain text; it never holds an LLM credential of its own.
+        if (aurl === "/analyzer-run") {
+          if (req.method !== "POST") return void res.writeHead(405).end();
+          void (async () => {
+            let pp: { prompt?: string } = {};
+            try { pp = JSON.parse((await readBody(req)).toString("utf8")); } catch { /* ignore */ }
+            const prompt = (pp.prompt || "").trim();
+            if (!prompt) return void res.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({ error: "empty prompt" }));
+            try {
+              const r = await runAnalyzerPrompt(prompt.slice(0, 40000));
+              res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ text: r.text }));
+            } catch (err) {
+              res.writeHead(500, { "content-type": "application/json" }).end(JSON.stringify({ error: (err as Error).message.slice(0, 300) }));
+            }
+          })();
+          return;
         }
         // POST /analyzer-issue — the agency opens the advisory issue for the analyzer. Rate-limited.
         if (req.method !== "POST") return void res.writeHead(405).end();

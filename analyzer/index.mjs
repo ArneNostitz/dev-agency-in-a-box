@@ -2,33 +2,34 @@
  * Dev Agency — Process Analyzer (standalone watchdog).
  *
  * Deliberately minimal and independent. It does NOT share the agency's database or filesystem: it
- * pulls aggregate telemetry over an AUTHENTICATED, read-only HTTP endpoint and uses its OWN
- * credentials. It runs occasionally (gated on enough new telemetry), mines repeating/wasteful
- * patterns, and opens an ADVISORY GitHub issue of proposals (skills / hooks / deterministic code) —
- * it never writes to the agency and never auto-merges. It also verifies the agency deployment.
+ * pulls aggregate telemetry over an AUTHENTICATED, read-only HTTP endpoint. It runs occasionally
+ * (gated on enough new telemetry), mines repeating/wasteful patterns, and opens an ADVISORY GitHub
+ * issue of proposals (skills / hooks / deterministic code) — it never writes to the agency and never
+ * auto-merges. It also verifies the agency deployment.
  *
- * Least privilege: the only thing it can do to the agency is READ aggregate metrics. Applying any
- * change (agents/skills/hooks) happens through the agency's own admin-authenticated UI after YOU
- * approve the proposal. Compromising the analyzer yields read-only metrics, nothing more.
+ * It carries NO LLM credential of its own: the actual analysis pass runs INSIDE the agency (POST
+ * /analyzer-run), using whatever provider/model is assigned to the "Analyzer" role in the agency's
+ * own Settings → Models — the same per-role/global resolution every other agent there uses. This
+ * service only sends the prompt and gets back text.
+ *
+ * Least privilege: the only thing it can do to the agency is READ aggregate metrics and ask it to run
+ * ONE fixed, server-authored analysis prompt (see /analyzer-run) — no arbitrary prompt injection
+ * beyond the telemetry digest it assembles itself. Applying any change (agents/skills/hooks) happens
+ * through the agency's own admin-authenticated UI after YOU approve the proposal. Compromising the
+ * analyzer yields read-only metrics and one report-writing call, nothing more.
  *
  * Config (env) — minimal:
  *   AGENCY_URL       base URL of the agency, e.g. https://devagency.example.com   (required)
  *   AGENCY_API_KEY   the shared secret matching the agency's ANALYZER_API_KEY      (required)
- *   LLM credential:  CLAUDE_CODE_OAUTH_TOKEN | ANTHROPIC_API_KEY | (ANTHROPIC_BASE_URL + ANTHROPIC_AUTH_TOKEN for GLM)
- *   Optional: ANALYZER_MODEL (default claude-sonnet-4-6), PORT (default 3000).
+ *   Optional: PORT (default 3000).
  * The repo to post to + the run thresholds come FROM the agency (/telemetry config), and the agency
  * opens the issue on our behalf — so no GitHub token or repo is configured here.
  */
 import { createServer } from "node:http";
 import { timingSafeEqual } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { query } from "@anthropic-ai/claude-agent-sdk";
 
 const AGENCY_URL = (process.env.AGENCY_URL || process.env.SERVICE_URL_AGENCY || "").trim();
 const AGENCY_API_KEY = (process.env.AGENCY_API_KEY || "").trim();
-const MODEL = process.env.ANALYZER_MODEL?.trim() || "claude-sonnet-4-6";
 const PORT = Number(process.env.PORT) || 3000;
 let INTERVAL_MS = 6 * 3600_000; // refined from the agency's config on the first pass
 const base = () => (AGENCY_URL.startsWith("http") ? AGENCY_URL : `https://${AGENCY_URL}`);
@@ -66,38 +67,18 @@ function digest(t) {
   ].join("\n");
 }
 
-const PERSONA = `You are the **Process Analyzer** for an autonomous dev agency. You receive a digest of the agency's own run
-telemetry. Your job is the BIG PICTURE of how the agency OPERATES — not fixing any individual user issue.
-
-PRIORITISE the "Operational failures" and "Token-heavy issues" sections: those are concrete problems happening right
-now (e.g. GitHub API rate limits, failing commands, runs that loop and burn tokens). For each, propose a better way the
-AGENCY should work — e.g. "gh issue edit hit rate limits 40× → only write a label when state actually changes, and
-batch/back off"; or "issue X took 4 fix cycles on a trivial style nit → add a skill so the developer puts imports at
-the top, and have the reviewer not block-merge on auto-fixable style". Also flag any repeating, mechanical, or wasteful
-patterns.
-
-Each proposal is ONE of: a **skill** (reusable instruction: name + description + body), a **hook** (a deterministic
-shell command pre/post a role: target + phase + command), or a **deterministic code change** (what to replace with code
-and how). Be specific and conservative; at most 5, highest-impact first. Enough detail that an engineer (or the agency
-itself) could act on each. GitHub-flavored markdown, a short rationale each. ADVISORY only — a human approves before
-anything changes.
-
-Start your reply with EXACTLY one line \`TITLE: <headline>\` — a short (under 80 chars), specific summary of the
-single biggest finding this pass (e.g. "GitHub API rate-limit hammering on issue-comments fetch (5,759 failures)").
-Every pass gets posted as its own GitHub issue, so a generic title makes them indistinguishable in the issue list —
-the headline is what a human scans to tell one report from another. If there's no operational failure this pass,
-summarize the top proposal instead (e.g. "Cache repeated gh api calls"). Then a blank line, then the report.`;
-
+// The persona (what the analyzer looks for, the TITLE: requirement, the proposal format) now lives
+// server-side at memory/central/agents/analyzer.md — editable from the agency's dashboard like any
+// other agent, and applied by the agency itself since IT runs the LLM call now (POST /analyzer-run).
 async function llm(prompt) {
-  const cfgDir = mkdtempSync(join(tmpdir(), "analyzer-"));
-  const env = { ...process.env, CLAUDE_CONFIG_DIR: cfgDir };
-  let text = "";
-  try {
-    for await (const m of query({ prompt, options: { systemPrompt: PERSONA, model: MODEL, env, allowedTools: [], permissionMode: "bypassPermissions", maxTurns: 6, settingSources: [], stderr: () => {} } })) {
-      if (m.type === "assistant") for (const b of (m.message?.content || [])) if (b.type === "text" && b.text) text += b.text;
-    }
-  } finally { try { rmSync(cfgDir, { recursive: true, force: true }); } catch {} }
-  return text;
+  const res = await fetch(`${base()}/analyzer-run`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${AGENCY_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt }),
+    signal: AbortSignal.timeout(120_000), // a full analysis pass can take a while
+  });
+  if (!res.ok) throw new Error(`analyzer-run HTTP ${res.status}`);
+  return (await res.json()).text || "";
 }
 
 // The agency opens the advisory issue for us (its own GitHub token + configured repo) — so we carry

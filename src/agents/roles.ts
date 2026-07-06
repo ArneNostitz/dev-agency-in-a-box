@@ -43,7 +43,7 @@ export function canonicalModel(m: string): string {
   return s;
 }
 
-export type RoleName = "planner" | "decomposer" | "architect" | "developer" | "reviewer" | "tester" | "librarian" | "auditor";
+export type RoleName = "planner" | "decomposer" | "architect" | "developer" | "reviewer" | "tester" | "librarian" | "auditor" | "analyzer";
 
 export interface RoleDef {
   name: RoleName;
@@ -160,6 +160,19 @@ export const ROLES: Record<RoleName, RoleDef> = {
     // Needs Bash to run graphify + git, and read tools to inspect the code it flags.
     tools: ["Read", "Glob", "Grep", "Bash"],
     maxTurns: 80,
+  },
+  // Runs the standalone Process Analyzer's telemetry pass (POST /analyzer-run, src/webhook.ts) — one
+  // no-repo, no-tools text analysis of an operational digest. Exists as a role so it gets its own
+  // Settings → Models slot, exactly like every other agent, instead of the analyzer service needing
+  // its own separate LLM credential env vars.
+  analyzer: {
+    name: "analyzer",
+    personaFile: "analyzer",
+    playbooks: [],
+    defaultModel: MODELS.sonnet,
+    modelEnv: "ANALYZER_MODEL",
+    tools: [],
+    maxTurns: 6,
   },
 };
 

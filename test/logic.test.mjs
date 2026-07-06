@@ -93,8 +93,11 @@ test("modelFor honors per-role env override, else default", () => {
 });
 
 test("each role declares tools and a model", () => {
+  // "analyzer" is the one deliberate exception: it never touches a repo (no workdir, no issue) — it
+  // just analyzes a telemetry digest text and replies (see runAnalyzerPrompt in roleAgent.ts).
+  const NO_TOOLS_OK = new Set(["analyzer"]);
   for (const role of Object.values(ROLES)) {
-    assert.ok(role.tools.length > 0, `${role.name} has tools`);
+    if (!NO_TOOLS_OK.has(role.name)) assert.ok(role.tools.length > 0, `${role.name} has tools`);
     assert.ok(role.defaultModel, `${role.name} has a default model`);
   }
 });

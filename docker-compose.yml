@@ -12,7 +12,17 @@
 # is exactly when you need it to report the breakage" — a broken build of THIS compose stack takes
 # both services down together now. If you want that isolation, deploy dev-agency-analyzer as its own
 # Coolify resource instead and delete the `analyzer` service + `./analyzer` directory below.
-# To use it: set ANALYZER_API_KEY (openssl rand -hex 32) and one LLM credential in your .env.
+#
+# The analyzer has NO LLM credential of its own — its analysis pass runs INSIDE the agency (POST
+# /analyzer-run), using whatever provider/model you assign the "Analyzer" role in Settings → Models
+# (same as every other agent). Assign one there before it can produce reports; until then it just
+# logs an error each interval and keeps retrying.
+#
+# ANALYZER_API_KEY below ships with a real generated default so both services talk to each other
+# out of the box — no `openssl rand -hex 32` step needed. Since both hop over the internal compose
+# network only (never the public internet), a shared baked-in default is low-risk here; rotate it
+# in your own `.env` if you'd rather not rely on the checked-in value (e.g. before making this repo
+# public, or before running a security-sensitive deployment).
 services:
   agency:
     build: .
@@ -20,6 +30,12 @@ services:
     # Let in-flight agent runs finish on deploy/restart before the platform force-kills the
     # container (pairs with the app's graceful drain). Raise if your builds run longer.
     stop_grace_period: 600s
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
     environment:
       # Email (optional) — enables "email me a reset link" on the forgot-password page. Fill these
       # in Coolify with the SAME SMTP credentials you gave Coolify's transactional email. Left blank
@@ -30,10 +46,9 @@ services:
       SMTP_PASS: ${SMTP_PASS:-}
       SMTP_FROM: ${SMTP_FROM:-}           # e.g. "Dev Agency <no-reply@yourdomain.com>"
       SMTP_SECURE: ${SMTP_SECURE:-}       # true|false to override (defaults: true on 465, else false)
-      # Enables the read-only /telemetry API the `analyzer` service below reads. Same value as
-      # AGENCY_API_KEY on that service. Left blank, /telemetry stays disabled (503) and the
-      # analyzer container just idles (it can't do anything without this).
-      ANALYZER_API_KEY: ${ANALYZER_API_KEY:-}
+      # Enables the read-only /telemetry + /analyzer-run APIs the `analyzer` service below calls.
+      # Same value as AGENCY_API_KEY on that service (prefilled — see the note above).
+      ANALYZER_API_KEY: ${ANALYZER_API_KEY:-ae3d3a8af34d5086fb00146f529afe99fdffd9ea4d6e2fc158cdcbc63b2fb96}
       # Other optional overrides — uncomment only to pin a value:
       # MASTER_KEY: ${MASTER_KEY:-}       # pin the secrets-encryption key (else auto-generated +
       #                                   # persisted at /app/data/.masterkey — keep the volume!)
@@ -48,21 +63,15 @@ services:
   analyzer:
     build: ./analyzer
     restart: unless-stopped
-    # No ANALYZER_API_KEY (or no LLM credential) → the analyzer just idles quietly (every pass
-    # fails its telemetry fetch and retries next interval) — safe to leave both blank if you don't
-    # want it running yet.
+    depends_on:
+      agency:
+        condition: service_healthy
     environment:
       # Internal compose network — no public URL/TLS needed for this hop (see analyzer/README.md).
       AGENCY_URL: http://agency:3000
-      AGENCY_API_KEY: ${ANALYZER_API_KEY:-}   # must match the agency's ANALYZER_API_KEY above
-      # One LLM credential (subscription token, API key, or provider base URL + token for GLM/etc.) —
-      # commonly the same one you gave the agency itself:
-      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
-      ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN:-}
-      ANALYZER_MODEL: ${ANALYZER_MODEL:-claude-sonnet-4-6}   # optional
-    # No volumes — telemetry over HTTP, cursor in-memory (see analyzer/README.md).
+      AGENCY_API_KEY: ${ANALYZER_API_KEY:-ae3d3a8af34d5086fb00146f529afe99fdffd9ea4d6e2fc158cdcbc63b2fb96}
+    # No volumes, no LLM credential — telemetry + the analysis pass itself both go over HTTP to the
+    # agency; cursor is in-memory (see analyzer/README.md).
 
 volumes:
   agency-data:

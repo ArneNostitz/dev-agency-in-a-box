@@ -493,6 +493,58 @@ export async function runRole(role: RoleName, input: RoleRunInput): Promise<Role
 }
 
 /**
+ * One-shot LLM call for the standalone Process Analyzer (POST /analyzer-run, src/webhook.ts): no
+ * repo, no tools, no issue — just the resolved "analyzer" role's model (Settings → Models, same
+ * per-role/global hierarchy every other role uses) and its persona. Deliberately NOT runRole: that
+ * function is deeply coupled to a real (repo, issueNumber) — activity feed, GitNexus/recall wiring,
+ * rate-limit fallback chains, session resume — none of which apply to a no-repo text analysis, and
+ * faking those coordinates would spam the dashboard's activity feed with orphaned entries for an
+ * issue that doesn't exist. This is the analyzer's entire reason to exist: it used to carry its OWN
+ * LLM credential (CLAUDE_CODE_OAUTH_TOKEN/ANTHROPIC_API_KEY/…) configured separately from the agency;
+ * now it has none at all — every call is routed through whatever provider the user configured here.
+ */
+export async function runAnalyzerPrompt(prompt: string): Promise<{ text: string; model: string; costUsd: number }> {
+  const role: RoleName = "analyzer";
+  const def = ROLES[role];
+  // Sentinel (repo:"", issueNumber:0): no per-issue override exists for a key that matches no real
+  // issue, so this always falls through to the per-role assignment (or the global default) — exactly
+  // the resolution every other agent uses when nothing more specific is set.
+  const route = resolveRoute(role, "", 0);
+  if (!route) {
+    const hasClaudeCred = Boolean(claudeToken() || anthropicApiKey());
+    if (!hasClaudeCred) throw new Error(`No model is set up for the Analyzer role — assign one in Settings → Models (or add a Claude credential).`);
+  }
+  const model = canonicalModel(route ? route.model : modelFor(def));
+  const systemPrompt = await loadPersona(def.personaFile);
+  const runEnv: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) if (typeof v === "string") runEnv[k] = v;
+  const cwd = mkdtempSync(pathJoin(tmpdir(), "analyzer-run-"));
+  const controller = new AbortController();
+  try {
+    const r = await runLLM(
+      {
+        task: prompt,
+        cwd,
+        model,
+        provider: route?.provider ?? null,
+        authKind: route?.authKind ?? "subscription",
+        allowedTools: [],
+        env: runEnv,
+        systemPrompt,
+        abort: controller,
+        maxTurns: def.maxTurns,
+        tokenCap: loadBudget().maxTokensPerRun,
+      },
+      () => {}, // no live activity feed — this run isn't tied to any issue card
+    );
+    recordTokens(r.tokens, r.costUsd, model, "_analyzer", 0, role);
+    return { text: r.text, model, costUsd: r.costUsd };
+  } finally {
+    try { rmSync(cwd, { recursive: true, force: true }); } catch { /* best effort */ }
+  }
+}
+
+/**
  * Make a tiny real Agent SDK call with the resolved default Claude credential, so the dashboard can
  * tell the user immediately whether their token actually authenticates — instead of discovering a
  * 401 only on the first real run. Mirrors runRole's (no-route) env construction exactly.
