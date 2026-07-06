@@ -27,7 +27,15 @@ export function RunSelector({ issue, data, act, running, modelOverride, onModelC
   const [sel, setSel] = useState(current);
   useEffect(() => { setSel(current); }, [current]);
   const curOpt = routeOpts.find((o) => o.value === sel);
-  const routeName = (curOpt && curOpt.label) || (issue.soloRole ? issue.soloRole : "Default");
+  // The "Default" option's own label bakes in the global default workflow's name ("Default · Full
+  // build") — accurate for an ordinary issue with nothing pinned (that IS what Play would run), but
+  // WRONG for a solo process dispatched outside the workflow system entirely (the codebase Auditor,
+  // dispatched via forceAudit/runAuditOn — never consults workflowId/rolePin at all). When nothing is
+  // explicitly pinned AND the issue carries a soloRole, that role — not the global default — is what
+  // is actually/will actually run, so it must win over the generic "Default · …" label.
+  const routeName = !current && issue.soloRole
+    ? issue.soloRole.charAt(0).toUpperCase() + issue.soloRole.slice(1)
+    : (curOpt && curOpt.label) || "Default";
 
   const pinRoute = (v) => {
     setSel(v);

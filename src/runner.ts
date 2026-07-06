@@ -865,6 +865,11 @@ export async function forceAudit(cfg: Config, repo: string): Promise<void> {
     number = created.number;
     setSetting(trackingKey, String(number));
   }
+  // Solo-agent flag (same one @dev/@plan pins use) — without it the dashboard has no workflowId AND
+  // no role match in its generic Plan/Dev/Test/Review fallback (the auditor isn't one of those four
+  // roles), so it defaulted to showing "Default · Full build" and a 4-step timeline stuck on "Dev"
+  // for a process that is actually one agent, one step, never a multi-step build.
+  setSetting(`issue_solo.${repo}#${number}`, "auditor");
   await runAuditOn(cfg, repo, number);
 }
 
@@ -873,6 +878,7 @@ export async function runAuditOn(cfg: Config, repo: string, number: number): Pro
   dispatch(`${repo}#${number}`, async () => {
     const workdir = workdirFor(repo, `audit-${number}`);
     await rm(workdir, { recursive: true, force: true }).catch(() => {});
+    setSetting(`issue_solo.${repo}#${number}`, "auditor"); // idempotent — also covers a resume path
     setActive(repo, number, "issue", "auditor", "Codebase audit");
     recordIssueStatus(repo, number, withStatus("working"), { title: "🔎 Codebase audit" });
     try {
