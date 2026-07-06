@@ -549,8 +549,19 @@ input,select,textarea{font-family:inherit;font-size:14px}
 
 .prbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;border:1px solid var(--green);background:var(--green-weak);border-radius:var(--radius);padding:10px 13px}
 .prbar-l,.prbar__l{display:inline-flex;align-items:center;gap:7px;font-weight:600;font-size:13.5px;color:var(--green);margin-right:auto}
-.att,.attnbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;border:1px solid var(--amber);background:var(--amber-weak);border-radius:var(--radius);padding:10px 13px}
+.attnbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;border:1px solid var(--amber);background:var(--amber-weak);border-radius:var(--radius);padding:10px 13px}
 .attnbar__l{display:inline-flex;align-items:center;gap:7px;font-weight:600;font-size:13.5px;color:var(--amber);margin-right:auto}
+/* Pending-attachment thumbnail (composer, before send) — was sharing .attnbar's amber warning-banner
+   look AND rendering the raw image at native size (a full screenshot could balloon the whole
+   composer). Small fixed square, click-to-zoom (delegated in app.js's installImageViewer), drag to
+   reorder when there's more than one. */
+.att{position:relative;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:44px;height:44px;border-radius:8px;overflow:hidden;background:var(--surface-2);border:1px solid var(--line)}
+.att-thumb{cursor:grab}
+.att-thumb.dragging{opacity:.4}
+.att-thumb img{width:100%;height:100%;object-fit:cover;cursor:zoom-in;border-radius:0}
+.att-file{display:flex;flex-direction:column;align-items:center;gap:2px;width:100%;padding:2px;font-size:9px;color:var(--ink-3);text-align:center;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.att-x{position:absolute;top:-5px;right:-5px;width:16px;height:16px;border-radius:50%;background:var(--ink-1);color:var(--bg);border:none;display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0;line-height:0}
+.att-x:hover{background:var(--red)}
 .conflictbox{border:1px solid var(--red);background:var(--red-weak);border-radius:var(--radius);padding:10px 13px;display:flex;flex-direction:column;gap:8px}
 .conflictbox-h{display:inline-flex;align-items:center;gap:7px;font-weight:600;font-size:13.5px;color:var(--red)}
 
@@ -609,6 +620,7 @@ input,select,textarea{font-family:inherit;font-size:14px}
 .composer-icon,.composer__icon{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border:none;background:transparent;color:var(--ink-3);border-radius:8px;cursor:pointer}
 .composer-icon:hover,.composer__icon:hover{background:var(--surface-2);color:var(--ink-2)}
 .composer-atts{display:flex;flex-wrap:wrap;gap:6px}
+.composer-lg{padding:14px 16px}
 
 /* ── Status line ───────────────────────────────────────────────── */
 .statusline{flex:none;display:flex;align-items:center;gap:12px;padding:6px 16px calc(6px + var(--safe-b));border-top:1px solid var(--line);background:var(--surface);font-size:11.5px;color:var(--ink-3)}
@@ -1228,9 +1240,14 @@ textarea{resize:vertical;min-height:64px}
 .oprop-done .oprop-h{color:var(--green)}
 .oprop-created{display:flex;flex-direction:column;gap:4px;margin-bottom:6px}
 .oprop-link{text-align:left;border:none;background:transparent;color:var(--accent);font-size:13px;cursor:pointer;padding:2px 0;font-weight:500}
-.orch-compose{display:flex;gap:8px;align-items:flex-end;padding:10px 12px;border-top:1px solid var(--line);background:var(--surface)}
-.orch-compose textarea{flex:1;resize:none;border:1px solid var(--line);border-radius:12px;padding:10px 12px;font:14.5px inherit;background:var(--bg);color:var(--ink);max-height:160px;line-height:1.5}
-.orch-compose textarea:focus{outline:none;border-color:var(--accent)}
+/* Frames the shared ChatComposer (same wrapper shape as .dcompose in Detail.js — that one's
+   known-good). Used to be display:flex plus its own raw textarea rules from before this mounted
+   ChatComposer; those non-important rules (background/border/padding, same specificity as
+   MarkdownArea's own textarea rule) won by source order and painted an OPAQUE background OVER
+   the transparent-overlay textarea MarkdownArea depends on — hiding its live preview text
+   entirely (looked like invisible input, just a caret) and adding padding the overlay's exact
+   text alignment didn't expect. Dropped; ChatComposer owns its own internal layout now. */
+.orch-compose{flex:none;padding:12px 16px;border-top:1px solid var(--line);background:var(--surface)}
 .orch-send{width:42px;height:42px;padding:0;flex:none;border-radius:12px;display:inline-flex;align-items:center;justify-content:center}
 @media(max-width:760px){.orch{height:calc(100vh - 190px);border-radius:0;border-left:none;border-right:none}.obub-body{max-width:92%}}
 /* ── FINAL table look (v1.7.6) ── */

@@ -367,7 +367,7 @@ function openImageOverlay(src) {
 }
 function installImageViewer() {
   document.addEventListener("click", (e) => {
-    const img = e.target && e.target.closest && e.target.closest(".b img, .obub-txt img, .cmt-in img, .cmt__b img, .cmt .b img, .mdarea-preview img");
+    const img = e.target && e.target.closest && e.target.closest(".b img, .obub-txt img, .cmt-in img, .cmt__b img, .cmt .b img, .mdarea-preview img, .att-thumb img");
     if (!img || !img.src) return;
     if (img.closest("a")) return; // linked images keep their link behaviour
     e.preventDefault(); e.stopPropagation();

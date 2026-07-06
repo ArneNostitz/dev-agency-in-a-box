@@ -1,9 +1,18 @@
 # Coolify-ready, ZERO-CONFIG deploy: create a Docker Compose resource from this repo and deploy.
 #
-# No environment variables are required. On first boot a MASTER_KEY is auto-generated and persisted
-# on the data volume (so it stays stable across redeploys); every operational setting and credential
-# lives in the dashboard (the onboarding wizard + Settings → Operations). The first visitor creates
-# the admin account in-browser.
+# No environment variables are required for the `agency` service on its own. On first boot a
+# MASTER_KEY is auto-generated and persisted on the data volume (so it stays stable across
+# redeploys); every operational setting and credential lives in the dashboard (the onboarding
+# wizard + Settings → Operations). The first visitor creates the admin account in-browser.
+#
+# The `analyzer` service (Process Analyzer — self-improvement proposals + deploy verification) is
+# OPTIONAL: it's vendored here (./analyzer, mirrored from github.com/ArneNostitz/dev-agency-analyzer)
+# so one `docker compose up` runs dev, storage, AND the analyzer together. That trades away the
+# standalone repo's whole reason to exist — "stays running even when an agency deploy breaks, which
+# is exactly when you need it to report the breakage" — a broken build of THIS compose stack takes
+# both services down together now. If you want that isolation, deploy dev-agency-analyzer as its own
+# Coolify resource instead and delete the `analyzer` service + `./analyzer` directory below.
+# To use it: set ANALYZER_API_KEY (openssl rand -hex 32) and one LLM credential in your .env.
 services:
   agency:
     build: .
@@ -21,9 +30,9 @@ services:
       SMTP_PASS: ${SMTP_PASS:-}
       SMTP_FROM: ${SMTP_FROM:-}           # e.g. "Dev Agency <no-reply@yourdomain.com>"
       SMTP_SECURE: ${SMTP_SECURE:-}       # true|false to override (defaults: true on 465, else false)
-      # Enables the read-only /telemetry API for the standalone analyzer (dev-agency-analyzer).
-      # Set a strong shared secret (openssl rand -hex 32) here AND as AGENCY_API_KEY on the analyzer.
-      # Left blank, /telemetry stays disabled (503).
+      # Enables the read-only /telemetry API the `analyzer` service below reads. Same value as
+      # AGENCY_API_KEY on that service. Left blank, /telemetry stays disabled (503) and the
+      # analyzer container just idles (it can't do anything without this).
       ANALYZER_API_KEY: ${ANALYZER_API_KEY:-}
       # Other optional overrides — uncomment only to pin a value:
       # MASTER_KEY: ${MASTER_KEY:-}       # pin the secrets-encryption key (else auto-generated +
@@ -32,6 +41,25 @@ services:
       # AGENCY_ENV: ${AGENCY_ENV:-}       # "development" shows a DEV badge on staging
     volumes:
       - agency-data:/app/data          # SQLite DB + the persisted MASTER_KEY live here — keep it!
+
+  analyzer:
+    build: ./analyzer
+    restart: unless-stopped
+    # No ANALYZER_API_KEY (or no LLM credential) → the analyzer just idles quietly (every pass
+    # fails its telemetry fetch and retries next interval) — safe to leave both blank if you don't
+    # want it running yet.
+    environment:
+      # Internal compose network — no public URL/TLS needed for this hop (see analyzer/README.md).
+      AGENCY_URL: http://agency:3000
+      AGENCY_API_KEY: ${ANALYZER_API_KEY:-}   # must match the agency's ANALYZER_API_KEY above
+      # One LLM credential (subscription token, API key, or provider base URL + token for GLM/etc.) —
+      # commonly the same one you gave the agency itself:
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-}
+      ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN:-}
+      ANALYZER_MODEL: ${ANALYZER_MODEL:-claude-sonnet-4-6}   # optional
+    # No volumes — telemetry over HTTP, cursor in-memory (see analyzer/README.md).
 
 volumes:
   agency-data:

@@ -11,7 +11,7 @@
 import { html, useEffect, useRef } from "/web/vendor/standalone.mjs";
 import { mdOverlay, continueMarkdownList } from "../../core.js";
 
-export function MarkdownArea({ value, onInput, onPaste, onKeyDown, placeholder, taRef, rows, class: cls }) {
+export function MarkdownArea({ value, onInput, onPaste, onKeyDown, placeholder, taRef, rows, maxHeight = 200, class: cls }) {
   const overlayRef = useRef(null);
   // Keep the preview overlay aligned to the textarea: same scroll position, and inset by the
   // textarea's scrollbar width so wrapped lines line up with the caret.
@@ -23,7 +23,7 @@ export function MarkdownArea({ value, onInput, onPaste, onKeyDown, placeholder, 
     const sb = ta.offsetWidth - ta.clientWidth;
     ov.style.right = sb > 0 ? sb + "px" : "0px";
   };
-  const autosize = (el) => { el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, 200) + "px"; };
+  const autosize = (el) => { el.style.height = "auto"; el.style.height = Math.min(el.scrollHeight, maxHeight) + "px"; };
   const handleInput = (e) => {
     const el = e.target;
     autosize(el);

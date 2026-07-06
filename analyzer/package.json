@@ -1,0 +1,11 @@
+{
+  "name": "dev-agency-analyzer",
+  "version": "1.0.0",
+  "description": "Standalone watchdog for Dev Agency: reads the shared telemetry DB, proposes self-improvements (advisory), and verifies the agency's deployment. Independent of the agency codebase.",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": { "start": "node index.mjs" },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.1.0"
+  }
+}

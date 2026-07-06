@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dev-agency",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["dist/runner.js"],
+      "port": 3000,
+      "autoPort": true
+    }
+  ]
+}

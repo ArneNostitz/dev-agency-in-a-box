@@ -18,6 +18,7 @@ import { MarkdownArea } from "../atoms/MarkdownArea.js";
 import { ModelSelect } from "../molecules/ModelSelect.js";
 import { Comment } from "../molecules/Comment.js";
 import { ChatComposer } from "../molecules/ChatComposer.js";
+import { AttachmentThumbs } from "../molecules/AttachmentThumbs.js";
 import { RunSelector } from "../molecules/RunSelector.js";
 import { timelineModel } from "../molecules/Timeline.js";
 import { api, getJSON } from "../../lib/api.js";
@@ -647,7 +648,7 @@ export function Composer({ repos, repo, setRepo, onClose, onCreate, data, onOpen
     <label class="composer-icon tip" data-tip="Attach a file" style="margin-right:auto"><${Icon} name="paperclip" size=${18}/><input type="file" multiple style="display:none" onChange=${pick}/></label>
     <button class="btn" onClick=${() => submit(false)}>Add to Planned</button>
     <button class="btn primary" onClick=${() => submit(true)}><${Icon} name="play" size=${15}/> Start now</button>`;
-  return html`<${Modal} title="New issue" onClose=${onClose} footer=${footer}>
+  return html`<${Modal} title="New issue" size="lg" onClose=${onClose} footer=${footer}>
     <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap">
       <${Select} value=${repo || ""} options=${repos.map((r) => ({ value: r, label: r.split("/").pop() }))} onChange=${setRepo}/>
       <${Select} value=${role} options=${agentOptions(data && data.agentDefs, data && data.workflows)} onChange=${setRole}/>
@@ -683,10 +684,10 @@ export function Composer({ repos, repo, setRepo, onClose, onCreate, data, onOpen
       })}
       </div>
     </div>` : null}
-    <input value=${title} onInput=${(e) => setTitle(e.target.value)} placeholder="What should it do?" style="margin-bottom:10px"/>
-    <div class="composer">
-      ${atts.length ? html`<div class="composer-atts">${atts.map((a, idx) => html`<span class="att" key=${idx}>${a.img ? html`<img src=${a.d}/>` : html`<span><${Icon} name="paperclip" size=${12}/> ${a.name}</span>`}<button class="iconbtn" style="width:18px;height:18px;border:none" onClick=${() => setAtts((x) => x.filter((_, j) => j !== idx))}>×</button></span>`)}</div>` : null}
-      <${MarkdownArea} value=${body} taRef=${taRef} placeholder="Details, context, acceptance criteria…  (Cmd+Enter starts, paste image to embed)" onInput=${(v) => setBody(v)} onPaste=${onPaste} onKeyDown=${(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); submit(true); } }}/>
+    <input value=${title} onInput=${(e) => setTitle(e.target.value)} placeholder="What should it do?" style="margin-bottom:10px;font-size:15px;padding:10px 12px"/>
+    <div class="composer composer-lg">
+      <${AttachmentThumbs} atts=${atts} onReorder=${setAtts} onRemove=${(idx) => setAtts((x) => x.filter((_, j) => j !== idx))}/>
+      <${MarkdownArea} value=${body} taRef=${taRef} rows=${6} maxHeight=${400} placeholder="Details, context, acceptance criteria…  (Cmd+Enter starts, paste image to embed)" onInput=${(v) => setBody(v)} onPaste=${onPaste} onKeyDown=${(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); submit(true); } }}/>
     </div>
   <//>`;
 }

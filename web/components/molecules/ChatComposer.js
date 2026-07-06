@@ -18,6 +18,7 @@ import { html, useState, useRef } from "/web/vendor/standalone.mjs";
 import { Icon } from "../atoms/Icon.js";
 import { Spinner } from "../atoms/Spinner.js";
 import { MarkdownArea } from "../atoms/MarkdownArea.js";
+import { AttachmentThumbs } from "./AttachmentThumbs.js";
 import { api } from "../../lib/api.js";
 import { toast, readAttach } from "../../lib/toast.js";
 
@@ -88,7 +89,7 @@ export function ChatComposer({ value, onInput, onSend, uploadCtx, placeholder, b
   }
   const isBusy = busy || sending;
   return html`<div class="composer">
-    ${atts.length ? html`<div class="composer-atts">${atts.map((a, idx) => html`<span class="att" key=${idx}>${a.img ? html`<img src=${a.d}/>` : html`<span><${Icon} name="paperclip" size=${12}/> ${a.name}</span>`}<button class="iconbtn" style="width:18px;height:18px;border:none" onClick=${() => setAtts((x) => x.filter((_, j) => j !== idx))}>×</button></span>`)}</div>` : null}
+    <${AttachmentThumbs} atts=${atts} onReorder=${setAtts} onRemove=${(idx) => setAtts((x) => x.filter((_, j) => j !== idx))}/>
     <${MarkdownArea} value=${value} taRef=${taRef} placeholder=${placeholder} onInput=${onInput} onPaste=${onPaste} onKeyDown=${(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); send(); } }}/>
     <div class="composer-row">
       <label class="composer-icon tip" data-tip="Attach a file"><${Icon} name="paperclip" size=${18}/><input type="file" multiple style="display:none" onChange=${pickFiles}/></label>

@@ -132,7 +132,7 @@ export function Orchestrator({ repos, repoFilter, setRepoFilter, reload, onOpenI
           </div>`}
       ${busy ? html`<div class="obub obub-orch"><span class="obub-av"><${Avatar} role="auditor" size=${26} crop="head"/></span><div class="obub-body"><div class="obub-txt obub-think"><${Spinner} size=${13}/> thinking…</div></div></div>` : null}
     </div>
-    <div class="orch-compose orch-compose--rich">
+    <div class="orch-compose">
       <${ChatComposer}
         value=${draft} onInput=${setDraft} taRef=${taRef}
         uploadCtx=${{ repo, number: 0 }}
