@@ -324,7 +324,7 @@ function App() {
 
   return html`
     <div class="app">
-      <${TopBar} working=${working} scanning=${data.scanning} env=${data.env} theme=${theme} setTheme=${setThemeP} onSettings=${() => setSheet("settings")} onUsage=${() => setSheet("usage")} onAgents=${() => setSheet("workflows")} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${load} auto=${data.auto || {}} autoRepos=${data.autoRepos || {}} setAuto=${act.setAuto} view=${view} setView=${setViewP} chatOpen=${chatOpen} setChatOpen=${setChatOpenP}/>
+      <${TopBar} working=${working} scanning=${data.scanning} env=${data.env} theme=${theme} setTheme=${setThemeP} onSettings=${() => setSheet("settings")} onUsage=${() => setSheet("usage")} onAgents=${() => setSheet("workflows")} onManageRepos=${() => setSheet("repos")} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${load} view=${view} setView=${setViewP} chatOpen=${chatOpen} setChatOpen=${setChatOpenP}/>
       ${data.secretsHealth ? html`<${SecretBanner} h=${data.secretsHealth} onFix=${() => setSheet("settings")}/>` : null}
       <div class="content">
         ${repos.length ? (() => {
@@ -339,7 +339,7 @@ function App() {
       </div>
       ${!isDesktop && view === "board" && html`<${TabBar} issues=${shown} tab=${tab} setTab=${setTab}/>`}
       ${sheet === "composer" && html`<${Composer} repos=${repos} repo=${composerRepo} setRepo=${setComposerRepo} onClose=${() => setSheet(null)} onCreate=${createIssue} data=${data} onOpenModels=${() => setSheet("models")}/>`}
-      ${(sheet === "settings" || sheet === "github" || sheet === "models") && html`<${SettingsShell} data=${data} section=${sheet === "github" ? "github" : sheet === "models" ? "models" : "general"} onClose=${() => setSheet(null)} reload=${load} openWorkflows=${() => setSheet("workflows")}/>`}
+      ${(sheet === "settings" || sheet === "github" || sheet === "models" || sheet === "repos") && html`<${SettingsShell} data=${data} section=${sheet === "github" ? "github" : sheet === "models" ? "models" : sheet === "repos" ? "repos" : "general"} onClose=${() => setSheet(null)} reload=${load} openWorkflows=${() => setSheet("workflows")} repos=${repos} auto=${data.auto || {}} autoRepos=${data.autoRepos || {}} setAuto=${act.setAuto}/>`}
       ${sheet === "addrepo" && html`<${AddRepo} repos=${repos} onClose=${() => setSheet(null)} reload=${load}/>`}
       ${sheet === "usage" && html`<${Usage} onClose=${() => setSheet(null)} onOpenIssue=${openIssue}/>`}
       ${sheet === "workflows" && html`<${WorkflowBuilder} data=${data} onClose=${() => setSheet(null)} reload=${load} onOpenModels=${() => setSheet("models")}/>`}

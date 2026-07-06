@@ -10,6 +10,7 @@ import { ProviderLogo } from "../atoms/ProviderLogo.js";
 import { ModelSelect } from "../molecules/ModelSelect.js";
 import { ProviderSearchSelect } from "../molecules/ProviderSearchSelect.js";
 import { SecretField } from "../molecules/SecretField.js";
+import { RepoPicker } from "../molecules/RepoPicker.js";
 import { api, getJSON } from "../../lib/api.js";
 import { sortModelsByRecency } from "../../lib/model-recency.js";
 import { toast } from "../../lib/toast.js";
@@ -27,13 +28,14 @@ const saved = () => toast("Saved");
 const failed = (e) => toast((e && e.message) || "Couldn't save", "error");
 
 // ---------- the shell ----------
-export function SettingsShell({ data, onClose, reload, section: initial, openWorkflows }) {
+export function SettingsShell({ data, onClose, reload, section: initial, openWorkflows, repos, auto, autoRepos, setAuto }) {
   const admin = Boolean(data.user && data.user.role === "admin");
   const [section, setSection] = useState(initial || "general");
   const NAV = [
     { k: "general", label: "General", icon: "sliders" },
     { k: "models", label: "Models & providers", icon: "flask" },
     { k: "github", label: "GitHub", icon: "link" },
+    { k: "repos", label: "Repositories", icon: "layers" },
     { k: "environments", label: "Environments", icon: "laptop" },
     ...(admin ? [{ k: "team", label: "Team", icon: "users" }] : []),
     { k: "account", label: "Account", icon: "lock" },
@@ -53,6 +55,7 @@ export function SettingsShell({ data, onClose, reload, section: initial, openWor
         ${section === "general" ? html`<${GeneralSection} data=${data} reload=${reload} admin=${admin}/>` : null}
         ${section === "models" ? html`<${ModelsSection} reload=${reload} secretKeys=${data.secretKeys || []}/>` : null}
         ${section === "github" ? html`<${GithubSection} secretKeys=${data.secretKeys || []} github=${data.github} reload=${reload}/>` : null}
+        ${section === "repos" ? html`<${ReposSection} repos=${repos} reload=${reload} auto=${auto} autoRepos=${autoRepos} setAuto=${setAuto}/>` : null}
         ${section === "environments" ? html`<${EnvironmentsSection} admin=${admin}/>` : null}
         ${section === "team" && admin ? html`<${TeamSection} users=${data.users || []} webhookSecretSet=${data.webhookSecretSet} reload=${reload}/>` : null}
         ${section === "account" ? html`<${AccountSection} data=${data} reload=${reload} onClose=${onClose}/>` : null}
@@ -280,6 +283,23 @@ function AddProvider({ existing, onClose, onSaved }) {
 }
 
 // ---------- GitHub ----------
+// ---------- Repositories ----------
+// Add/remove watched repos + per-repo (and global) auto-resume/auto-merge — moved here from the
+// TopBar dropdown, which now only picks the active repo filter (issue: the auto pills + trash icon
+// crowded that dropdown and truncated repo names).
+function ReposSection({ repos, reload, auto, autoRepos, setAuto }) {
+  const gpill = (kind) => { const on = ((auto || {})[kind] || "") === "on"; const tip = "Auto-" + kind + " for all repos — " + (on ? "ON" : "OFF"); return html`<button class=${"apill " + (on ? "on" : "off")} aria-label=${tip} data-tip=${tip} onClick=${() => setAuto(kind, on ? "off" : "on")}><${Icon} name=${kind === "resume" ? "refresh" : "merge"} size=${12}/> <span class="apill-label">${kind}</span></button>`; };
+  return html`<div>
+    <div class="sec">Repositories</div>
+    <div class="muted" style="font-size:12px;margin-bottom:8px">Watched repos, and auto-resume / auto-merge — globally, or per repo below.</div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+      <div style="flex:1;display:flex;align-items:center;gap:6px"><${Icon} name="layers" size=${14}/> All repos</div>
+      ${gpill("resume")}${gpill("merge")}
+    </div>
+    <${RepoPicker} repos=${repos} reload=${reload} showAuto=${true} autoRepos=${autoRepos} setAuto=${setAuto} filterable=${true}/>
+  </div>`;
+}
+
 function GithubSection({ secretKeys, github, reload }) {
   const [adv, setAdv] = useState(false);
   return html`<div>

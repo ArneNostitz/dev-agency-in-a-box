@@ -326,9 +326,9 @@ test("v4: epics unfold their sub-issues as indented full rows in the List", asyn
   dom.window.close();
 });
 
-// Repo dropdown (#152): opening it renders the auto resume/merge pills with a hideable
-// `.apill-label` span (icon-only on mobile) while keeping the accessible label/tooltip.
-test("repo dropdown auto-pills wrap their text in .apill-label and keep aria-label", async () => {
+// Repo dropdown (#152, revised): the TopBar dropdown is select-only now (no truncated names from
+// crowded auto pills); add/remove/auto-resume/auto-merge moved to Settings → Repositories.
+test("repo dropdown is a plain repo switcher; auto-pills live in Settings > Repositories", async () => {
   const SAMPLE = {
     user: { id: 1, username: "arne", role: "admin" }, authEnabled: true, onboarded: true,
     repos: ["acme/app"], auto: { resume: "on", merge: "" }, autoRepos: { "acme/app": {} },
@@ -340,20 +340,38 @@ test("repo dropdown auto-pills wrap their text in .apill-label and keep aria-lab
     view: "list",
     fetch: async (u) => ({ ok: true, json: async () => (String(u).includes("/data") ? SAMPLE : {}), text: async () => "" }),
   });
-  await new Promise((r) => setTimeout(r, 150));
+  const tick = (ms) => new Promise((r) => setTimeout(r, ms));
+  const q = (s) => window.document.querySelector(s);
+  const click = (el) => { if (!el) throw new Error("element not found"); el.dispatchEvent(new window.MouseEvent("click", { bubbles: true })); };
+  await tick(150);
 
-  const btn = window.document.querySelector(".repodrop-btn");
+  const btn = q(".repodrop-btn");
   assert.ok(btn, "repo dropdown trigger renders");
-  btn.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 40));
+  click(btn);
+  await tick(40);
 
-  assert.ok(window.document.querySelector(".repodrop-menu"), "dropdown menu opens");
-  const label = window.document.querySelector(".apill .apill-label");
+  const menu = q(".repodrop-menu");
+  assert.ok(menu, "dropdown menu opens");
+  assert.ok(!menu.querySelector(".apill"), "no auto pills in the switcher");
+  assert.match(menu.textContent, /acme\/app/, "full repo name renders, unabbreviated");
+  const manage = Array.from(window.document.querySelectorAll(".repodrop-menu .dropmenu-item")).find((b) => /Manage repos/.test(b.textContent));
+  assert.ok(manage, "switcher links out to Manage repos");
+  click(manage);
+  await tick(80);
+
+  assert.ok(q(".setshell"), "Manage repos opens the settings shell");
+  const reposNav = Array.from(window.document.querySelectorAll(".setshell__navitem")).find((b) => /Repositories/.test(b.textContent));
+  assert.ok(reposNav, "left nav has a Repositories section");
+  click(reposNav);
+  await tick(80);
+
+  const label = q(".apill .apill-label");
   assert.ok(label, "auto-pill text is wrapped in .apill-label (hidden on mobile via CSS)");
   assert.match(label.textContent, /resume|merge/, "label carries the pill kind");
   const pill = label.closest(".apill");
   assert.ok(pill.getAttribute("aria-label"), "auto-pill keeps an aria-label for icon-only mode");
   assert.ok(pill.getAttribute("data-tip"), "auto-pill keeps its tooltip");
+  assert.match(root.innerHTML, /Add a repo/, "add-a-repo input renders in Settings");
 
   dom.window.close();
 });

@@ -5,7 +5,6 @@
 import { html, useState, useEffect } from "/web/vendor/standalone.mjs";
 import { Icon } from "../atoms/Icon.js";
 import { Spinner } from "../atoms/Spinner.js";
-import { RepoPicker } from "../molecules/RepoPicker.js";
 import { api, getJSON } from "../../lib/api.js";
 import { ago, fmtTok, hm } from "../../lib/format.js";
 import { toast } from "../../lib/toast.js";
@@ -21,7 +20,7 @@ export function SecretBanner({ h, onFix }) {
   return html`<div class="secbanner"><b>⚠ Credentials need attention.</b> ${msgs.map((m, i) => html`<div key=${i} style="margin-top:3px">${m}</div>`)} <button class="btn ghost" style="margin-top:7px" onClick=${onFix}>Open Settings</button></div>`;
 }
 
-export function TopBar({ working, scanning, env, theme, setTheme, onSettings, onUsage, onAgents, repos, repoFilter, setRepoFilter, reload, auto, autoRepos, setAuto, view, setView, chatOpen, setChatOpen }) {
+export function TopBar({ working, scanning, env, theme, setTheme, onSettings, onUsage, onAgents, onManageRepos, repos, repoFilter, setRepoFilter, reload, view, setView, chatOpen, setChatOpen }) {
   const [menu, setMenu] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   // Spin only while this manual refresh is in flight, and ALWAYS time out — never tie the spinner to
@@ -40,7 +39,7 @@ export function TopBar({ working, scanning, env, theme, setTheme, onSettings, on
   return html`<div class="topbar">
     <div class="brand"><${Icon} name="crown" size=${18}/> <span class="brandname">Dev Agency in a Box</span> ${env === "development" ? html`<span class="envbadge">DEV</span>` : null} ${working ? html`<span class="dot"></span>` : null}</div>
     <div class="spacer"></div>
-    <${RepoDropdown} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} reload=${reload} auto=${auto} autoRepos=${autoRepos} setAuto=${setAuto}/>
+    <${RepoDropdown} repos=${repos} repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} onManageRepos=${onManageRepos}/>
     <div class="spacer"></div>
     ${repos && repos.length && view && setView ? html`<div class="viewseg">
       <button class=${view === "list" ? "on" : ""} data-tip="List" onClick=${() => setView("list")}><${Icon} name="layers" size=${15}/> <span class="viewseg__txt">List</span></button>
@@ -59,16 +58,15 @@ export function TopBar({ working, scanning, env, theme, setTheme, onSettings, on
   </div>`;
 }
 
-// Centered repo selector that doubles as repo add/remove (replaces the pill row + Add modal).
-function RepoDropdown({ repos, repoFilter, setRepoFilter, reload, auto, autoRepos, setAuto }) {
+// Centered repo selector — just picks the active repo filter. Add/remove/auto-resume/auto-merge
+// live in Settings → Repositories now (issue: names were getting truncated by the per-row controls
+// crowding this dropdown; it's just a switch, not a repo manager).
+function RepoDropdown({ repos, repoFilter, setRepoFilter, onManageRepos }) {
   const [open, setOpen] = useState(false);
-
-  // Simple on/off toggle (default = off). Green = auto-on, muted = off.
-  const gpill = (kind) => { const on = (auto[kind] || "") === "on"; const tip = "Auto-" + kind + " for all repos — " + (on ? "ON" : "OFF"); return html`<button class=${"apill " + (on ? "on" : "off")} aria-label=${tip} data-tip=${tip} onClick=${(e) => { e.stopPropagation(); setAuto(kind, on ? "off" : "on"); }}><${Icon} name=${kind === "resume" ? "refresh" : "merge"} size=${12}/> <span class="apill-label">${kind}</span></button>`; };
-
+  const watching = repos || [];
   const title = repoFilter ? repoFilter.split("/").pop() : "All";
   return html`<div class="dropwrap repodrop">
-    <button class="repodrop-btn" data-tip="Switch repo · add / remove repos" onClick=${() => setOpen((o) => !o)}>
+    <button class="repodrop-btn" data-tip="Switch repo" onClick=${() => setOpen((o) => !o)}>
       <span class="repodrop-title">${title}</span>
       <${Icon} name=${open ? "x" : "chevdown"} size=${15}/>
     </button>
@@ -76,11 +74,15 @@ function RepoDropdown({ repos, repoFilter, setRepoFilter, reload, auto, autoRepo
       <div class="dropmenu repodrop-menu">
         <div class="repodrop-head"><span>Repositories</span><button class="iconbtn" aria-label="Close" onClick=${() => setOpen(false)}><${Icon} name="x" size=${18}/></button></div>
         <button class=${"dropmenu-item" + (repoFilter ? "" : " sel")} onClick=${() => { setRepoFilter(null); setOpen(false); }}>
-          <div style="flex:1;display:flex;align-items:center"><${Icon} name="layers" size=${14}/> All repos</div>
-          <div class="autorow" style="margin:0">${gpill("resume")}${gpill("merge")}</div>
+          <${Icon} name="layers" size=${14}/> All repos
         </button>
-        <${RepoPicker} repos=${repos} reload=${reload} showAuto=${true} autoRepos=${autoRepos} setAuto=${setAuto}
-          repoFilter=${repoFilter} setRepoFilter=${setRepoFilter} onPick=${(r) => { setRepoFilter(r); setOpen(false); }}/>
+        ${watching.length ? html`<div class="dropmenu-h">Watching</div>` : null}
+        ${watching.map((r) => html`<button key=${r} class=${"dropmenu-item" + (repoFilter === r ? " sel" : "")} onClick=${() => { setRepoFilter(r); setOpen(false); }}>
+          <${Icon} name="pr" size=${13}/> ${r}
+        </button>`)}
+        ${onManageRepos ? html`<button class="dropmenu-item" style="margin-top:4px;border-top:1px solid var(--line);padding-top:9px" onClick=${() => { setOpen(false); onManageRepos(); }}>
+          <${Icon} name="sliders" size=${13}/> Manage repos…
+        </button>` : null}
       </div>` : null}
   </div>`;
 }
