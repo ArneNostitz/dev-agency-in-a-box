@@ -181,7 +181,7 @@ function bTimeline(i) {
   else if (sstate === "review") cur = 3;
   else { const r = (i.role || "").toLowerCase(); cur = (r in BROLE_STEP) ? BROLE_STEP[r] : 1; }
   const running = !!(i.active || i.running);
-  const attn = i.blocked === "needsAttention" || i.blocked === "awaitingApproval" || i.blocked === "awaitingAnswer" || i.blocked === "conflict" || i.blocked === "budgetExceeded";
+  const attn = i.blocked === "needsAttention" || i.blocked === "awaitingApproval" || i.blocked === "awaitingAnswer" || i.blocked === "conflict" || i.blocked === "budgetExceeded" || i.blocked === "unverified";
   // Workflow-driven: one dot per real workflow step with its own agent face.
   const wfSteps = Array.isArray(i.wfSteps) && i.wfSteps.length ? i.wfSteps : null;
   if (wfSteps) {

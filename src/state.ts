@@ -28,6 +28,7 @@ export type BlockedReason =
   | "conflict" // merge conflict on the branch
   | "rateLimited" // transient — provider rate limit
   | "budgetExceeded" // over the per-issue token/$ budget
+  | "unverified" // checks could not run in-sandbox — a human/CI must green-light before merge
   | "held"; // user interrupted to steer — paused at a step boundary, resumable
 
 export interface IssueStatus {
@@ -46,6 +47,7 @@ export const BLOCKED_REASONS: readonly BlockedReason[] = [
   "conflict",
   "rateLimited",
   "budgetExceeded",
+  "unverified",
   "held",
 ];
 

@@ -27,11 +27,49 @@ test("parseDiscoveredChecks: returns null when absent or malformed", () => {
   assert.equal(parseDiscoveredChecks('CHECKS_JSON: {"checks":[]}'), null, "empty checks → null");
 });
 
-import { isEnvError, baselineFailures } from "../dist/checks.js";
+import { isEnvError, baselineFailures, detectCommands } from "../dist/checks.js";
 import { execSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, chmodSync } from "node:fs";
+import { mkdtempSync, writeFileSync, chmodSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+// A repo name that was never cached, so detectCommands hits the language registry (not a stored set).
+const fresh = () => `test/detect-${Math.random().toString(36).slice(2)}`;
+
+test("detectCommands: Flutter (pubspec.yaml) → analyze+test, requires flutter, provisions the SDK", () => {
+  const wd = mkdtempSync(join(tmpdir(), "flutter-"));
+  writeFileSync(join(wd, "pubspec.yaml"), "name: demo\n");
+  const set = detectCommands(wd, fresh());
+  assert.ok(set, "detected");
+  assert.equal(set.requires, "flutter");
+  assert.deepEqual(set.checks.map((c) => c.name), ["analyze", "test"]);
+  assert.match(set.checks[0].cmd, /flutter analyze/);
+  assert.ok(set.provision && /git clone .*flutter/.test(set.provision), "clones the SDK when missing");
+  assert.ok(set.binDir && set.binDir.endsWith("/bin"), "binDir points at the SDK bin");
+});
+
+test("detectCommands: Tauri (src-tauri/) wins over Node and runs the Rust backend too", () => {
+  const wd = mkdtempSync(join(tmpdir(), "tauri-"));
+  // A Node front-end (would otherwise match nodeCommands first)…
+  writeFileSync(join(wd, "package.json"), JSON.stringify({ scripts: { test: "vitest", tauri: "tauri" } }));
+  // …plus a Rust backend that must NOT be skipped.
+  mkdirSync(join(wd, "src-tauri"));
+  writeFileSync(join(wd, "src-tauri", "Cargo.toml"), "[package]\nname='app'\n");
+  const set = detectCommands(wd, fresh());
+  assert.ok(set, "detected");
+  assert.equal(set.requires, "cargo");
+  assert.ok(set.checks.some((c) => /cargo test --manifest-path src-tauri\/Cargo.toml/.test(c.cmd)), "checks the Rust backend");
+  assert.ok(set.checks.some((c) => c.name === "test"), "keeps the web checks too");
+});
+
+test("detectCommands: a plain Node repo is unaffected (no false Tauri/Flutter match)", () => {
+  const wd = mkdtempSync(join(tmpdir(), "node-"));
+  writeFileSync(join(wd, "package.json"), JSON.stringify({ scripts: { test: "vitest" } }));
+  const set = detectCommands(wd, fresh());
+  assert.ok(set);
+  assert.equal(set.requires, "node");
+  assert.ok(!set.provision, "no toolchain provisioning for a normal Node repo");
+});
 
 test("isEnvError: pytest collection/no-test + cmd-not-found are env, real failures are not", () => {
   assert.equal(isEnvError("python3 -m pytest -q", 2), true);  // collection/usage error (import error)

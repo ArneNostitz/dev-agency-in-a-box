@@ -326,7 +326,7 @@ export function classify(i) {
   if (i.active || i.queued || i.running) return "working"; // actually executing right now
   if (i.pr_number && s !== "planned") return "review"; // a PR is up → waiting on you
   // Waiting on the human shows in Review (needs your 👍 / answer / attention).
-  if (i.blocked === "awaitingApproval" || i.blocked === "awaitingAnswer" || i.blocked === "needsAttention") return "review";
+  if (i.blocked === "awaitingApproval" || i.blocked === "awaitingAnswer" || i.blocked === "needsAttention" || i.blocked === "unverified") return "review";
   if (s === "working") return "working";
   if (s === "review") return "review";
   return "planned";
@@ -342,6 +342,7 @@ export function statusChip(i) {
   if (i.blocked === "conflict") return { cls: "s-changes", label: "conflict", icon: "alert" };
   if (i.blocked === "budgetExceeded") return { cls: "s-attn", label: "over budget", icon: "alert" };
   if (i.blocked === "held") return { cls: "s-working", label: "on hold", icon: "clock" };
+  if (i.blocked === "unverified") return { cls: "s-attn", label: "verify", icon: "alert" };
   if (i.blocked === "needsAttention") return { cls: "s-attn", label: "needs you", icon: "alert" };
   if (i.blocked === "awaitingApproval") return { cls: "s-attn", label: "approve?", icon: "check" };
   if (i.blocked === "awaitingAnswer") return { cls: "s-attn", label: "reply", icon: "messages" };

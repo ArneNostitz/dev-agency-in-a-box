@@ -9,26 +9,44 @@
  */
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { getSetting, setSetting } from "./store.js";
 import { ghBotToken } from "./creds.js";
 
 export interface CheckResult { name: string; cmd: string; ok: boolean; firstError: string; env?: boolean }
-export interface ChecksOutcome { ran: boolean; pass: boolean; summary: string; results: CheckResult[]; envBlocked?: boolean; blockReason?: string }
+/**
+ * `verified` is the fail-closed signal: true only when the checks ACTUALLY ran to a real pass/fail
+ * here. Toolchain-missing (even after a provision attempt) and env-blocked runs are `verified:false`
+ * so the caller never presents an unrun suite as "green" and silently merges broken code.
+ */
+export interface ChecksOutcome { ran: boolean; pass: boolean; verified: boolean; summary: string; results: CheckResult[]; envBlocked?: boolean; blockReason?: string }
 
 interface CommandSet {
-  /** Binary that must exist on PATH for these checks to run here (e.g. "swift", "go", "cargo"). */
+  /** Binary that must exist on PATH for these checks to run here (e.g. "swift", "go", "cargo", "flutter"). */
   requires?: string;
   install?: string;
   checks: Array<{ name: string; cmd: string }>;
+  /**
+   * Best-effort shell command to install the toolchain in-sandbox when `requires` is missing, so we
+   * can actually verify instead of deferring. Runs in bash (so `$HOME` etc. expand). Idempotent.
+   */
+  provision?: string;
+  /** Absolute dir to prepend to PATH for provision + checks (where `provision` installs the binary). */
+  binDir?: string;
 }
 
 /** Run a shell command in `cwd`, capturing combined output; resolves with code + tail of output. */
 export function runShell(cmd: string, cwd: string, timeoutMs = 240_000): Promise<{ code: number; out: string }> { return run(cmd, cwd, timeoutMs); }
-function run(cmd: string, cwd: string, timeoutMs = 240_000): Promise<{ code: number; out: string }> {
+function run(cmd: string, cwd: string, timeoutMs = 240_000, extraPath?: string): Promise<{ code: number; out: string }> {
   return new Promise((resolve) => {
     const token = ghBotToken();
-    const env = { ...process.env, CI: "1", ...(token ? { GH_TOKEN: token, GITHUB_TOKEN: token } : {}) };
+    const env = {
+      ...process.env,
+      CI: "1",
+      ...(token ? { GH_TOKEN: token, GITHUB_TOKEN: token } : {}),
+      ...(extraPath ? { PATH: `${extraPath}:${process.env.PATH ?? ""}` } : {}),
+    };
     const child = spawn("bash", ["-lc", cmd], { cwd, env });
     let out = "";
     const cap = (d: Buffer) => { out += d.toString(); if (out.length > 200_000) out = out.slice(-200_000); };
@@ -110,27 +128,74 @@ function rustCommands(workdir: string): CommandSet | null {
 }
 
 /**
+ * Tauri (native desktop): a Node/web front-end plus a Rust backend in `src-tauri/`. Detected before
+ * `nodeCommands` so the Rust side is never skipped — a green front-end with a broken backend was
+ * exactly the "looks tested, isn't" trap. Runs the web checks (if any) + `cargo test` on the backend.
+ */
+function tauriCommands(workdir: string): CommandSet | null {
+  if (!existsSync(join(workdir, "src-tauri", "Cargo.toml"))) return null;
+  const node = nodeCommands(workdir);
+  const checks = [
+    ...(node?.checks ?? []),
+    { name: "cargo-test", cmd: "cargo test --manifest-path src-tauri/Cargo.toml" },
+  ];
+  return {
+    requires: "cargo",
+    install: node?.install,
+    checks,
+    provision: `command -v cargo >/dev/null 2>&1 || curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal`,
+    binDir: join(homedir(), ".cargo", "bin"),
+  };
+}
+
+/**
+ * Flutter / Dart (pubspec.yaml). `flutter analyze` is the gate that catches compile-level defects
+ * (missing imports, type errors) that a plain `flutter test` on a subset would miss. When the SDK
+ * isn't here we clone it (best-effort) so we can actually verify rather than defer-and-merge.
+ */
+function flutterCommands(workdir: string): CommandSet | null {
+  if (!existsSync(join(workdir, "pubspec.yaml"))) return null;
+  const sdk = join(homedir(), ".devagency-toolchains", "flutter");
+  return {
+    requires: "flutter",
+    checks: [
+      { name: "analyze", cmd: "flutter analyze" },
+      { name: "test", cmd: "flutter test" },
+    ],
+    // Clone stable Flutter (bundles Dart) once, then warm it so `analyze`/`test` are ready.
+    provision:
+      `test -x "${sdk}/bin/flutter" || { mkdir -p "$(dirname "${sdk}")" && git clone --depth 1 -b stable https://github.com/flutter/flutter.git "${sdk}"; } ; ` +
+      `"${sdk}/bin/flutter" --version >/dev/null 2>&1 || true`,
+    binDir: join(sdk, "bin"),
+  };
+}
+
+/**
  * Detect check commands for a clone. Cache wins (incl. what the LLM tester discovered for an unusual
  * stack), then a language registry. Returns null for stacks we can't run here (e.g. an Xcode
  * .xcodeproj, which needs macOS) → the caller defers to the LLM tester / local run.
  */
-function detectCommands(workdir: string, repo: string): CommandSet | null {
+export function detectCommands(workdir: string, repo: string): CommandSet | null {
   const cached = getSetting(`checks:${repo}`);
   if (cached) { try { return JSON.parse(cached) as CommandSet; } catch { /* fall through */ } }
-  // Order matters for polyglot repos: pick the primary stack by its most specific marker.
+  // Order matters for polyglot repos: pick the primary stack by its most specific marker. Tauri
+  // (src-tauri/) wins over Node so the Rust backend is checked; Flutter's pubspec is checked before
+  // the looser Python markers.
   return (
+    tauriCommands(workdir) ||
     nodeCommands(workdir) ||
     swiftCommands(workdir) ||
     goCommands(workdir) ||
     rustCommands(workdir) ||
+    flutterCommands(workdir) ||
     pythonCommands(workdir) ||
     null
   );
 }
 
-/** Is a binary available on PATH in this container? */
-async function hasTool(name: string): Promise<boolean> {
-  const r = await run(`command -v ${name}`, process.cwd(), 10_000);
+/** Is a binary available on PATH (optionally including a provisioned `extraPath`) in this container? */
+async function hasTool(name: string, extraPath?: string): Promise<boolean> {
+  const r = await run(`command -v ${name}`, process.cwd(), 10_000, extraPath);
   return r.code === 0;
 }
 
@@ -170,25 +235,31 @@ export function parseDiscoveredChecks(text: string): CommandSet | null {
  */
 export async function runChecks(workdir: string, repo: string): Promise<ChecksOutcome> {
   const set = detectCommands(workdir, repo);
-  if (!set) return { ran: false, pass: false, summary: "", results: [] };
-  // If the language's toolchain isn't installed here (e.g. an Xcode/Swift app on a Linux box),
-  // don't false-fail — defer to the LLM tester / a local run.
-  if (set.requires && !(await hasTool(set.requires))) {
-    return { ran: false, pass: false, summary: "", results: [] };
+  if (!set) return { ran: false, pass: false, verified: false, summary: "", results: [] };
+  const extraPath = set.binDir;
+  // If the language's toolchain isn't here, first TRY to provision it in-sandbox (Part B) so we can
+  // actually verify. If it's still missing after that, don't false-fail — return unverified so the
+  // caller defers to the LLM tester / a local run WITHOUT treating it as green.
+  if (set.requires && !(await hasTool(set.requires, extraPath))) {
+    if (set.provision) await run(set.provision, workdir, 900_000, extraPath);
+    if (!(await hasTool(set.requires, extraPath))) {
+      return { ran: false, pass: false, verified: false, summary: "", results: [] };
+    }
   }
 
   if (set.install) {
-    const inst = await run(set.install, workdir);
+    const inst = await run(set.install, workdir, 240_000, extraPath);
     if (inst.code !== 0) {
       // Dependencies didn't install → the sandbox can't run these checks. Don't fall into a fix loop
-      // over phantom failures; report it as environment-blocked so the caller skips the gate.
-      return { ran: true, pass: false, envBlocked: true, blockReason: firstError(inst.out) || "dependency install failed", summary: "", results: [] };
+      // over phantom failures; report it as environment-blocked (unverified) so the caller neither
+      // gates the developer on it nor mistakes it for a passing run.
+      return { ran: true, pass: false, verified: false, envBlocked: true, blockReason: firstError(inst.out) || "dependency install failed", summary: "", results: [] };
     }
   }
 
   const results: CheckResult[] = [];
   for (const c of set.checks) {
-    const r = await run(c.cmd, workdir);
+    const r = await run(c.cmd, workdir, 240_000, extraPath);
     const env = isEnvError(c.cmd, r.code);
     results.push({ name: c.name, cmd: c.cmd, ok: r.code === 0, firstError: r.code === 0 ? "" : firstError(r.out), env });
   }
@@ -198,7 +269,8 @@ export async function runChecks(workdir: string, repo: string): Promise<ChecksOu
   const summary = `| check | status | detail |\n|---|---|---|\n` +
     results.map((r) => `| ${r.name} | ${r.ok ? "✅ pass" : r.env ? "⚙️ env" : "❌ FAIL"} | ${r.ok ? "" : "`" + r.firstError.replace(/\|/g, "\\|") + "`"} |`).join("\n") +
     `\n\n${pass ? "All checks passed." : "Some checks failed — see the first error above."}`;
-  return { ran: true, pass, envBlocked, blockReason, summary, results };
+  // Verified only when it genuinely executed to a real result (not an env-blocked run).
+  return { ran: true, pass, verified: !envBlocked, envBlocked, blockReason, summary, results };
 }
 
 

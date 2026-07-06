@@ -30,7 +30,7 @@ export function timelineModel(i) {
   }
   const running = !!(i.active || i.running);
   const blk = i.blocked;
-  const attn = blk === "needsAttention" || blk === "awaitingApproval" || blk === "awaitingAnswer" || blk === "conflict" || blk === "budgetExceeded";
+  const attn = blk === "needsAttention" || blk === "awaitingApproval" || blk === "awaitingAnswer" || blk === "conflict" || blk === "budgetExceeded" || blk === "unverified";
   // WORKFLOW-DRIVEN timeline: one dot per ACTUAL workflow step (e.g. 8 for HolyMoly), each with its
   // own agent (name + avatar). Falls back to the generic plan/dev/test/review when no workflow.
   const wfSteps = Array.isArray(i.wfSteps) && i.wfSteps.length ? i.wfSteps : null;
@@ -145,6 +145,9 @@ function rowQuick(i, act) {
   const done = isDone(i);
   if (i.state === "planned" || i.state === "notPlanned" || (!i.state && !done)) return { a: "start", icon: "play", label: i.byAgent ? "Approve" : "Start", cls: "primary", fn: () => i.byAgent ? act.approve(i.repo, i.number) : act.start(i.repo, i.number) };
   if (i.blocked === "awaitingApproval") return { a: "approve", icon: "check", label: "Approve", cls: "primary", fn: () => act.approve(i.repo, i.number) };
+  // Unverified: checks never ran here. Nudge a re-check (retries toolchain provisioning + the real
+  // suite) over a one-click merge on an unrun pass — the human can still merge from the PR itself.
+  if (i.blocked === "unverified") return { a: "resume", icon: "refresh", label: "Recheck", cls: "primary", fn: () => act.resume(i.repo, i.number) };
   if (i.state === "review" && i.review === "changes") return { a: "fix", icon: "wrench", label: "Fix", cls: "primary", fn: () => act.fix(i.repo, i.number) };
   if (i.state === "review" && i.review === "approved") return { a: "merge", icon: "merge", label: "Merge", cls: "primary", fn: () => act.merge(i.repo, i.number) };
   if (i.blocked === "needsAttention") return { a: "resume", icon: "refresh", label: "Resume", cls: "primary", fn: () => act.resume(i.repo, i.number) };

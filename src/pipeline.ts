@@ -65,19 +65,21 @@ async function runTests(
   issueNumber: number,
   workdir: string,
   branch: string,
-): Promise<{ text: string; pass: boolean }> {
+): Promise<{ text: string; pass: boolean; verified: boolean }> {
   const checks = await runChecks(workdir, repo);
   if (checks.ran) {
     recordRun(repo, issueNumber, "tester", "code", 0, "test", 0); // deterministic, token-free
     // The sandbox couldn't actually run the checks (deps wouldn't install, pytest collection error,
-    // missing tool). That's NOT a code defect — don't gate on it or the developer chases ghosts.
+    // missing tool). That's NOT a code defect — don't gate on it (the developer would chase ghosts),
+    // but it also isn't a passing run: `verified:false` parks the PR for a human/CI to green-light.
     if (checks.envBlocked) {
       return {
-        text: `⚙️ **Couldn't run the checks in the sandbox** — \`${checks.blockReason}\`.\n\nThis is an environment/dependency issue, not a code failure, so the change isn't blocked on it. Run the suite locally to confirm.`,
+        text: `⚙️ **Couldn't run the checks in the sandbox** — \`${checks.blockReason}\`.\n\nThis is an environment/dependency issue, not a code failure, so the change isn't blocked on it — but the suite did **not** actually run here, so it must be green-lit by a human or CI before merge.`,
         pass: true,
+        verified: false,
       };
     }
-    if (checks.pass) return { text: checks.summary, pass: true };
+    if (checks.pass) return { text: checks.summary, pass: true, verified: true };
     // Some checks failed. Were they ALREADY red on main (pre-existing), or did THIS change break them?
     // Only newly-introduced failures gate the PR; pre-existing ones are reported, not fixed in a loop.
     const failing = checks.results.filter((r) => !r.ok);
@@ -86,7 +88,7 @@ async function runTests(
     const note = preexisting.size
       ? `\n\n> ℹ️ ${preexisting.size} check(s) (${[...preexisting].join(", ")}) were **already failing on \`main\`** before this change — pre-existing, not gated. ${introduced.length ? "" : "Proceeding to review."}`
       : "";
-    return { text: checks.summary + note, pass: introduced.length === 0 };
+    return { text: checks.summary + note, pass: introduced.length === 0, verified: true };
   }
   // Unknown stack or toolchain missing → let the cheap tester discover the commands, then cache them.
   const t = await runRole("tester", {
@@ -108,7 +110,14 @@ async function runTests(
   if (discovered) rememberChecks(repo, discovered);
   // Strip the machine line from what humans read.
   const text = t.text.replace(/CHECKS_JSON:\s*\{[\s\S]*$/m, "").trim();
-  return { text, pass: !/❌|\bFAIL\b|\bfailed\b/i.test(text) };
+  const pass = !/❌|\bFAIL\b|\bfailed\b/i.test(text);
+  // The tester couldn't actually execute the suite (toolchain absent, "run it locally", "CI must
+  // green-light"…). A no-error report in that case is UNVERIFIED, not green — don't merge on it.
+  const couldntRun =
+    /couldn'?t run|could not run|unable to run|cannot (?:run|execute)|not installed|isn'?t installed|no(?:t)? .{0,20}installed|toolchain .{0,20}(?:missing|not|absent|unavailable)|must (?:green-?light|be run|run)|CI must|run (?:it|them|the (?:suite|tests)) locally|on (?:the|your) (?:user'?s )?machine/i.test(
+      text,
+    );
+  return { text, pass, verified: pass && !couldntRun };
 }
 // Dashboard-tunable (setting wins over env wins over default), so no redeploy to change behaviour.
 function maxReviseRounds(): number {
@@ -208,13 +217,16 @@ async function plan(repo: string, issue: Issue, workdir: string, thread: string)
  * (looped / interrupted) still lands a PR instead of bouncing to needs-attention. Returns true
  * if a PR now exists.
  */
-async function finalizeWithPr(repo: string, issue: Issue, workdir: string, branch: string, changesRequested = false): Promise<boolean> {
+async function finalizeWithPr(repo: string, issue: Issue, workdir: string, branch: string, changesRequested = false, unverified = false): Promise<boolean> {
   if (stopped(repo, issue.number, "finalizeWithPr")) return false;
   if (held(repo, issue.number, "finalizeWithPr")) return false;
   const hasCommits = await ensureBranchPushed(workdir, branch);
   const pr = hasCommits ? await ensureDraftPr(repo, issue.number, branch, issue.title) : await findPrForBranch(repo, branch);
   if (pr) {
-    recordIssueStatus(repo, issue.number, withStatus("review"));
+    // Fail-closed: if the checks never actually ran here, park the PR as `unverified` so the card
+    // shows "green-light needed" instead of a clean pass — a human/CI must confirm before merge.
+    // (A reviewer "changes requested" verdict takes precedence — that's the more urgent flag.)
+    recordIssueStatus(repo, issue.number, unverified && !changesRequested ? setBlocked(withStatus("review"), "unverified") : withStatus("review"));
     recordPr(repo, issue.number, pr.number, pr.url);
     // Reconcile the conflict box against reality — a normal finalize (not just the conflict-only Fix
     // path) can make a branch mergeable, and a stale "resolve first" must not stick on the card/PR bar.
@@ -222,6 +234,8 @@ async function finalizeWithPr(repo: string, issue: Issue, workdir: string, branc
     if (cf.ok) { if (cf.files.length) recordConflict(repo, issue.number, "", cf.files); else clearConflict(repo, issue.number); }
     const head = changesRequested
       ? `**⚠️ PR opened, but the reviewer still wants changes.** ${pr.url}\n\nPress **Fix** on the card to address them, or **Merge anyway** to ship as-is.`
+      : unverified
+      ? `**⚠️ PR opened — but the checks could NOT be verified in the sandbox.** ${pr.url}\n\nThe toolchain to run this project's tests isn't available here, so this is **unrun, not green**. A human or CI must green-light before merge — don't merge on a pass that never happened.`
       : `**✅ Work complete.** Opened ${pr.isDraft ? "draft " : ""}PR ${pr.url}`;
     await commentOnIssue(
       repo,
@@ -424,7 +438,7 @@ async function build(
 
   // Orchestrated loop (decideNext is the single source of "what next"): keep tests green BEFORE
   // reviewing broken code, re-test after every revise, and warm the reviewer across its own rounds.
-  let testText = test.text, testPass = test.pass, lastReview = "", round = 0, reviews = 0;
+  let testText = test.text, testPass = test.pass, testVerified = test.verified, lastReview = "", round = 0, reviews = 0;
   const maxR = maxReviseRounds();
   const reviseDev = async (task: string): Promise<boolean> => {
     const before = await localHeadSha(workdir);
@@ -438,7 +452,7 @@ async function build(
   };
   const retest = async (label: string): Promise<void> => {
     const t = await runTests(repo, issue.number, workdir, branch);
-    testText = t.text; testPass = t.pass;
+    testText = t.text; testPass = t.pass; testVerified = t.verified;
     await commentOnIssue(repo, issue.number, say("tester", `**${label}**\n\n${t.text}`));
   };
 
@@ -488,7 +502,7 @@ async function build(
   const stillChanges = changesRequested(lastReview);
   recordReview(repo, issue.number, stillChanges ? "changes" : "approved", lastReview);
 
-  const ok = await finalizeWithPr(repo, issue, workdir, branch, stillChanges);
+  const ok = await finalizeWithPr(repo, issue, workdir, branch, stillChanges, !testVerified);
   if (ok) {
     // Reflect (cheap, best-effort): what should the agency remember from this build?
     await runReflection(
@@ -881,7 +895,7 @@ export async function runReviewFix(repo: string, issue: Issue, workdir: string, 
 
   const stillChanges = changesRequested(review2.text);
   recordReview(repo, issue.number, stillChanges ? "changes" : "approved", review2.text);
-  await finalizeWithPr(repo, issue, workdir, branch, stillChanges);
+  await finalizeWithPr(repo, issue, workdir, branch, stillChanges, !test.verified);
 }
 
 /** Park an unresolved-conflict PR at needs-attention with a clear note (and keep the conflict box). */

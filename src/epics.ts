@@ -46,7 +46,7 @@ export function childStatus(repo: string, t: RecentThread): string {
   if (t.closed || s.state === "done") return "done";
   if (s.state === "review") return "in review";
   if (s.blocked === "awaitingApproval" || s.blocked === "awaitingAnswer") return "waiting";
-  if (s.blocked === "needsAttention") return "blocked";
+  if (s.blocked === "needsAttention" || s.blocked === "unverified") return "blocked";
   if (s.state === "working") return "working";
   return "open";
 }
