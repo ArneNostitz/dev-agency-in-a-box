@@ -37,13 +37,14 @@ import {
   prMerged,
   closeIssue,
   canTrigger,
+  upsertTrackerComment,
   type Issue,
 } from "./github.js";
 import { seedAdmin, resetAdminPassword } from "./auth.js";
 import { sNum } from "./settings.js";
 import { githubReady, ghUserToken, ghBotToken } from "./creds.js";
 import { decideThreadAction } from "./route.js";
-import { reconcileEpics, onChildMerged } from "./epics.js";
+import { reconcileEpics, onChildMerged, renderEpicTracker } from "./epics.js";
 import { indexRepo } from "./gitnexus.js";
 import { pushActivity } from "./activity.js";
 import { roleForHandle, ALL_ROLES, type RoleName } from "./agents/roles.js";
@@ -97,6 +98,8 @@ import {
   getLocalIssue,
   getIssueRow,
   archiveIssue,
+  addEpicChild,
+  listEpicChildren,
 } from "./store.js";
 
 /**
@@ -837,9 +840,17 @@ const AUDIT_TASK = [
 
 const AUDIT_ISSUE_BODY =
   "The Dev Agency **Auditor** is reviewing this codebase's health (architecture, duplication, dead " +
-  "code, complexity, test coverage) and will open scoped refactor/cleanup issues into Planned.\n\n" +
-  "This tracking issue auto-closes when the audit completes. If it's interrupted (e.g. a usage " +
-  "limit), it persists here — press **Resume** to re-run it.";
+  "code, complexity, test coverage) and will open scoped refactor/cleanup issues as its sub-issues " +
+  "(this becomes an epic tracking them).\n\n" +
+  "This tracking issue closes when the audit finds nothing to propose, or once every sub-issue is " +
+  "done. If it's interrupted (e.g. a usage limit), it persists here — press **Resume** to re-run it.";
+
+/** First readable line of a proposal's body — prefers the "Problem:" line the auditor persona writes. */
+function auditExcerpt(body: string): string {
+  const m = /^\s*(?:-\s*)?\*{0,2}Problem:?\*{0,2}\s*(.+)$/im.exec(body);
+  const line = (m ? m[1] : body.split("\n").find((l) => l.trim())) || "";
+  return line.trim().slice(0, 200);
+}
 
 /**
  * Manual "Audit now": the independent codebase Auditor. Opens (or reuses) a real GitHub **tracking
@@ -886,7 +897,7 @@ export async function runAuditOn(cfg: Config, repo: string, number: number): Pro
       const res = await runRole("auditor", { task: AUDIT_TASK, workdir, repo, issueNumber: number });
       const proposals = parseAuditProposals(res.text).slice(0, 5);
       const owner = ghUserToken() || ghBotToken();
-      const created: string[] = [];
+      const createdIssues: { number: number; title: string; body: string }[] = [];
       for (const p of proposals) {
         const issue = await createIssue(
           repo,
@@ -896,16 +907,30 @@ export async function runAuditOn(cfg: Config, repo: string, number: number): Pro
         ).catch(() => null);
         if (!issue || !issue.number) continue;
         recordIssueStatus(repo, issue.number, withStatus("planned"), { title: p.title });
-        created.push(`#${issue.number}`);
+        // Make the tracking issue the epic parent — its sub-issues are exactly this audit's
+        // proposals, consolidated instead of standalone (epic-ness is DB-only, see epics.ts).
+        addEpicChild(repo, number, issue.number, p.title);
+        createdIssues.push({ number: issue.number, title: p.title, body: p.body });
       }
-      const summary = created.length
-        ? `🔎 **Audit complete** — opened ${created.length} issue(s) in Planned: ${created.join(", ")}.`
-        : "🔎 **Audit complete** — no issues to propose; the codebase looks healthy.";
-      await commentOnIssue(repo, number, summary).catch(() => {});
-      await closeIssue(repo, number, "Audit complete.").catch(() => {});
-      recordIssueStatus(repo, number, withStatus("done")); // → Done
+      if (createdIssues.length) {
+        const findings = createdIssues
+          .map((c, i) => `${i + 1}. **#${c.number} ${c.title}** — ${auditExcerpt(c.body)}`)
+          .join("\n");
+        await commentOnIssue(
+          repo,
+          number,
+          `🔎 **Audit complete** — found ${createdIssues.length} issue(s), opened as sub-issues:\n\n${findings}`,
+        ).catch(() => {});
+        await upsertTrackerComment(repo, number, renderEpicTracker(listEpicChildren(repo, number))).catch(() => {});
+        // Leave the parent "working" (set above) — reconcileEpics flips it to "review" once every
+        // sub-issue is done, same as the planner's epic pattern (maybeDecompose in pipeline.ts).
+      } else {
+        await commentOnIssue(repo, number, "🔎 **Audit complete** — no issues to propose; the codebase looks healthy.").catch(() => {});
+        await closeIssue(repo, number, "Audit complete.").catch(() => {});
+        recordIssueStatus(repo, number, withStatus("done")); // → Done
+      }
       setSetting(`audit_tracking.${repo}`, ""); // free the slot for the next audit
-      console.log(`[agency] audit ${repo} #${number}: opened ${created.length} issue(s)`);
+      console.log(`[agency] audit ${repo} #${number}: opened ${createdIssues.length} issue(s)`);
     } catch (err) {
       const msg = (err as Error).message ?? String(err);
       // Survive a usage limit (auto-resumes after reset) or any error (resumable) — the tracking
