@@ -8,12 +8,12 @@
  * auto-merges. It also verifies the agency deployment.
  *
  * It carries NO LLM credential of its own: the actual analysis pass runs INSIDE the agency (POST
- * /analyzer-run), using whatever provider/model is assigned to the "Analyzer" role in the agency's
+ * /analyzer-analyze), using whatever provider/model is assigned to the "Analyzer" role in the agency's
  * own Settings → Models — the same per-role/global resolution every other agent there uses. This
  * service only sends the prompt and gets back text.
  *
  * Least privilege: the only thing it can do to the agency is READ aggregate metrics and ask it to run
- * ONE fixed, server-authored analysis prompt (see /analyzer-run) — no arbitrary prompt injection
+ * ONE fixed, server-authored analysis prompt (see /analyzer-analyze) — no arbitrary prompt injection
  * beyond the telemetry digest it assembles itself. Applying any change (agents/skills/hooks) happens
  * through the agency's own admin-authenticated UI after YOU approve the proposal. Compromising the
  * analyzer yields read-only metrics and one report-writing call, nothing more.
@@ -69,15 +69,15 @@ function digest(t) {
 
 // The persona (what the analyzer looks for, the TITLE: requirement, the proposal format) now lives
 // server-side at memory/central/agents/analyzer.md — editable from the agency's dashboard like any
-// other agent, and applied by the agency itself since IT runs the LLM call now (POST /analyzer-run).
+// other agent, and applied by the agency itself since IT runs the LLM call now (POST /analyzer-analyze).
 async function llm(prompt) {
-  const res = await fetch(`${base()}/analyzer-run`, {
+  const res = await fetch(`${base()}/analyzer-analyze`, {
     method: "POST",
     headers: { Authorization: `Bearer ${AGENCY_API_KEY}`, "Content-Type": "application/json" },
     body: JSON.stringify({ prompt }),
     signal: AbortSignal.timeout(120_000), // a full analysis pass can take a while
   });
-  if (!res.ok) throw new Error(`analyzer-run HTTP ${res.status}`);
+  if (!res.ok) throw new Error(`analyzer-analyze HTTP ${res.status}`);
   return (await res.json()).text || "";
 }
 

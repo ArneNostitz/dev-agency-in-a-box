@@ -64,11 +64,14 @@ export function SettingsShell({ data, onClose, reload, section: initial, openWor
 // ---------- General ----------
 function GeneralSection({ data, reload, admin }) {
   const cfg = data.config || {};
+  const ops = data.ops || {};
   const later = useAutoSave();
   const [maxTok, setMaxTok] = useState(cfg.maxTokensPerRun || 600000);
   const [avatarsOn, setAvatarsOn] = useState(cfg.avatars !== "off");
-  const [selfImprove, setSelfImprove] = useState((data.ops || {}).self_improve != null ? !!(data.ops || {}).self_improve : true);
+  const [selfImprove, setSelfImprove] = useState(ops.self_improve != null ? !!ops.self_improve : true);
   const [newDefault, setNewDefault] = useState(cfg.newIssueDefault || "@dev");
+  const [analyzerOn, setAnalyzerOn] = useState(ops.analyzer_enabled != null ? !!ops.analyzer_enabled : true);
+  const [analyzerRepo, setAnalyzerRepo] = useState(ops.analyzer_repo || "");
   const put = (body) => api("/settings", body).then(saved).then(reload).catch(failed);
   return html`<div>
     <div class="sec">Appearance</div>
@@ -82,7 +85,15 @@ function GeneralSection({ data, reload, admin }) {
     <input type="number" min="0" step="50000" value=${maxTok} onInput=${(e) => { setMaxTok(e.target.value); later(() => put({ maxTokensPerRun: Number(e.target.value) || 0 })); }}/>
 
     ${admin ? html`<div class="sec" style="margin-top:18px">Automation</div>
-      <label class="ckline"><input type="checkbox" checked=${selfImprove} onChange=${(e) => { setSelfImprove(e.target.checked); put({ ops: { self_improve: e.target.checked } }); }}/> Allow self-improvement PRs</label>` : null}
+      <label class="ckline"><input type="checkbox" checked=${selfImprove} onChange=${(e) => { setSelfImprove(e.target.checked); put({ ops: { self_improve: e.target.checked } }); }}/> Allow self-improvement PRs</label>
+
+      <div class="sec" style="margin-top:18px">Process Analyzer</div>
+      <div class="muted" style="font-size:12px;margin-bottom:6px">Self-improvement watchdog — reads aggregate telemetry (no secrets/issue bodies), opens advisory GitHub issues you approve. Needs the standalone <code>analyzer</code> service running (vendored in <code>./analyzer</code>, or its own deploy) and <code>ANALYZER_API_KEY</code> set.</div>
+      <label class="ckline"><input type="checkbox" checked=${analyzerOn} onChange=${(e) => { setAnalyzerOn(e.target.checked); put({ ops: { analyzer_enabled: e.target.checked } }); }}/> Enable the Process Analyzer</label>
+      <label style="margin-top:10px">Analyzer issues → repo</label>
+      <div class="muted" style="font-size:12px;margin-bottom:4px">Where its advisory issues get created. Blank = this agency's own repo (its default target — these are reports on ITS operational health, not any one watched product repo).</div>
+      <input placeholder="owner/repo (blank = agency's own repo)" value=${analyzerRepo} onInput=${(e) => { setAnalyzerRepo(e.target.value); later(() => put({ ops: { analyzer_repo: e.target.value.trim() } })); }}/>
+      <div class="muted" style="font-size:12px;margin-top:6px">Model: the Analyzer role uses your global/Claude default until you configure per-role models — same as every other agent here.</div>` : null}
   </div>`;
 }
 

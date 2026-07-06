@@ -36,7 +36,7 @@ import { renderShell } from "./shell.js";
 import { afterMerge } from "./merge_hooks.js";
 import { activeClaims } from "./locks.js";
 import { authEnabled, userFromReq, setSessionCookie, clearSessionCookie, parseCookies, SESSION_COOKIE, verifyRecoveryKey } from "./auth.js";
-import { OPS_SETTINGS, opsSettingsValues } from "./settings.js";
+import { OPS_SETTINGS, opsSettingsValues, sBool } from "./settings.js";
 import { getSecretSetting, setSecretSetting, getUserSecretStatus } from "./store.js";
 import { masterKeyConfigured } from "./crypto.js";
 import { ghBotToken, ghUserToken, claudeToken, anthropicApiKey } from "./creds.js";
@@ -228,11 +228,16 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
     // analyzer needs almost no config of its own: it reads aggregate telemetry + tuning here, and the
     // agency opens the advisory issue on its behalf (so the analyzer carries no GitHub token/repo).
     // Least-privilege: aggregate metrics only (no secrets/bodies) + a rate-limited advisory issue the
-    // agency never acts on without approval. Disabled (503) unless a strong key is set.
+    // agency never acts on without approval. Disabled (503) unless a strong key is set AND the
+    // "Enable the Process Analyzer" toggle (Settings → General) is on — the toggle defaults to on
+    // (matching docker-compose.yml's prefilled key, so it works out of the box) but is a real,
+    // explicit kill-switch: flip it off to stop the analyzer even if a key is still configured.
     {
       const aurl = (req.url ?? "/").split("?")[0];
-      if (aurl === "/telemetry" || aurl === "/analyzer-issue" || aurl === "/analyzer-run") {
+      if (aurl === "/telemetry" || aurl === "/analyzer-issue" || aurl === "/analyzer-analyze") {
         const key = (process.env.ANALYZER_API_KEY || getSetting("analyzer_api_key") || "").trim();
+        const enabled = sBool("analyzer_enabled", "", true);
+        if (!enabled) return void res.writeHead(503, { "content-type": "application/json" }).end(JSON.stringify({ error: "analyzer disabled in Settings" }));
         if (!key || key.length < 16) return void res.writeHead(503, { "content-type": "application/json" }).end(JSON.stringify({ error: "analyzer API disabled (set a strong ANALYZER_API_KEY)" }));
         const hdr = (req.headers["authorization"] || "").toString();
         const got = hdr.startsWith("Bearer ") ? hdr.slice(7).trim() : "";
@@ -253,11 +258,15 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
             config: { minSteps: Number(getSetting("analyzer_min_steps")) || 15, intervalHours: Number(getSetting("analyzer_interval_hours")) || 1 },
           }));
         }
-        // POST /analyzer-run — run the analyzer's own LLM pass IN the agency, using whatever
-        // provider/model is assigned to the "Analyzer" role in Settings → Models (same per-role/
-        // global resolution every other agent uses). The analyzer sends its telemetry-digest prompt
-        // and gets back plain text; it never holds an LLM credential of its own.
-        if (aurl === "/analyzer-run") {
+        // POST /analyzer-analyze — run the analyzer's own LLM pass IN the agency, using whatever
+        // provider/model is assigned to the "Analyzer" role (same per-role/global resolution every
+        // other agent uses, falling back to the global/Claude default until you assign one
+        // specifically). The analyzer sends its telemetry-digest prompt and gets back plain text; it
+        // never holds an LLM credential of its own.
+        // NOTE: distinct from the pre-existing POST /analyzer-run below (session-cookie admin action
+        // that proxies the dashboard's "Run now" button to the STANDALONE analyzer container's own
+        // /run endpoint) — same-looking name, different direction, do not merge these two.
+        if (aurl === "/analyzer-analyze") {
           if (req.method !== "POST") return void res.writeHead(405).end();
           void (async () => {
             let pp: { prompt?: string } = {};
@@ -1714,6 +1723,9 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
         if (path === "/analyzer-run") {
           // Manually kick the standalone watchdog: proxy a forced POST /run so the shared key never
           // leaves the server. Admin-only.
+          // NOTE: distinct from POST /analyzer-analyze above (the Bearer-keyed endpoint the analyzer
+          // container itself calls to run its LLM pass IN the agency) — same-looking name, opposite
+          // direction. This one is browser session-cookie auth; that one is the analyzer's own key.
           if (actor.role !== "admin") return res.writeHead(403).end('{"error":"admin only"}');
           const base = (getSetting("analyzer_url") || "").trim().replace(/\/+$/, "");
           const key = (process.env.ANALYZER_API_KEY || getSetting("analyzer_api_key") || "").trim();

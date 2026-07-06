@@ -23,7 +23,7 @@ agency deploy breaks — which is exactly when you need it to report the breakag
   (`GET {AGENCY_URL}/telemetry`, `Authorization: Bearer {AGENCY_API_KEY}`). No shared DB, no shared
   volume, no filesystem coupling.
 - When enough new telemetry has accrued, assembles a digest and asks the agency to run the actual
-  analysis pass (`POST {AGENCY_URL}/analyzer-run`, same Bearer key) — the agency runs the LLM call
+  analysis pass (`POST {AGENCY_URL}/analyzer-analyze`, same Bearer key) — the agency runs the LLM call
   in-process using whatever provider/model is assigned to its "Analyzer" role in Settings → Models,
   and returns plain text. This service holds **no LLM credential of its own**. It parses the result
   and opens an **advisory** GitHub issue (titled from that pass's own biggest finding, not a generic
@@ -76,7 +76,7 @@ Required env:
 Optional: `PORT` (default 3000).
 
 No LLM credential is configured here — the actual analysis pass runs INSIDE the agency (`POST
-/analyzer-run`), using whatever model is assigned to its "Analyzer" role in Settings → Models. This
+/analyzer-analyze`), using whatever model is assigned to its "Analyzer" role in Settings → Models. This
 works identically whether the analyzer is standalone (over HTTPS) or vendored (over the internal
 compose network) — assign that role a model once, on the agency side, and every deployment mode of
 this service picks it up.
