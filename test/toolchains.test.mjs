@@ -5,6 +5,11 @@ import assert from "node:assert/strict";
 import {
   TOOLCHAINS,
   parseProgress,
+  getToolchain,
+  allToolchains,
+  addCustomToolchain,
+  removeCustomToolchain,
+  listCustomToolchains,
   toolchainForBinary,
   toolchainStatus,
   isToolchainReady,
@@ -14,14 +19,38 @@ import {
   clearToolchainRequests,
 } from "../dist/toolchains.js";
 
-test("catalog: Flutter + Rust are defined with a binary and an install script", () => {
-  assert.ok(TOOLCHAINS.flutter && TOOLCHAINS.rust);
-  assert.equal(TOOLCHAINS.flutter.binary, "flutter");
-  assert.equal(TOOLCHAINS.rust.binary, "cargo");
-  for (const t of Object.values(TOOLCHAINS)) {
-    assert.ok(t.install && t.install.length, `${t.id} has install bash`);
-    assert.ok(t.binDir && t.binDir.length, `${t.id} has a binDir`);
+test("catalog: presets (Flutter/Rust/Go/Bun/Deno/.NET) each have a binary + binDir + install", () => {
+  for (const id of ["flutter", "rust", "go", "bun", "deno", "dotnet"]) {
+    const t = TOOLCHAINS[id];
+    assert.ok(t, `${id} preset present`);
+    assert.ok(t.binary && t.binDir && t.install, `${id} fully defined`);
   }
+  assert.equal(TOOLCHAINS.flutter.binary, "flutter");
+  assert.equal(TOOLCHAINS.go.binary, "go");
+});
+
+test("custom: add → getToolchain/allToolchains include it → remove, defaults check from binary", () => {
+  // clean any stragglers from a prior run
+  listCustomToolchains().filter((t) => t.label.startsWith("Zig Test")).forEach((t) => removeCustomToolchain(t.id));
+  const id = addCustomToolchain({ label: "Zig Test", install: "echo installing zig", binary: "zig" });
+  const tc = getToolchain(id);
+  assert.ok(tc && tc.custom, "resolvable + flagged custom");
+  assert.equal(tc.check, "command -v zig", "check defaults from the binary");
+  assert.ok(allToolchains().some((t) => t.id === id), "appears in the merged list");
+  // built-in id still wins / resolves too
+  assert.ok(getToolchain("flutter") && !getToolchain("flutter").custom);
+  removeCustomToolchain(id);
+  assert.equal(getToolchain(id), undefined, "removed");
+});
+
+test("custom: id is slugged + de-duplicated, a check-only env needs no binary", () => {
+  const a = addCustomToolchain({ label: "My Env!", install: "true", check: "which foo" });
+  const b = addCustomToolchain({ label: "My Env!", install: "true", check: "which foo" });
+  assert.equal(a, "my-env");
+  assert.equal(b, "my-env-2", "collision gets a numeric suffix");
+  assert.equal(getToolchain(a).binary, "", "no binary is fine when a check command is given");
+  assert.equal(getToolchain(a).check, "which foo");
+  removeCustomToolchain(a); removeCustomToolchain(b);
 });
 
 test("toolchainForBinary maps a checks.ts `requires` binary to a catalog id", () => {

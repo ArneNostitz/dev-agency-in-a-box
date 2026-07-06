@@ -389,15 +389,20 @@ function EnvironmentsSection({ admin }) {
       .catch(failed)
       .finally(() => setBusy((b) => ({ ...b, [id]: false })));
   };
+  const remove = (id) => api("/toolchain-remove", { id }).then(() => { toast("Removed"); load(); }).catch(failed);
   if (!tc) return html`<div class="muted" style="display:flex;align-items:center;gap:6px"><${Spinner} size=${12}/> Loading…</div>`;
+  const list = tc.toolchains || [];
+  const presets = list.filter((t) => !t.custom), custom = list.filter((t) => t.custom);
+  const rowProps = (t) => ({ t, admin, busy: busy[t.id], live: live[t.id], onInstall: () => install(t.id), onRemove: () => remove(t.id) });
   return html`<div>
-    <div class="sec">Toolchains</div>
-    <div class="muted" style="font-size:12px;margin-bottom:12px">Install language SDKs so agents can run checks for these app types in-agency. When a run needs one that isn't here, it pauses the issue and asks — no PR until the checks actually run. Installed to <code>${tc.dir}</code>; point <code>TOOLCHAINS_DIR</code> at a mounted volume to survive redeploys.</div>
-    ${(tc.toolchains || []).map((t) => TcRow({ t, admin, busy: busy[t.id], live: live[t.id], onInstall: () => install(t.id) }))}
-    ${!admin ? html`<div class="muted" style="font-size:12px;margin-top:10px">Only an admin can install toolchains.</div>` : null}
+    <div class="sec">Environments</div>
+    <div class="muted" style="font-size:12px;margin-bottom:12px">Install language toolchains so agents can run checks for these app types in-agency. When a run needs one that isn't here, it pauses the issue and asks — no PR until the checks actually run. Installed to <code>${tc.dir}</code> (persists across redeploys).</div>
+    ${presets.map((t) => TcRow(rowProps(t)))}
+    ${custom.length ? html`<div class="sec" style="margin-top:18px">Custom (installed by hand)</div>${custom.map((t) => TcRow(rowProps(t)))}` : null}
+    ${admin ? html`<${AddEnv} sharedBin=${tc.sharedBin} onAdded=${load}/>` : html`<div class="muted" style="font-size:12px;margin-top:10px">Only an admin can install environments.</div>`}
   </div>`;
 }
-function TcRow({ t, admin, busy, live, onInstall }) {
+function TcRow({ t, admin, busy, live, onInstall, onRemove }) {
   const ready = t.status === "ready", installing = t.status === "installing", failed = t.status === "failed";
   const prog = installing ? (live || t.progress) : null;
   const chip = ready
@@ -421,7 +426,44 @@ function TcRow({ t, admin, busy, live, onInstall }) {
         ${prog.log && prog.log.length ? html`<pre style="margin:6px 0 0;max-height:110px;overflow:auto;font-size:10.5px;line-height:1.45;background:var(--code-bg,rgba(128,128,128,.08));border-radius:5px;padding:6px 8px;white-space:pre-wrap;word-break:break-all">${prog.log.slice(-8).join("\n")}</pre>` : null}
       </div>` : null}
     </div>
-    ${admin ? html`<button class=${"btn" + (ready ? " ghost" : " primary")} style="padding:4px 12px;font-size:12px;white-space:nowrap" disabled=${busy || installing} onClick=${onInstall}>${installing ? "Installing…" : ready ? "Reinstall" : reqs.length ? "Install now" : "Install"}</button>` : null}
+    ${admin ? html`<div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
+      <button class=${"btn" + (ready ? " ghost" : " primary")} style="padding:4px 12px;font-size:12px;white-space:nowrap" disabled=${busy || installing} onClick=${onInstall}>${installing ? "Installing…" : ready ? "Reinstall" : reqs.length ? "Install now" : "Install"}</button>
+      ${t.custom && !installing ? html`<button class="btn ghost" style="padding:2px 10px;font-size:11px" onClick=${onRemove}>Remove</button>` : null}
+    </div>` : null}
+  </div>`;
+}
+// "Install by hand": run a raw terminal command on the host to provision an environment we don't ship.
+function AddEnv({ sharedBin, onAdded }) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [f, setF] = useState({ label: "", install: "", check: "", binary: "", note: "", start: true });
+  const set = (k) => (e) => setF((x) => ({ ...x, [k]: e.target.value }));
+  const submit = () => {
+    if (!f.label.trim() || !f.install.trim()) return toast("Name and install command are required", "error");
+    setBusy(true);
+    api("/toolchain-add", f)
+      .then(() => { toast("Environment added"); setF({ label: "", install: "", check: "", binary: "", note: "", start: true }); setOpen(false); onAdded(); })
+      .catch(failed).finally(() => setBusy(false));
+  };
+  if (!open) return html`<button class="btn ghost" style="margin-top:14px;font-size:12px" onClick=${() => setOpen(true)}><${Icon} name="plus" size=${13}/> Add environment by hand</button>`;
+  return html`<div style="margin-top:14px;border:1px solid var(--line,rgba(128,128,128,.2));border-radius:8px;padding:12px">
+    <div style="font-weight:600">Custom environment</div>
+    <div class="muted" style="font-size:11.5px;margin:2px 0 10px">Runs your command on the agency host as the <code>node</code> user. Drop the binary into <code>${sharedBin || "$TOOLCHAINS_DIR/bin"}</code> (already on PATH) so agents can use it. Everything under the data volume persists across redeploys.</div>
+    <label>Name</label>
+    <input value=${f.label} onInput=${set("label")} placeholder="e.g. Zig"/>
+    <label style="margin-top:8px">Install command (bash)</label>
+    <textarea rows="4" value=${f.install} onInput=${set("install")} placeholder="set -e&#10;curl -fsSL … -o \"$TOOLCHAINS_DIR/bin/zig\" && chmod +x \"$TOOLCHAINS_DIR/bin/zig\"" style="width:100%;box-sizing:border-box;font-family:ui-monospace,monospace;font-size:11.5px"></textarea>
+    <div style="display:flex;gap:10px;margin-top:8px">
+      <div style="flex:1"><label>Binary (optional)</label><input value=${f.binary} onInput=${set("binary")} placeholder="zig"/></div>
+      <div style="flex:1"><label>Check command (optional)</label><input value=${f.check} onInput=${set("check")} placeholder="command -v zig"/></div>
+    </div>
+    <label style="margin-top:8px">What it unlocks (optional)</label>
+    <input value=${f.note} onInput=${set("note")} placeholder="Zig projects — zig build test"/>
+    <label class="ckline" style="margin-top:10px"><input type="checkbox" checked=${f.start} onChange=${(e) => setF((x) => ({ ...x, start: e.target.checked }))}/> Install now</label>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button class="btn primary" disabled=${busy} onClick=${submit}>${busy ? "Adding…" : "Add environment"}</button>
+      <button class="btn ghost" onClick=${() => setOpen(false)}>Cancel</button>
+    </div>
   </div>`;
 }
 

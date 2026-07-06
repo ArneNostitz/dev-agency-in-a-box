@@ -27,7 +27,7 @@ import { startDeviceFlow, pollDeviceToken, fetchGitHubUser } from "./github-oaut
 import { githubOAuthClientId, githubOAuthToken, githubIdentity } from "./creds.js";
 import { binaryAvailable } from "./runners/registry.js";
 import { installSpec, installCli, RUNNER_PACKAGES } from "./runners/install.js";
-import { TOOLCHAINS, toolchainStatus, isInstalling, listToolchainRequests, installToolchain, toolchainsDir, toolchainProgress, subscribeToolchains } from "./toolchains.js";
+import { allToolchains, getToolchain, toolchainStatus, isInstalling, listToolchainRequests, installToolchain, toolchainsDir, sharedBinDir, toolchainProgress, subscribeToolchains, addCustomToolchain, removeCustomToolchain } from "./toolchains.js";
 import { parseLegacyStatus, withStatus, setBlocked } from "./state.js";
 import { runOrchestratorChat } from "./agents/orchestrator-chat.js";
 import { listOrchThread, clearOrchThread, setByAgent } from "./store.js";
@@ -692,18 +692,18 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
       // Environments.
       if (url === "/toolchains") {
         const requests = listToolchainRequests();
-        const toolchains = Object.values(TOOLCHAINS).map((t) => {
+        const toolchains = allToolchains().map((t) => {
           const st = toolchainStatus(t.id);
           const prog = toolchainProgress(t.id);
           return {
-            id: t.id, label: t.label, binary: t.binary, note: t.note,
+            id: t.id, label: t.label, binary: t.binary, note: t.note, custom: !!t.custom,
             status: isInstalling(t.id) ? "installing" : st.status, version: st.version, error: st.error,
             requestedBy: requests.filter((r) => r.id === t.id).map((r) => ({ repo: r.repo, number: r.number })),
             // Live snapshot so a tab opened mid-install shows the bar + tail immediately; /toolchain-events streams deltas.
             progress: prog ? { pct: prog.pct, phase: prog.phase, log: prog.log.slice(-12) } : undefined,
           };
         });
-        res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ toolchains, dir: toolchainsDir() }));
+        res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ toolchains, dir: toolchainsDir(), sharedBin: sharedBinDir() }));
         return;
       }
 
@@ -1571,12 +1571,31 @@ export async function runWebhook(cfg: Config, processAll: ProcessAll, resume?: R
           return void res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ ok: r.models.length > 0, models: r.models, via: r.via, runner: r.runner, error: r.error }));
         }
         if (path === "/install-toolchain") {
-          // Host-affecting (clones an SDK / runs rustup) → admin only. Fire-and-forget: the install
-          // can take many minutes; state flips to "installing" and the UI polls /toolchains.
+          // Host-affecting (clones an SDK / runs rustup / runs a user's own install command) → admin
+          // only. Fire-and-forget: the install can take many minutes; state flips to "installing" and
+          // /toolchain-events streams progress.
           if (!actor || actor.role !== "admin") return void res.writeHead(403, { "content-type": "application/json" }).end('{"error":"admin only"}');
           const id = String(p.id ?? "");
-          if (!TOOLCHAINS[id]) return void res.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({ error: "Unknown toolchain." }));
+          if (!getToolchain(id)) return void res.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({ error: "Unknown toolchain." }));
           void installToolchain(id);
+          return ok();
+        }
+        if (path === "/toolchain-add") {
+          // Add a custom "install by hand" environment (a raw terminal command). Admin only — it runs
+          // on the agency host. Optionally installs it right away.
+          if (!actor || actor.role !== "admin") return void res.writeHead(403, { "content-type": "application/json" }).end('{"error":"admin only"}');
+          const b = p as { label?: string; install?: string; check?: string; binary?: string; note?: string; start?: boolean };
+          if (!b.label?.trim() || !b.install?.trim()) return void res.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({ error: "A name and an install command are required." }));
+          const newId = addCustomToolchain({ label: b.label, install: b.install, check: b.check, binary: b.binary, note: b.note });
+          if (b.start) void installToolchain(newId);
+          return ok(JSON.stringify({ ok: true, id: newId }));
+        }
+        if (path === "/toolchain-remove") {
+          if (!actor || actor.role !== "admin") return void res.writeHead(403, { "content-type": "application/json" }).end('{"error":"admin only"}');
+          const id = String(p.id ?? "");
+          const tc = getToolchain(id);
+          if (!tc || !tc.custom) return void res.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({ error: "Only custom environments can be removed." }));
+          removeCustomToolchain(id);
           return ok();
         }
         if (path === "/install-cli") {

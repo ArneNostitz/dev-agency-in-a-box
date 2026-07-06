@@ -128,8 +128,11 @@ ENV NPM_CONFIG_PREFIX=/app/data/npm-global \
 # volume so they survive a redeploy — no separate volume needed. Flutter clones into
 # $TOOLCHAINS_DIR/flutter; rustup's CARGO_HOME/RUSTUP_HOME are symlinked onto the volume below (the
 # same trick used for ~/.claude). Their bin dirs go on PATH so `flutter`/`cargo` resolve everywhere.
+# The shared /app/data/toolchains/bin is where every OTHER toolchain (Go/Bun/Deno/.NET presets AND
+# user-added "install by hand" environments) symlinks its binary on install, so one PATH entry
+# exposes them all to agents — no Dockerfile change needed to add a new environment.
 ENV TOOLCHAINS_DIR=/app/data/toolchains \
-    PATH=/app/data/toolchains/flutter/bin:/home/node/.cargo/bin:/app/data/npm-global/bin:$PATH
+    PATH=/app/data/toolchains/flutter/bin:/home/node/.cargo/bin:/app/data/toolchains/bin:/app/data/npm-global/bin:$PATH
 ENV SOURCE_COMMIT=$SOURCE_COMMIT
 
 # Run as a NON-root user: Claude Code refuses --dangerously-skip-permissions (bypassPermissions)
@@ -151,7 +154,7 @@ RUN set -eux; mkdir -p /app/data/npm-global
 RUN set -eux; rm -rf /home/node/.claude; ln -sfn /app/data/claude /home/node/.claude
 # Toolchains on the data volume: Flutter under /app/data/toolchains; Rust via ~/.cargo & ~/.rustup
 # symlinked onto the volume (rustup writes there, cargo reads there — no env plumbing in checks.ts).
-RUN set -eux; mkdir -p /app/data/toolchains /app/data/cargo /app/data/rustup
+RUN set -eux; mkdir -p /app/data/toolchains /app/data/toolchains/bin /app/data/cargo /app/data/rustup
 RUN set -eux; rm -rf /home/node/.cargo /home/node/.rustup; \
     ln -sfn /app/data/cargo /home/node/.cargo; ln -sfn /app/data/rustup /home/node/.rustup
 RUN set -eux; chown node:node /app; chown -R node:node /app/data /app/.work /app/data/npm-global /app/data/toolchains /app/data/cargo /app/data/rustup
