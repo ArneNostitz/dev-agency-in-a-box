@@ -77,8 +77,8 @@ function RepoDropdown({ repos, repoFilter, setRepoFilter, reload, auto, autoRepo
   }
 
   // Simple on/off toggle (default = off). Green = auto-on, muted = off.
-  const gpill = (kind) => { const on = (auto[kind] || "") === "on"; return html`<button class=${"apill " + (on ? "on" : "off")} data-tip=${"Auto-" + kind + " for all repos — " + (on ? "ON" : "OFF")} onClick=${(e) => { e.stopPropagation(); setAuto(kind, on ? "off" : "on"); }}><${Icon} name=${kind === "resume" ? "refresh" : "merge"} size=${12}/> ${kind}</button>`; };
-  const rpill = (repo, kind) => { const on = ((autoRepos[repo] || {})[kind] || "") === "on"; return html`<button class=${"apill " + (on ? "on" : "off")} data-tip=${"Auto-" + kind + " — " + (on ? "ON" : "OFF")} onClick=${(e) => { e.stopPropagation(); setAuto(kind, on ? "off" : "on", repo); }}><${Icon} name=${kind === "resume" ? "refresh" : "merge"} size=${12}/> ${kind}</button>`; };
+  const gpill = (kind) => { const on = (auto[kind] || "") === "on"; const tip = "Auto-" + kind + " for all repos — " + (on ? "ON" : "OFF"); return html`<button class=${"apill " + (on ? "on" : "off")} aria-label=${tip} data-tip=${tip} onClick=${(e) => { e.stopPropagation(); setAuto(kind, on ? "off" : "on"); }}><${Icon} name=${kind === "resume" ? "refresh" : "merge"} size=${12}/> <span class="apill-label">${kind}</span></button>`; };
+  const rpill = (repo, kind) => { const on = ((autoRepos[repo] || {})[kind] || "") === "on"; const tip = "Auto-" + kind + " — " + (on ? "ON" : "OFF"); return html`<button class=${"apill " + (on ? "on" : "off")} aria-label=${tip} data-tip=${tip} onClick=${(e) => { e.stopPropagation(); setAuto(kind, on ? "off" : "on", repo); }}><${Icon} name=${kind === "resume" ? "refresh" : "merge"} size=${12}/> <span class="apill-label">${kind}</span></button>`; };
 
   const watching = repos || [];
   const addable = (avail || []).filter((r) => !watching.includes(r.full_name));

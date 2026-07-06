@@ -326,6 +326,38 @@ test("v4: epics unfold their sub-issues as indented full rows in the List", asyn
   dom.window.close();
 });
 
+// Repo dropdown (#152): opening it renders the auto resume/merge pills with a hideable
+// `.apill-label` span (icon-only on mobile) while keeping the accessible label/tooltip.
+test("repo dropdown auto-pills wrap their text in .apill-label and keep aria-label", async () => {
+  const SAMPLE = {
+    user: { id: 1, username: "arne", role: "admin" }, authEnabled: true, onboarded: true,
+    repos: ["acme/app"], auto: { resume: "on", merge: "" }, autoRepos: { "acme/app": {} },
+    github: { connected: true }, workflows: [], active: [], runs: [], activity: [],
+    spendToday: { costUsd: 0 }, session: {}, config: {},
+    issues: [{ repo: "acme/app", number: 1, title: "Task", state: "planned", updated_at: new Date().toISOString(), auto: {} }],
+  };
+  const { window, dom, root } = await mountApp({
+    view: "list",
+    fetch: async (u) => ({ ok: true, json: async () => (String(u).includes("/data") ? SAMPLE : {}), text: async () => "" }),
+  });
+  await new Promise((r) => setTimeout(r, 150));
+
+  const btn = window.document.querySelector(".repodrop-btn");
+  assert.ok(btn, "repo dropdown trigger renders");
+  btn.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 40));
+
+  assert.ok(window.document.querySelector(".repodrop-menu"), "dropdown menu opens");
+  const label = window.document.querySelector(".apill .apill-label");
+  assert.ok(label, "auto-pill text is wrapped in .apill-label (hidden on mobile via CSS)");
+  assert.match(label.textContent, /resume|merge/, "label carries the pill kind");
+  const pill = label.closest(".apill");
+  assert.ok(pill.getAttribute("aria-label"), "auto-pill keeps an aria-label for icon-only mode");
+  assert.ok(pill.getAttribute("data-tip"), "auto-pill keeps its tooltip");
+
+  dom.window.close();
+});
+
 // Pure unit tests for shapeToastMsg (web/core.js) — the toast-message tokenizer that splits a
 // string into text/url/path segments. core.js imports the vendor bundle via an absolute path, so
 // copy it to a temp dir rewriting that import, then import only the named export (no jsdom needed).

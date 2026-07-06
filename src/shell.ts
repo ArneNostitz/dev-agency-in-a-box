@@ -651,7 +651,7 @@ html[data-theme="dark"] .gtip{background:#000;color:#fff}
 .repodrop-btn:hover{border-color:var(--line-2)}
 .repodrop-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .repodrop-sub{color:var(--ink-3);font-weight:400;font-size:12.5px}
-.repodrop-menu{left:50%;right:auto;transform:translateX(-50%);min-width:300px;max-width:min(92vw,380px)}
+.repodrop-menu{left:50%;right:auto;transform:translateX(-50%);min-width:380px;max-width:min(94vw,460px)}
 .repodrop-head{display:none}
 @media(max-width:560px){.repodrop-head{display:flex;align-items:center;justify-content:space-between;font-weight:600;font-size:15px;padding:4px 4px 10px;border-bottom:1px solid var(--line);margin-bottom:6px;position:sticky;top:0;background:var(--surface)}}
 @media(max-width:560px){.repodrop-menu{position:fixed;inset:0;transform:none;width:auto;min-width:0;max-width:none;max-height:none;border:none;border-radius:0;padding:10px 12px calc(12px + var(--safe-b))}.repodrop-ctl{position:static;opacity:1;pointer-events:auto;background:none;padding-left:0;margin-left:auto}.repodrop-row{flex-wrap:wrap}}
@@ -866,6 +866,8 @@ textarea{resize:vertical;min-height:64px}
 .apill{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);border-radius:999px;padding:5px 11px;font-size:13px;cursor:pointer}
 .apill.on{background:var(--green-weak);border-color:var(--green);color:var(--green)}
 .apill.off{color:var(--ink-3)}
+.apill-label{display:inline}
+@media(max-width:560px){.apill-label{display:none}.apill{padding:6px 8px;gap:0}}
 .toast-stack{position:fixed;bottom:calc(74px + var(--safe-b));right:16px;z-index:80;display:flex;flex-direction:column-reverse;gap:8px;max-width:min(340px,calc(100vw - 32px));pointer-events:none}
 .toast-item{position:relative;overflow:visible;display:flex;align-items:center;gap:8px;background:var(--ink);color:var(--bg);padding:9px 13px;border-radius:10px;font-size:13px;line-height:1.4;box-shadow:var(--shadow-md);animation:toastin .18s ease;pointer-events:auto}
 .toast-item.t-error{background:var(--red);color:#fff}
